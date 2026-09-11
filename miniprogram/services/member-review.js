@@ -29,7 +29,7 @@
  * ============================================================
  */
 
-const { USER_STATUS, USER_STATUS_LABEL } = require('../utils/constants.js');
+const { USER_STATUS, USER_STATUS_LABEL, GENDER_LABEL } = require('../utils/constants.js');
 const { formatDateTime } = require('../utils/format.js');
 const { canManage } = require('./permission.js');
 
@@ -171,6 +171,8 @@ function buildApplicationRow(application, ctx = {}) {
     nickName: application.nickName || application.realName || application._id,
     avatarUrl: application.avatarUrl || '',
     realName: application.realName || '',
+    // 性别参与定级与单打榜过滤，是审核时该一起核对的信息
+    genderText: GENDER_LABEL[application.gender] || '',
     studentId: application.studentId || '',
     college: application.college || '',
     phone: application.phone || '',

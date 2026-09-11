@@ -450,3 +450,111 @@ test('赛事详情 —— 抽签后签表随详情下发，逐轮推进后决赛
     facade.resetCache();
   }
 });
+
+test('赛事详情 —— 首轮某场被驳回后重抽，该签位恢复为待确认而不是卡在已撤销', async () => {
+  const facade = require('../miniprogram/services/index.js');
+  facade.resetCache();
+  try {
+    const members = await facade.getMembers();
+    const host = members[0]._id;
+    const players = members.slice(0, 4).map((member) => member._id);
+
+    const { record } = await facade.publishEvent(
+      {
+        title: '重抽回归赛',
+        description: '',
+        matchType: MATCH_TYPE.SINGLES,
+        level: EVENT_LEVEL.SECOND,
+        bronzeMode: EVENT_BRONZE_MODE.TIED,
+        seedMode: SEED_MODE.ELO,
+        seedCount: 2,
+        startTime: '2026-05-20T09:00:00',
+        location: '学校体育馆',
+        quota: 8,
+      },
+      host
+    );
+    for (const userId of players) await facade.signUpEvent(record._id, userId);
+
+    const drawn = await facade.drawEvent(record._id, host, { seedValue: 5 });
+    assert.strictEqual(drawn.ok, true, drawn.message);
+
+    // 某一签位被对手驳回（比赛记录上会压一条 REVOKED 改判）
+    const target = drawn.matches[0];
+    const rejected = await facade.rejectMatch(target._id, target.teamB[0], '比分记错了');
+    assert.strictEqual(rejected.ok, true, rejected.message);
+
+    // 再抽一次：编号是确定的，会落到同一个 _id 上
+    const redrawn = await facade.drawEvent(record._id, host, { seedValue: 5 });
+    assert.strictEqual(redrawn.ok, true, redrawn.message);
+
+    const after = (await facade.getMatchRecords()).find((match) => match._id === target._id);
+    assert.ok(after, '重抽后该签位应还在签表里');
+    assert.strictEqual(
+      after.status,
+      MATCH_STATUS.PENDING,
+      '重抽清掉旧改判，该签位应回到待确认，而不是永远卡在已撤销'
+    );
+  } finally {
+    facade.resetCache();
+  }
+});
+
+test('赛事详情 —— 手工指定种子：下发候选人名单与需凑齐的人数', async () => {
+  const facade = require('../miniprogram/services/index.js');
+  facade.resetCache();
+  try {
+    const members = await facade.getMembers();
+    const actor = await facade.getCurrentUser();
+    // 参赛人数少于选定种子数：人人都是种子，该点几位就点几位（决策 9.3）
+    const players = members.slice(0, 3).map((member) => member._id);
+    const host = players[0];
+
+    const { record } = await facade.publishEvent(
+      {
+        title: '手工种子测试赛',
+        description: '',
+        matchType: MATCH_TYPE.SINGLES,
+        level: EVENT_LEVEL.SECOND,
+        bronzeMode: EVENT_BRONZE_MODE.TIED,
+        seedMode: SEED_MODE.MANUAL,
+        seedCount: 4,
+        startTime: '2026-05-20T09:00:00',
+        location: '学校体育馆',
+        quota: 8,
+      },
+      host
+    );
+    for (const userId of players) await facade.signUpEvent(record._id, userId);
+
+    const view = await loadEventDetailView(record._id, { user: actor, isMock: true });
+    assert.strictEqual(view.event.isManualSeed, true, '手工指定的赛事要能被界面认出来');
+    assert.strictEqual(view.seedCandidates.length, 3, '候选名单就是有效报名者');
+    assert.strictEqual(
+      view.manualSeedNeeded,
+      3,
+      '选定 4 位种子但只有 3 人参赛，只需点 3 位（与抽签算法同一口径）'
+    );
+    for (const candidate of view.seedCandidates) {
+      assert.ok(players.includes(candidate.userId));
+      assert.ok(candidate.nickName, '候选人要有名字可点');
+    }
+
+    // 没点名就抽：算法必须拒绝，而不是悄悄按报名顺序顶上
+    const refused = await facade.drawEvent(record._id, host, { seedValue: 5 });
+    assert.strictEqual(refused.ok, false);
+    assert.match(refused.message, /请指定 3 位种子/);
+
+    // 管理员点名的顺序就是种子顺序，不是等级分顺序
+    const manualOrder = [players[2], players[1], players[0]];
+    const drawn = await facade.drawEvent(record._id, host, { seedValue: 5, manualOrder });
+    assert.strictEqual(drawn.ok, true, drawn.message);
+    assert.deepStrictEqual(
+      drawn.draw.seeds.slice().sort(),
+      manualOrder.slice().sort(),
+      '抽签落库的种子应与点名的那几位一致'
+    );
+  } finally {
+    facade.resetCache();
+  }
+});

@@ -45,11 +45,15 @@
     <!-- ========== 不可改的实名信息 ========== -->
     <view class="card">
       <view class="card-title">实名信息</view>
-      <view class="card-subtitle">姓名与学号是入会审核的依据，不能自行修改；若填错了请联系管理员</view>
+      <view class="card-subtitle">姓名、性别与学号是入会审核的依据，不能自行修改；若填错了请联系管理员</view>
 
       <view class="field-row">
         <view class="field-label">姓名</view>
         <view class="field-value readonly">{{realName || '—'}}</view>
+      </view>
+      <view class="field-row">
+        <view class="field-label">性别</view>
+        <view class="field-value readonly">{{genderText || '—'}}</view>
       </view>
       <view class="field-row">
         <view class="field-label">学号</view>

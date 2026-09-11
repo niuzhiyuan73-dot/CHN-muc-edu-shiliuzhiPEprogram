@@ -449,6 +449,21 @@ function draftsFromPairs(event, pairs, { round, stage, format }) {
 }
 
 /**
+ * 一张签表里的实际参赛人数（轮空位不算人）。
+ *
+ * 名次校验要判断「这届打不打得出三四名赛」，而这个由签表结构决定，不由
+ * 报名人数决定：抽签后再补报名、或报名后又有人退赛，两者就会对不上。
+ * 谁真正站上了签位是签表说了算，所以以它为准。
+ *
+ * @param {Object} [draw] 赛事的 draw 字段
+ * @returns {number} 参赛人数；没有签表时返回 0
+ */
+function drawnEntryCount(draw) {
+  const slots = draw && Array.isArray(draw.slots) ? draw.slots : [];
+  return slots.filter((id) => !!id).length;
+}
+
+/**
  * 能不能重抽（决策 9.5）。
  *
  * 只要该赛事已有比赛被确认生效（已计入 elo），就禁止重抽——分数已经
@@ -492,6 +507,7 @@ module.exports = {
   buildBracketMatches,
   planNextRound,
   buildRoundMatches,
+  drawnEntryCount,
   canRedraw,
   bracketSizeOf,
 };

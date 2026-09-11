@@ -29,7 +29,7 @@ const {
   ANNOUNCEMENT_STATUS,
   isMemberStatus,
 } = require('../../lib/utils/constants.js');
-const { loadSeason } = require('./season.js');
+const { loadSeason, ALGO_VERSION } = require('./season.js');
 
 /** 仓储 → { key, dataset } */
 const memoByRepo = new WeakMap();
@@ -115,6 +115,11 @@ async function getDataset(ctx) {
     season._id,
     Number(season.version || 0),
     season.algoVersion,
+    // 代码里的算法版本也要进键。只认赛季文档里的 algoVersion 有个缺口：
+    // 调完参把常量加一、尚未发生任何写入时，文档里存的还是调参前的旧值，
+    // 「算法调参后自动重算」（season.js 头部）就落不了地——容器里若留着
+    // 旧缓存，新算法要等到下一次写操作才生效。带上常量，加一即失效。
+    ALGO_VERSION,
     season.anchorTime ? new Date(season.anchorTime).getTime() : 'n',
     // 重置分界也算缓存键的一部分：写重置时版本号已经 +1，这里再显式带上，
     // 是为了让「改了分界点却没动版本号」这种意外不至于悄悄命中旧缓存。

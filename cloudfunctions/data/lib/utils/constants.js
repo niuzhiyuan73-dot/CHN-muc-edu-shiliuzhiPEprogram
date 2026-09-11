@@ -72,6 +72,32 @@ function isRankable(user) {
 }
 
 /**
+ * 会员性别。
+ *
+ * 【为什么必须采集，而且不让本人随意改】
+ * 性别参与两处业务判断，都不只是「展示一下」：
+ *   1. 定级——女会员的初始分比男会员低 genderInitialGap 分（见 elo.js）；
+ *   2. 上榜——男单榜 / 女单榜按性别过滤（见 RANK_PROJECT_CONFIG）。
+ * 少了它，会员会同时从两张单打榜消失，还会被按男会员的初始分定级。
+ * 它又会影响历史成绩的定级，因此与姓名、学号一样属于实名信息：
+ * 注册时采集，之后由管理员核改，不在个人可改的白名单里。
+ *
+ * 取值沿用种子数据里的 'M' / 'F'，便于与既有数据对接。
+ */
+const GENDER = {
+  MALE: 'M',
+  FEMALE: 'F',
+};
+
+const GENDER_LABEL = {
+  [GENDER.MALE]: '男',
+  [GENDER.FEMALE]: '女',
+};
+
+/** 全部性别。校验「填的性别是否在册」时用它 */
+const ALL_GENDERS = Object.values(GENDER);
+
+/**
  * 比赛项目类型
  * 【重要】编号 2 曾用于「女子单打」，现已废弃，不要复用。
  *   男女单打合并计算后，两者共用一个单打池；性别差异体现在
@@ -413,6 +439,9 @@ module.exports = {
   USER_STATUS_LABEL,
   isMemberStatus,
   isRankable,
+  GENDER,
+  GENDER_LABEL,
+  ALL_GENDERS,
   MATCH_TYPE,
   MATCH_TYPE_LABEL,
   RATING_POOL,

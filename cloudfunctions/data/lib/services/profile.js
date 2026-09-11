@@ -31,6 +31,9 @@ const IMMUTABLE_FIELDS = [
   '_id',
   'openId',
   'realName',
+  // 性别与姓名、学号同类：它决定初始分与上哪张单打榜（见 constants.GENDER），
+  // 让本人随手改等于让他能挑起点分，必须由管理员核改
+  'gender',
   'studentId',
   'college',
   'phone',

@@ -166,8 +166,10 @@ function extractPoolStats(user, pool) {
     lastMatchTime: bucket.lastMatchTime,
     // 积分是所有项目统一累计的，不区分池
     points: user.points || 0,
-    // 保留原始用户对象引用，便于上层取用其它字段
-    user,
+    // 注意：这里只挑展示需要的字段，绝不把整个 user 对象挂上去。
+    // 榜单会经 getLeaderboard / getHomeSummary 原样下发给客户端，
+    // 而 user 里带着 phone、studentId、openId 等隐私字段——挂上它
+    // 等于把全站会员的隐私暴露给任意访客（首页概览连登录都不需要）。
   };
 }
 

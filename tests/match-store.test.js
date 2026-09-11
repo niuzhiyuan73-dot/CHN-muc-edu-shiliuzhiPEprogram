@@ -84,6 +84,22 @@ test('saveMatch —— 覆盖时把比分清掉，重抽后的对阵是干净的
   assert.strictEqual(stored.winner, null);
 });
 
+test('saveMatch —— 覆盖时清掉旧改判，重抽后不会仍被盖成「已撤销」', () => {
+  // 抽签 → 这一场被撤销 → 重抽。编号是确定的，重抽落到同一个 _id 上。
+  // 若覆盖时不清改判，旧的那条 REVOKED 会被 buildCache 重新盖回来，
+  // 这一场就永远录不了分，重抽多少次都解不开。
+  store.saveMatch(draft({ _id: 'x_e9_r1_main_0' }));
+  store.setStatus('x_e9_r1_main_0', {
+    status: MATCH_STATUS.REVOKED,
+    action: 'revoke',
+    reason: '录错了',
+  });
+
+  store.saveMatch(draft({ _id: 'x_e9_r1_main_0', teamA: ['u03'], teamB: ['u04'] }));
+
+  assert.strictEqual(store.overrideOf('x_e9_r1_main_0'), null, '旧改判应随覆盖作废');
+});
+
 test('listSubmitted —— 返回副本，外部改不动内部', () => {
   store.addMatch(draft());
 

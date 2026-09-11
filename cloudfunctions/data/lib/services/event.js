@@ -491,6 +491,29 @@ function buildEventRecord(form, ctx = {}) {
  * ============================================================ */
 
 /**
+ * 这届的参赛人数打不打得出三四名赛。
+ *
+ * 三四名赛是「半决赛的两名负者再打一场」，所以要能打出第 4 名，前提是
+ * 半决赛两场都真打。签表按 2 的幂补齐，参赛人数 N 与签表规模 size 的关系
+ * 决定了半决赛是否满员：
+ *   - N = 4（size 4）：首轮即半决赛，两场都是实打实的对阵 → 有两个负者；
+ *   - N ≥ 5（size ≥ 8）：首轮过后每一轮都是满员对阵，到半决赛必然两场
+ *     都打 → 有两个负者；
+ *   - N = 3（size 4）：首轮有一场轮空，只有一个负者，第 4 名无从产生。
+ * 归结起来就是「参赛满 4 人」。
+ *
+ * 人数未知（老数据没有签表、或调用方没传）时不作放宽，维持严格口径。
+ *
+ * @param {number} entryCount
+ * @returns {boolean}
+ */
+function canPlayBronzeMatch(entryCount) {
+  const count = Number(entryCount);
+  if (!Number.isFinite(count)) return true;
+  return count >= 4;
+}
+
+/**
  * 校验并整形成一个赛事的名次表。
  *
  * 【为什么在这里判成对而不是在积分里判】
@@ -502,11 +525,14 @@ function buildEventRecord(form, ctx = {}) {
  *   - 名次必须是正整数，且每人只出现一次；
  *   - 一场赛事有且只有一位冠军，亚军至多一位；
  *   - 并列季军：不出现第 4 名；
- *   - 打三四名：第 3 名与第 4 名成对出现，且各至多一位。
+ *   - 打三四名：第 3 名与第 4 名成对出现，且各至多一位——
+ *     但参赛人数不足 4 人时打不出三四名赛（见 canPlayBronzeMatch），
+ *     此时只可能出现一位季军，不能再要求成对。
  *
  * @param {Array<Object>} results [{ userId, placement }]
  * @param {Object} [options]
  * @param {string} [options.bronzeMode] 取值见 constants.EVENT_BRONZE_MODE
+ * @param {number} [options.entryCount] 实际参赛人数；不传则按「打得出来」处理
  * @returns {{ok:boolean, results:Array<Object>, errors:Object, firstError:string}}
  */
 function validatePlacements(results, options = {}) {
@@ -534,6 +560,9 @@ function validatePlacements(results, options = {}) {
   }
 
   const countOf = (place) => normalized.filter((row) => row.placement === place).length;
+  // 人数不足 4 人时，这届根本排不出季军赛：只会有并列季军那一位，没有第 4 名。
+  // 此时仍按「成对」卡，赛事就永远结不了（名次表无论怎么填都过不了校验）。
+  const bronzePlayable = canPlayBronzeMatch(options.entryCount);
 
   let message = '';
   if (countOf(1) !== 1) {
@@ -542,10 +571,14 @@ function validatePlacements(results, options = {}) {
     message = '亚军只能有一位';
   } else if (bronzeMode === EVENT_BRONZE_MODE.TIED && countOf(4) > 0) {
     message = '并列季军模式下不应出现第 4 名';
-  } else if (bronzeMode === EVENT_BRONZE_MODE.PLAYOFF && countOf(3) !== countOf(4)) {
-    message = '打三四名模式下，第 3 名与第 4 名必须成对出现';
   } else if (bronzeMode === EVENT_BRONZE_MODE.PLAYOFF && countOf(3) > 1) {
     message = '打三四名模式下第 3 名只能有一位';
+  } else if (bronzeMode === EVENT_BRONZE_MODE.PLAYOFF && countOf(4) > 1) {
+    message = '打三四名模式下第 4 名只能有一位';
+  } else if (bronzeMode === EVENT_BRONZE_MODE.PLAYOFF && !bronzePlayable && countOf(4) > 0) {
+    message = '本场参赛人数不足 4 人，打不出三四名赛，不应出现第 4 名';
+  } else if (bronzeMode === EVENT_BRONZE_MODE.PLAYOFF && bronzePlayable && countOf(3) !== countOf(4)) {
+    message = '打三四名模式下，第 3 名与第 4 名必须成对出现';
   }
 
   if (message) {
@@ -636,6 +669,10 @@ function buildEventRow(event, ctx = {}) {
     location: event.location || '',
     // 抽签参数：仅单打赛事有，双打为 null
     seedModeLabel: SEED_MODE_LABEL[event.seedMode] || '',
+    seedMode: event.seedMode || '',
+    // 手工指定种子的赛事，抽签前必须先在界面上点名排位（决策 9.4）；
+    // 别处看这个布尔量，不必自己比对字符串
+    isManualSeed: event.seedMode === SEED_MODE.MANUAL,
     seedCount: Number(event.seedCount) || 0,
     // 是否已抽过签（决定入口文案是「抽签」还是「重抽」）
     drawn: Boolean(event.draw),

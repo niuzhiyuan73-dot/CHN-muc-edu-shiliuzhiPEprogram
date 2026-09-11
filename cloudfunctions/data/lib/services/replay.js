@@ -196,9 +196,13 @@ function applyEventPoints({ roster, replayed, events, config, resetMs, resetAppl
       event.matchType === MATCH_TYPE.DOUBLES || event.pool === RATING_POOL.DOUBLES;
     if (isDoubles) continue;
 
-    // 赛季分界之前的赛事属于上一个赛季，不计入本赛季积分
-    const finishedAt = new Date(event.endTime || event.startTime).getTime();
-    if (resetApplies && Number.isFinite(finishedAt) && finishedAt < resetMs) continue;
+    // 赛季分界之前的赛事属于上一个赛季，不计入本赛季积分。
+    // 「赛事什么时候结束」以录入名次那一刻（finishedAt）为准：app 里发布的
+    // 赛事只有计划开赛时间 startTime，拿它当结束时间会把赛程与赛季对错——
+    // 恰好跨在分界点两边的赛事会算进错误的赛季。历史 / 种子赛事没有
+    // finishedAt，退回它的 endTime，再退回 startTime。
+    const endedAt = new Date(event.finishedAt || event.endTime || event.startTime).getTime();
+    if (resetApplies && Number.isFinite(endedAt) && endedAt < resetMs) continue;
 
     for (const result of event.results || []) {
       const user = roster.get(result.userId);

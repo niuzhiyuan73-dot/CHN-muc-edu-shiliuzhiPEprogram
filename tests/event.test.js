@@ -481,7 +481,66 @@ describe('validatePlacements —— 名次成对校验', () => {
   });
 
   test('打三四名时只有第 3 名、没有第 4 名，被拒', () => {
+    // 只留一位第 3 名：冠军、亚军、季军各一，第 4 名缺失
+    const missingFourth = [
+      { userId: 'u1', placement: 1 },
+      { userId: 'u2', placement: 2 },
+      { userId: 'u3', placement: 3 },
+      { userId: 'u4', placement: 5 },
+    ];
+    const result = validatePlacements(missingFourth, { bronzeMode: EVENT_BRONZE_MODE.PLAYOFF });
+    assert.equal(result.ok, false);
+    assert.match(result.firstError, /成对/);
+  });
+
+  test('打三四名时出现两位第 3 名，被拒', () => {
     const result = validatePlacements(tiedBoard, { bronzeMode: EVENT_BRONZE_MODE.PLAYOFF });
+    assert.equal(result.ok, false);
+    assert.match(result.firstError, /第 3 名只能有一位/);
+  });
+
+  test('打三四名：参赛只有 3 人时排不出季军赛，允许单一位第 3 名', () => {
+    // 3 人签表规模是 4，首轮必有一场轮空，半决赛只产生一个负者，
+    // 第 4 名无从产生——若还按成对卡，这场赛事就永远结不了
+    const three = [
+      { userId: 'u1', placement: 1 },
+      { userId: 'u2', placement: 2 },
+      { userId: 'u3', placement: 3 },
+    ];
+    const result = validatePlacements(three, {
+      bronzeMode: EVENT_BRONZE_MODE.PLAYOFF,
+      entryCount: 3,
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.results.length, 3);
+  });
+
+  test('打三四名：参赛只有 3 人却报了第 4 名，被拒', () => {
+    const impossible = [
+      { userId: 'u1', placement: 1 },
+      { userId: 'u2', placement: 2 },
+      { userId: 'u3', placement: 3 },
+      { userId: 'u4', placement: 4 },
+    ];
+    const result = validatePlacements(impossible, {
+      bronzeMode: EVENT_BRONZE_MODE.PLAYOFF,
+      entryCount: 3,
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.firstError, /第 4 名/);
+  });
+
+  test('打三四名：参赛满 4 人时仍要求第 3、第 4 名成对', () => {
+    const board = [
+      { userId: 'u1', placement: 1 },
+      { userId: 'u2', placement: 2 },
+      { userId: 'u3', placement: 3 },
+      { userId: 'u4', placement: 5 },
+    ];
+    const result = validatePlacements(board, {
+      bronzeMode: EVENT_BRONZE_MODE.PLAYOFF,
+      entryCount: 4,
+    });
     assert.equal(result.ok, false);
     assert.match(result.firstError, /成对/);
   });

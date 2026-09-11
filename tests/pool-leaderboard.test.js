@@ -67,6 +67,24 @@ describe('extractPoolStats —— 摊平某个池的分数', () => {
     const user = makeUser('a', { doubles: [1400, 30] });
     assert.equal(extractPoolStats(user, RATING_POOL.SINGLES).elo, DEFAULT_ELO);
   });
+
+  test('不把隐私字段带进榜单（榜单会原样下发给任意访客）', () => {
+    const user = makeUser('a', { doubles: [1400, 30] });
+    // 用户文档里实际带着的东西，一个都不该出现在榜单行上
+    Object.assign(user, {
+      phone: '13800000000',
+      studentId: '2026001',
+      openId: 'ox_openid_secret',
+      realName: '赵明宇',
+    });
+
+    const stats = extractPoolStats(user, RATING_POOL.DOUBLES);
+
+    assert.equal(stats.user, undefined, '不应挂上原始用户对象');
+    for (const field of ['phone', 'studentId', 'openId', 'realName']) {
+      assert.equal(stats[field], undefined, `榜单行不应含 ${field}`);
+    }
+  });
 });
 
 describe('buildPoolLeaderboard —— 分池排名', () => {

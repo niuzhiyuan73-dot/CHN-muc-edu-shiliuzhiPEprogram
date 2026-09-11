@@ -98,6 +98,13 @@ function addMatch(draft) {
  * 状态一律重置为「待确认」：重抽会作废尚未确认的比分，覆盖上去的就该是
  * 一场干干净净、等开打的新对阵。
  *
+ * 【为什么还要顺手清掉改判】
+ * 重抽落到的是同一批确定性编号（见 draw.eventMatchKey）。若上一版签表里
+ * 这一场被驳回或撤销过，overrides 里还压着一条 REVOKED；不清掉它，盖上来的
+ * 新对阵会被那条旧改判重新盖成「已撤销」，既录不了分也确认不了，重抽多少次
+ * 都解不开（见 mock.buildCache 的合并顺序）。覆盖一场比赛时，它的历史改判
+ * 就该随之作废——这正是「重置为待确认」的完整含义。
+ *
  * @param {Object} draft 带 _id 的比赛记录（见 draw.buildBracketMatches）
  * @returns {Object} 落库后的副本
  */
@@ -106,6 +113,8 @@ function saveMatch(draft) {
   const index = submitted.findIndex((item) => item._id === record._id);
   if (index >= 0) submitted[index] = record;
   else submitted.push(record);
+  // 覆盖即作废旧改判，否则驳回/撤销过的签位重抽后仍是「已撤销」
+  overrides.delete(record._id);
   return cloneMatch(record);
 }
 

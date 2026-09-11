@@ -14,6 +14,7 @@
 const { NICKNAME_MAX, resolveNameDisplay } = require('../../services/profile.js');
 const { uploadAvatar } = require('../../services/avatar.js');
 const { updateProfile, isMock } = require('../../services/index.js');
+const { GENDER_LABEL } = require('../../utils/constants.js');
 
 Page({
   data: {
@@ -34,6 +35,7 @@ Page({
 
     /** 只读的实名信息，让用户看得到「改的是谁」 */
     realName: '',
+    genderText: '',
     studentId: '',
 
     /** 逐字段的错误提示 */
@@ -55,6 +57,7 @@ Page({
       form: { nickName: display.nickName, avatarUrl: user.avatarUrl || '' },
       avatarText: (display.nickName || '?').slice(0, 1),
       realName: display.realName,
+      genderText: GENDER_LABEL[user.gender] || '',
       studentId: user.studentId || '',
     });
   },

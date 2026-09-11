@@ -1257,6 +1257,83 @@ test('赛事详情 —— 开始赛事之后可以给报名者代签', async () 
   assert.strictEqual(page.data.view.signupRows[0].canCheckIn, false);
 });
 
+test('赛事详情 —— 手工指定种子：点抽签先弹面板，凑齐人数才真正落签', async () => {
+  loginAs();
+  const created = await publishTestEvent({ seedMode: SEED_MODE.MANUAL, seedCount: 2 });
+  for (const userId of ['u06', 'u01', 'u02']) await facade.signUpEvent(created._id, userId);
+
+  const page = instantiate(eventDetailConfig);
+  await page.onLoad({ eventId: created._id });
+
+  assert.strictEqual(page.data.view.event.isManualSeed, true);
+  assert.strictEqual(page.data.view.manualSeedNeeded, 2, '选定 2 位种子');
+  assert.strictEqual(page.data.view.seedCandidates.length, 3, '候选就是三位报名者');
+
+  // 点「开始抽签」：先把点名面板开出来，不能直接按默认顺序抽
+  await page.onDraw();
+  assert.strictEqual(page.data.seedDialogOpen, true);
+  assert.strictEqual(page.data.view.event.drawn, false, '还没点名，签不该落下来');
+
+  // 只点一位就确定：挡下来，说清还差几位
+  page.onToggleSeed({ currentTarget: { dataset: { userId: 'u02' } } });
+  assert.deepStrictEqual(page.data.seedPicked, ['u02']);
+  assert.strictEqual(page.data.seedRows.find((row) => row.userId === 'u02').order, 1, '先点的排 1 号');
+
+  await page.onConfirmSeeds();
+  assert.strictEqual(page.data.seedDialogOpen, true, '没凑齐不该关面板');
+  assert.ok(page.data.seedError.includes('还需指定 1 位'));
+  assert.strictEqual(page.data.view.event.drawn, false);
+
+  // 选满了再多点一位：拒绝并提示，不把第 3 个人挤进去
+  page.onToggleSeed({ currentTarget: { dataset: { userId: 'u01' } } });
+  page.onToggleSeed({ currentTarget: { dataset: { userId: 'u06' } } });
+  assert.deepStrictEqual(page.data.seedPicked, ['u02', 'u01']);
+  assert.ok(page.data.seedError.includes('2 位'));
+
+  // 再点一次已选的人＝取消，方便点错就地改
+  page.onToggleSeed({ currentTarget: { dataset: { userId: 'u01' } } });
+  assert.deepStrictEqual(page.data.seedPicked, ['u02']);
+
+  // 换成先点 u06、后点 u01 的顺序，凑齐后抽签
+  page.onToggleSeed({ currentTarget: { dataset: { userId: 'u06' } } });
+  assert.deepStrictEqual(page.data.seedPicked, ['u02', 'u06']);
+  await page.onConfirmSeeds();
+
+  assert.strictEqual(page.data.seedDialogOpen, false);
+  assert.strictEqual(page.data.view.event.drawn, true);
+  assert.strictEqual(page.data.view.hasBracket, true);
+
+  const events = await facade.getEvents();
+  const drawn = events.find((item) => item._id === created._id);
+  assert.deepStrictEqual(
+    drawn.draw.seeds.slice().sort(),
+    ['u02', 'u06'],
+    '落库的种子正是点名的那两位（顺序即 1 号、2 号）'
+  );
+  assert.strictEqual(drawn.draw.drawCount, 1);
+});
+
+test('赛事详情 —— 手工种子面板可以清空重选、点遮罩关掉', async () => {
+  loginAs();
+  const created = await publishTestEvent({ seedMode: SEED_MODE.MANUAL, seedCount: 2 });
+  for (const userId of ['u06', 'u01', 'u02']) await facade.signUpEvent(created._id, userId);
+
+  const page = instantiate(eventDetailConfig);
+  await page.onLoad({ eventId: created._id });
+
+  await page.onDraw();
+  page.onToggleSeed({ currentTarget: { dataset: { userId: 'u01' } } });
+  page.onToggleSeed({ currentTarget: { dataset: { userId: 'u02' } } });
+  page.onClearSeeds();
+  assert.deepStrictEqual(page.data.seedPicked, []);
+  assert.deepStrictEqual(page.data.seedRows.map((row) => row.order), [0, 0, 0]);
+
+  page.onCloseSeedDialog();
+  assert.strictEqual(page.data.seedDialogOpen, false);
+  assert.deepStrictEqual(page.data.seedPicked, []);
+  assert.strictEqual(page.data.view.event.drawn, false, '关掉面板什么都没抽');
+});
+
 test('发布赛事 —— 未登录时不给表单', () => {
   resetSession();
   const page = instantiate(eventEditConfig);
@@ -1556,6 +1633,7 @@ function fillValidForm(page) {
   for (const [field, value] of Object.entries(values)) {
     page.onInput({ currentTarget: { dataset: { field } }, detail: { value } });
   }
+  page.onPickGender({ detail: { value: 0 } }); // 下拉第 1 项 = 男
   page.onPickCollege({ detail: { value: 0 } });
 }
 

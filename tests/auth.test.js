@@ -26,6 +26,7 @@ const facade = require('../miniprogram/services/index.js');
 function validForm(overrides = {}) {
   return {
     realName: '马小雨',
+    gender: 'M',
     studentId: '2023001234',
     college: COLLEGES[0],
     phone: '13800138000',
@@ -41,11 +42,12 @@ describe('validateProfile —— 实名信息校验', () => {
     assert.equal(result.firstError, '');
   });
 
-  test('四项必填全空时逐项报错，firstError 指向姓名', () => {
+  test('五项必填全空时逐项报错，firstError 指向姓名', () => {
     const result = validateProfile({});
     assert.equal(result.valid, false);
     assert.deepEqual(Object.keys(result.errors).sort(), [
       'college',
+      'gender',
       'phone',
       'realName',
       'studentId',
@@ -53,11 +55,21 @@ describe('validateProfile —— 实名信息校验', () => {
     assert.equal(result.firstErrorField, 'realName');
   });
 
+  test('性别只认 M / F：缺失、乱填、大小写都要判准', () => {
+    assert.ok(validateProfile(validForm({ gender: undefined })).errors.gender, '缺性别要报错');
+    assert.ok(validateProfile(validForm({ gender: '' })).errors.gender, '空串要报错');
+    assert.ok(validateProfile(validForm({ gender: '男' })).errors.gender, '中文标签不是合法取值');
+    assert.equal(validateProfile(validForm({ gender: 'F' })).valid, true);
+    // 小写也接受：表单偶尔会传来 'm' / 'f'，normalize 会先转成大写
+    assert.equal(validateProfile(validForm({ gender: 'f' })).valid, true);
+  });
+
   test('学号与姓名首尾的空格会先被去掉，不该因此判错', () => {
     const result = validateProfile(validForm({ realName: ' 马小雨 ', studentId: ' 2023001234 ' }));
     assert.equal(result.valid, true);
     assert.deepEqual(result.profile, {
       realName: '马小雨',
+      gender: 'M',
       studentId: '2023001234',
       college: COLLEGES[0],
       phone: '13800138000',
@@ -104,6 +116,7 @@ describe('normalizeProfile —— 整形', () => {
   test('缺失字段补成空串，数字被转成字符串', () => {
     assert.deepEqual(normalizeProfile({ realName: undefined, studentId: 2023001234 }), {
       realName: '',
+      gender: '',
       studentId: '2023001234',
       college: '',
       phone: '',
@@ -132,6 +145,12 @@ describe('buildAccount —— 组装账号', () => {
   test('没有昵称时用真实姓名兜底，头像处不会空白', () => {
     const account = buildAccount({ profile: validForm({ nickName: '' }) });
     assert.equal(account.nickName, '马小雨');
+  });
+
+  test('性别写进账号：定级与单打榜都靠它', () => {
+    assert.equal(buildAccount({ profile: validForm({ gender: 'F' }) }).gender, 'F');
+    // 小写进来也存成规范的大写取值
+    assert.equal(buildAccount({ profile: validForm({ gender: 'm' }) }).gender, 'M');
   });
 });
 

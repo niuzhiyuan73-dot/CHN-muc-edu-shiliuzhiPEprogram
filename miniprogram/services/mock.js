@@ -56,6 +56,7 @@ const {
   buildBracketMatches,
   planNextRound,
   buildRoundMatches,
+  drawnEntryCount,
   canRedraw,
 } = require('./draw.js');
 const { buildProfilePatch } = require('./profile.js');
@@ -1292,7 +1293,9 @@ async function finishEvent(id, results, actor) {
     signups.filter((item) => item.status !== SIGNUP_STATUS.CANCELED).map((item) => item.userId)
   );
 
-  const checked = validatePlacements(results, { bronzeMode: target.bronzeMode });
+  // 以签表人数为准判「打不打得出三四名赛」；没抽签时退回报名人数
+  const entryCount = drawnEntryCount(target.draw) || validUsers.size;
+  const checked = validatePlacements(results, { bronzeMode: target.bronzeMode, entryCount });
   if (!checked.ok) {
     return { ok: false, record: null, errors: checked.errors, firstError: checked.firstError };
   }

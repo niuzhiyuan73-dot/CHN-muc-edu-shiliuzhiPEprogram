@@ -21,6 +21,7 @@
  */
 
 const { COLLEGES, login, resolveAuthState } = require('../../services/auth.js');
+const { ALL_GENDERS, GENDER_LABEL } = require('../../utils/constants.js');
 // 注册要走门面而不是直接调 auth.register：只有落到数据源里，
 // 审核页才看得到这条申请，通过了录入页也才选得到这个人
 const { isMock, registerMember } = require('../../services/index.js');
@@ -35,6 +36,7 @@ Page({
       nickName: '',
       avatarUrl: '',
       realName: '',
+      gender: '',
       studentId: '',
       college: '',
       phone: '',
@@ -43,6 +45,12 @@ Page({
     colleges: COLLEGES,
     /** picker 选中项下标，-1 表示还没选 */
     collegeIndex: -1,
+    /** 性别候选：值与文案一一对应，picker 只认下标 */
+    genderOptions: ALL_GENDERS.map((value) => ({ value, label: GENDER_LABEL[value] })),
+    /** 性别 picker 选中项下标，-1 表示还没选 */
+    genderIndex: -1,
+    /** 性别在输入框里的展示文案 */
+    genderText: '',
     /** 各字段的错误提示 */
     errors: {},
     /** 整体错误提示（登录失败等） */
@@ -194,6 +202,19 @@ Page({
     this.setData(patch);
   },
 
+  /** 性别选择 */
+  onPickGender(event) {
+    const index = Number(event.detail.value);
+    const option = this.data.genderOptions[index];
+    if (!option) return;
+    this.setData({
+      genderIndex: index,
+      genderText: option.label,
+      'form.gender': option.value,
+      'errors.gender': '',
+    });
+  },
+
   /** 学院选择 */
   onPickCollege(event) {
     const index = Number(event.detail.value);
@@ -262,6 +283,7 @@ Page({
         statusClass: state.isActive ? 'tag-success' : 'tag-warning',
         nickName: user.nickName || '',
         realName: user.realName || '',
+        genderText: GENDER_LABEL[user.gender] || '',
         studentId: user.studentId || '',
         college: user.college || '',
         statusLabel: state.statusLabel,

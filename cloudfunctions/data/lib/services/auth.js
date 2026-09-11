@@ -3,7 +3,7 @@
  * ============================================================
  * 这里放三件事，全部不依赖任何微信 API，因而可以在 Node 里直接测试：
  *
- *   1. 实名信息的校验——姓名、学号、学院、联系方式
+ *   1. 实名信息的校验——姓名、性别、学号、学院、联系方式
  *   2. 注册申请的组装——新账号一律是「待审核」，不能自己把自己激活
  *   3. 登录态判定——能不能录入成绩、要不要提示待审核、能不能看战绩
  *
@@ -18,7 +18,13 @@
  * ============================================================
  */
 
-const { ROLE, USER_STATUS, USER_STATUS_LABEL, ROLE_LABEL } = require('../utils/constants.js');
+const {
+  ROLE,
+  USER_STATUS,
+  USER_STATUS_LABEL,
+  ROLE_LABEL,
+  ALL_GENDERS,
+} = require('../utils/constants.js');
 const { createEmptyRatings } = require('../utils/rating.js');
 
 /**
@@ -60,6 +66,14 @@ const PROFILE_RULES = [
     message: '请填写 2~15 个字的真实姓名（中文或字母）',
   },
   {
+    field: 'gender',
+    label: '性别',
+    // 只认 'M' / 'F' 两个取值。它决定初始分与上榜的性别榜，缺失即判不通过——
+    // 放任空值，会员会在两张单打榜上同时消失（见 constants.GENDER 的说明）
+    test: (value) => ALL_GENDERS.includes(value),
+    message: '请选择性别',
+  },
+  {
     field: 'studentId',
     label: '学号',
     test: (value) => /^\d{6,12}$/.test(value),
@@ -92,6 +106,8 @@ function normalizeProfile(form) {
   const pickString = (value) => (value === null || value === undefined ? '' : String(value).trim());
   return {
     realName: pickString(source.realName),
+    // 统一转成大写：表单偶尔会传来小写的 'm' / 'f'，不该因此判错
+    gender: pickString(source.gender).toUpperCase(),
     studentId: pickString(source.studentId),
     college: pickString(source.college),
     phone: pickString(source.phone),
@@ -149,6 +165,7 @@ function buildAccount({ openId = '', profile = {}, now = new Date() }) {
     nickName: p.nickName || p.realName,
     avatarUrl: p.avatarUrl,
     realName: p.realName,
+    gender: p.gender,
     studentId: p.studentId,
     college: p.college,
     phone: p.phone,

@@ -254,6 +254,7 @@ test('提交入会申请 —— 注册不需要先登录，但身份由服务端
     {
       profile: {
         realName: '王五',
+        gender: 'M',
         studentId: '2026123456',
         college: '体育学院',
         phone: '13900000000',
@@ -267,7 +268,33 @@ test('提交入会申请 —— 注册不需要先登录，但身份由服务端
   assert.equal(res.data.account.status, USER_STATUS.PENDING);
   assert.equal(res.data.account.role, ROLE.MEMBER);
   assert.equal(res.data.account.openId, 'openid-new');
+  assert.equal(res.data.account.gender, 'M', '性别要随账号一起落库，否则会员会从两张单打榜消失');
   assert.ok(res.data.account._id, '主键由服务端按 OpenID 派生');
+
+  // 再从仓储读一遍：确认真写进了 users 集合，而不只是出现在返回值里
+  const stored = await dispatch('getMember', { userId: res.data.account._id }, ctx);
+  assert.equal(stored.data.gender, 'M');
+});
+
+test('提交入会申请 —— 没选性别的申请被挡下并指明字段', async () => {
+  const ctx = await contextFor(createFixtureRepo(), 'openid-new');
+  const res = await dispatch(
+    'registerMember',
+    {
+      profile: {
+        realName: '王五',
+        gender: '',
+        studentId: '2026123456',
+        college: '体育学院',
+        phone: '13900000000',
+      },
+    },
+    ctx
+  );
+
+  assert.equal(res.data.ok, false);
+  assert.ok(res.data.errors.gender, '要指明是性别这一项没填');
+  assert.equal(res.data.account, null);
 });
 
 test('提交入会申请 —— 实名信息不合规时一个字都不落库', async () => {

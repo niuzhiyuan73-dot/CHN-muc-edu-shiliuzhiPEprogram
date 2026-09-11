@@ -570,6 +570,7 @@ describe('mock 数据源 —— 会员注册与审核', () => {
   /** 一份合法的实名信息 */
   const draft = {
     realName: '测试同学',
+    gender: 'M',
     studentId: '20240099',
     college: '法学院',
     phone: '13700001111',
@@ -1110,6 +1111,38 @@ describe('mock 数据源 —— 赛事闭环', () => {
       assert.equal(result.ok, false);
       assert.match(result.firstError, /没有报名/);
       assert.equal((await mock.getEvents()).find((e) => e._id === record._id).status, EVENT_STATUS.ONGOING);
+    })
+  );
+
+  test(
+    '录入名次 —— 3 人打三四名赛也能结赛（签表排不出季军赛，名次到第 3 名为止）',
+    withCleanStore(async () => {
+      const me = await mock.getCurrentUser();
+      const members = await mock.getMembers();
+      const others = members.filter((m) => m._id !== me._id).slice(0, 2);
+      const players = [me._id, ...others.map((m) => m._id)];
+
+      const { record } = await mock.publishEvent(eventDraft(), me._id);
+      const id = record._id;
+      for (const userId of players) await mock.signUpEvent(id, userId);
+
+      const drawn = await mock.drawEvent(id, me._id, { seedValue: 5 });
+      assert.equal(drawn.ok, true, drawn.message);
+      assert.equal(drawn.matches.length, 1, '3 人 4 签，首轮有一场轮空，只打得出一场');
+
+      await mock.startEvent(id, me._id);
+
+      const finished = await mock.finishEvent(
+        id,
+        [
+          { userId: players[0], placement: 1 },
+          { userId: players[1], placement: 2 },
+          { userId: players[2], placement: 3 },
+        ],
+        me._id
+      );
+      assert.equal(finished.ok, true, finished.firstError);
+      assert.equal(finished.record.status, EVENT_STATUS.FINISHED);
     })
   );
 

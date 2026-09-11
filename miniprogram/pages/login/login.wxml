@@ -92,6 +92,16 @@
       </view>
 
       <view class="form-item">
+        <view class="form-label">性别 <text class="form-required">*</text></view>
+        <picker mode="selector" range="{{genderOptions}}" range-key="label" value="{{genderIndex}}" bindchange="onPickGender">
+          <view class="form-input form-picker {{errors.gender ? 'is-error' : ''}} {{form.gender ? '' : 'is-placeholder'}}">
+            {{genderText || '请选择性别'}}
+          </view>
+        </picker>
+        <view wx:if="{{errors.gender}}" class="form-error">{{errors.gender}}</view>
+      </view>
+
+      <view class="form-item">
         <view class="form-label">学号 <text class="form-required">*</text></view>
         <input
           class="form-input {{errors.studentId ? 'is-error' : ''}}"
@@ -153,6 +163,10 @@
       <view class="pending-row">
         <text class="pending-key">姓名</text>
         <text class="pending-value">{{pending.realName}}</text>
+      </view>
+      <view class="pending-row">
+        <text class="pending-key">性别</text>
+        <text class="pending-value">{{pending.genderText || '—'}}</text>
       </view>
       <view class="pending-row">
         <text class="pending-key">学号</text>

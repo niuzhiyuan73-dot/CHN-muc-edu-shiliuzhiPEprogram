@@ -43,6 +43,7 @@ const {
   planDraw,
   buildDrawRecord,
   buildBracketMatches,
+  drawnEntryCount,
   canRedraw,
 } = require('../../lib/services/draw.js');
 const { EVENT_STATUS, SIGNUP_STATUS, MATCH_STATUS, MATCH_TYPE } = require('../../lib/utils/constants.js');
@@ -309,7 +310,9 @@ async function finishEvent(payload = {}, ctx) {
     signups.filter((item) => item.status !== SIGNUP_STATUS.CANCELED).map((item) => item.userId)
   );
 
-  const checked = validatePlacements(payload.results, { bronzeMode: event.bronzeMode });
+  // 以签表人数为准判「打不打得出三四名赛」；没抽签时退回报名人数
+  const entryCount = drawnEntryCount(event.draw) || validUsers.size;
+  const checked = validatePlacements(payload.results, { bronzeMode: event.bronzeMode, entryCount });
   if (!checked.ok) {
     return ok({ ok: false, record: null, errors: checked.errors, firstError: checked.firstError });
   }

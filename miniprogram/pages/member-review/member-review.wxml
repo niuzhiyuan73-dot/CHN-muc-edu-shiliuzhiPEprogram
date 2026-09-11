@@ -60,6 +60,7 @@
 
         <view class="application-meta">
           <text wx:if="{{item.realName}}">实名 {{item.realName}}</text>
+          <text wx:if="{{item.genderText}}" class="application-meta-item">{{item.genderText}}</text>
           <text wx:if="{{item.studentId}}" class="application-meta-item">学号 {{item.studentId}}</text>
           <text wx:if="{{item.college}}" class="application-meta-item">学院 {{item.college}}</text>
           <text wx:if="{{item.phone}}" class="application-meta-item">手机 {{item.phone}}</text>

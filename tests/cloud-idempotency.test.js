@@ -133,6 +133,7 @@ test('入会申请 —— 重复提交不会多出一条申请', async () => {
   const ctx = await contextFor(repo, 'openid-new');
   const profile = {
     realName: '王五',
+    gender: 'M',
     studentId: '2026123456',
     college: '体育学院',
     phone: '13900000000',
@@ -153,6 +154,7 @@ test('入会申请 —— 已经批下来的账号不会被一次重试打回待
   const applicant = await contextFor(repo, 'openid-new');
   const profile = {
     realName: '王五',
+    gender: 'M',
     studentId: '2026123456',
     college: '体育学院',
     phone: '13900000000',

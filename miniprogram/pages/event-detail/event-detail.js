@@ -40,6 +40,15 @@ Page({
     isMock,
     /** 写操作进行中，防止连点 */
     acting: false,
+
+    /** 「手工指定种子」面板是否打开 */
+    seedDialogOpen: false,
+    /** 已按顺序点选的种子编号，下标即 1 号、2 号…… */
+    seedPicked: [],
+    /** 候选名单 + 已选序号，供模板渲染（order 为 0 表示未选） */
+    seedRows: [],
+    /** 点选过程中的提示（选满了、还差几位） */
+    seedError: '',
   },
 
   /** 返回 Promise 让测试能等待首屏加载完 */
@@ -175,9 +184,9 @@ Page({
   /**
    * 抽签 / 重抽。
    *
-   * 【为什么随机值取此刻的时间戳并落库】
-   * 决策 4.4：抽签结果必须可复核。把 seedValue 一并存进 draw 字段后，
-   * 任何人拿同一个值重跑就能得到同一张签表。这里只负责给一个值。
+   * 手工指定种子的赛事不能直接抽：还缺一份「谁是 1 号种子」的名单，得先
+   * 打开面板让管理员点名，凑齐了再走真正抽签那一步（见 onConfirmSeeds）。
+   * 按等级分 / 赛季积分排的，算法自己排得出来，这里直接确认即可。
    */
   async onDraw() {
     if (this.data.acting) return undefined;
@@ -188,6 +197,25 @@ Page({
       return undefined;
     }
 
+    if (this.data.view.event.isManualSeed) {
+      this.openSeedDialog();
+      return undefined;
+    }
+
+    return this.runDraw(user, undefined);
+  },
+
+  /**
+   * 确认之后真正落库的一步。
+   *
+   * 【为什么随机值取此刻的时间戳并落库】
+   * 决策 4.4：抽签结果必须可复核。把 seedValue 一并存进 draw 字段后，
+   * 任何人拿同一个值重跑就能得到同一张签表。这里只负责给一个值。
+   *
+   * @param {Object} user 当前登录会员
+   * @param {string[]|undefined} manualOrder 手工指定的种子顺序，其余模式传 undefined
+   */
+  async runDraw(user, manualOrder) {
     const times = this.data.view.event.drawCount || 0;
     const confirmed = await this.confirm(
       times
@@ -198,7 +226,7 @@ Page({
     if (!confirmed) return undefined;
 
     this.setData({ acting: true });
-    const result = await drawEvent(this.eventId, user._id, { seedValue: Date.now() });
+    const result = await drawEvent(this.eventId, user._id, { seedValue: Date.now(), manualOrder });
     this.setData({ acting: false });
 
     if (!result || !result.ok) {
@@ -208,6 +236,97 @@ Page({
 
     this.showToast(times ? '已重新抽签' : '抽签完成', 'success');
     return this.refresh();
+  },
+
+  /* ---------- 手工指定种子 ---------- */
+
+  /** 把候选名单与已选顺序拼成模板要的行：order 为 0 表示未选 */
+  buildSeedRows(picked) {
+    const candidates = this.data.view.seedCandidates || [];
+    return candidates.map((item) => {
+      const at = picked.indexOf(item.userId);
+      return {
+        userId: item.userId,
+        nickName: item.nickName,
+        avatarText: item.avatarText,
+        avatarUrl: item.avatarUrl || '',
+        order: at >= 0 ? at + 1 : 0,
+      };
+    });
+  },
+
+  /** 面板里的空操作：挡住点击穿透，点面板本身不该关掉它 */
+  noop() {},
+
+  openSeedDialog() {
+    this.setData({
+      seedDialogOpen: true,
+      seedPicked: [],
+      seedRows: this.buildSeedRows([]),
+      seedError: '',
+    });
+  },
+
+  onCloseSeedDialog() {
+    this.setData({ seedDialogOpen: false, seedPicked: [], seedRows: [], seedError: '' });
+  },
+
+  /**
+   * 点选 / 取消一位种子。
+   *
+   * 【为什么按点击先后排号，而不是点完再排】
+   * 决策 9.4：1 号种子是谁由管理员定，等级分高不见得就要排第一。
+   * 所以先点的是 1 号、后点的是 2 号，顺序本身就是输入。
+   */
+  onToggleSeed(event) {
+    const userId = event.currentTarget.dataset.userId;
+    if (!userId) return undefined;
+
+    const picked = this.data.seedPicked.slice();
+    const at = picked.indexOf(userId);
+
+    // 再点一次已选的人＝取消，方便点错了就地改
+    if (at >= 0) {
+      picked.splice(at, 1);
+      this.setData({ seedPicked: picked, seedRows: this.buildSeedRows(picked), seedError: '' });
+      return undefined;
+    }
+
+    const needed = this.data.view.manualSeedNeeded || 0;
+    if (picked.length >= needed) {
+      this.setData({ seedError: `一共只需指定 ${needed} 位种子` });
+      return undefined;
+    }
+
+    picked.push(userId);
+    this.setData({ seedPicked: picked, seedRows: this.buildSeedRows(picked), seedError: '' });
+    return undefined;
+  },
+
+  /** 清空重选 */
+  onClearSeeds() {
+    this.setData({ seedPicked: [], seedRows: this.buildSeedRows([]), seedError: '' });
+  },
+
+  /** 点名完毕，开始抽签 */
+  async onConfirmSeeds() {
+    const user = this.currentUser();
+    if (!user) {
+      this.showToast('请先登录后再操作');
+      return undefined;
+    }
+
+    const needed = this.data.view.manualSeedNeeded || 0;
+    const picked = this.data.seedPicked;
+    if (picked.length !== needed) {
+      const short = needed - picked.length;
+      this.setData({ seedError: `还需指定 ${short} 位种子` });
+      return undefined;
+    }
+
+    // 先收起面板，抽签失败时再来一次不必重新点名
+    this.setData({ seedDialogOpen: false, seedRows: [], seedError: '' });
+    return this.runDraw(user, picked.slice());
   },
 
   /** 给抽签排出的比赛录分：跳到录入页，带上这一场的编号 */

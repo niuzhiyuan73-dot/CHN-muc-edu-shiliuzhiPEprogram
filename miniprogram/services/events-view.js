@@ -48,6 +48,9 @@ const {
 } = require('./event.js');
 const { canConfirm, isParticipant, needsScore } = require('./match-record.js');
 const { statusTagOf } = require('./match-view.js');
+// 手工指定种子要凑几位，与真正抽签时同一把尺子（种子数与参赛人数的较小者），
+// 免得界面点名点到一个算法并不接受的数量
+const { actualSeedCount } = require('./draw.js');
 const {
   getCurrentUser,
   getMembers,
@@ -535,6 +538,8 @@ async function loadEventDetailView(eventId, options = {}) {
       hasBracket: false,
       drawText: '',
       byeText: '',
+      seedCandidates: [],
+      manualSeedNeeded: 0,
       resultRows: [],
       hasResults: false,
       demoNotice: '',
@@ -554,6 +559,15 @@ async function loadEventDetailView(eventId, options = {}) {
   const bracketRows = buildBracketRows(ledger, event, memberMap, { actor, isMock: mock });
   const resultRows = buildResultRows(event, memberMap, actor);
 
+  // 手工指定种子的候选名单就是有效报名者；顺序由管理员在页面上点出来，
+  // 这里给的先后不重要——抽签的随机性只该来自 seedValue（见 draw.js）
+  const seedCandidates = signupRows.map((signup) => ({
+    userId: signup.userId,
+    nickName: signup.nickName,
+    avatarText: signup.avatarText,
+    avatarUrl: signup.avatarUrl || '',
+  }));
+
   return {
     found: true,
     notFoundText: '',
@@ -565,6 +579,9 @@ async function loadEventDetailView(eventId, options = {}) {
     hasBracket: bracketRows.length > 0,
     drawText: describeDraw(event.draw),
     byeText: byeTextOf(event.draw, memberMap),
+    // 手工指定种子要凑几位：参赛人数不够种子数时，人人都是种子
+    seedCandidates,
+    manualSeedNeeded: actualSeedCount(row.seedCount, seedCandidates.length),
     resultRows,
     hasResults: resultRows.length > 0,
     demoNotice: demoNoticeOf(mock, actor),

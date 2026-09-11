@@ -152,7 +152,7 @@ test('resolveNameDisplay —— null / 非对象都安全返回空值', () => {
 });
 
 test('IMMUTABLE_FIELDS —— 实名与权限字段都在禁改名单里', () => {
-  for (const field of ['realName', 'studentId', 'role', 'status', 'points']) {
+  for (const field of ['realName', 'gender', 'studentId', 'role', 'status', 'points']) {
     assert.ok(IMMUTABLE_FIELDS.includes(field), `${field} 应当明确不可改`);
   }
 });

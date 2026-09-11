@@ -183,3 +183,133 @@
   margin-bottom: var(--space-md);
   line-height: 1.5;
 }
+
+/* ==================== 手工指定种子面板 ==================== */
+
+/* 与会员审核页的驳回面板同款（.sheet-*）：页面样式表按页隔离，这里写一份 */
+.sheet-mask {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: flex-end;
+  z-index: 100;
+}
+
+.sheet {
+  width: 100%;
+  background: var(--color-card);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding: var(--space-lg);
+  padding-bottom: calc(var(--space-lg) + env(safe-area-inset-bottom));
+}
+
+.sheet-title {
+  font-size: var(--font-lg);
+  font-weight: 600;
+}
+
+.sheet-hint {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  margin-top: var(--space-xs);
+  line-height: 1.5;
+}
+
+.sheet-error {
+  margin-top: var(--space-xs);
+  font-size: var(--font-xs);
+  color: var(--color-danger);
+}
+
+.sheet-actions {
+  display: flex;
+  margin-top: var(--space-md);
+}
+
+.sheet-btn {
+  flex: 1;
+}
+
+.sheet-btn + .sheet-btn {
+  margin-left: var(--space-sm);
+}
+
+/* 人数可能十来个，给一个限高的滚动区，免得面板顶到屏幕外 */
+.seed-list {
+  max-height: 640rpx;
+  margin-top: var(--space-md);
+}
+
+.seed-row {
+  display: flex;
+  align-items: center;
+  padding: var(--space-sm) 0;
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.seed-row:last-child {
+  border-bottom: none;
+}
+
+/* 已选的行整条染上主色，一眼看出点了哪些 */
+.seed-row.is-picked {
+  background: rgba(20, 122, 63, 0.06);
+}
+
+.seed-order {
+  flex-shrink: 0;
+  width: 44rpx;
+  height: 44rpx;
+  line-height: 44rpx;
+  margin-right: var(--space-sm);
+  border-radius: 50%;
+  text-align: center;
+  font-size: var(--font-sm);
+  color: #ffffff;
+  background: var(--color-divider);
+}
+
+.seed-row.is-picked .seed-order {
+  background: var(--color-primary);
+}
+
+.seed-avatar {
+  flex-shrink: 0;
+  width: 64rpx;
+  height: 64rpx;
+  line-height: 64rpx;
+  margin-right: var(--space-sm);
+  border-radius: 50%;
+  overflow: hidden;
+  text-align: center;
+  font-size: var(--font-md);
+  color: #ffffff;
+  background: var(--color-primary);
+}
+
+.seed-avatar-img {
+  width: 64rpx;
+  height: 64rpx;
+  display: block;
+}
+
+.seed-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-md);
+}
+
+.seed-mark {
+  flex-shrink: 0;
+  margin-left: var(--space-sm);
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+}
+
+.seed-row.is-picked .seed-mark {
+  color: var(--color-primary);
+}
