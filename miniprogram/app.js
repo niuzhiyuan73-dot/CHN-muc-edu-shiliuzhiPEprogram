@@ -36,6 +36,9 @@ App({
     this.initSystemInfo();
     this.initDataSource();
     this.restoreUserInfo();
+    // 故意不 await：启动流程不该被一次网络往返拖住。校正结果落在
+    // globalData 上，下一次页面 onShow 读全局登录态时就会体现出来
+    this.refreshSession();
   },
 
   /**
@@ -112,6 +115,44 @@ App({
       }
     } catch (err) {
       console.error('[app] 读取本地登录态失败', err);
+    }
+  },
+
+  /**
+   * 拿服务端的最新状态校正本地登录态。
+   *
+   * 【为什么必须有这一步】登录态是在注册/登录那一刻整份写进本地缓存的
+   * （见 setUserInfo），而所有页面读的都是这份缓存，没有一处会主动回查。
+   * 于是管理员在后台把人审核通过、或调整了角色，客户端并不知道：那个人
+   * 会一直卡在「待审核」，模板上写着「通过后即可录入成绩」，可他怎么点都
+   * 不行，也没有任何提示告诉他「重新登录一次」。启动时静默校正一次，
+   * 就把这个死结解开了。
+   *
+   * 【为什么只走云端】mock 的会员就在同一个客户端内存里，注册、审核、读
+   * 页面用的是同一份数据，不存在不同步；反过来，mock 的 login() 返回的是
+   * 种子里的演示会员，拿它去覆盖刚注册的账号，反而会把状态改错。
+   *
+   * 【失败为什么一律保留缓存】拉取失败多半是网络抖动或云函数偶发故障。
+   * 这时把人踢回未登录，比让他多看一会儿旧状态糟糕得多。只有服务端明确
+   * 回答「没有这个账号」（例如账号文档被删）才清本地——那种情况下留着
+   * 一份账号，会让每次写操作都报「请先登录」，反而更难排查。
+   *
+   * @returns {Promise<void>}
+   */
+  async refreshSession() {
+    if (this.globalData.dataSource !== DATA_SOURCE.CLOUD) return;
+    if (!this.getUserInfo()) return;
+
+    try {
+      // 延迟取用：与 services/auth.js 里 login() 的写法一致，
+      // 避免 app → auth → 门面 → mock 的加载期环
+      const { login } = require('./services/auth.js');
+      const { ok, user } = await login();
+
+      if (ok && user) this.setUserInfo(user);
+      else this.clearUserInfo();
+    } catch (err) {
+      console.error('[app] 校正登录态失败，继续沿用本地缓存', err);
     }
   },
 
