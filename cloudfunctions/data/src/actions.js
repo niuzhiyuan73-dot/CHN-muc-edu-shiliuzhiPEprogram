@@ -1,7 +1,7 @@
 /**
  * 云函数操作名单
  * ============================================================
- * 与前端 services/cloud.js 里的调用名必须一字不差。那份文件把 29 个
+ * 与前端 services/cloud.js 里的调用名必须一字不差。那份文件把 32 个
  * 接口钉死成 { action, payload }，这里的名单就是服务端的对应表。
  *
  * tests/cloud-core.test.js 会把它与 cloud.js 导出的函数名逐一比对：
@@ -10,7 +10,7 @@
  * ============================================================
  */
 
-/** 只读接口（20 个） */
+/** 只读接口（21 个） */
 const READ_ACTIONS = [
   'getCurrentUser',
   'getMembers',
@@ -32,9 +32,10 @@ const READ_ACTIONS = [
   'getMyProjects',
   'getHomeSummary',
   'getMatchRecords',
+  'getSeasonState',
 ];
 
-/** 写接口（9 个）。这些要走事务，权限一律在服务端判定。 */
+/** 写接口（11 个）。这些要走事务，权限一律在服务端判定。 */
 const WRITE_ACTIONS = [
   'submitMatch',
   'confirmMatch',
@@ -45,9 +46,11 @@ const WRITE_ACTIONS = [
   'rejectMember',
   'publishAnnouncement',
   'archiveAnnouncement',
+  'updateProfile',
+  'resetSeason',
 ];
 
-/** 全部 29 个操作 */
+/** 全部 32 个操作 */
 const ALL_ACTIONS = [...READ_ACTIONS, ...WRITE_ACTIONS];
 
 module.exports = { READ_ACTIONS, WRITE_ACTIONS, ALL_ACTIONS };

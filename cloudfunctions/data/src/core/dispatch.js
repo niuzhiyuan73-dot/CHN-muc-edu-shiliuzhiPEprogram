@@ -17,6 +17,7 @@ const readHandlers = require('./read-handlers.js');
 const matchHandlers = require('./match-handlers.js');
 const memberHandlers = require('./member-handlers.js');
 const announcementHandlers = require('./announcement-handlers.js');
+const seasonHandlers = require('./season-handlers.js');
 
 /** action → 处理器 */
 const HANDLERS = {
@@ -24,6 +25,7 @@ const HANDLERS = {
   ...matchHandlers,
   ...memberHandlers,
   ...announcementHandlers,
+  ...seasonHandlers,
 };
 
 /**

@@ -49,6 +49,15 @@
   font-weight: 600;
 }
 
+/* 真名缀在昵称旁边：字号压小、字重回常规、颜色压淡，
+   一眼就能看出「哪个是昵称、哪个是实名」 */
+.member-real-name {
+  margin-left: 6rpx;
+  font-size: var(--font-sm);
+  font-weight: 400;
+  color: var(--color-text-tertiary);
+}
+
 .member-badge {
   margin-left: var(--space-xs);
   padding: 0 var(--space-sm);

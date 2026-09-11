@@ -22,10 +22,14 @@ const { replaySeason } = require('./replay.js');
 const matchStore = require('./match-store.js');
 const userStore = require('./user-store.js');
 const announcementStore = require('./announcement-store.js');
+const profileStore = require('./profile-store.js');
+const seasonStore = require('./season-store.js');
 const { register: registerAccount } = require('./auth.js');
+const { DEFAULT_RESET_POLICY, canResetSeason } = require('./season.js');
 const { REVIEW_ACTION, validateReview } = require('./member-review.js');
 const { canConfirm, canRevoke, buildMatchRecord } = require('./match-record.js');
 const { canPublish, buildAnnouncementRecord } = require('./announcement.js');
+const { buildProfilePatch } = require('./profile.js');
 const { getPoolRating } = require('../utils/rating.js');
 const {
   RANK_PROJECT_LABEL,
@@ -127,10 +131,18 @@ function buildCache() {
   // 3. 回放名单 = 种子会员 + 已通过审核的本地账号。
   //    注意 replaySeason 的参数名是 members（不是 users）：它返回的
   //    replayed.users 才是「回放后的会员」。
+  // 本次会话若做过赛季软重置，把分界点交给回放：引擎会在该处统一压分，
+  // 并把起点分刷成压分后的值（见 replay.js 的 applySeasonReset）。
+  const reset = seasonStore.getReset();
+
   const replayed = replaySeason({
     ...seed,
     members: seed.members.concat(approved),
     matches: activeOnly,
+    options: {
+      resetTime: reset ? reset.resetTime : null,
+      resetPolicy: reset ? reset.policy : null,
+    },
   });
 
   const replayedById = new Map(replayed.matches.map((match) => [match._id, match]));
@@ -154,16 +166,29 @@ function buildCache() {
     (item) => item.status !== ANNOUNCEMENT_STATUS.ARCHIVED
   );
 
+  // 5. 资料补丁：昵称与头像是会员自己改的，盖在回放结果之上。
+  //    种子会员不在 user-store 里，所以补丁必须在这里盖。users 与 members
+  //    必须是盖过补丁的同一份——否则 getCurrentUser（读 users）与
+  //    getMembers（读 members）会在改完昵称后各说各话。分数、场次仍以回放
+  //    结果为准，补丁只覆盖这两个字段（见 profile-store.js）。
+  const patchProfile = (account) => {
+    const patch = profileStore.patchOf(account._id);
+    return patch ? { ...account, ...patch } : account;
+  };
+  const members = replayed.users.map(patchProfile);
+
   return {
     ...replayed,
-    // replayed.users 已经过回放（分数、场次都是最新），给它一个显式的名字
-    members: replayed.users,
-    applications,
+    // replayed.users 已经过回放（分数、场次都是最新），再盖上资料补丁
+    users: members,
+    members,
+    // 申请名单同样要盖：审核页要显示申请人改过的昵称头像
+    applications: applications.map(patchProfile),
     ledger,
     // 放在 ...replayed 之后，盖掉种子原封不动带来的那份 announcements
     announcements,
     announcementLedger,
-    nameOf: createNameResolver(replayed.users),
+    nameOf: createNameResolver(members),
   };
 }
 
@@ -189,6 +214,10 @@ function resetCache() {
   userStore.reset();
   // 本地公告同理：新发的与下架的改判都属于临时写入
   announcementStore.reset();
+  // 资料补丁同理：改过的昵称头像也是临时写入
+  profileStore.reset();
+  // 赛季重置同理：分界点必须一起清，否则下一轮生成的分数还是被压过的
+  seasonStore.reset();
 }
 
 /**
@@ -767,12 +796,91 @@ async function archiveAnnouncement(id, actor) {
   return { ok: true, record, message: '' };
 }
 
+/* ---------- 赛季管理 ---------- */
+
+/**
+ * 读取当前赛季状态。
+ *
+ * mock 没有云端那份赛季文档，锚点直接取回放给出「赛季首场」，
+ * 重置记录则来自本次会话的 seasonStore。形状与云端保持一致，
+ * 管理页与视图模型两边共用。
+ *
+ * @returns {Promise<Object>}
+ */
+async function getSeasonState() {
+  const reset = seasonStore.getReset();
+  return {
+    anchorTime: load().meta.seasonStart || null,
+    resetTime: reset ? reset.resetTime : null,
+    // 从未重置时也给默认策略，界面照样能说明「重置后会怎么压分」
+    policy: reset ? reset.policy : { ...DEFAULT_RESET_POLICY },
+    version: reset ? 1 : 0,
+  };
+}
+
+/**
+ * 执行一次赛季软重置。
+ *
+ * 权限判定与云端同源（services/season.js），mock 下放宽为「已登录的
+ * 正常会员即可」——种子里没有管理员，否则这条链路在演示数据里就是死的。
+ * 只记分界点与策略，压分交给回放引擎，与云端的行为一致。
+ *
+ * @param {string} actor 操作者编号
+ * @returns {Promise<{ok:boolean, season:Object|null, message:string}>}
+ */
+async function resetSeason(actor) {
+  const account = accountOf(actor);
+  if (!canResetSeason(account, { isMock: true })) {
+    return { ok: false, season: null, message: '只有管理员可以执行赛季重置' };
+  }
+
+  seasonStore.setReset({ resetTime: new Date(), policy: DEFAULT_RESET_POLICY });
+  cache = null;
+  return { ok: true, season: await getSeasonState(), message: '' };
+}
+
+/* ---------- 个人资料 ---------- */
+
+/**
+ * 修改自己的昵称与头像。
+ *
+ * 【只能改这两项】
+ * 真实姓名与学号是实名信息，改不得。白名单写在 profile.js 的
+ * EDITABLE_FIELDS 里，校验也走它的 buildProfilePatch（纯函数），
+ * 与云端共用同一套规则。
+ *
+ * 【为什么要回查账号而不是信任页面传来的编号】
+ * 与其它写接口同一纪律：页面只递一个编号，身份回台账里查。这样
+ * 「改别人的昵称」在本地也做不到。
+ *
+ * @param {Object} patch 只应含 nickName / avatarUrl
+ * @param {string} actor 操作者编号
+ * @returns {Promise<{ok:boolean, account:Object|null, errors:Object, firstError:string}>}
+ */
+async function updateProfile(patch, actor) {
+  const account = accountOf(actor);
+  if (!account) {
+    return { ok: false, account: null, errors: {}, firstError: '请先登录后再修改资料' };
+  }
+
+  const built = buildProfilePatch(patch);
+  if (!built.ok) {
+    return { ok: false, account: null, errors: built.errors, firstError: built.firstError };
+  }
+
+  profileStore.setProfile(account._id, built.patch);
+  cache = null;
+  // 重新查一遍，拿到的就是盖过补丁的新昵称/头像
+  return { ok: true, account: accountOf(account._id), errors: {}, firstError: '' };
+}
+
 module.exports = {
   DEFAULT_CURRENT_USER_ID,
   SEED_OPTIONS,
   load,
   resetCache,
   getMatchRecords,
+  getSeasonState,
   submitMatch,
   confirmMatch,
   rejectMatch,
@@ -782,6 +890,8 @@ module.exports = {
   rejectMember,
   publishAnnouncement,
   archiveAnnouncement,
+  updateProfile,
+  resetSeason,
   getCurrentUser,
   getMembers,
   getMember,

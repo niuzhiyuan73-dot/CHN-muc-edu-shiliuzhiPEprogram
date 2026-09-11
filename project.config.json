@@ -1,11 +1,11 @@
 {
   "description": "中央民族大学匹克球俱乐部微信小程序",
   "projectname": "minzu-pickleball",
-  "appid": "wxf7def9ae26dda811",
+  "appid": "wxbc3c37c18a86b4f6",
   "compileType": "miniprogram",
   "miniprogramRoot": "miniprogram/",
   "cloudfunctionRoot": "cloudfunctions/",
-  "libVersion": "3.5.0",
+  "libVersion": "3.14.2",
   "setting": {
     "urlCheck": false,
     "es6": true,

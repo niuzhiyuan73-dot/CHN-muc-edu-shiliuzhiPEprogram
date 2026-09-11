@@ -1,123 +1,143 @@
 /**
  * 积分算法单元测试
+ * ============================================================
+ * 积分只来自赛事（决策 9）。日常比赛不论输赢都不再产生积分，
+ * 所以这里没有「胜 N 分、负 N 分」这类用例——那些规则已从算法里删掉。
+ * ============================================================
  */
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
   DEFAULT_POINT_CONFIG,
-  calculateStreakBonus,
-  calculateMatchPoints,
-  calculateStreak,
+  placementBaseOf,
+  calculateEventPoints,
 } = require('../miniprogram/utils/points.js');
+const {
+  EVENT_LEVEL,
+  EVENT_LEVEL_MULTIPLIER,
+  DEFAULT_EVENT_LEVEL,
+} = require('../miniprogram/utils/constants.js');
 
-describe('calculateStreakBonus —— 连胜奖励', () => {
-  test('连胜不足 3 场时不触发奖励', () => {
-    assert.equal(calculateStreakBonus(0), 0);
-    assert.equal(calculateStreakBonus(1), 0);
-    assert.equal(calculateStreakBonus(2), 0);
+describe('placementBaseOf —— 名次档位基础分', () => {
+  test('前四名各有固定档位', () => {
+    assert.equal(placementBaseOf(1), 20);
+    assert.equal(placementBaseOf(2), 14);
+    assert.equal(placementBaseOf(3), 10);
+    assert.equal(placementBaseOf(4), 7);
   });
 
-  test('第 3 场连胜触发 +1', () => {
-    assert.equal(calculateStreakBonus(3), 1);
+  test('5 到 8 名共用八强档', () => {
+    for (const rank of [5, 6, 7, 8]) {
+      assert.equal(placementBaseOf(rank), 4);
+    }
   });
 
-  test('第 4 场连胜累加到 +2', () => {
-    assert.equal(calculateStreakBonus(4), 2);
+  test('八强之外为 0：只拿参与分', () => {
+    assert.equal(placementBaseOf(9), 0);
+    assert.equal(placementBaseOf(16), 0);
+    assert.equal(placementBaseOf(100), 0);
   });
 
-  test('第 5 场起封顶于 +3', () => {
-    assert.equal(calculateStreakBonus(5), 3);
-    assert.equal(calculateStreakBonus(6), 3);
-    assert.equal(calculateStreakBonus(100), 3);
+  test('名次非法一律按 0 处理', () => {
+    for (const bad of [undefined, null, 0, -1, 'x', NaN, {}]) {
+      assert.equal(placementBaseOf(bad), 0);
+    }
+  });
+
+  test('字符串数字按数字处理', () => {
+    assert.equal(placementBaseOf('1'), 20);
+    assert.equal(placementBaseOf('6'), 4);
+  });
+
+  test('自定义档位表生效', () => {
+    const config = { ...DEFAULT_POINT_CONFIG, placementBase: { 1: 100 }, quarterfinalBase: 1 };
+    assert.equal(placementBaseOf(1, config), 100);
+    // 自定义表没有第 2 名，落到八强档
+    assert.equal(placementBaseOf(2, config), 1);
   });
 });
 
-describe('calculateMatchPoints —— 单场积分', () => {
-  test('普通获胜：3 分', () => {
-    const result = calculateMatchPoints({ isWin: true });
-    assert.deepEqual(result, { base: 3, streakBonus: 0, eventBonus: 0, total: 3 });
+describe('calculateEventPoints —— 一次赛事的积分', () => {
+  test('三级赛事冠军：2（参与）+ 20 × 1 = 22', () => {
+    const r = calculateEventPoints({ placement: 1, level: EVENT_LEVEL.THIRD });
+    assert.equal(r.participate, 2);
+    assert.equal(r.placementScore, 20);
+    assert.equal(r.multiplier, 1);
+    assert.equal(r.total, 22);
   });
 
-  test('普通落败：仍有 1 分参与分', () => {
-    const result = calculateMatchPoints({ isWin: false });
-    assert.deepEqual(result, { base: 1, streakBonus: 0, eventBonus: 0, total: 1 });
+  test('二级赛事亚军：2（参与）+ 14 × 2 = 30', () => {
+    const r = calculateEventPoints({ placement: 2, level: EVENT_LEVEL.SECOND });
+    assert.equal(r.multiplier, 2);
+    assert.equal(r.total, 30);
   });
 
-  test('落败时不计算连胜奖励', () => {
-    const result = calculateMatchPoints({ isWin: false, currentStreak: 5 });
-    assert.equal(result.streakBonus, 0);
-    assert.equal(result.total, 1);
+  test('一级赛事冠军：2（参与）+ 20 × 4 = 82', () => {
+    const r = calculateEventPoints({ placement: 1, level: EVENT_LEVEL.FIRST });
+    assert.equal(r.multiplier, 4);
+    assert.equal(r.total, 82);
   });
 
-  test('3 连胜中的第 3 场：3 + 1 = 4 分', () => {
-    const result = calculateMatchPoints({ isWin: true, currentStreak: 3 });
-    assert.equal(result.total, 4);
+  test('未进八强也有参与分：仅 2 分', () => {
+    const r = calculateEventPoints({ placement: 9, level: EVENT_LEVEL.FIRST });
+    assert.equal(r.placementScore, 0);
+    assert.equal(r.total, 2);
   });
 
-  test('参加正式赛事获胜：3 + 2 = 5 分', () => {
-    const result = calculateMatchPoints({ isWin: true, isEvent: true });
-    assert.equal(result.eventBonus, 2);
-    assert.equal(result.total, 5);
+  test('缺名次时只拿参与分', () => {
+    assert.equal(calculateEventPoints({}).total, 2);
+    assert.equal(calculateEventPoints({ level: EVENT_LEVEL.FIRST }).total, 2);
   });
 
-  test('正式赛事 + 5 连胜：3 + 3 + 2 = 8 分', () => {
-    const result = calculateMatchPoints({ isWin: true, currentStreak: 5, isEvent: true });
-    assert.equal(result.total, 8);
+  test('缺等级时按三级赛事计（决策 13 的默认值）', () => {
+    const r = calculateEventPoints({ placement: 1 });
+    assert.equal(r.multiplier, EVENT_LEVEL_MULTIPLIER[DEFAULT_EVENT_LEVEL]);
+    assert.equal(r.total, 22);
   });
 
-  test('自定义配置生效', () => {
-    const result = calculateMatchPoints({
-      isWin: true,
-      config: { win: 10, eventParticipate: 5 },
-      isEvent: true,
-    });
-    assert.equal(result.total, 15);
+  test('等级非法时退回默认等级的倍数', () => {
+    const r = calculateEventPoints({ placement: 1, level: 99 });
+    assert.equal(r.multiplier, EVENT_LEVEL_MULTIPLIER[DEFAULT_EVENT_LEVEL]);
   });
 
-  test('返回的总分恒等于各项之和', () => {
-    for (const isWin of [true, false]) {
-      for (const currentStreak of [0, 3, 4, 9]) {
-        for (const isEvent of [true, false]) {
-          const r = calculateMatchPoints({ isWin, currentStreak, isEvent });
-          assert.equal(r.total, r.base + r.streakBonus + r.eventBonus);
-        }
+  test('双打赛事一律不计分', () => {
+    const r = calculateEventPoints({ placement: 1, level: EVENT_LEVEL.FIRST, isDoubles: true });
+    assert.deepEqual(r, { participate: 0, placementScore: 0, multiplier: 0, total: 0 });
+  });
+
+  test('自定义参与分生效', () => {
+    const r = calculateEventPoints({ placement: 1, config: { eventParticipate: 10 } });
+    assert.equal(r.participate, 10);
+    assert.equal(r.total, 30);
+  });
+
+  test('总分恒等于参与分与名次分之和', () => {
+    for (const placement of [1, 2, 3, 4, 5, 8, 9, 16, undefined]) {
+      for (const level of [1, 2, 3]) {
+        const r = calculateEventPoints({ placement, level });
+        assert.equal(r.total, r.participate + r.placementScore);
       }
     }
   });
 
-  test('积分恒为正数：参与即得分，体现鼓励参与的设计意图', () => {
-    for (const isWin of [true, false]) {
-      assert.ok(calculateMatchPoints({ isWin }).total > 0);
-    }
-  });
-
-  test('默认配置与策划书表 4-2 一致', () => {
-    assert.equal(DEFAULT_POINT_CONFIG.win, 3);
-    assert.equal(DEFAULT_POINT_CONFIG.loss, 1);
+  test('名额配与策划书 2.1 / 2.2 一致', () => {
     assert.equal(DEFAULT_POINT_CONFIG.eventParticipate, 2);
-    assert.equal(DEFAULT_POINT_CONFIG.streakBonusThreshold, 3);
-    assert.equal(DEFAULT_POINT_CONFIG.streakBonusMax, 3);
-    assert.equal(DEFAULT_POINT_CONFIG.absencePenalty, -2);
-  });
-});
-
-describe('calculateStreak —— 连胜场次统计', () => {
-  test('连续三场获胜返回 3', () => {
-    const matches = [{ isWin: true }, { isWin: true }, { isWin: true }];
-    assert.equal(calculateStreak(matches), 3);
-  });
-
-  test('遇到失利立即中断计数', () => {
-    const matches = [{ isWin: true }, { isWin: true }, { isWin: false }, { isWin: true }];
-    assert.equal(calculateStreak(matches), 2);
+    assert.equal(DEFAULT_POINT_CONFIG.placementBase[1], 20);
+    assert.equal(DEFAULT_POINT_CONFIG.placementBase[2], 14);
+    assert.equal(DEFAULT_POINT_CONFIG.placementBase[3], 10);
+    assert.equal(DEFAULT_POINT_CONFIG.placementBase[4], 7);
+    assert.equal(DEFAULT_POINT_CONFIG.quarterfinalBase, 4);
+    assert.equal(DEFAULT_POINT_CONFIG.quarterfinalMaxRank, 8);
+    // 等级倍数：一级 4 倍、二级 2 倍、三级 1 倍
+    assert.equal(EVENT_LEVEL_MULTIPLIER[EVENT_LEVEL.FIRST], 4);
+    assert.equal(EVENT_LEVEL_MULTIPLIER[EVENT_LEVEL.SECOND], 2);
+    assert.equal(EVENT_LEVEL_MULTIPLIER[EVENT_LEVEL.THIRD], 1);
   });
 
-  test('最近一场失利则连胜为 0', () => {
-    assert.equal(calculateStreak([{ isWin: false }, { isWin: true }]), 0);
-  });
-
-  test('空战绩返回 0', () => {
-    assert.equal(calculateStreak([]), 0);
+  test('已废止的日常积分字段不再出现在默认配置里', () => {
+    for (const gone of ['win', 'loss', 'streakBonusThreshold', 'streakBonusMax', 'absencePenalty']) {
+      assert.equal(Object.prototype.hasOwnProperty.call(DEFAULT_POINT_CONFIG, gone), false);
+    }
   });
 });

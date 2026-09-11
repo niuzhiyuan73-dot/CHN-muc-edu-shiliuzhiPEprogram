@@ -869,3 +869,130 @@ describe('mock 数据源 —— 公告发布与下架', () => {
     })
   );
 });
+
+describe('mock 数据源 —— 个人资料', () => {
+  /** 资料补丁写的是内存台账，所以每条用例前后都复位（同上） */
+  function withCleanStore(fn) {
+    return async () => {
+      mock.resetCache();
+      try {
+        await fn();
+      } finally {
+        mock.resetCache();
+      }
+    };
+  }
+
+  test(
+    '改昵称后「当前登录会员」与「会员名单」看到的是同一个新名字',
+    withCleanStore(async () => {
+      const me = await mock.getCurrentUser();
+      // 种子里的 u06 是「明宇 / 赵明宇」，昵称与真名本来就分得开
+      assert.notEqual(me.nickName, me.realName);
+
+      const result = await mock.updateProfile({ nickName: '小明' }, me._id);
+      assert.equal(result.ok, true, result.firstError);
+      assert.equal(result.account.nickName, '小明');
+
+      const after = await mock.getCurrentUser();
+      assert.equal(after.nickName, '小明');
+      // 这两处若各盖各的补丁，改完昵称就会一个变一个不变
+      const [fromMembers] = (await mock.getMembers()).filter((m) => m._id === me._id);
+      assert.equal(fromMembers.nickName, '小明');
+    })
+  );
+
+  test(
+    '改头像只动头像，昵称与实名信息分毫不动',
+    withCleanStore(async () => {
+      const me = await mock.getCurrentUser();
+      const result = await mock.updateProfile({ avatarUrl: 'cloud://x/y.png' }, me._id);
+
+      assert.equal(result.ok, true, result.firstError);
+      assert.equal(result.account.avatarUrl, 'cloud://x/y.png');
+      assert.equal(result.account.nickName, me.nickName);
+      assert.equal(result.account.realName, me.realName);
+      assert.equal(result.account.studentId, me.studentId);
+    })
+  );
+
+  test(
+    '实名与权限字段即使被塞进补丁也会被丢掉',
+    withCleanStore(async () => {
+      const me = await mock.getCurrentUser();
+      const result = await mock.updateProfile(
+        { nickName: '合规名字', realName: '冒名', studentId: '000000', role: 2, points: 99999 },
+        me._id
+      );
+
+      assert.equal(result.ok, true, result.firstError);
+      assert.equal(result.account.nickName, '合规名字');
+      // 白名单之外的一个都不能落地
+      assert.equal(result.account.realName, me.realName);
+      assert.equal(result.account.studentId, me.studentId);
+      assert.equal(result.account.role, me.role);
+      assert.equal(result.account.points, me.points);
+    })
+  );
+
+  test(
+    '只提交敏感字段等于什么都没改，明确报错且不落库',
+    withCleanStore(async () => {
+      const me = await mock.getCurrentUser();
+      const result = await mock.updateProfile({ role: 2, realName: '冒名' }, me._id);
+
+      assert.equal(result.ok, false);
+      assert.equal(result.firstError, '没有要修改的内容');
+      assert.equal((await mock.getCurrentUser()).realName, me.realName);
+    })
+  );
+
+  test(
+    '昵称不合规时原样报错，旧名字保持不变',
+    withCleanStore(async () => {
+      const me = await mock.getCurrentUser();
+      const result = await mock.updateProfile({ nickName: '   ' }, me._id);
+
+      assert.equal(result.ok, false);
+      assert.ok(result.errors.nickName);
+      assert.equal((await mock.getCurrentUser()).nickName, me.nickName);
+    })
+  );
+
+  test(
+    '改完昵称，榜单上那一行也跟着换名字',
+    withCleanStore(async () => {
+      const me = await mock.getCurrentUser();
+      await mock.updateProfile({ nickName: '榜上新名' }, me._id);
+
+      const board = await mock.getLeaderboard(RANK_PROJECT.MEN_SINGLES);
+      const row = board.find((item) => item._id === me._id);
+      assert.equal(row.nickName, '榜上新名');
+    })
+  );
+
+  test(
+    '未登录或查不到的账号改不动资料',
+    withCleanStore(async () => {
+      const me = await mock.getCurrentUser();
+      for (const actor of [null, 'ghost']) {
+        const result = await mock.updateProfile({ nickName: '谁' }, actor);
+        assert.equal(result.ok, false);
+        assert.match(result.firstError, /请先登录/);
+      }
+      assert.equal((await mock.getCurrentUser()).nickName, me.nickName);
+    })
+  );
+
+  test(
+    'resetCache 会把资料补丁一并清掉，名字退回种子',
+    withCleanStore(async () => {
+      const me = await mock.getCurrentUser();
+      await mock.updateProfile({ nickName: '临时名字' }, me._id);
+      assert.equal((await mock.getCurrentUser()).nickName, '临时名字');
+
+      mock.resetCache();
+      assert.equal((await mock.getCurrentUser()).nickName, me.nickName);
+    })
+  );
+});

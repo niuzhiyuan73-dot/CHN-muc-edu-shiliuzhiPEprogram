@@ -3,6 +3,7 @@
     "pages/index/index",
     "pages/rank/rank",
     "pages/match/match",
+    "pages/events/events",
     "pages/profile/profile",
     "pages/member/member",
     "pages/login/login",
@@ -10,7 +11,10 @@
     "pages/member-review/member-review",
     "pages/announcements/announcements",
     "pages/announcement-manage/announcement-manage",
-    "pages/announcement-edit/announcement-edit"
+    "pages/announcement-edit/announcement-edit",
+    "pages/profile-edit/profile-edit",
+    "pages/profile-detail/profile-detail",
+    "pages/season-manage/season-manage"
   ],
   "window": {
     "backgroundTextStyle": "dark",
@@ -36,6 +40,10 @@
       {
         "pagePath": "pages/match/match",
         "text": "比赛"
+      },
+      {
+        "pagePath": "pages/events/events",
+        "text": "赛事"
       },
       {
         "pagePath": "pages/profile/profile",

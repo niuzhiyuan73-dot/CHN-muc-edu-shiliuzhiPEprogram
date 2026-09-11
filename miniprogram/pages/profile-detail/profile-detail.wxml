@@ -1,0 +1,21 @@
+<!--
+  个人详情
+  ============================================================
+  从「我的」页点自己头像进来。走势图、逐场战绩、交锋记录、搭档记录
+  这些细账都挪到这里，「我的」页只留分数与赛事荣誉。
+  界面来自 templates/member-view.wxml 的 profileDetailView，
+  本页只负责装配数据。模板的字段说明见该文件。
+  ============================================================
+-->
+<import src="../../templates/member-view.wxml" />
+
+<view class="page-container">
+  <template
+    is="profileDetailView"
+    data="{{...view, loading: loading, error: error, hasMore: hasMore, switching: switching}}"
+  />
+
+  <view wx:if="{{isMock}}" class="mock-note">
+    当前为本地模拟数据，用于开发预览，并非真实成绩
+  </view>
+</view>

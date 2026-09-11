@@ -16,7 +16,7 @@
 2. 把环境 ID 填进 `miniprogram/config.js` 的 `CLOUD_ENV_ID`：
 
    ```js
-   const CLOUD_ENV_ID = 'pickleball-1a2b3c';
+   const CLOUD_ENV_ID = 'cloud1-d7g9o5ift32b465d7';
    ```
 
    留空时小程序会自动退回本地模拟数据，功能仍可完整演示，只是数据存在内存里，

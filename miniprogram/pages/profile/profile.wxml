@@ -1,7 +1,9 @@
 <!--
   我的
-  主体内容与「他人主页」完全相同，因此抽到公共模板里，
-  这里只负责装配数据。模板的字段说明见 templates/member-view.wxml。
+  只展示当前分数与赛事荣誉；走势、逐场战绩、交锋记录、搭档记录
+  都在个人详情页（点下方头卡里的头像过去看）。
+  界面同样抽在公共模板里，这里只负责装配数据。
+  模板的字段说明见 templates/member-view.wxml。
 -->
 <import src="../../templates/member-view.wxml" />
 
@@ -27,14 +29,22 @@
     <view class="entry-card-arrow">›</view>
   </view>
 
+  <view wx:if="{{seasonEntry.visible}}" class="card entry-card" bindtap="onGoSeasonManage">
+    <view class="entry-card-main">
+      <view class="entry-card-title">赛季管理</view>
+      <view class="entry-card-hint">{{seasonEntry.hint}}</view>
+    </view>
+    <view class="entry-card-arrow">›</view>
+  </view>
+
   <!--
     未登录：这一页只有「自己」可看，没有自己就没什么可看的。
-    不要让 memberView 模板去渲染数据源答出来的「当前用户」——云端认的是
+    不要让模板去渲染数据源答出来的「当前用户」——云端认的是
     OpenID，退出登录之后它照样答得出是谁（见 profile.js 的 refresh）。
   -->
   <block wx:if="{{loggedIn}}">
     <template
-      is="memberView"
+      is="profileView"
       data="{{...view, loading: loading, error: error, hasMore: hasMore, switching: switching}}"
     />
   </block>

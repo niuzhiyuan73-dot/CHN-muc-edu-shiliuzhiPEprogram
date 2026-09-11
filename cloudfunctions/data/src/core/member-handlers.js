@@ -26,6 +26,7 @@ const {
   REVIEW_ACTION,
   validateReview,
 } = require('../../lib/services/member-review.js');
+const { buildProfilePatch } = require('../../lib/services/profile.js');
 const { ROLE, USER_STATUS } = require('../../lib/utils/constants.js');
 
 /**
@@ -130,7 +131,50 @@ async function rejectMember(payload = {}, ctx) {
   return reviewMember(payload.applicationId, REVIEW_ACTION.REJECT, payload.reason, ctx);
 }
 
+/**
+ * 修改自己的昵称与头像。
+ *
+ * 【改的是谁，我说了不算】
+ * 只认 ctx.actorId（由 OpenID 解析而来），payload 里的 actor 只是「谁点的
+ * 按钮」的线索。请求体里塞一个别人的编号，改到的仍是自己的账号。
+ *
+ * 【真实姓名与学号为什么改不了】
+ * 白名单写在 profile.js 的 EDITABLE_FIELDS 里，buildProfilePatch 会把
+ * 白名单外的字段直接丢掉——实名信息是审核依据，不能由本人随手改。
+ *
+ * 【为什么要动赛季版本号】
+ * 昵称、头像进了回放数据集（nameOf 解析器、榜单列表都读它）。不 +1 的话
+ * 缓存里仍是旧名字，别人刷新看到的还是原来那个。
+ *
+ * @param {Object} payload { patch: {nickName?, avatarUrl?} }
+ * @param {Object} ctx
+ * @returns {Promise<Object>} {ok, account, errors, firstError}
+ */
+async function updateProfile(payload = {}, ctx) {
+  const guard = callerError(ctx);
+  if (guard) return fail(guard);
+
+  const built = buildProfilePatch(payload.patch);
+  if (!built.ok) {
+    return ok({ ok: false, account: null, errors: built.errors, firstError: built.firstError });
+  }
+
+  const patched = await ctx.repo.transaction(async (tx) => {
+    const current = await tx.users.getById(ctx.actorId);
+    if (!current) return null;
+    const next = { ...current, ...built.patch };
+    await tx.users.set(ctx.actorId, next);
+    await bumpSeason(tx, { anchorTime: null, now: ctx.now });
+    return next;
+  });
+
+  if (!patched) {
+    return ok({ ok: false, account: null, errors: {}, firstError: '找不到你的账号' });
+  }
+  return ok({ ok: true, account: patched, errors: {}, firstError: '' });
+}
+
 // reviewMember 是 approve / reject 共用的内部实现，不导出——dispatch 会把
 // 模块的所有导出都当成可调用的 action，导出它就等于多开一个没有参数约定
 // 的路由。
-module.exports = { registerMember, approveMember, rejectMember };
+module.exports = { registerMember, approveMember, rejectMember, updateProfile };

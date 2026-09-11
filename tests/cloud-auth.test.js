@@ -281,3 +281,97 @@ test('提交入会申请 —— 实名信息不合规时一个字都不落库', 
   const applications = await dispatch('getMemberApplications', {}, ctx);
   assert.equal(applications.data.length, 1, '被拒的申请不能留下痕迹');
 });
+
+/* ---------- 个人资料 ---------- */
+
+test('修改资料 —— 普通会员可以改自己的昵称与头像', async () => {
+  const repo = createFixtureRepo();
+  const ctx = await contextFor(repo, 'openid-u01');
+
+  const res = await dispatch(
+    'updateProfile',
+    { patch: { nickName: '小甲', avatarUrl: 'cloud://a/b.png' } },
+    ctx
+  );
+  assert.equal(res.data.ok, true, res.data.firstError);
+  assert.equal(res.data.account.nickName, '小甲');
+  assert.equal(res.data.account.avatarUrl, 'cloud://a/b.png');
+
+  // 改完之后别人取到的也是新名字
+  const fetched = await dispatch('getMember', { userId: 'u01' }, ctx);
+  assert.equal(fetched.data.nickName, '小甲');
+});
+
+test('修改资料 —— 只认登录身份，请求体里写别人的编号也改不到别人', async () => {
+  const repo = createFixtureRepo();
+  const mine = await contextFor(repo, 'openid-u01');
+  const other = await contextFor(repo, 'openid-u02');
+
+  const res = await dispatch(
+    'updateProfile',
+    { patch: { nickName: '改别人' }, actor: 'u02' },
+    mine
+  );
+  assert.equal(res.data.ok, true, res.data.firstError);
+
+  assert.equal((await dispatch('getMember', { userId: 'u01' }, mine)).data.nickName, '改别人');
+  assert.equal(
+    (await dispatch('getMember', { userId: 'u02' }, other)).data.nickName,
+    '乙',
+    'u02 的名字不该被 u01 的请求改动'
+  );
+});
+
+test('修改资料 —— 实名与权限字段被白名单挡在门外', async () => {
+  const repo = createFixtureRepo();
+  const ctx = await contextFor(repo, 'openid-u01');
+
+  // 拿库里那条原始记录比对：数据集里的 points 是从赛事名次算出来的派生值，
+  // 与库里存的那一列无关。这里要确认的是「存进去的敏感字段一个都没被改动」，
+  // 所以直接读库比对，而不是拿派生值去和原始值对等。
+  const before = await repo.users.getById('u01');
+  const res = await dispatch(
+    'updateProfile',
+    {
+      patch: {
+        nickName: '合规',
+        realName: '冒名',
+        studentId: '000000',
+        role: 2,
+        points: 99999,
+      },
+    },
+    ctx
+  );
+
+  const after = await repo.users.getById('u01');
+  assert.equal(res.data.ok, true, res.data.firstError);
+  assert.equal(res.data.account.nickName, '合规');
+  assert.equal(after.realName, before.realName);
+  assert.equal(after.studentId, before.studentId);
+  assert.equal(after.role, before.role);
+  assert.equal(after.points, before.points, '积分是派生值，不该被资料补丁改动库里的那一列');
+});
+
+test('修改资料 —— 昵称不合规与空补丁都被挡下，且不落库', async () => {
+  const repo = createFixtureRepo();
+  const ctx = await contextFor(repo, 'openid-u01');
+
+  const blank = await dispatch('updateProfile', { patch: { nickName: '  ' } }, ctx);
+  assert.equal(blank.data.ok, false);
+  assert.ok(blank.data.errors.nickName);
+
+  const nothing = await dispatch('updateProfile', { patch: { role: 2 } }, ctx);
+  assert.equal(nothing.data.ok, false);
+  assert.equal(nothing.data.firstError, '没有要修改的内容');
+
+  assert.equal((await dispatch('getMember', { userId: 'u01' }, ctx)).data.nickName, '甲');
+});
+
+test('修改资料 —— 未登录时顶层失败，提示先登录', async () => {
+  const ctx = await contextFor(createFixtureRepo(), null);
+  const res = await dispatch('updateProfile', { patch: { nickName: '谁' } }, ctx);
+
+  assert.equal(res.ok, false);
+  assert.equal(res.message, '请先登录后再操作');
+});

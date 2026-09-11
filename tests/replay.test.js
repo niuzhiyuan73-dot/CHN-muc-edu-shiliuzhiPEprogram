@@ -19,6 +19,8 @@ const {
   MATCH_TYPE,
   RATING_POOL,
   MATCH_STATUS,
+  EVENT_STATUS,
+  EVENT_LEVEL,
 } = require('../miniprogram/utils/constants.js');
 
 /**
@@ -44,6 +46,21 @@ function match(id, matchType, teamA, teamB, winner, day = 1, eventId = null) {
 
 const men = (id, teamA, teamB, winner, day, eventId) =>
   match(id, MATCH_TYPE.SINGLES, teamA, teamB, winner, day, eventId);
+
+/**
+ * 造一场已结束的赛事。积分只认「已结束」的赛事，所以默认就带上这个状态；
+ * 要测「没结束不计分」时再覆盖 status。
+ */
+function event(id, matchType, results, patch = {}) {
+  return {
+    _id: id,
+    matchType,
+    endTime: new Date('2026-05-10T18:00:00'),
+    status: EVENT_STATUS.FINISHED,
+    results,
+    ...patch,
+  };
+}
 
 /** 按 id 取回放后的用户 */
 const userOf = (result, id) => result.users.find((u) => u._id === id);
@@ -417,52 +434,133 @@ describe('replaySeason —— 新人定级', () => {
 });
 
 describe('replaySeason —— 积分', () => {
-  test('胜 3 分、负 1 分', () => {
-    const members = [{ _id: 'a' }, { _id: 'b' }];
-    const result = replaySeason({ members, matches: [men('m1', ['a'], ['b'], 'A', 1)] });
-    assert.equal(userOf(result, 'a').points, 3);
-    assert.equal(userOf(result, 'b').points, 1);
-  });
-
-  test('三连胜触发连胜奖励', () => {
+  test('日常比赛不产生任何积分（决策 9）', () => {
     const members = [{ _id: 'a' }, { _id: 'b' }];
     const result = replaySeason({
       members,
       matches: [
         men('m1', ['a'], ['b'], 'A', 1),
-        men('m2', ['a'], ['b'], 'A', 2),
+        men('m2', ['a'], ['b'], 'B', 2),
         men('m3', ['a'], ['b'], 'A', 3),
       ],
     });
-    // 3 + 3 + (3 + 1) = 10
-    assert.equal(userOf(result, 'a').points, 10);
-    assert.equal(userOf(result, 'b').points, 3);
+    // 赢也好输也好，约球都不给分
+    assert.equal(userOf(result, 'a').points, 0);
+    assert.equal(userOf(result, 'b').points, 0);
   });
 
-  test('连胜中断后重新计数', () => {
-    const members = [{ _id: 'a' }, { _id: 'b' }];
-    const streak = replaySeason({
-      members,
-      matches: [
-        men('m1', ['a'], ['b'], 'A', 1),
-        men('m2', ['a'], ['b'], 'A', 2),
-        men('m3', ['a'], ['b'], 'A', 3),
-        men('m4', ['a'], ['b'], 'B', 4),
-        men('m5', ['a'], ['b'], 'A', 5),
-      ],
-    });
-    // 前四场 3+3+4+1 = 11，第五场连胜重新从 1 开始 → +3
-    assert.equal(userOf(streak, 'a').points, 14);
-  });
-
-  test('正式赛事额外加参赛分', () => {
+  test('赛事按最终名次计分：冠军 2 + 20，亚军 2 + 14', () => {
     const members = [{ _id: 'a' }, { _id: 'b' }];
     const result = replaySeason({
       members,
       matches: [men('m1', ['a'], ['b'], 'A', 1, 'e01')],
+      events: [
+        event('e01', MATCH_TYPE.SINGLES, [
+          { userId: 'a', placement: 1 },
+          { userId: 'b', placement: 2 },
+        ]),
+      ],
     });
-    assert.equal(userOf(result, 'a').points, 5); // 3 胜 + 2 参赛
-    assert.equal(userOf(result, 'b').points, 3); // 1 负 + 2 参赛
+    assert.equal(userOf(result, 'a').points, 22);
+    assert.equal(userOf(result, 'b').points, 16);
+  });
+
+  test('等级赛事放大名次分：一级赛冠军 2 + 20 × 4', () => {
+    const members = [{ _id: 'a' }, { _id: 'b' }];
+    const result = replaySeason({
+      members,
+      matches: [men('m1', ['a'], ['b'], 'A', 1, 'e01')],
+      events: [
+        event(
+          'e01',
+          MATCH_TYPE.SINGLES,
+          [{ userId: 'a', placement: 1 }],
+          { level: EVENT_LEVEL.FIRST }
+        ),
+      ],
+    });
+    assert.equal(userOf(result, 'a').points, 82);
+  });
+
+  test('双打赛事不计分（决策 3）', () => {
+    const members = [{ _id: 'a' }, { _id: 'b' }, { _id: 'c' }, { _id: 'd' }];
+    const result = replaySeason({
+      members,
+      matches: [
+        match('m1', MATCH_TYPE.DOUBLES, ['a', 'b'], ['c', 'd'], 'A', 1, 'e01'),
+      ],
+      events: [
+        event('e01', MATCH_TYPE.DOUBLES, [
+          { userId: 'a', placement: 1 },
+          { userId: 'b', placement: 1 },
+        ]),
+      ],
+    });
+    assert.equal(userOf(result, 'a').points, 0);
+    assert.equal(userOf(result, 'b').points, 0);
+  });
+
+  test('未结束的赛事不计分', () => {
+    const members = [{ _id: 'a' }];
+    const result = replaySeason({
+      members,
+      matches: [],
+      events: [
+        event('e01', MATCH_TYPE.SINGLES, [{ userId: 'a', placement: 1 }], { status: 1 }),
+      ],
+    });
+    assert.equal(userOf(result, 'a').points, 0);
+  });
+
+  test('赛季分界之前的赛事属于上个赛季，不计入本赛季', () => {
+    const members = [{ _id: 'a' }];
+    const result = replaySeason({
+      members,
+      matches: [],
+      events: [
+        // 重置日 6月1日；这场赛事 5月10日结束，早于分界
+        event('e_old', MATCH_TYPE.SINGLES, [{ userId: 'a', placement: 1 }]),
+        event(
+          'e_new',
+          MATCH_TYPE.SINGLES,
+          [{ userId: 'a', placement: 1 }],
+          { endTime: new Date('2026-06-05T18:00:00') }
+        ),
+      ],
+      options: { resetTime: '2026-06-01T00:00:00' },
+    });
+    // 只有分界之后那场算数
+    assert.equal(userOf(result, 'a').points, 22);
+  });
+
+  test('同一赛事打多轮，积分只结在最后一场（2.5）', () => {
+    const members = [{ _id: 'a' }, { _id: 'b' }, { _id: 'c' }];
+    const result = replaySeason({
+      members,
+      matches: [
+        men('m1', ['a'], ['b'], 'A', 1, 'e01'),
+        men('m2', ['a'], ['c'], 'A', 2, 'e01'),
+      ],
+      events: [
+        event('e01', MATCH_TYPE.SINGLES, [
+          { userId: 'a', placement: 1 },
+          { userId: 'b', placement: 2 },
+          { userId: 'c', placement: 3 },
+        ]),
+      ],
+    });
+
+    const deltaOn = (matchId, userId) =>
+      result.matches
+        .find((m) => m._id === matchId)
+        .players.find((p) => p.userId === userId).pointDelta;
+
+    // 冠军的 22 分结在决赛（m2），半决赛那场是 0
+    assert.equal(deltaOn('m1', 'a'), 0);
+    assert.equal(deltaOn('m2', 'a'), 22);
+    // 亚军只打了一场，就结在那一场
+    assert.equal(deltaOn('m1', 'b'), 16);
+    assert.equal(userOf(result, 'c').points, 12);
   });
 
   test('总分等于各场积分变动之和', () => {
@@ -470,9 +568,16 @@ describe('replaySeason —— 积分', () => {
     const result = replaySeason({
       members,
       matches: [
-        men('m1', ['a'], ['b'], 'A', 1),
-        men('m2', ['b'], ['c'], 'A', 2),
-        men('m3', ['a'], ['c'], 'B', 3, 'e01'),
+        men('m1', ['a'], ['b'], 'A', 1, 'e01'),
+        men('m2', ['b'], ['c'], 'A', 2, 'e01'),
+        men('m3', ['a'], ['c'], 'B', 3, 'e02'),
+      ],
+      events: [
+        event('e01', MATCH_TYPE.SINGLES, [
+          { userId: 'a', placement: 1 },
+          { userId: 'b', placement: 2 },
+        ]),
+        event('e02', MATCH_TYPE.SINGLES, [{ userId: 'c', placement: 1 }]),
       ],
     });
 

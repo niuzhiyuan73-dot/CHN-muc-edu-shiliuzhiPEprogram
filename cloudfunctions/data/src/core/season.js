@@ -24,7 +24,7 @@ const SEASON_ID = 'current';
  * 算法版本。改动 ELO 参数、K 值分段、积分规则、定级规则时都要 +1，
  * 否则容器里缓存的旧结果会被继续沿用，改了算法却不生效。
  */
-const ALGO_VERSION = 1;
+const ALGO_VERSION = 2;
 
 /**
  * 赛季文档的缺省形状。数据库里还没有 seasons 文档时用它顶上，
@@ -35,6 +35,10 @@ function defaultSeason() {
   return {
     _id: SEASON_ID,
     anchorTime: null,
+    // 最近一次软重置的分界点与当时用的参数。null 表示从未重置过。
+    // 两者都参与回放：分界点决定从哪一场起压分，参数决定压成什么样。
+    resetTime: null,
+    resetPolicy: null,
     version: 0,
     algoVersion: ALGO_VERSION,
   };
@@ -76,4 +80,44 @@ async function bumpSeason(tx, { anchorTime = null, now = new Date() } = {}) {
   return next;
 }
 
-module.exports = { SEASON_ID, ALGO_VERSION, defaultSeason, loadSeason, bumpSeason };
+/**
+ * 记录一次赛季软重置：写入分界点与策略，并把版本号加一。
+ *
+ * 【为什么重置也算一次「写」】
+ * 版本号是读缓存的唯一凭据（见文件头）。软重置会改变所有人的分数，
+ * 若不 +1，容器里那份旧的重放结果会被继续沿用，界面上看起来
+ * 「点了重置却没反应」。锚点则沿用 bumpSeason 的纪律：已经有了就不动。
+ *
+ * @param {Object} tx 事务内的仓储
+ * @param {Object} [params]
+ * @param {Date|string} [params.resetTime] 重置分界点，通常是服务端此刻
+ * @param {Object} [params.policy] 重置策略 {anchorRating, retentionFactor}
+ * @param {Date} [params.now]
+ * @returns {Promise<Object>} 写入后的赛季文档
+ */
+async function writeSeasonReset(tx, { resetTime, policy = null, now = new Date() } = {}) {
+  const existing = await tx.seasons.get(SEASON_ID);
+  const base = existing || defaultSeason();
+
+  const next = {
+    ...base,
+    anchorTime: base.anchorTime || null,
+    resetTime: resetTime || now,
+    resetPolicy: policy || base.resetPolicy || null,
+    version: Number(base.version || 0) + 1,
+    algoVersion: ALGO_VERSION,
+    updatedAt: now,
+  };
+
+  await tx.seasons.set(SEASON_ID, next);
+  return next;
+}
+
+module.exports = {
+  SEASON_ID,
+  ALGO_VERSION,
+  defaultSeason,
+  loadSeason,
+  bumpSeason,
+  writeSeasonReset,
+};

@@ -123,6 +123,7 @@ test('buildHistoryRow —— 双打显示搭档，单打写明「单打」', () 
   assert.strictEqual(doubles.resultText, '胜');
   assert.strictEqual(doubles.eloDeltaText, '+9');
   assert.strictEqual(doubles.pointDeltaText, '+3');
+  assert.strictEqual(doubles.hasPointDelta, true, '真的有积分时才显示那一行');
   assert.strictEqual(doubles.isEvent, true);
   assert.strictEqual(doubles.poolLabel, '双打');
 
@@ -162,6 +163,8 @@ test('buildHistoryRow —— 分数没涨没跌时显示 0，不显示 -0', () =
 
   assert.strictEqual(row.eloDeltaText, '0');
   assert.strictEqual(row.scoreText, PLACEHOLDER);
+  // 日常比赛不给积分，0 分那一行整行隐去，不留一句「积分 0」
+  assert.strictEqual(row.hasPointDelta, false);
 });
 
 test('buildHistoryRow —— 带赛制时渲染成「11 分制 · 三局两胜」', () => {
@@ -378,4 +381,20 @@ test('loadMemberView —— 不同会员看到的是各自的数据', async () =
   assert.strictEqual(other.user.userId, 'u01');
   assert.notStrictEqual(other.user.nickName, me.user.nickName);
   assert.notStrictEqual(other.summary.elo, me.summary.elo);
+});
+
+test('loadMemberView —— 头卡同时给出昵称与真名，真名另标一个字段', async () => {
+  const view = await loadMemberView('u06');
+
+  // 昵称在主位，真名另存一处交给模板以小字并排渲染
+  assert.strictEqual(view.user.nickName, '明宇');
+  assert.strictEqual(view.user.realName, '赵明宇');
+  assert.strictEqual(view.user.showRealName, true);
+  // 学号也带出来，编辑页要展示且不可改
+  assert.ok(view.user.studentId);
+});
+
+test('loadMemberView —— 头像缺省时用昵称首字兜底', async () => {
+  const view = await loadMemberView('u06');
+  assert.strictEqual(view.user.avatarText, view.user.nickName.slice(0, 1));
 });

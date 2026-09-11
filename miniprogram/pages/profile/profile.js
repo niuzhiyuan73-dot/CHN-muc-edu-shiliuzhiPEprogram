@@ -1,18 +1,19 @@
 /**
  * 我的
  * ============================================================
- * 展示当前登录会员的完整战绩：分数、走势、赛事名次、交锋记录、
- * 搭档记录、逐场战绩。
+ * 展示当前登录会员的当前分数（单打/双打）与赛事荣誉。
+ * 走势、逐场战绩、交锋记录、搭档记录这些细账搬到了个人详情页
+ * pages/profile-detail，点头卡头像过去看。
  *
- * 界面与交互全部来自 templates/member-view，本文件只管两件事：
+ * 界面与交互来自 templates/member-view（profileView），本文件只管两件事：
  * 「看谁的数据」——这里不传 userId，也就是看自己；
- * 以及「看得到哪些入口」——审核权只在这里算一次。
+ * 以及「看得到哪些入口」——审核权与公告权只在这里算一次。
  * 他人主页 pages/member 用的是同一套模板，只是把 userId 传了进去。
  *
- * 【为什么在这里外包一层，而不是改模板】
- * templates/member-view 是「我的」和「他人主页」共用的。若把审核入口写进
- * 模板，别人的主页上也会冒出一个审核按钮——权限判断于是散到两处。
- * 包一层之后，入口只属于「我的」页，模板一行都不用动。
+ * 【为什么管理入口在这里包一层】
+ * templates/member-view 是三个页面共用的。若把审核入口写进模板，
+ * 别人的主页上也会冒出一个审核按钮——权限判断于是散到几处。
+ * 包一层之后，入口只属于「我的」页。
  * ============================================================
  */
 
@@ -20,6 +21,7 @@ const { createMemberPage } = require('../../templates/member-view.js');
 const { isMock } = require('../../services/index.js');
 const { canReview } = require('../../services/member-review.js');
 const { canPublish } = require('../../services/announcement.js');
+const { canResetSeason } = require('../../services/season.js');
 
 // 先建出公共配置，再把本页独有的字段并进去，
 // 避免为了加一个字段就把 createMemberPage 整个再调一次
@@ -37,6 +39,8 @@ Page({
     reviewEntry: { visible: false, hint: '' },
     /** 公告管理入口。与审核入口同理，没权限就不渲染 */
     adminEntry: { visible: false, hint: '' },
+    /** 赛季管理入口。只有管理员看得到，与其它入口同一套判定 */
+    seasonEntry: { visible: false, hint: '' },
   },
 
   onLoad(query) {
@@ -63,10 +67,24 @@ Page({
   onShow() {
     this.syncEntries();
 
-    const user = this.currentUser();
-    const userId = user ? user._id : null;
-    if (userId !== (this.loadedForUserId || null)) return this.refresh();
+    const key = this.sessionKey(this.currentUser());
+    if (key !== (this.loadedForKey || null)) return this.refresh();
     return undefined;
+  },
+
+  /**
+   * 会话指纹：除了「是谁」，还把昵称与头像算进去。
+   *
+   * 【为什么不能只比编号】改完昵称/头像从编辑页返回时，人还是那个人，编号
+   * 没变。只比编号就不会重取，屏幕上仍挂着旧名字——刚改完却看不到变化，
+   * 用户只会以为没保存上。
+   *
+   * @param {Object|null} user
+   * @returns {string|null}
+   */
+  sessionKey(user) {
+    if (!user) return null;
+    return [user._id, user.nickName || '', user.avatarUrl || ''].join('|');
   },
 
   /** 读取全局登录态。app 可能还没初始化好，逐层兜底 */
@@ -107,9 +125,9 @@ Page({
     // 或者压根还没有数据——必须先挂上加载态：不挂的话，模板会拿着登录前那份
     // {found:false} 渲染成「没有找到这位会员」，一直挂到云端返回为止。冷启动的
     // 云函数要等好几秒，看起来就像「必须手动刷新一次才出得来」。
-    const hadData =
-      this.loadedForUserId === user._id && this.data.view && this.data.view.found;
-    this.loadedForUserId = user._id;
+    const key = this.sessionKey(user);
+    const hadData = this.loadedForKey === key && this.data.view && this.data.view.found;
+    this.loadedForKey = key;
     if (!hadData) this.setData({ loading: true, error: '' });
 
     await memberPage.refresh.call(this);
@@ -125,7 +143,7 @@ Page({
   /** 原地切成未登录的样子，不跳页——退出的入口和这里都不该把人甩到别的页 */
   showGuest() {
     // 没有登录态可展示，下次 onShow 只要还是未登录就不用重取
-    this.loadedForUserId = null;
+    this.loadedForKey = null;
     this.setData({
       loading: false,
       error: '',
@@ -157,6 +175,7 @@ Page({
     const user = this.currentUser();
     const canReviewNow = canReview(user, { isMock });
     const canPublishNow = canPublish(user, { isMock });
+    const canResetNow = canResetSeason(user, { isMock });
 
     this.setData({
       loggedIn: Boolean(user),
@@ -167,6 +186,10 @@ Page({
       adminEntry: {
         visible: canPublishNow,
         hint: canPublishNow ? '发布或下架俱乐部公告' : '',
+      },
+      seasonEntry: {
+        visible: canResetNow,
+        hint: canResetNow ? '查看赛季状态或开始新赛季' : '',
       },
     });
   },
@@ -200,4 +223,21 @@ Page({
   onGoAnnouncementsAdmin() {
     wx.navigateTo({ url: '/pages/announcement-manage/announcement-manage' });
   },
+
+  /** 进赛季管理页 */
+  onGoSeasonManage() {
+    wx.navigateTo({ url: '/pages/season-manage/season-manage' });
+  },
+
+  /** 点头卡头像进个人详情页。走势、战绩、交手这些细账都在那边 */
+  onGoProfileDetail() {
+    wx.navigateTo({ url: '/pages/profile-detail/profile-detail' });
+  },
+
+  /**
+   * 收掉工厂里的曲线重绘：本页改渲染 profileView，没有 canvas。
+   * 不覆盖的话，每次 refresh 都会去查一个不存在的节点——虽然查不到会静默跳过，
+   * 但白跑一趟；覆盖成空操作更干净。
+   */
+  drawChart() {},
 });

@@ -151,24 +151,71 @@ const MATCH_STATUS_LABEL = {
   [MATCH_STATUS.REVOKED]: '已撤销',
 };
 
+/**
+ * 赛事状态。
+ * 【重要】「已结束」必须保持取值 2：种子赛事写死字面量 2，改动它会让
+ * 全部历史赛事变成「未结束」，赛季积分瞬间归零。
+ * 完整状态机（报名中 / 进行中）在赛事闭环里按编号追加，不要复用这里的 2。
+ */
+const EVENT_STATUS = {
+  FINISHED: 2, // 已结束：名次已定，可计入赛季积分
+};
+
+const EVENT_STATUS_LABEL = {
+  [EVENT_STATUS.FINISHED]: '已结束',
+};
+
+/**
+ * 赛事等级（决策 13、2.1）。
+ * 等级决定名次分的倍数，也决定赛事比赛的 elo K 值（见 elo.js）。
+ */
+const EVENT_LEVEL = {
+  FIRST: 1, // 一级赛事
+  SECOND: 2, // 二级赛事
+  THIRD: 3, // 三级赛事
+};
+
+const EVENT_LEVEL_LABEL = {
+  [EVENT_LEVEL.FIRST]: '一级赛事',
+  [EVENT_LEVEL.SECOND]: '二级赛事',
+  [EVENT_LEVEL.THIRD]: '三级赛事',
+};
+
+/**
+ * 等级 → 名次分倍数（决策 2.1）。
+ * 只放大名次分，与等级分（elo）无关——后者见 elo.js 的赛事 K 配置。
+ */
+const EVENT_LEVEL_MULTIPLIER = {
+  [EVENT_LEVEL.FIRST]: 4,
+  [EVENT_LEVEL.SECOND]: 2,
+  [EVENT_LEVEL.THIRD]: 1,
+};
+
+/**
+ * 缺省赛事等级。
+ * 历史 / 种子赛事没有等级字段时按三级处理（决策 13：默认三级，但新建时必选）。
+ */
+const DEFAULT_EVENT_LEVEL = EVENT_LEVEL.THIRD;
+
 /** 参赛队伍标识 */
 const TEAM = {
   A: 'A',
   B: 'B',
 };
 
-/** 排行榜维度 */
+/**
+ * 排行榜时间范围。
+ * 只保留「总榜」与「赛季榜」：周榜、月榜已按决策 2 去掉——
+ * 短期尺子奖励的是「最近打得勤」，与「谁强谁在前」的等级分榜讲的是
+ * 两件事，混在一起反而让人看不懂名次是怎么来的。
+ */
 const RANK_PERIOD = {
   ALL: 'all', // 总榜
-  WEEK: 'week', // 周榜
-  MONTH: 'month', // 月榜
   SEASON: 'season', // 赛季榜
 };
 
 const RANK_PERIOD_LABEL = {
   [RANK_PERIOD.ALL]: '总榜',
-  [RANK_PERIOD.WEEK]: '周榜',
-  [RANK_PERIOD.MONTH]: '月榜',
   [RANK_PERIOD.SEASON]: '赛季榜',
 };
 
@@ -245,6 +292,12 @@ module.exports = {
   RANK_PROJECT_CONFIG,
   MATCH_STATUS,
   MATCH_STATUS_LABEL,
+  EVENT_STATUS,
+  EVENT_STATUS_LABEL,
+  EVENT_LEVEL,
+  EVENT_LEVEL_LABEL,
+  EVENT_LEVEL_MULTIPLIER,
+  DEFAULT_EVENT_LEVEL,
   TEAM,
   RANK_PERIOD,
   RANK_PERIOD_LABEL,

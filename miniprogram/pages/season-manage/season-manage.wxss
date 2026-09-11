@@ -1,0 +1,78 @@
+/*
+ * 赛季管理样式
+ * 卡片（.card）、按钮（.btn）、标签（.tag）都在 app.wxss 里，与其它页共用。
+ */
+
+/* ==================== 当前赛季 ==================== */
+
+.season-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: var(--space-sm);
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.season-version {
+  font-size: var(--font-lg);
+  font-weight: 600;
+}
+
+/* 已重置用暖色、进行中用冷色，一眼看出赛季处在哪一步 */
+.tag.is-reset {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.tag.is-clean {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.season-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) 0;
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.season-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.season-label {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+
+.season-value {
+  font-size: var(--font-sm);
+  color: var(--color-text);
+}
+
+/* ==================== 重置说明 ==================== */
+
+.season-policy {
+  margin-top: var(--space-xs);
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.7;
+}
+
+/* 这段说明的是重置的影响面与不可撤销，看漏了会误操作，不能用淡小字 */
+.season-warn {
+  margin-top: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  font-size: var(--font-xs);
+  color: #b45309;
+  background: #fef3c7;
+  border-radius: var(--radius-sm);
+  line-height: 1.6;
+}
+
+/* 重置进行中把按钮压暗，避免连点触发第二次重置 */
+.btn.is-disabled {
+  opacity: 0.6;
+}

@@ -35,6 +35,7 @@ const {
 } = require('../utils/format.js');
 const { sortProjectsForDisplay } = require('../utils/leaderboard.js');
 const { formatMatchFormat } = require('../utils/match-format.js');
+const { resolveNameDisplay } = require('./profile.js');
 const {
   getCurrentUser,
   getMember,
@@ -135,6 +136,9 @@ function buildHistoryRow(row) {
     eloDeltaText: formatSigned(row.eloDelta),
     eloDeltaUp: row.eloDelta >= 0,
     pointDeltaText: formatSigned(row.pointDelta),
+    // 日常比赛不再产生积分（决策 9），大多数场次的分差是 0。
+    // 一行一行地写「积分 0」既占地方又像没算对，索性只在真有积分时显示。
+    hasPointDelta: Number(row.pointDelta) !== 0,
     isEvent: Boolean(row.eventId),
     poolLabel: RATING_POOL_LABEL[row.pool] || '',
     // 赛制文案。老数据没有这两个字段时 formatMatchFormat 返回空串，
@@ -185,15 +189,23 @@ async function loadMemberView(userId, options = {}) {
     participantCount: row.participantCount,
   }));
 
+  // 昵称与真名一起给：昵称占主位，真名小一号缀在旁边。
+  // 两者相同时不重复显示（见 profile.resolveNameDisplay）。
+  const nameDisplay = resolveNameDisplay(user);
+
   return {
     found: true,
     user: {
       userId: user._id,
-      nickName: user.nickName,
+      nickName: nameDisplay.nickName,
+      realName: nameDisplay.realName,
+      showRealName: nameDisplay.showRealName,
       // 没有头像时用昵称首字当占位。整串名字塞进圆形头像里会溢出。
-      avatarText: (user.nickName || '?').slice(0, 1),
+      avatarText: (nameDisplay.nickName || '?').slice(0, 1),
       avatarUrl: user.avatarUrl || '',
       college: user.college || '',
+      // 实名信息，个人资料页只读展示
+      studentId: user.studentId || '',
       roleLabel: ROLE_LABEL[user.role] || '',
       statusLabel: USER_STATUS_LABEL[user.status] || '',
       joinDateText: formatDate(user.joinDate),

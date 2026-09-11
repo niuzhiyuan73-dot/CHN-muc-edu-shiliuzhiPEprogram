@@ -1,0 +1,119 @@
+/*
+ * 编辑资料样式
+ * 卡片（.card）、按钮（.btn）、空状态（.empty-state）都在 app.wxss 里，
+ * 与其它页共用。表单行的写法与发布公告页一致，两处填单体验不割裂。
+ */
+
+/* ==================== 表单行 ==================== */
+
+.field-row {
+  display: flex;
+  align-items: center;
+  min-height: 88rpx;
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.field-label {
+  width: 140rpx;
+  flex-shrink: 0;
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+
+.field-value {
+  font-size: var(--font-md);
+}
+
+/* 不可改的字段压暗，与可编辑项拉开区别 */
+.field-value.readonly {
+  color: var(--color-text-tertiary);
+}
+
+.field-input {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-md);
+}
+
+.field-row-avatar {
+  padding: var(--space-sm) 0;
+}
+
+.field-hint {
+  margin-top: var(--space-sm);
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  line-height: 1.5;
+}
+
+.field-error {
+  margin-top: var(--space-xs);
+  font-size: var(--font-xs);
+  color: var(--color-danger);
+  line-height: 1.5;
+}
+
+/* ==================== 头像选择 ==================== */
+
+.avatar-btn {
+  padding: 0;
+  margin: 0;
+  width: 128rpx;
+  height: 128rpx;
+  border-radius: 50%;
+  background: var(--color-bg);
+  border: 2rpx dashed var(--color-border);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.2;
+}
+
+.avatar-btn::after {
+  border: none;
+}
+
+.avatar-img {
+  width: 128rpx;
+  height: 128rpx;
+}
+
+/* 没有头像时用昵称首字兜底，整串名字塞进圆里会溢出 */
+.avatar-placeholder {
+  width: 128rpx;
+  height: 128rpx;
+  line-height: 128rpx;
+  text-align: center;
+  font-size: var(--font-xl);
+  font-weight: 600;
+  color: var(--color-primary);
+}
+
+/* ==================== 提交 ==================== */
+
+.submit-error {
+  font-size: var(--font-sm);
+  color: var(--color-danger);
+  text-align: center;
+  padding: var(--space-sm) 0;
+}
+
+.submit-bar {
+  display: flex;
+  margin-bottom: var(--space-md);
+}
+
+.submit-btn {
+  flex: 1;
+}
+
+.submit-btn + .submit-btn {
+  margin-left: var(--space-sm);
+}
+
+/* 不能编辑时给一个返回出口，别把人困在空页面上 */
+.block-back {
+  margin-top: var(--space-lg);
+  padding: 0 var(--space-xl);
+}

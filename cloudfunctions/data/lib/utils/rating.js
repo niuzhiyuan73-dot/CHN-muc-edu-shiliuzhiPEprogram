@@ -174,9 +174,15 @@ function applySeasonalResetToUser(ratings, { resetFn, onlyPlayed = true } = {}) 
     if (!current) continue;
     if (onlyPlayed && current.matchCount === 0) continue;
 
+    const nextElo = resetFn(current.elo);
+
     result[pool] = {
       ...current,
-      elo: resetFn(current.elo),
+      elo: nextElo,
+      // 【起点分必须一起刷新】进步榜算的是「相对赛季初涨了多少」。
+      // 若只改 elo 不动 startElo，重置后的涨幅会把上一个赛季的积累也
+      // 算进来，进步榜会在赛季初集体虚高一大截。
+      startElo: nextElo,
       // 新赛季重新计数？不。场次是生涯统计，跨赛季保留，
       // 否则「定级期」判定会在每个赛季初被误触发。
       matchCount: current.matchCount,

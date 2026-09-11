@@ -299,6 +299,35 @@ describe('applySeasonalResetToUser —— 赛季软重置', () => {
     assert.equal(reset[RATING_POOL.SINGLES].matchCount, 30);
   });
 
+  test('起点分随重置后的分数一起刷新（进步榜不能把上赛季积累算进来）', () => {
+    const user = newUser();
+    user.ratings[RATING_POOL.SINGLES].elo = 1400;
+    user.ratings[RATING_POOL.SINGLES].startElo = 1500;
+    user.ratings[RATING_POOL.SINGLES].matchCount = 30;
+
+    const reset = applySeasonalResetToUser(user.ratings, {
+      resetFn: (elo) => Math.round(elo * 0.75 + 1500 * 0.25),
+    });
+
+    assert.equal(reset[RATING_POOL.SINGLES].elo, 1425);
+    // 只改 elo 不改 startElo 的话，新赛季第一天就会显示「已进步 75 分」
+    assert.equal(reset[RATING_POOL.SINGLES].startElo, 1425);
+  });
+
+  test('未参赛的池连起点分也不动', () => {
+    const user = newUser();
+    user.ratings[RATING_POOL.SINGLES].elo = 1400;
+    user.ratings[RATING_POOL.SINGLES].startElo = 1500;
+    user.ratings[RATING_POOL.SINGLES].matchCount = 30;
+
+    const reset = applySeasonalResetToUser(user.ratings, {
+      resetFn: (elo) => Math.round(elo * 0.75 + 1500 * 0.25),
+    });
+
+    assert.equal(reset[RATING_POOL.DOUBLES].startElo, 1500);
+    assert.equal(reset[RATING_POOL.DOUBLES].elo, 1500);
+  });
+
   test('未传 resetFn 时抛出错误', () => {
     assert.throws(
       () => applySeasonalResetToUser(createEmptyRatings(), {}),

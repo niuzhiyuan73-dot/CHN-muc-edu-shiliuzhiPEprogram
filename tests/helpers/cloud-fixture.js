@@ -23,6 +23,7 @@ const {
   MATCH_TYPE,
   MATCH_TYPE_TO_POOL,
   MATCH_STATUS,
+  EVENT_STATUS,
   RATING_POOL,
   ANNOUNCEMENT_STATUS,
 } = require('../../miniprogram/utils/constants.js');
@@ -113,6 +114,8 @@ const EVENTS = [
     pool: RATING_POOL.SINGLES,
     location: '体育馆',
     startTime: '2026-04-15T09:00:00',
+    // 赛事积分只认「已结束」的赛事（决策 9 / §2.5），没有这个状态就一分不发
+    status: EVENT_STATUS.FINISHED,
     results: [
       { userId: 'u01', placement: 1 },
       { userId: 'u02', placement: 2 },

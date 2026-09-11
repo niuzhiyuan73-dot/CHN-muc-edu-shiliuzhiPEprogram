@@ -139,6 +139,10 @@ require('../miniprogram/pages/member-review/member-review.js');
 require('../miniprogram/pages/announcements/announcements.js');
 require('../miniprogram/pages/announcement-manage/announcement-manage.js');
 require('../miniprogram/pages/announcement-edit/announcement-edit.js');
+require('../miniprogram/pages/profile-edit/profile-edit.js');
+require('../miniprogram/pages/profile-detail/profile-detail.js');
+require('../miniprogram/pages/season-manage/season-manage.js');
+require('../miniprogram/pages/events/events.js');
 
 /**
  * 深拷贝页面初值。
@@ -209,6 +213,10 @@ const memberReviewConfig = registered[7];
 const announcementsConfig = registered[8];
 const announcementManageConfig = registered[9];
 const announcementEditConfig = registered[10];
+const profileEditConfig = registered[11];
+const profileDetailConfig = registered[12];
+const seasonManageConfig = registered[13];
+const eventsConfig = registered[14];
 
 // 写接口（确认 / 撤销 / 录入）只改内存，跑完一条用例就得把内存退回种子状态，
 // 否则上一条确认过的比赛会让下一条拿到的榜单与台账都不一样
@@ -362,17 +370,31 @@ test('我的页 —— onLoad 之后渲染出当前会员的数据', async () =>
   assert.ok(page.data.view.projectTabs.length > 0);
 });
 
-test('我的页 —— 曲线画到了 canvas 上，并按设备像素比做了缩放', async () => {
+test('我的页 —— 点头卡头像进个人详情页', async () => {
   loginAs();
   const page = instantiate(profileConfig);
-  canvas.width = 0;
-  canvas.height = 0;
-
   await page.onLoad({});
 
-  // 不乘 dpr 的话，曲线在手机上会糊成一片
-  assert.strictEqual(canvas.width, CANVAS_SIZE.width * PIXEL_RATIO);
-  assert.strictEqual(canvas.height, CANVAS_SIZE.height * PIXEL_RATIO);
+  calls.navigations.length = 0;
+  page.onGoProfileDetail();
+  assert.deepStrictEqual(calls.navigations, ['/pages/profile-detail/profile-detail']);
+});
+
+test('我的页 —— 单打与双打两张分卡的分数、排名、百分位都取得到', async () => {
+  loginAs();
+  const page = instantiate(profileConfig);
+  await page.onLoad({});
+
+  const tabs = page.data.view.projectTabs;
+  // 赵明宇有男单和双打，正好两张卡；每张都得有分数
+  assert.strictEqual(tabs.length, 2);
+  assert.strictEqual(tabs[0].label, '男单');
+  for (const tab of tabs) {
+    assert.ok(tab.elo, `${tab.label} 要有当前分数`);
+  }
+  // 排名与百分位取自主项目（默认单打）
+  assert.ok(page.data.view.summary.rankText);
+  assert.ok(page.data.view.summary.beatText);
 });
 
 test('我的页 —— 默认展示单打，且单打标签排在最前', async () => {
@@ -383,76 +405,6 @@ test('我的页 —— 默认展示单打，且单打标签排在最前', async 
   // 双打场次比单打多，默认落到双打是「按出场次数排序」造成的，不是想要的
   assert.strictEqual(page.data.view.activeProjectLabel, '男单');
   assert.strictEqual(page.data.view.projectTabs[0].active, true);
-});
-
-test('我的页 —— 切换项目后整页数据跟着换', async () => {
-  loginAs();
-  const page = instantiate(profileConfig);
-  await page.onLoad({});
-
-  await page.onSwitchProject({ currentTarget: { dataset: { project: 'men_singles' } } });
-
-  assert.strictEqual(page.data.view.activeProject, 'men_singles');
-  assert.strictEqual(page.data.switching, false, '切完要把淡出状态收回');
-  assert.ok(page.data.view.history.length > 0);
-  for (const row of page.data.view.history) {
-    assert.strictEqual(row.poolLabel, '单打');
-  }
-});
-
-test('我的页 —— 重复点当前项目不做无谓的重新加载', async () => {
-  const page = instantiate(profileConfig);
-  await page.onLoad({});
-
-  const before = page.data.view;
-  await page.onSwitchProject({
-    currentTarget: { dataset: { project: page.data.view.activeProject } },
-  });
-
-  // 视图模型对象被整体替换过就说明真的重算了
-  assert.strictEqual(page.data.view, before);
-});
-
-test('我的页 —— 加载更多会扩大取数范围', async () => {
-  const page = instantiate(profileConfig);
-  await page.onLoad({});
-
-  const before = page.data.historyLimit;
-  await page.onLoadMore();
-  assert.strictEqual(page.data.historyLimit, before + 20);
-});
-
-test('我的页 —— 是否还有更多战绩，按实际总场次判断', async () => {
-  loginAs();
-  const page = instantiate(profileConfig);
-  // 只取一场，这个池肯定不止一场
-  page.data.historyLimit = 1;
-  await page.onLoad({});
-  assert.strictEqual(page.data.hasMore, true);
-
-  // 上限放到远超总场次，再点「加载更多」就没意义了，按钮该消失
-  page.data.historyLimit = 100000;
-  await page.refresh();
-  assert.strictEqual(page.data.hasMore, false);
-});
-
-test('我的页 —— 点交锋记录里的人会跳到对方主页', async () => {
-  const page = instantiate(profileConfig);
-  await page.onLoad({});
-
-  calls.navigations.length = 0;
-  page.onOpenMember({ currentTarget: { dataset: { userId: 'u01' } } });
-  assert.deepStrictEqual(calls.navigations, ['/pages/member/member?userId=u01']);
-});
-
-test('我的页 —— 点到自己不会再跳一层', async () => {
-  loginAs();
-  const page = instantiate(profileConfig);
-  await page.onLoad({});
-
-  calls.navigations.length = 0;
-  page.onOpenMember({ currentTarget: { dataset: { userId: 'u06' } } });
-  assert.deepStrictEqual(calls.navigations, [], '自己的名字点了不该再开一个页面');
 });
 
 test('我的页 —— 下拉刷新会收起刷新动画', async () => {
@@ -547,6 +499,42 @@ test('我的页 —— 退出登录后 onShow 会把公告管理入口一并收�
   assert.strictEqual(page.data.adminEntry.visible, false, '权限没了，入口不能还挂着');
 });
 
+test('我的页 —— 访客看不到赛季管理入口', async () => {
+  resetSession();
+  const page = instantiate(profileConfig);
+  await page.onLoad({});
+
+  assert.strictEqual(page.data.seasonEntry.visible, false);
+});
+
+test('我的页 —— 正常会员看到赛季管理入口，点进去跳转赛季管理页', async () => {
+  resetSession();
+  app.globalData.userInfo = fakeMember();
+
+  const page = instantiate(profileConfig);
+  await page.onLoad({});
+
+  assert.strictEqual(page.data.seasonEntry.visible, true);
+  assert.ok(page.data.seasonEntry.hint, '入口卡上要写清楚点进去是干什么的');
+
+  calls.navigations.length = 0;
+  page.onGoSeasonManage();
+  assert.deepStrictEqual(calls.navigations, ['/pages/season-manage/season-manage']);
+});
+
+test('我的页 —— 退出登录后 onShow 会把赛季管理入口一并收回去', async () => {
+  resetSession();
+  app.globalData.userInfo = fakeMember();
+
+  const page = instantiate(profileConfig);
+  await page.onLoad({});
+  assert.strictEqual(page.data.seasonEntry.visible, true);
+
+  app.globalData.userInfo = null;
+  page.onShow();
+  assert.strictEqual(page.data.seasonEntry.visible, false, '权限没了，入口不能还挂着');
+});
+
 test('我的页 —— 已登录才给退出按钮，点了清登录态并回首页', async () => {
   resetSession();
   app.globalData.userInfo = fakeMember();
@@ -603,22 +591,6 @@ test('我的页 —— 登录后补取数据期间显示加载态，而不是「
   await pending;
   assert.strictEqual(page.data.loading, false);
   assert.strictEqual(page.data.view.found, true);
-});
-
-test('我的页 —— 切项目时不整页替成加载态，别把刚看到的内容抹掉', async () => {
-  resetSession();
-  loginAs();
-
-  const page = instantiate(profileConfig);
-  await page.onLoad({});
-  assert.strictEqual(page.data.view.hasProject, true);
-
-  const pending = page.onSwitchProject({ currentTarget: { dataset: { project: 'doubles' } } });
-  assert.strictEqual(page.data.loading, false, '换项目不该把整页数据换成加载中');
-  assert.strictEqual(page.data.switching, true, '但要给个切换中的反馈');
-
-  await pending;
-  assert.strictEqual(page.data.view.activeProject, 'doubles');
 });
 
 test('我的页 —— 切回本页时登录态没变就不重复取数', async () => {
@@ -727,6 +699,138 @@ test('我的页 —— 加载失败时留着登录态，只提示重试', async 
 });
 
 /* ============================================================
+ * 个人详情（从「我的」页点头像进来）
+ * ============================================================ */
+
+test('个人详情 —— onLoad 之后渲染出当前会员的数据', async () => {
+  loginAs();
+  const page = instantiate(profileDetailConfig);
+  await page.onLoad({});
+
+  assert.strictEqual(page.data.loading, false);
+  assert.strictEqual(page.data.error, '');
+  assert.strictEqual(page.data.view.found, true);
+  assert.strictEqual(page.data.view.user.userId, 'u06');
+});
+
+test('个人详情 —— 曲线画到了 canvas 上，并按设备像素比做了缩放', async () => {
+  loginAs();
+  const page = instantiate(profileDetailConfig);
+  canvas.width = 0;
+  canvas.height = 0;
+
+  await page.onLoad({});
+
+  // 不乘 dpr 的话，曲线在手机上会糊成一片
+  assert.strictEqual(canvas.width, CANVAS_SIZE.width * PIXEL_RATIO);
+  assert.strictEqual(canvas.height, CANVAS_SIZE.height * PIXEL_RATIO);
+});
+
+test('个人详情 —— 切换项目后整页数据跟着换', async () => {
+  loginAs();
+  const page = instantiate(profileDetailConfig);
+  await page.onLoad({});
+
+  await page.onSwitchProject({ currentTarget: { dataset: { project: 'men_singles' } } });
+
+  assert.strictEqual(page.data.view.activeProject, 'men_singles');
+  assert.strictEqual(page.data.switching, false, '切完要把淡出状态收回');
+  assert.ok(page.data.view.history.length > 0);
+  for (const row of page.data.view.history) {
+    assert.strictEqual(row.poolLabel, '单打');
+  }
+});
+
+test('个人详情 —— 重复点当前项目不做无谓的重新加载', async () => {
+  const page = instantiate(profileDetailConfig);
+  await page.onLoad({});
+
+  const before = page.data.view;
+  await page.onSwitchProject({
+    currentTarget: { dataset: { project: page.data.view.activeProject } },
+  });
+
+  // 视图模型对象被整体替换过就说明真的重算了
+  assert.strictEqual(page.data.view, before);
+});
+
+test('个人详情 —— 切项目时不整页替成加载态，别把刚看到的内容抹掉', async () => {
+  loginAs();
+  const page = instantiate(profileDetailConfig);
+  await page.onLoad({});
+  assert.strictEqual(page.data.view.hasProject, true);
+
+  const pending = page.onSwitchProject({ currentTarget: { dataset: { project: 'doubles' } } });
+  assert.strictEqual(page.data.loading, false, '换项目不该把整页数据换成加载中');
+  assert.strictEqual(page.data.switching, true, '但要给个切换中的反馈');
+
+  await pending;
+  assert.strictEqual(page.data.view.activeProject, 'doubles');
+});
+
+test('个人详情 —— 加载更多会扩大取数范围', async () => {
+  const page = instantiate(profileDetailConfig);
+  await page.onLoad({});
+
+  const before = page.data.historyLimit;
+  await page.onLoadMore();
+  assert.strictEqual(page.data.historyLimit, before + 20);
+});
+
+test('个人详情 —— 是否还有更多战绩，按实际总场次判断', async () => {
+  loginAs();
+  const page = instantiate(profileDetailConfig);
+  // 只取一场，这个池肯定不止一场
+  page.data.historyLimit = 1;
+  await page.onLoad({});
+  assert.strictEqual(page.data.hasMore, true);
+
+  // 上限放到远超总场次，再点「加载更多」就没意义了，按钮该消失
+  page.data.historyLimit = 100000;
+  await page.refresh();
+  assert.strictEqual(page.data.hasMore, false);
+});
+
+test('个人详情 —— 点交锋记录里的人会跳到对方主页', async () => {
+  const page = instantiate(profileDetailConfig);
+  await page.onLoad({});
+
+  calls.navigations.length = 0;
+  page.onOpenMember({ currentTarget: { dataset: { userId: 'u01' } } });
+  assert.deepStrictEqual(calls.navigations, ['/pages/member/member?userId=u01']);
+});
+
+test('个人详情 —— 点到自己不会再跳一层', async () => {
+  loginAs();
+  const page = instantiate(profileDetailConfig);
+  await page.onLoad({});
+
+  calls.navigations.length = 0;
+  page.onOpenMember({ currentTarget: { dataset: { userId: 'u06' } } });
+  assert.deepStrictEqual(calls.navigations, [], '自己的名字点了不该再开一个页面');
+});
+
+test('个人详情 —— 修改头像入口跳到编辑资料页', async () => {
+  loginAs();
+  const page = instantiate(profileDetailConfig);
+  await page.onLoad({});
+
+  calls.navigations.length = 0;
+  page.onGoProfileEdit();
+  assert.deepStrictEqual(calls.navigations, ['/pages/profile-edit/profile-edit']);
+});
+
+test('个人详情 —— 详情页里再点头像不跳转', async () => {
+  loginAs();
+  const page = instantiate(profileDetailConfig);
+  await page.onLoad({});
+
+  calls.navigations.length = 0;
+  page.onGoProfileDetail();
+  assert.deepStrictEqual(calls.navigations, [], '已经在详情页了，不该再开一层');
+});
+
+/* ============================================================
  * 他人主页
  * ============================================================ */
 
@@ -761,6 +865,16 @@ test('他人主页 —— 导航栏标题会换成被查看会员的昵称', asy
   await page.onLoad({ userId: 'u01' });
 
   assert.strictEqual(calls.titles[calls.titles.length - 1], page.data.view.user.nickName);
+});
+
+test('他人主页 —— 头卡是共用的，但点头像不会跳走', async () => {
+  // 头像跳详情只有「我的」页需要；看别人资料时点头像不该有任何反应
+  const page = instantiate(memberConfig);
+  await page.onLoad({ userId: 'u01' });
+
+  calls.navigations.length = 0;
+  page.onGoProfileDetail();
+  assert.deepStrictEqual(calls.navigations, []);
 });
 
 /* ============================================================
@@ -912,6 +1026,77 @@ test('排行榜 —— 切换项目后搜索词保留，不悄悄回到全部', 
 
   assert.strictEqual(page.data.keyword, target.nickName, '切榜不该把搜索框清空');
   assert.strictEqual(page.data.searching, true);
+});
+
+/* ============================================================
+ * 赛事（赛季积分榜）
+ * ============================================================ */
+
+test('赛事页 —— 首屏加载后展示赛季积分榜', async () => {
+  const page = instantiate(eventsConfig);
+  await page.onLoad();
+
+  assert.strictEqual(page.data.loading, false);
+  assert.strictEqual(page.data.error, '');
+  assert.ok(page.data.view.rows.length > 0, '种子里有单打赛事，榜上不该空着');
+  assert.ok(page.data.view.seasonText.length > 0);
+});
+
+test('赛事页 —— 榜上的人名次连续、积分从高到低', async () => {
+  const page = instantiate(eventsConfig);
+  await page.onLoad();
+
+  const rows = page.data.view.rows;
+  rows.forEach((row, index) => {
+    assert.strictEqual(row.rank, index + 1);
+    assert.ok(Number(row.valueText) > 0, '0 分的人不该出现在积分榜上');
+  });
+  const points = rows.map((row) => Number(row.valueText));
+  assert.deepStrictEqual(points, [...points].sort((a, b) => b - a));
+});
+
+test('赛事页 —— 点榜上的人会跳到他的主页', async () => {
+  const page = instantiate(eventsConfig);
+  await page.onLoad();
+
+  calls.navigations.length = 0;
+  page.onOpenMember({ currentTarget: { dataset: { userId: 'u01' } } });
+  assert.deepStrictEqual(calls.navigations, ['/pages/member/member?userId=u01']);
+});
+
+test('赛事页 —— 点空白行不会乱跳', async () => {
+  const page = instantiate(eventsConfig);
+  await page.onLoad();
+
+  calls.navigations.length = 0;
+  page.onOpenMember({ currentTarget: { dataset: {} } });
+  assert.deepStrictEqual(calls.navigations, []);
+});
+
+test('赛事页 —— 下拉刷新会收起刷新动画', async () => {
+  const page = instantiate(eventsConfig);
+  await page.onLoad();
+
+  calls.pullDownStopped = 0;
+  await page.onPullDownRefresh();
+  assert.strictEqual(calls.pullDownStopped, 1);
+});
+
+test('赛事页 —— 加载失败时给出提示而不是白屏', async () => {
+  const page = instantiate(eventsConfig);
+  // 门面是「调用时解析实现」，改实现模块的导出就能让这次取数失败
+  const original = mock.getEvents;
+  mock.getEvents = async () => {
+    throw new Error('模拟数据源故障');
+  };
+
+  try {
+    await page.onLoad();
+    assert.strictEqual(page.data.loading, false);
+    assert.ok(page.data.error.length > 0, '失败要有文案，不能只剩一个空页面');
+  } finally {
+    mock.getEvents = original;
+  }
 });
 
 /* ============================================================
@@ -1605,7 +1790,8 @@ test('录入页 —— 比分填完就实时预告谁赢，不用用户心算', 
 
   fillSinglesForm(page);
 
-  assert.strictEqual(page.data.winnerText, '赵明宇 胜');
+  // u06 的昵称是「明宇」，真名「赵明宇」只在「我的」页以小字并排显示
+  assert.strictEqual(page.data.winnerText, '明宇 胜');
 });
 
 test('录入页 —— 没选对手就提交，逐字段标红且不写台账', async () => {
@@ -2053,4 +2239,236 @@ test('发布公告页 —— 输入标题会把该项的旧错误清掉', async 
 
   page.onInputTitle({ detail: { value: '训练通知' } });
   assert.strictEqual(page.data.errors.title, '');
+});
+
+/* ============================================================
+ * 编辑资料页
+ * ============================================================ */
+
+/** 一位带实名信息的已登录会员，编辑页要拿它填只读的姓名与学号 */
+function loggedInWithRealName(overrides = {}) {
+  return loginAs({ realName: '赵明宇', studentId: '20230006', ...overrides });
+}
+
+test('编辑资料页 —— 未登录被整页挡住，表单都不给', () => {
+  resetSession();
+
+  const page = instantiate(profileEditConfig);
+  page.onLoad();
+
+  assert.match(page.data.blockReason, /登录/);
+});
+
+test('编辑资料页 —— 已登录时填入当前昵称，真名与学号只读展示', () => {
+  resetSession();
+  loggedInWithRealName();
+
+  const page = instantiate(profileEditConfig);
+  page.onLoad();
+
+  assert.strictEqual(page.data.blockReason, '');
+  assert.strictEqual(page.data.form.nickName, '赵明宇');
+  assert.strictEqual(page.data.realName, '赵明宇');
+  assert.strictEqual(page.data.studentId, '20230006');
+});
+
+test('编辑资料页 —— 改昵称保存：落进数据源、更新登录态、返回上一页', async () => {
+  resetSession();
+  loggedInWithRealName();
+
+  const page = instantiate(profileEditConfig);
+  page.onLoad();
+
+  page.onInputNickname({ detail: { value: '小明' } });
+
+  calls.backCount = 0;
+  await page.onSubmit();
+
+  assert.strictEqual(page.data.submitting, false);
+  assert.deepStrictEqual(page.data.errors, {});
+  assert.strictEqual(calls.backCount, 1);
+
+  // 数据层与本地登录态都要更新，否则「我的」页返回后仍是旧名字
+  assert.strictEqual((await facade.getMember('u06')).nickName, '小明');
+  assert.strictEqual(app.globalData.userInfo.nickName, '小明');
+  // 实名信息不因改昵称而变动
+  assert.strictEqual(app.globalData.userInfo.realName, '赵明宇');
+});
+
+test('编辑资料页 —— 昵称清空时不提交，逐字段报错且不返回', async () => {
+  resetSession();
+  loggedInWithRealName();
+
+  const page = instantiate(profileEditConfig);
+  page.onLoad();
+
+  page.onInputNickname({ detail: { value: '   ' } });
+
+  calls.backCount = 0;
+  await page.onSubmit();
+
+  assert.ok(page.data.errors.nickName);
+  assert.ok(page.data.errorText);
+  assert.strictEqual(calls.backCount, 0);
+  assert.strictEqual((await facade.getMember('u06')).nickName, '明宇');
+});
+
+test('编辑资料页 —— 选择头像写入表单，本地模拟下原样保留临时路径', async () => {
+  resetSession();
+  loggedInWithRealName();
+
+  const page = instantiate(profileEditConfig);
+  page.onLoad();
+
+  await page.onChooseAvatar({ detail: { avatarUrl: 'http://tmp/abc.png' } });
+  assert.strictEqual(page.data.form.avatarUrl, 'http://tmp/abc.png');
+});
+
+test('编辑资料页 —— 输入昵称会把旧的错误提示清掉', async () => {
+  resetSession();
+  loggedInWithRealName();
+
+  const page = instantiate(profileEditConfig);
+  page.onLoad();
+
+  page.setData({ 'form.nickName': '' });
+  await page.onSubmit();
+  assert.ok(page.data.errors.nickName);
+
+  page.onInputNickname({ detail: { value: '新昵称' } });
+  assert.strictEqual(page.data.errors.nickName, '');
+  assert.strictEqual(page.data.errorText, '');
+});
+
+test('编辑资料页 —— 调用抛异常时也要给出提示并恢复按钮，不能点了没反应', async () => {
+  resetSession();
+  loggedInWithRealName();
+
+  // 云端未部署新版（「未知的操作」）或网络断开时，取数层是直接抛错的
+  const original = mock.updateProfile;
+  mock.updateProfile = async () => {
+    throw new Error('未知的操作：updateProfile');
+  };
+
+  try {
+    const page = instantiate(profileEditConfig);
+    page.onLoad();
+    page.onInputNickname({ detail: { value: '新名字' } });
+
+    calls.backCount = 0;
+    await page.onSubmit();
+
+    assert.strictEqual(page.data.submitting, false, '按钮必须放回来');
+    assert.ok(page.data.errorText);
+    assert.strictEqual(calls.backCount, 0, '没保存成功就不能返回');
+  } finally {
+    mock.updateProfile = original;
+  }
+});
+
+/* ============================================================
+ * 「我的」页 —— 头像入口与改完后的回显
+ * ============================================================ */
+
+test('我的页 —— 未登录时不给个人数据，也不给编辑资料入口', async () => {
+  resetSession();
+
+  const page = instantiate(profileConfig);
+  await page.onLoad({});
+
+  assert.strictEqual(page.data.loggedIn, false, '没登录就没有编辑入口');
+  assert.strictEqual(page.data.view.found, false, '没登录也不该渲染别人的战绩');
+});
+
+test('我的页 —— 改完昵称返回后会重取数据，头卡显示新名字', async () => {
+  resetSession();
+  loginAs();
+  await facade.resetCache();
+
+  const page = instantiate(profileConfig);
+  await page.onLoad({});
+  assert.strictEqual(page.data.view.user.nickName, '明宇');
+
+  // 模拟在编辑页里改了昵称：数据源与本地登录态都更新，再返回本页
+  await facade.updateProfile({ nickName: '改过的名字' }, 'u06');
+  app.globalData.userInfo = fakeMember({ nickName: '改过的名字' });
+
+  await page.onShow();
+
+  // 只比编号就不会重取，这一页会一直挂着旧名字
+  assert.strictEqual(page.data.view.user.nickName, '改过的名字');
+  assert.strictEqual(page.data.view.user.realName, '赵明宇');
+});
+
+/* ============================================================
+ * 赛季管理页
+ * ============================================================ */
+
+test('赛季管理页 —— 访客被整页挡住，赛季数据一个字段都拿不到', async () => {
+  resetSession();
+
+  const page = instantiate(seasonManageConfig);
+  await page.onLoad();
+
+  assert.strictEqual(page.data.view.allowed, false);
+  assert.match(page.data.view.blockedText, /登录/);
+  assert.strictEqual(page.data.view.policyText, '');
+});
+
+test('赛季管理页 —— 正常会员看到赛季状态与压分说明，并挂出演示口径提示', async () => {
+  resetSession();
+  app.globalData.userInfo = activeMember();
+
+  const page = instantiate(seasonManageConfig);
+  await page.onLoad();
+
+  assert.strictEqual(page.data.view.allowed, true);
+  assert.strictEqual(page.data.view.hasReset, false);
+  assert.strictEqual(page.data.view.resetText, '本赛季尚未重置');
+  assert.ok(page.data.view.policyText, '要说明重置后会怎么压分');
+  assert.ok(page.data.view.demoNotice.length > 0);
+});
+
+test('赛季管理页 —— 执行重置后状态翻新并给出成功提示', async () => {
+  resetSession();
+  app.globalData.userInfo = activeMember();
+
+  const page = instantiate(seasonManageConfig);
+  await page.onLoad();
+  assert.strictEqual(page.data.view.hasReset, false);
+
+  calls.toasts.length = 0;
+  await page.onReset();
+
+  assert.strictEqual(page.data.view.hasReset, true);
+  assert.notStrictEqual(page.data.view.resetText, '本赛季尚未重置');
+  assert.strictEqual(page.data.acting, false, '动作结束后按钮要能再点');
+  assert.ok(calls.toasts.includes('新赛季已开始'));
+});
+
+test('赛季管理页 —— 从别处返回时刷新状态', async () => {
+  resetSession();
+  app.globalData.userInfo = activeMember();
+
+  const page = instantiate(seasonManageConfig);
+  await page.onLoad();
+  assert.strictEqual(page.data.view.hasReset, false);
+
+  // 模拟管理员在别处刚重置过，返回本页时不该仍显示「尚未重置」
+  await facade.resetSeason('u06');
+  await page.onShow();
+
+  assert.strictEqual(page.data.view.hasReset, true);
+});
+
+test('赛季管理页 —— 下拉刷新会收掉刷新动画', async () => {
+  resetSession();
+  app.globalData.userInfo = activeMember();
+
+  const page = instantiate(seasonManageConfig);
+  await page.onLoad();
+
+  calls.pullDownStopped = 0;
+  await page.onPullDownRefresh();
+  assert.strictEqual(calls.pullDownStopped, 1);
 });

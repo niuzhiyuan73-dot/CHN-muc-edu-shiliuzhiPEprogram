@@ -1,0 +1,74 @@
+<!--
+  编辑资料
+  只改昵称与头像；真实姓名与学号是注册时核过的实名信息，这里只读展示。
+  校验在 services/profile.js，本页只渲染并把用户的操作交回去。
+-->
+<view class="page-container">
+
+  <!-- 没有登录态时不给表单：填完再被拒，比一开始就说清楚糟得多 -->
+  <view wx:if="{{blockReason}}" class="empty-state">
+    <view class="empty-state-icon">🔒</view>
+    <view class="empty-state-text">{{blockReason}}</view>
+    <view class="btn btn-outline block-back" bindtap="onCancel">返回</view>
+  </view>
+
+  <block wx:else>
+
+    <!-- ========== 可改的两项 ========== -->
+    <view class="card">
+      <view class="card-title">头像与昵称</view>
+      <view class="card-subtitle">昵称与头像会显示在排行榜、比赛记录里，随时可以改</view>
+
+      <view class="field-row field-row-avatar">
+        <view class="field-label">头像</view>
+        <button class="avatar-btn" open-type="chooseAvatar" bindchooseavatar="onChooseAvatar">
+          <image wx:if="{{form.avatarUrl}}" class="avatar-img" src="{{form.avatarUrl}}" mode="aspectFill" />
+          <view wx:else class="avatar-placeholder">{{avatarText}}</view>
+        </button>
+      </view>
+
+      <view class="field-row">
+        <view class="field-label">昵称</view>
+        <input
+          class="field-input"
+          type="nickname"
+          placeholder="点击可填入微信昵称"
+          value="{{form.nickName}}"
+          maxlength="{{nicknameMax}}"
+          bindinput="onInputNickname"
+        />
+      </view>
+      <view wx:if="{{errors.nickName}}" class="field-error">{{errors.nickName}}</view>
+      <view class="field-hint">最多 {{nicknameMax}} 个字符</view>
+    </view>
+
+    <!-- ========== 不可改的实名信息 ========== -->
+    <view class="card">
+      <view class="card-title">实名信息</view>
+      <view class="card-subtitle">姓名与学号是入会审核的依据，不能自行修改；若填错了请联系管理员</view>
+
+      <view class="field-row">
+        <view class="field-label">姓名</view>
+        <view class="field-value readonly">{{realName || '—'}}</view>
+      </view>
+      <view class="field-row">
+        <view class="field-label">学号</view>
+        <view class="field-value readonly">{{studentId || '—'}}</view>
+      </view>
+    </view>
+
+    <view wx:if="{{errorText}}" class="submit-error">{{errorText}}</view>
+
+    <view class="submit-bar">
+      <view class="btn btn-outline submit-btn" bindtap="onCancel">取消</view>
+      <view
+        class="btn btn-primary submit-btn {{submitting ? 'btn-disabled' : ''}}"
+        bindtap="onSubmit"
+      >保存</view>
+    </view>
+
+    <view wx:if="{{isMock}}" class="mock-note">
+      当前为本地模拟数据，保存后只写入内存，重启小程序即清空
+    </view>
+  </block>
+</view>

@@ -72,6 +72,7 @@ const getHomeSummary = () => request('getHomeSummary');
 
 /* 成绩录入与流转。权限一律由云函数在服务端判定，前端说了不算。 */
 const getMatchRecords = (options) => request('getMatchRecords', options);
+const getSeasonState = () => request('getSeasonState');
 const submitMatch = (params) => request('submitMatch', params);
 const confirmMatch = (id, actor) => request('confirmMatch', { id, actor });
 const rejectMatch = (id, actor, reason) => request('rejectMatch', { id, actor, reason });
@@ -103,6 +104,22 @@ const rejectMember = (applicationId, actor, reason) =>
 const publishAnnouncement = (form, actor) => request('publishAnnouncement', { form, actor });
 const archiveAnnouncement = (id, actor) => request('archiveAnnouncement', { id, actor });
 
+/*
+ * 修改自己的昵称与头像。
+ *
+ * actor 只是「谁点的按钮」的线索，真正的身份由云函数按 OpenID 在服务端
+ * 判定，前端说了不算。patch 里只有昵称与头像两个字段——真实姓名、学号
+ * 即使被塞进来，服务端也会按白名单丢掉。
+ */
+const updateProfile = (patch, actor) => request('updateProfile', { patch, actor });
+
+/*
+ * 赛季管理。软重置会按公式改动全俱乐部每个人的分数，权限门槛高于发布
+ * 公告：服务端按 OpenID 判定必须为管理员。actor 同样只是「谁点的按钮」
+ * 的线索，前端说了不算。
+ */
+const resetSeason = (actor) => request('resetSeason', { actor });
+
 module.exports = {
   CLOUD_FUNCTION,
   request,
@@ -126,6 +143,7 @@ module.exports = {
   getMyProjects,
   getHomeSummary,
   getMatchRecords,
+  getSeasonState,
   submitMatch,
   confirmMatch,
   rejectMatch,
@@ -135,4 +153,6 @@ module.exports = {
   rejectMember,
   publishAnnouncement,
   archiveAnnouncement,
+  updateProfile,
+  resetSeason,
 };

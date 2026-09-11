@@ -1,29 +1,42 @@
-/* 我的页样式。主体样式在 templates/member-view.wxss 里，与「他人主页」共用。 */
+/* 我的页样式。主体样式在 templates/member-view.wxss 里，与「他人主页」共用。
+   入口卡片（.entry-card 系列）在 app.wxss，个人详情页也要用。 */
 @import "../../templates/member-view.wxss";
 
-/* ==================== 管理入口卡片 ==================== */
+/* ==================== 当前分数 ==================== */
 
-/* 会员审核与公告管理共用一套样式：
-   都是「标题 + 一句说明 + 箭头」的可点卡片 */
-.entry-card {
+/* 单打、双打并排各显示一个等级分。两个项目用一条竖线隔开，
+   一眼分得清哪个数是哪个项目的，不用再来回切换 */
+.score-duo {
   display: flex;
-  align-items: center;
+  align-items: stretch;
 }
 
-.entry-card-main {
+.score-duo-cell {
   flex: 1;
   min-width: 0;
+  text-align: center;
 }
 
-.entry-card-title {
-  font-size: var(--font-md);
-  font-weight: 600;
+/* 两项之间才画线，第一项左边不画 */
+.score-duo-cell + .score-duo-cell {
+  border-left: 2rpx solid var(--color-divider);
 }
 
-.entry-card-hint {
-  margin-top: 4rpx;
-  font-size: var(--font-xs);
+.score-duo-label {
+  font-size: var(--font-sm);
   color: var(--color-text-secondary);
+}
+
+.score-duo-value {
+  margin-top: 4rpx;
+  font-size: 64rpx;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+/* 默认展示的那个项目用主色，和切池标签的选中态一个意思 */
+.score-duo-cell.is-active .score-duo-value {
+  color: var(--color-primary);
 }
 
 /* ==================== 退出登录 ==================== */
@@ -42,13 +55,4 @@
 
 .guest-btn {
   margin-top: var(--space-md);
-}
-
-/* 一个朴素的方向箭头，暗示这张卡可以点 */
-.entry-card-arrow {
-  flex-shrink: 0;
-  margin-left: var(--space-sm);
-  font-size: var(--font-xl);
-  color: var(--color-text-tertiary);
-  line-height: 1;
 }

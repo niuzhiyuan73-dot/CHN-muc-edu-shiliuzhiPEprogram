@@ -307,6 +307,40 @@ page {
   margin: var(--space-md) 0;
 }
 
+/* ==================== 可点入口卡片 ==================== */
+
+/* 标题 + 一句说明 + 箭头的可点卡片。管理入口（我的页）与「修改头像」
+   （个人详情页）共用，放在全局，免得两个页面各写一份。 */
+.entry-card {
+  display: flex;
+  align-items: center;
+}
+
+.entry-card-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.entry-card-title {
+  font-size: var(--font-md);
+  font-weight: 600;
+}
+
+.entry-card-hint {
+  margin-top: 4rpx;
+  font-size: var(--font-xs);
+  color: var(--color-text-secondary);
+}
+
+/* 一个朴素的方向箭头，暗示这张卡可以点 */
+.entry-card-arrow {
+  flex-shrink: 0;
+  margin-left: var(--space-sm);
+  font-size: var(--font-xl);
+  color: var(--color-text-tertiary);
+  line-height: 1;
+}
+
 /* ==================== 加载状态 ==================== */
 
 /* 开发期提示条：告诉用户现在看到的是模拟数据，别当成真实成绩。

@@ -1,0 +1,81 @@
+<!--
+  赛事
+  数据形状见 services/events-view.js 的 loadEventsView。
+  榜单行的样式来自 templates/rank-board.wxss，与「排行榜」页共用。
+-->
+<view class="page-container">
+
+  <!-- 加载中。必须排在出错之前，否则首屏会一闪而过地报错 -->
+  <view wx:if="{{loading}}" class="loading">正在加载…</view>
+
+  <view wx:elif="{{error}}" class="empty-state">
+    <view class="empty-state-icon">⚠️</view>
+    <view class="empty-state-text">{{error}}</view>
+  </view>
+
+  <block wx:else>
+
+    <!-- ========== 赛季说明 ========== -->
+    <!-- 积分只来自赛事，且每赛季清零。先把口径写在这里，免得有人拿积分当实力比 -->
+    <view class="season-bar">
+      <view class="season-bar-title">{{view.seasonText}}</view>
+      <view class="season-bar-note">积分只来自赛事，赛季开始后重新计算</view>
+    </view>
+
+    <!-- ========== 我在积分榜上的位置 ========== -->
+    <view wx:if="{{view.me}}" class="card my-rank">
+      <view class="my-rank-value">
+        {{view.me.rank}}<text class="my-rank-total">/{{view.me.total}}</text>
+      </view>
+      <view class="my-rank-line1">我在本赛季积分榜的排名</view>
+      <view class="my-rank-line2">{{view.me.beatText}}</view>
+    </view>
+
+    <!-- 我不在榜上时也要交代一句，空着会让人以为页面坏了 -->
+    <view wx:else class="my-rank-hint">{{view.meHint}}</view>
+
+    <!-- ========== 赛季积分榜 ========== -->
+    <view class="card">
+      <view class="rank-head">
+        <view class="rank-head-title">赛季积分榜</view>
+        <view class="rank-head-count">{{view.playerCountText}}</view>
+      </view>
+
+      <view wx:if="{{view.empty}}" class="empty-note">{{view.emptyNote}}</view>
+
+      <!-- 点一行就去看这个人的完整战绩 -->
+      <view
+        wx:for="{{view.rows}}"
+        wx:key="userId"
+        class="rank-row {{item.isMe ? 'is-me' : ''}}"
+        data-user-id="{{item.userId}}"
+        bindtap="onOpenMember"
+      >
+        <view class="rank-no {{item.medal ? 'is-' + item.medal : ''}}">{{item.rank}}</view>
+
+        <view class="rank-avatar">
+          <image wx:if="{{item.avatarUrl}}" class="rank-avatar-img" src="{{item.avatarUrl}}" mode="aspectFill" />
+          <text wx:else>{{item.avatarText}}</text>
+        </view>
+
+        <view class="rank-main">
+          <view class="rank-name">
+            <text>{{item.nickName}}</text>
+            <text wx:if="{{item.isMe}}" class="rank-me-tag">我</text>
+          </view>
+          <view class="rank-detail">{{item.detailText}}</view>
+        </view>
+
+        <view class="rank-value-box">
+          <view class="rank-value">{{item.valueText}}</view>
+          <view class="rank-note">{{item.noteText}}</view>
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{isMock}}" class="mock-note">
+      当前为本地模拟数据，用于开发预览，并非真实成绩
+    </view>
+
+  </block>
+</view>

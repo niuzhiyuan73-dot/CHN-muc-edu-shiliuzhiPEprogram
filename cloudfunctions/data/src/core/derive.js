@@ -69,8 +69,13 @@ async function buildDataset(repo, season) {
     members,
     matches: activeOnly,
     events,
-    // 锚点由赛季文档钉死；还没定下时传 null，回放会退回「流水里最早一场」
-    options: { seasonStart: season.anchorTime },
+    // 锚点由赛季文档钉死；还没定下时传 null，回放会退回「流水里最早一场」。
+    // 软重置的分界点与策略同样落库，回放据此在分界处压分并刷新起点分。
+    options: {
+      seasonStart: season.anchorTime,
+      resetTime: season.resetTime || null,
+      resetPolicy: season.resetPolicy || null,
+    },
   });
 
   const replayedById = new Map(replayed.matches.map((match) => [match._id, match]));
@@ -107,6 +112,9 @@ async function getDataset(ctx) {
     Number(season.version || 0),
     season.algoVersion,
     season.anchorTime ? new Date(season.anchorTime).getTime() : 'n',
+    // 重置分界也算缓存键的一部分：写重置时版本号已经 +1，这里再显式带上，
+    // 是为了让「改了分界点却没动版本号」这种意外不至于悄悄命中旧缓存。
+    season.resetTime ? new Date(season.resetTime).getTime() : 'n',
   ].join(':');
 
   const cached = memoByRepo.get(ctx.repo);

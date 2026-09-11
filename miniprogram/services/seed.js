@@ -144,6 +144,14 @@ function buildAnnouncements(baseDate) {
  * trueSkill 是隐藏的真实水平，仅用于模拟比赛结果，不对外展示。
  * 数值参考业余匹克球爱好者的大致分布：新手 1100 上下，高手 1700 上下。
  *
+ * 【nickName 与 realName 的分工】
+ * realName 是注册时登记的实名，nickName 是展示用的昵称。界面上昵称在
+ * 前、真名小一号缀在旁边（见 templates/member-view.wxml）。校园社团里
+ * 昵称多半就是名字本身或名字的后两字，所以这里：
+ *   三字姓名 → 昵称取后两字（张宇轩 → 宇轩）
+ *   两字姓名 → 昵称与真名相同，头卡上不重复显示
+ * 这样既演示了「昵称 + 真名」的展示，又不会被硬凑出来的花名弄得失真。
+ *
  * 【男女之间为什么刻意留出差距】
  * 男女单打合并成一个池之后，男女分数可以直接比较，这时候如果两组人的
  * 真实水平完全一样，实验就观察不到任何差异，「合并计算会不会埋没女生」
@@ -154,33 +162,33 @@ function buildAnnouncements(baseDate) {
  * 隐藏的 trueSkill 上，等级分仍然要靠回放自己长出来。
  */
 const MEMBER_SEED = [
-  { nickName: '巴特尔', gender: 'M', college: '体育学院', trueSkill: 1690 },
-  { nickName: '张宇轩', gender: 'M', college: '信息工程学院', trueSkill: 1655 },
-  { nickName: '李思远', gender: 'M', college: '经济学院', trueSkill: 1620 },
-  { nickName: '王浩然', gender: 'M', college: '管理学院', trueSkill: 1585 },
-  { nickName: '刘子涵', gender: 'M', college: '理学院', trueSkill: 1550 },
-  { nickName: '赵明宇', gender: 'M', college: '法学院', trueSkill: 1510 },
-  { nickName: '吴俊杰', gender: 'M', college: '历史文化学院', trueSkill: 1475 },
-  { nickName: '郑凯文', gender: 'M', college: '信息工程学院', trueSkill: 1440 },
-  { nickName: '黄伟豪', gender: 'M', college: '生命与环境科学学院', trueSkill: 1405 },
-  { nickName: '马小龙', gender: 'M', college: '民族学与社会学学院', trueSkill: 1365 },
-  { nickName: '高志强', gender: 'M', college: '体育学院', trueSkill: 1320 },
-  { nickName: '谢天磊', gender: 'M', college: '教育学院', trueSkill: 1280 },
-  { nickName: '曹阳', gender: 'M', college: '外国语学院', trueSkill: 1235 },
-  { nickName: '卓玛', gender: 'F', college: '中国少数民族语言文学学院', trueSkill: 1500 },
-  { nickName: '陈曦', gender: 'F', college: '美术学院', trueSkill: 1455 },
-  { nickName: '阿依古丽', gender: 'F', college: '音乐学院', trueSkill: 1425 },
-  { nickName: '周雨桐', gender: 'F', college: '经济学院', trueSkill: 1385 },
-  { nickName: '孙悦', gender: 'F', college: '法学院', trueSkill: 1350 },
-  { nickName: '林清', gender: 'F', college: '哲学与宗教学学院', trueSkill: 1300 },
-  { nickName: '徐梦琪', gender: 'F', college: '管理学院', trueSkill: 1255 },
-  { nickName: '何静怡', gender: 'F', college: '教育学院', trueSkill: 1225 },
+  { nickName: '巴特尔', realName: '巴特尔', gender: 'M', college: '体育学院', trueSkill: 1690 },
+  { nickName: '宇轩', realName: '张宇轩', gender: 'M', college: '信息工程学院', trueSkill: 1655 },
+  { nickName: '思远', realName: '李思远', gender: 'M', college: '经济学院', trueSkill: 1620 },
+  { nickName: '浩然', realName: '王浩然', gender: 'M', college: '管理学院', trueSkill: 1585 },
+  { nickName: '子涵', realName: '刘子涵', gender: 'M', college: '理学院', trueSkill: 1550 },
+  { nickName: '明宇', realName: '赵明宇', gender: 'M', college: '法学院', trueSkill: 1510 },
+  { nickName: '俊杰', realName: '吴俊杰', gender: 'M', college: '历史文化学院', trueSkill: 1475 },
+  { nickName: '凯文', realName: '郑凯文', gender: 'M', college: '信息工程学院', trueSkill: 1440 },
+  { nickName: '伟豪', realName: '黄伟豪', gender: 'M', college: '生命与环境科学学院', trueSkill: 1405 },
+  { nickName: '小龙', realName: '马小龙', gender: 'M', college: '民族学与社会学学院', trueSkill: 1365 },
+  { nickName: '志强', realName: '高志强', gender: 'M', college: '体育学院', trueSkill: 1320 },
+  { nickName: '天磊', realName: '谢天磊', gender: 'M', college: '教育学院', trueSkill: 1280 },
+  { nickName: '曹阳', realName: '曹阳', gender: 'M', college: '外国语学院', trueSkill: 1235 },
+  { nickName: '卓玛', realName: '卓玛', gender: 'F', college: '中国少数民族语言文学学院', trueSkill: 1500 },
+  { nickName: '陈曦', realName: '陈曦', gender: 'F', college: '美术学院', trueSkill: 1455 },
+  { nickName: '阿依古丽', realName: '阿依古丽·买买提', gender: 'F', college: '音乐学院', trueSkill: 1425 },
+  { nickName: '雨桐', realName: '周雨桐', gender: 'F', college: '经济学院', trueSkill: 1385 },
+  { nickName: '孙悦', realName: '孙悦', gender: 'F', college: '法学院', trueSkill: 1350 },
+  { nickName: '林清', realName: '林清', gender: 'F', college: '哲学与宗教学学院', trueSkill: 1300 },
+  { nickName: '梦琪', realName: '徐梦琪', gender: 'F', college: '管理学院', trueSkill: 1255 },
+  { nickName: '静怡', realName: '何静怡', gender: 'F', college: '教育学院', trueSkill: 1225 },
   // 以下会员在中途加入俱乐部。
   // 他们的初始分不走固定值，而是按「入会后前五场对手的水平」定出来，
   // 这样进步榜才有真实意义：可以衡量他们入会之后的涨分幅度。
-  { nickName: '罗雨欣', gender: 'F', college: '外国语学院', trueSkill: 1180, joinWeek: 5 },
-  { nickName: '韩雪', gender: 'F', college: '历史文化学院', trueSkill: 1140, joinWeek: 5 },
-  { nickName: '邓紫琳', gender: 'F', college: '民族学与社会学学院', trueSkill: 1085, joinWeek: 10 },
+  { nickName: '雨欣', realName: '罗雨欣', gender: 'F', college: '外国语学院', trueSkill: 1180, joinWeek: 5 },
+  { nickName: '韩雪', realName: '韩雪', gender: 'F', college: '历史文化学院', trueSkill: 1140, joinWeek: 5 },
+  { nickName: '紫琳', realName: '邓紫琳', gender: 'F', college: '民族学与社会学学院', trueSkill: 1085, joinWeek: 10 },
 ];
 
 /**
@@ -501,7 +509,11 @@ function generateSeed(options = {}) {
   // ---------- 1. 会员 ----------
   const members = MEMBER_SEED.map((item, index) => ({
     _id: 'u' + String(index + 1).padStart(2, '0'),
+    // 昵称在前，真名缀在旁边——两者的分工见 MEMBER_SEED 的说明
     nickName: item.nickName,
+    realName: item.realName,
+    // 学号是实名信息，不可修改；这里按序号编一个稳定的号码供演示
+    studentId: '2023' + String(index + 1).padStart(4, '0'),
     gender: item.gender,
     college: item.college,
     avatarUrl: '',

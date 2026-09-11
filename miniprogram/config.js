@@ -18,6 +18,6 @@
  */
 
 /** 云开发环境 ID。留空表示使用本地模拟数据 */
-const CLOUD_ENV_ID = '';
+const CLOUD_ENV_ID = 'cloud1-d7g9o5ift32b465d7';
 
 module.exports = { CLOUD_ENV_ID };
