@@ -34,6 +34,12 @@ const { loadSeasonManageView, describePolicy } = require('../miniprogram/service
 
 const mock = require('../miniprogram/services/mock.js');
 const { dispatch } = require('../cloudfunctions/data/src/core/dispatch.js');
+const {
+  defaultSeason,
+  bumpSeason,
+  writeSeasonReset,
+  SEASON_ID,
+} = require('../cloudfunctions/data/src/core/season.js');
 const { createFixtureRepo, contextFor, NOW } = require('./helpers/cloud-fixture.js');
 
 const MALE_START = DEFAULT_CONFIG.initialRating;
@@ -157,6 +163,7 @@ describe('云函数 —— 赛季状态与重置', () => {
       anchorTime: null,
       resetTime: null,
       policy: DEFAULT_RESET_POLICY,
+      seasonNumber: 1,
       version: 0,
     });
   });
@@ -204,6 +211,43 @@ describe('云函数 —— 赛季状态与重置', () => {
 });
 
 /* ============================================================
+ * 赛季编号：只由「开始新赛季」递增
+ * ============================================================
+ * 曾经的缺陷：界面上的「第 N 赛季」直接拿 version + 1 来显示，而 version
+ * 是读缓存计数器，录一场球、审一位会员就 +1。于是管理员什么都没做，
+ * 赛季数却自己从第四涨到第六。这里把「日常写入不许动编号」钉死。
+ * ============================================================ */
+
+describe('赛季编号 —— 只由「开始新赛季」递增', () => {
+  test('日常写入（bumpSeason）不让编号前进，但版本号照旧每次都走', async () => {
+    const repo = createFixtureRepo();
+
+    for (let i = 0; i < 5; i += 1) {
+      await repo.transaction((tx) => bumpSeason(tx, { anchorTime: NOW, now: NOW }));
+    }
+
+    const doc = await repo.seasons.get(SEASON_ID);
+    assert.equal(doc.seasonNumber, 1, '录比赛之类的写入绝不能让赛季数虚涨');
+    assert.equal(doc.version, 5, '版本号必须仍随每次写入前进，它是读缓存的凭据');
+  });
+
+  test('只有 writeSeasonReset 让编号加一，其后的日常写入也不再动它', async () => {
+    const repo = createFixtureRepo();
+
+    await repo.transaction((tx) => writeSeasonReset(tx, { resetTime: NOW, now: NOW }));
+    await repo.transaction((tx) => writeSeasonReset(tx, { resetTime: NOW, now: NOW }));
+    await repo.transaction((tx) => bumpSeason(tx, { anchorTime: NOW, now: NOW }));
+
+    const doc = await repo.seasons.get(SEASON_ID);
+    assert.equal(doc.seasonNumber, 3, '两次开始新赛季 → 第三赛季，之后的写入不再叠加');
+  });
+
+  test('缺字段的老赛季文档按第一赛季补上', () => {
+    assert.equal(defaultSeason().seasonNumber, 1);
+  });
+});
+
+/* ============================================================
  * mock 数据源
  * ============================================================ */
 
@@ -214,6 +258,7 @@ describe('mock 数据源 —— 赛季状态与重置', () => {
 
     assert.equal(state.resetTime, null);
     assert.equal(state.version, 0);
+    assert.equal(state.seasonNumber, 1, '没开始新赛季前恒为第一赛季');
     assert.deepEqual(state.policy, DEFAULT_RESET_POLICY);
     assert.ok(state.anchorTime, '演示数据必有赛季首场，锚点不该为空');
   });
@@ -235,6 +280,7 @@ describe('mock 数据源 —— 赛季状态与重置', () => {
     assert.equal(result.ok, true);
     assert.ok(result.season.resetTime, '重置后要记下分界点');
     assert.equal(result.season.version, 1);
+    assert.equal(result.season.seasonNumber, 2, '开始新赛季后应是第二赛季');
 
     const after = getPoolRating(await mock.getMember(top.user._id), RATING_POOL.SINGLES);
     assert.ok(after.elo < before, '高分段应当被压向锚点');
@@ -284,5 +330,16 @@ describe('season-view —— 赛季管理页视图', () => {
     assert.equal(view.demoNotice, '');
     assert.equal(view.hasReset, false);
     assert.equal(view.resetText, '本赛季尚未重置');
+    assert.equal(view.versionText, '第 1 赛季', '没有开始新赛季之前恒为第一赛季');
+  });
+
+  test('开始新赛季后，界面编号前进到第二赛季', async () => {
+    mock.resetCache();
+    await mock.resetSeason(mock.DEFAULT_CURRENT_USER_ID);
+
+    const view = await loadSeasonManageView({ user: account('admin', ROLE.ADMIN), isMock: false });
+    assert.equal(view.versionText, '第 2 赛季');
+
+    mock.resetCache();
   });
 });

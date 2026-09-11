@@ -24,27 +24,44 @@ let resetTime = null;
 let resetPolicy = null;
 
 /**
+ * 赛季编号。与云端 seasonNumber 同义：默认第一赛季，只有「开始新赛季」
+ * （setReset）能让它 +1。日常录入比赛、审核会员都不该动它——否则界面上的
+ * 赛季数会随操作次数乱涨。
+ */
+let seasonNumber = 1;
+
+/**
  * 读取最近一次重置。从未重置过时返回 null。
- * @returns {{resetTime:Date, policy:Object}|null}
+ * @returns {{resetTime:Date, policy:Object, seasonNumber:number}|null}
  */
 function getReset() {
   if (!resetTime) return null;
   return {
     resetTime: new Date(resetTime.getTime()),
     policy: { ...(resetPolicy || DEFAULT_RESET_POLICY) },
+    seasonNumber,
   };
 }
 
 /**
- * 记下一次重置。
+ * 读取当前赛季编号。从未重置过时为 1。
+ * @returns {number}
+ */
+function getSeasonNumber() {
+  return seasonNumber;
+}
+
+/**
+ * 记下一次重置（即「开始新赛季」），把赛季编号加一。
  * @param {Object} params
  * @param {Date|string} params.resetTime 分界点
  * @param {Object} [params.policy] 重置策略
- * @returns {{resetTime:Date, policy:Object}}
+ * @returns {{resetTime:Date, policy:Object, seasonNumber:number}}
  */
 function setReset({ resetTime: time, policy } = {}) {
   resetTime = time instanceof Date ? new Date(time.getTime()) : new Date(time);
   resetPolicy = { ...(policy || DEFAULT_RESET_POLICY) };
+  seasonNumber += 1;
   return getReset();
 }
 
@@ -52,6 +69,7 @@ function setReset({ resetTime: time, policy } = {}) {
 function reset() {
   resetTime = null;
   resetPolicy = null;
+  seasonNumber = 1;
 }
 
-module.exports = { getReset, setReset, reset };
+module.exports = { getReset, getSeasonNumber, setReset, reset };

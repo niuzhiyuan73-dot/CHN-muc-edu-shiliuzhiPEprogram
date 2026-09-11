@@ -102,7 +102,9 @@ async function loadSeasonManageView(options = {}) {
     // 逐层兜底：锚点一般都有，但绝不渲染出 undefined
     anchorText: state.anchorTime ? formatDateTime(state.anchorTime) : '暂无比赛记录',
     resetText: hasReset ? formatDateTime(state.resetTime) : '本赛季尚未重置',
-    versionText: `第 ${Number(state.version || 0) + 1} 赛季`,
+    // 读赛季编号，绝不读 version：version 是写缓存计数器，录一场球就 +1，
+    // 拿它当赛季数会让界面上的赛季随日常操作一路虚涨
+    versionText: `第 ${Number(state.seasonNumber || 1)} 赛季`,
     policyText: describePolicy(state.policy),
     demoNotice:
       relaxed && !strict

@@ -34,7 +34,7 @@ const { DEFAULT_RESET_POLICY, canResetSeason } = require('../../lib/services/sea
 /**
  * 把赛季文档整形成界面要的形状，绝不漏字段给渲染层。
  * @param {Object} season
- * @returns {{anchorTime:*, resetTime:*, policy:Object, version:number}}
+ * @returns {{anchorTime:*, resetTime:*, policy:Object, seasonNumber:number, version:number}}
  */
 function shapeSeason(season) {
   return {
@@ -42,6 +42,8 @@ function shapeSeason(season) {
     resetTime: season.resetTime || null,
     // 从未重置过时返回默认策略，界面照样能说明「重置后会怎么压分」
     policy: season.resetPolicy || DEFAULT_RESET_POLICY,
+    // 界面上的「第 N 赛季」读这个编号，读到的绝不是写缓存用的 version
+    seasonNumber: Number(season.seasonNumber || 1),
     version: Number(season.version || 0),
   };
 }
@@ -51,7 +53,7 @@ function shapeSeason(season) {
  *
  * @param {Object} payload
  * @param {Object} ctx
- * @returns {Promise<Object>} {anchorTime, resetTime, policy, version}
+ * @returns {Promise<Object>} {anchorTime, resetTime, policy, seasonNumber, version}
  */
 async function getSeasonState(payload = {}, ctx) {
   const season = await loadSeason(ctx.repo);

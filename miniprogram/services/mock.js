@@ -865,6 +865,8 @@ async function getSeasonState() {
     resetTime: reset ? reset.resetTime : null,
     // 从未重置时也给默认策略，界面照样能说明「重置后会怎么压分」
     policy: reset ? reset.policy : { ...DEFAULT_RESET_POLICY },
+    // 赛季编号只由「开始新赛季」递增，与其它写入无关，形状与云端一致
+    seasonNumber: seasonStore.getSeasonNumber(),
     version: reset ? 1 : 0,
   };
 }
