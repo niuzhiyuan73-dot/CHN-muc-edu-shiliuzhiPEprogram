@@ -68,11 +68,33 @@ Page({
    * 是谁——于是刚清掉的账号原地又长回来，页面上还挂着「我」的战绩。
    * 所以先看本地有没有人，没有就什么都不查。
    *
+   * 【服务端答「查无此人」是什么意思】本地还留着登录态，getCurrentUser
+   * 却说没这个人，只有两种可能：账号在后台被删了，或者这台设备上的微信号
+   * 与服务端那个账号根本不是同一个（开发者工具与真机的 OpenID 不同，是
+   * 两个微信号）。两种情况下这份缓存都已经对不上号，若照常渲染，页面就
+   * 停在「没有找到这位会员」——一个既进不去也退不出的死角。清掉它退回
+   * 登录引导，才是用户此刻真实的处境。
+   *
    * @returns {Promise<void>}
    */
-  refresh() {
-    if (this.currentUser()) return memberPage.refresh.call(this);
+  async refresh() {
+    if (!this.currentUser()) {
+      this.showGuest();
+      return undefined;
+    }
 
+    await memberPage.refresh.call(this);
+
+    // 加载报错时 view 还是空的，不能拿它当「查无此人」处理
+    if (!this.data.error && this.data.view && this.data.view.found === false) {
+      this.dropSession();
+      this.showGuest();
+    }
+    return undefined;
+  },
+
+  /** 原地切成未登录的样子，不跳页——退出的入口和这里都不该把人甩到别的页 */
+  showGuest() {
     this.setData({
       loading: false,
       error: '',
@@ -80,7 +102,15 @@ Page({
       hasMore: false,
       view: { found: false },
     });
-    return Promise.resolve();
+  },
+
+  /** 丢掉本地登录态。内存与缓存同步的那份逻辑在 app 上，这里不另抄一遍 */
+  dropSession() {
+    const app = getApp();
+    if (app && typeof app.clearUserInfo === 'function') app.clearUserInfo();
+    else if (app && app.globalData) app.globalData.userInfo = null;
+
+    this.syncEntries();
   },
 
   /** 未登录时的引导按钮 */
@@ -123,13 +153,10 @@ Page({
    * 答得出是谁，这一页的战绩还会原样挂在那儿，看着像没退掉。
    */
   onLogout() {
-    const app = getApp();
-    if (app && typeof app.clearUserInfo === 'function') app.clearUserInfo();
-    else if (app && app.globalData) app.globalData.userInfo = null;
-
     // 顺手把本页也切成未登录的样子：切页动画期间它还留在屏幕上，
-    // 继续挂着审核入口会闪一下
-    this.syncEntries();
+    // 继续挂着审核入口或旧战绩会闪一下
+    this.dropSession();
+    this.showGuest();
     wx.switchTab({ url: '/pages/index/index' });
   },
 

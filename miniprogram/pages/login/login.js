@@ -107,7 +107,13 @@ Page({
     try {
       const { ok, user, state } = await login();
       if (!ok || !user) {
-        this.setData({ submitting: false, errorText: '登录失败，请稍后重试' });
+        // 服务端说「这个 OpenID 没有账号」不是故障，是引导——他去注册就行。
+        // 报成「请稍后重试」会让人对着一个永远重试不出结果的按钮使劲点，
+        // 而这恰恰是换了一台设备（开发者工具与真机 OpenID 不同）后最常见的情形。
+        this.setData({
+          submitting: false,
+          errorText: '这个微信号还没有账号，请点下面的「新会员注册」',
+        });
         return undefined;
       }
 
@@ -122,8 +128,10 @@ Page({
       this.goHome();
       return undefined;
     } catch (err) {
+      // 走到这里是云函数调用真的抛了（断网、环境 ID 不对），与「没有账号」不同，
+      // 所以文案也不一样：这种情况重试是有意义的
       console.error('[login] 登录失败', err);
-      this.setData({ submitting: false, errorText: '登录失败，请稍后重试' });
+      this.setData({ submitting: false, errorText: '网络异常，请稍后重试' });
       return undefined;
     }
   },

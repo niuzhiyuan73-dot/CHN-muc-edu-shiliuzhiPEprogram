@@ -17,6 +17,9 @@ const { beforeEach } = require('node:test');
 
 /** 数据源门面。写接口会改内存，用例之间必须把缓存清干净 */
 const facade = require('../miniprogram/services/index.js');
+// 直接拿实现模块，是为了在个别用例里临时把某个接口换掉。
+// 门面是「调用时才解析实现」，所以改这里的导出真的会作用到上面那层
+const mock = require('../miniprogram/services/mock.js');
 const { MATCH_STATUS, MATCH_TYPE, USER_STATUS } = require('../miniprogram/utils/constants.js');
 
 /* ============================================================
@@ -583,6 +586,54 @@ test('我的页 —— 未登录时不查数据，只给登录引导', async () 
   assert.deepStrictEqual(calls.navigations, ['/pages/login/login']);
 });
 
+test('我的页 —— 服务端查无此人时清掉登录态，不把人困在「没有找到这位会员」', async () => {
+  resetSession();
+  app.globalData.userInfo = fakeMember();
+
+  // 本地缓存还留着登录态（比如账号刚在后台被删掉，或这台设备上的微信号
+  // 与服务端那个账号不是同一个），数据源却答不出这个人
+  const originalGetCurrentUser = mock.getCurrentUser;
+  mock.getCurrentUser = async () => undefined;
+
+  try {
+    calls.tabSwitches.length = 0;
+    const page = instantiate(profileConfig);
+    await page.onLoad({});
+
+    assert.strictEqual(page.data.view.found, false);
+    assert.strictEqual(page.data.loading, false, '不能一直挂在加载态');
+    assert.strictEqual(page.data.loggedIn, false, '对不上的登录态要清掉');
+    assert.strictEqual(app.globalData.userInfo, null, '全局登录态也要一并清掉');
+    // 这一步不跳页：用户正站在「我的」上，原地换成登录引导即可
+    assert.deepStrictEqual(calls.tabSwitches, [], '不要把人甩到别的页面去');
+  } finally {
+    mock.getCurrentUser = originalGetCurrentUser;
+  }
+});
+
+test('我的页 —— 加载失败时留着登录态，只提示重试', async () => {
+  resetSession();
+  app.globalData.userInfo = fakeMember();
+
+  // 抛错是网络/云函数故障，与「查无此人」不是一回事：这时把人的登录态
+  // 清掉，等于让他白白重新登录一次
+  const originalGetCurrentUser = mock.getCurrentUser;
+  mock.getCurrentUser = async () => {
+    throw new Error('云函数调用失败');
+  };
+
+  try {
+    const page = instantiate(profileConfig);
+    await page.onLoad({});
+
+    assert.strictEqual(page.data.error, '数据加载失败，请下拉重试');
+    assert.strictEqual(page.data.loggedIn, true, '故障时不该把人踢下线');
+    assert.ok(app.globalData.userInfo);
+  } finally {
+    mock.getCurrentUser = originalGetCurrentUser;
+  }
+});
+
 /* ============================================================
  * 他人主页
  * ============================================================ */
@@ -812,6 +863,29 @@ test('登录页 —— 一键登录写入全局登录态并回到首页', async 
   assert.strictEqual(app.globalData.userInfo._id, 'u06');
   assert.strictEqual(page.data.submitting, false);
   assert.deepStrictEqual(calls.tabSwitches, ['/pages/index/index']);
+});
+
+test('登录页 —— 服务端没有这个账号时，引导去注册而不是让人干重试', async () => {
+  resetSession();
+
+  // 换台设备最常见的情形：这个 OpenID 在服务端还没有账号
+  const originalGetCurrentUser = mock.getCurrentUser;
+  mock.getCurrentUser = async () => undefined;
+
+  try {
+    const page = instantiate(loginConfig);
+    page.onLoad();
+
+    calls.tabSwitches.length = 0;
+    await page.onLogin();
+
+    assert.strictEqual(page.data.submitting, false);
+    assert.strictEqual(app.globalData.userInfo, null, '没有账号就不该写入登录态');
+    assert.match(page.data.errorText, /新会员注册/, '要告诉他下一步该点哪里');
+    assert.deepStrictEqual(calls.tabSwitches, [], '没登录成功不能回首页');
+  } finally {
+    mock.getCurrentUser = originalGetCurrentUser;
+  }
 });
 
 test('登录页 —— 表单校验不过时不提交，并逐字段报错', async () => {
