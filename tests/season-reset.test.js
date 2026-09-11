@@ -275,7 +275,8 @@ describe('mock 数据源 —— 赛季状态与重置', () => {
     assert.ok(top, '演示数据里应当有人打过单打');
 
     const before = top.rating.elo;
-    const result = await mock.resetSeason(mock.DEFAULT_CURRENT_USER_ID);
+    // 重置要管理员，种子里的管理员是 u01
+    const result = await mock.resetSeason('u01');
 
     assert.equal(result.ok, true);
     assert.ok(result.season.resetTime, '重置后要记下分界点');
@@ -309,33 +310,38 @@ describe('season-view —— 赛季管理页视图', () => {
     assert.equal(view.policyText, '');
   });
 
-  test('普通会员在正式口径下无权，mock 口径下放行且给出演示提示', async () => {
+  test('普通会员无论哪个数据源口径都无权', async () => {
     const member = account('u1', ROLE.MEMBER);
-
-    const strict = await loadSeasonManageView({ user: member, isMock: false });
-    assert.equal(strict.allowed, false);
-    assert.match(strict.blockedText, /权限/);
-
-    const relaxed = await loadSeasonManageView({ user: member, isMock: true });
-    assert.equal(relaxed.allowed, true);
-    assert.match(relaxed.demoNotice, /演示数据源/);
-    assert.ok(relaxed.policyText, '有权限时要给出压分说明');
+    // 门槛是管理员，普通会员在本地与线上一样被挡住——演示数据源不再放宽
+    for (const isMock of [false, true]) {
+      const view = await loadSeasonManageView({ user: member, isMock });
+      assert.equal(view.allowed, false);
+      assert.match(view.blockedText, /权限/);
+      assert.equal(view.policyText, '');
+    }
   });
 
-  test('管理员在正式口径下放行，且没有演示提示', async () => {
+  test('干事也无权重置，门槛是管理员而不是干事', async () => {
+    const view = await loadSeasonManageView({ user: account('u2', ROLE.STAFF), isMock: true });
+    assert.equal(view.allowed, false);
+    assert.match(view.blockedText, /权限/);
+  });
+
+  test('管理员放行，能看到赛季状态与压分说明', async () => {
     mock.resetCache();
     const view = await loadSeasonManageView({ user: account('admin', ROLE.ADMIN), isMock: false });
 
     assert.equal(view.allowed, true);
-    assert.equal(view.demoNotice, '');
     assert.equal(view.hasReset, false);
     assert.equal(view.resetText, '本赛季尚未重置');
     assert.equal(view.versionText, '第 1 赛季', '没有开始新赛季之前恒为第一赛季');
+    assert.ok(view.policyText, '有权限时要给出压分说明');
   });
 
   test('开始新赛季后，界面编号前进到第二赛季', async () => {
     mock.resetCache();
-    await mock.resetSeason(mock.DEFAULT_CURRENT_USER_ID);
+    // 重置要管理员，种子里的管理员是 u01
+    await mock.resetSeason('u01');
 
     const view = await loadSeasonManageView({ user: account('admin', ROLE.ADMIN), isMock: false });
     assert.equal(view.versionText, '第 2 赛季');

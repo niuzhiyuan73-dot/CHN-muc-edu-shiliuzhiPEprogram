@@ -4,9 +4,10 @@
  * 这一层决定「谁能给谁盖章」，是全项目权限最敏感的地方，所以每条边界
  * 都用字面量钉死：
  *
- *   1. 审核权 —— 访客、待审核账号、被禁用的管理员，一个都不许审。
- *   2. 自己审自己 —— 这是唯一一条 mock 下也不放宽的硬规则，
- *      必须单独盯着：一旦破了，注册就变成自封正式会员。
+ *   1. 审核权 —— 访客、待审核账号、被禁用的管理员，一个都不许审；
+ *      普通会员也照样不许（判定只看角色，不分数据源）。
+ *   2. 自己审自己 —— 硬规则，必须单独盯着：一旦破了，
+ *      注册就变成自封正式会员。
  *   3. 驳回理由 —— 没有理由的驳回事后说不清，必须拦住。
  *   4. 行数据的预计算布尔量 —— 模板不写业务逻辑，全靠它们。
  *
@@ -56,33 +57,27 @@ const ADMIN = { _id: 'u03', nickName: '张管理', role: ROLE.ADMIN, status: USE
 
 test('canReview —— 访客没有审核权', () => {
   assert.strictEqual(canReview(null), false);
-  assert.strictEqual(canReview(null, { isMock: true }), false);
 });
 
 test('canReview —— 待审核的账号自己还没转正，不能去审别人', () => {
   const pendingUser = { _id: 'local_1001', role: ROLE.MEMBER, status: USER_STATUS.PENDING };
   assert.strictEqual(canReview(pendingUser), false);
-  // 关键：即便 mock 放宽，没转正的人也不许给别人盖章
-  assert.strictEqual(canReview(pendingUser, { isMock: true }), false);
 });
 
 test('canReview —— 被禁用的管理员同样没有审核权', () => {
   const banned = { _id: 'u09', role: ROLE.ADMIN, status: USER_STATUS.DISABLED };
   assert.strictEqual(canReview(banned), false);
-  assert.strictEqual(canReview(banned, { isMock: true }), false);
 });
 
-test('canReview —— 正常会员只在 mock 下放宽可审，正式环境要求干事及以上', () => {
-  assert.strictEqual(canReview(MEMBER, { isMock: false }), false);
-  assert.strictEqual(canReview(MEMBER, { isMock: true }), true);
-  // 默认口径与显式传 false 一致
+test('canReview —— 普通会员没有审核权，与数据源无关', () => {
+  // 本地模拟数据源里也不放宽：普通会员在自己手机上看不到审核入口
   assert.strictEqual(canReview(MEMBER), false);
+  assert.strictEqual(canReview(MEMBER, { isMock: true }), false);
 });
 
-test('canReview —— 干事与管理员在两种口径下都能审', () => {
+test('canReview —— 干事与管理员都能审', () => {
   for (const actor of [STAFF, ADMIN]) {
     assert.strictEqual(canReview(actor), true, `${actor._id} 应当可审`);
-    assert.strictEqual(canReview(actor, { isMock: true }), true);
   }
 });
 
@@ -101,13 +96,11 @@ test('isSelf —— 编号相同才算本人', () => {
 test('canReviewApplication —— 管理员也不能审自己的申请', () => {
   const mine = { ...APPLICANT, _id: ADMIN._id };
   assert.strictEqual(canReviewApplication(ADMIN, mine), false);
-  assert.strictEqual(canReviewApplication(ADMIN, mine, { isMock: true }), false);
 });
 
-test('canReviewApplication —— mock 放宽后，普通会员能审别人的待审核申请', () => {
-  assert.strictEqual(canReviewApplication(MEMBER, APPLICANT, { isMock: true }), true);
-  // 同一份数据，正式口径下就审不了
-  assert.strictEqual(canReviewApplication(MEMBER, APPLICANT, { isMock: false }), false);
+test('canReviewApplication —— 普通会员审不了，干事能审别人的待审核申请', () => {
+  assert.strictEqual(canReviewApplication(MEMBER, APPLICANT), false);
+  assert.strictEqual(canReviewApplication(STAFF, APPLICANT), true);
 });
 
 test('canReviewApplication —— 已经处理过的申请不能再动', () => {
@@ -192,24 +185,17 @@ test('buildApplicationRow —— 有权限且不是自己时，两个按钮都�
   assert.strictEqual(row.canApprove, true);
   assert.strictEqual(row.canReject, true);
   assert.strictEqual(row.isSelf, false);
-  // 干事在正式口径下也能审，说明这不是「放宽」出来的权限
-  assert.strictEqual(row.reviewRelaxed, false);
 });
 
-test('buildApplicationRow —— mock 放宽时标注演示口径', () => {
-  const row = buildApplicationRow(APPLICANT, { actor: MEMBER, isMock: true });
-  assert.strictEqual(row.canApprove, true);
-  assert.strictEqual(row.reviewRelaxed, true, '放宽出来的权限必须能被界面标出来');
-
-  // 同一行在正式口径下没有任何按钮
-  const strict = buildApplicationRow(APPLICANT, { actor: MEMBER, isMock: false });
-  assert.strictEqual(strict.canApprove, false);
-  assert.strictEqual(strict.canReject, false);
+test('buildApplicationRow —— 普通会员那一行没有任何按钮', () => {
+  const row = buildApplicationRow(APPLICANT, { actor: MEMBER });
+  assert.strictEqual(row.canApprove, false);
+  assert.strictEqual(row.canReject, false);
 });
 
 test('buildApplicationRow —— 本人那条只留提示，不给按钮', () => {
   const mine = { ...APPLICANT, _id: STAFF._id };
-  const row = buildApplicationRow(mine, { actor: STAFF, isMock: true });
+  const row = buildApplicationRow(mine, { actor: STAFF });
 
   assert.strictEqual(row.isSelf, true);
   assert.strictEqual(row.canApprove, false);

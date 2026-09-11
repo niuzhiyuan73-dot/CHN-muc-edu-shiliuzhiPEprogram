@@ -41,9 +41,6 @@
       </view>
     </view>
 
-    <!-- 审核权只来自演示口径时必须在页面上说清楚，别被当成真实规则 -->
-    <view wx:if="{{view.demoNotice}}" class="demo-notice">{{view.demoNotice}}</view>
-
     <!-- ========== 申请列表 ========== -->
     <view class="card">
       <view wx:if="{{view.rows.length === 0}}" class="empty-note">{{view.emptyText}}</view>

@@ -56,9 +56,6 @@
       >{{acting ? '正在重置…' : '开始新赛季（重置）'}}</view>
     </view>
 
-    <!-- 重置权来自演示口径时必须在页面上说清楚，别被当成真实规则 -->
-    <view wx:if="{{view.demoNotice}}" class="demo-notice">{{view.demoNotice}}</view>
-
     <view wx:if="{{isMock}}" class="mock-note">
       当前为本地模拟数据，重置只写入内存，重启小程序即清空
     </view>

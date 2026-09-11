@@ -27,9 +27,6 @@
       <view class="btn btn-accent btn-block" bindtap="onGoPublish">发布新公告</view>
     </view>
 
-    <!-- 发布权来自演示口径时必须在页面上说清楚，别被当成真实规则 -->
-    <view wx:if="{{view.demoNotice}}" class="demo-notice">{{view.demoNotice}}</view>
-
     <!-- ========== 台账 ========== -->
     <view class="card">
       <view class="manage-summary">

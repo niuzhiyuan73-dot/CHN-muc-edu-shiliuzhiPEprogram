@@ -5,12 +5,14 @@
  * 两处的规则一字不差，只是管的事不同，所以把判定抽到这里，各业务模块
  * 只声明自己需要的门槛。
  *
- * 【为什么 isMock 要放宽】
- * 种子里 24 位会员的 role 全是普通会员（seed.js 里写死为 0），没有干事、
- * 没有管理员。严格按 role >= STAFF 判定的话，本地任何一次审核、任何一条
- * 公告都永远做不了，这两条链路在演示数据源里就是死的。
- * 所以 mock 下放宽为「已登录且审核通过的会员即可」，但界面必须把这一点
- * 明示出来（见各视图模型的 demoNotice），免得把演示口径当成正式规则。
+ * 【为什么不再为演示数据源放宽】
+ * 早先种子里 24 位会员的 role 全是普通会员，严格判定会让本地任何一次审核、
+ * 任何一条公告都做不了，于是 mock 下放宽成「是会员就能管」。代价是本地看到
+ * 的权限规则与云端不是一套：普通会员在自己手机上也看得见审核、公告管理、
+ * 赛季重置、发布赛事这些入口，而线上他们一个都点不到。
+ * 现在种子里已经有干事（张宇轩 u02）与管理员（巴特尔 u01），放宽就没有
+ * 存在的理由了——判定只剩角色一条，本地与云端完全一致。要在本地演示管理
+ * 功能，把 mock.js 的 DEFAULT_CURRENT_USER_ID 换成 'u01' / 'u02' 即可。
  *
  * 【为什么不在页面里判】
  * 页面里写 `user.role >= 1` 这种判断，Node 跑不了，等于没法测；而且
@@ -35,17 +37,17 @@ function isActive(actor) {
 /**
  * 有没有管理资格。
  *
+ * 判定只看角色，与数据源无关——本地与云端走的是同一条规则。
+ *
  * @param {Object|null} actor 操作者
  * @param {Object} [options]
- * @param {boolean} [options.isMock=false] 演示数据源下放宽为「是会员即可」
- * @param {number} [options.minRole=ROLE.STAFF] 正式环境要求的角色门槛
+ * @param {number} [options.minRole=ROLE.STAFF] 要求的角色门槛
  * @returns {boolean}
  */
 function canManage(actor, options = {}) {
-  const { isMock = false, minRole = ROLE.STAFF } = options;
+  const { minRole = ROLE.STAFF } = options;
 
   if (!isActive(actor)) return false;
-  if (isMock) return true;
 
   return Number(actor.role || 0) >= minRole;
 }

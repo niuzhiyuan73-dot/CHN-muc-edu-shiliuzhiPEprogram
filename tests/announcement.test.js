@@ -69,26 +69,22 @@ describe('sortAnnouncements —— 置顶优先，其余按时间倒序', () => 
 
 describe('canPublish —— 发布权', () => {
   test('未登录没有发布权', () => {
-    assert.strictEqual(canPublish(null, { isMock: false }), false);
+    assert.strictEqual(canPublish(null), false);
   });
 
   test('待审核的账号没有发布权', () => {
-    assert.strictEqual(
-      canPublish(member({ status: USER_STATUS.PENDING }), { isMock: false }),
-      false
-    );
+    assert.strictEqual(canPublish(member({ status: USER_STATUS.PENDING })), false);
   });
 
-  test('正式环境要求干事及以上', () => {
-    assert.strictEqual(canPublish(member(), { isMock: false }), false);
-    assert.strictEqual(canPublish(staff(), { isMock: false }), true);
-    assert.strictEqual(canPublish(staff({ role: ROLE.ADMIN }), { isMock: false }), true);
+  test('要求干事及以上', () => {
+    assert.strictEqual(canPublish(member()), false);
+    assert.strictEqual(canPublish(staff()), true);
+    assert.strictEqual(canPublish(staff({ role: ROLE.ADMIN })), true);
   });
 
-  test('mock 下放宽为「已登录的正常会员即可」', () => {
-    assert.strictEqual(canPublish(member(), { isMock: true }), true);
-    // 放宽的只是角色门槛，待审核依旧不行
-    assert.strictEqual(canPublish(member({ status: USER_STATUS.PENDING }), { isMock: true }), false);
+  test('普通会员在本地模拟数据源里也没有发布权', () => {
+    // 判定只看角色，不因数据源而放宽——否则本地上普通会员会看到发布入口
+    assert.strictEqual(canPublish(member(), { isMock: true }), false);
   });
 });
 
@@ -239,8 +235,8 @@ describe('buildAnnouncementRow —— 整形列表行', () => {
     assert.strictEqual(buildAnnouncementRow(published, { actor: member() }).canArchive, false);
     // 访客也不行
     assert.strictEqual(buildAnnouncementRow(published, { actor: null }).canArchive, false);
-    // 演示口径下放宽
-    assert.strictEqual(buildAnnouncementRow(published, { actor: member(), isMock: true }).canArchive, true);
+    // 本地模拟数据源里也不给普通会员放开
+    assert.strictEqual(buildAnnouncementRow(published, { actor: member(), isMock: true }).canArchive, false);
   });
 
   test('已下架的不能再下架', () => {

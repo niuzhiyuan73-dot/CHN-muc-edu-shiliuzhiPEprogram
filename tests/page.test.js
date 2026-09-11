@@ -266,6 +266,14 @@ function loginAs(overrides) {
   return app.globalData.userInfo;
 }
 
+/**
+ * 演示数据里的两种管理者。
+ * 管理门槛是干事，赛季重置是管理员——普通会员（默认 u06）与线上一样被挡住。
+ * 管理类动作要按这两个身份登录，别再拿普通会员顶替。
+ */
+const STAFF = { role: 1, _id: 'u02', nickName: '张宇轩' };
+const ADMIN = { role: 2, _id: 'u01', nickName: '巴特尔' };
+
 /* ============================================================
  * 首页
  * ============================================================ */
@@ -450,15 +458,30 @@ test('我的页 —— 待审核账号自己还没转正，同样没有审核入
   assert.strictEqual(page.data.reviewEntry.visible, false);
 });
 
-test('我的页 —— 正常会员看到审核入口，点进去跳转审核页', async () => {
+test('我的页 —— 普通会员看不到任何管理入口', async () => {
   resetSession();
   app.globalData.userInfo = fakeMember();
 
   const page = instantiate(profileConfig);
   await page.onLoad({});
 
+  // 演示数据源不再放宽：普通会员与线上一样，三个管理入口一个都不给
+  assert.strictEqual(page.data.reviewEntry.visible, false);
+  assert.strictEqual(page.data.adminEntry.visible, false);
+  assert.strictEqual(page.data.seasonEntry.visible, false);
+});
+
+test('我的页 —— 干事看到审核入口，点进去跳转审核页', async () => {
+  resetSession();
+  app.globalData.userInfo = fakeMember({ role: 1 });
+
+  const page = instantiate(profileConfig);
+  await page.onLoad({});
+
   assert.strictEqual(page.data.reviewEntry.visible, true);
   assert.ok(page.data.reviewEntry.hint, '入口卡上要写清楚点进去是干什么的');
+  // 赛季重置门槛是管理员，干事不该看到
+  assert.strictEqual(page.data.seasonEntry.visible, false);
 
   calls.navigations.length = 0;
   page.onGoReview();
@@ -467,7 +490,7 @@ test('我的页 —— 正常会员看到审核入口，点进去跳转审核页
 
 test('我的页 —— 退出登录后 onShow 会把审核入口收回去', async () => {
   resetSession();
-  app.globalData.userInfo = fakeMember();
+  app.globalData.userInfo = fakeMember({ role: 1 });
 
   const page = instantiate(profileConfig);
   await page.onLoad({});
@@ -486,9 +509,9 @@ test('我的页 —— 访客看不到公告管理入口', async () => {
   assert.strictEqual(page.data.adminEntry.visible, false);
 });
 
-test('我的页 —— 正常会员看到公告管理入口，点进去跳转公告管理页', async () => {
+test('我的页 —— 干事看到公告管理入口，点进去跳转公告管理页', async () => {
   resetSession();
-  app.globalData.userInfo = fakeMember();
+  app.globalData.userInfo = fakeMember({ role: 1 });
 
   const page = instantiate(profileConfig);
   await page.onLoad({});
@@ -503,7 +526,7 @@ test('我的页 —— 正常会员看到公告管理入口，点进去跳转公
 
 test('我的页 —— 退出登录后 onShow 会把公告管理入口一并收回去', async () => {
   resetSession();
-  app.globalData.userInfo = fakeMember();
+  app.globalData.userInfo = fakeMember({ role: 1 });
 
   const page = instantiate(profileConfig);
   await page.onLoad({});
@@ -522,9 +545,9 @@ test('我的页 —— 访客看不到赛季管理入口', async () => {
   assert.strictEqual(page.data.seasonEntry.visible, false);
 });
 
-test('我的页 —— 正常会员看到赛季管理入口，点进去跳转赛季管理页', async () => {
+test('我的页 —— 管理员看到赛季管理入口，点进去跳转赛季管理页', async () => {
   resetSession();
-  app.globalData.userInfo = fakeMember();
+  app.globalData.userInfo = fakeMember({ role: 2, _id: 'u01', nickName: '巴特尔' });
 
   const page = instantiate(profileConfig);
   await page.onLoad({});
@@ -539,7 +562,7 @@ test('我的页 —— 正常会员看到赛季管理入口，点进去跳转赛
 
 test('我的页 —— 退出登录后 onShow 会把赛季管理入口一并收回去', async () => {
   resetSession();
-  app.globalData.userInfo = fakeMember();
+  app.globalData.userInfo = fakeMember({ role: 2, _id: 'u01', nickName: '巴特尔' });
 
   const page = instantiate(profileConfig);
   await page.onLoad({});
@@ -1118,9 +1141,12 @@ test('赛事页 —— 加载失败时给出提示而不是白屏', async () => 
  * 赛事闭环（列表 → 详情 → 发布 → 名次录入）
  * ============================================================ */
 
-/** 造一场「报名中」的赛事，返回落库后的记录 */
+/**
+ * 造一场「报名中」的赛事，返回落库后的记录。
+ * 发布门槛是干事，这里直接以管理员身份落库，与会话解耦——
+ * 用例想以谁的身份看赛事，自己在 onLoad 前摆登录态即可。
+ */
 async function publishTestEvent(overrides = {}) {
-  const user = loginAs();
   const result = await facade.publishEvent(
     {
       title: '测试单打赛',
@@ -1135,7 +1161,7 @@ async function publishTestEvent(overrides = {}) {
       quota: 8,
       ...overrides,
     },
-    user._id
+    ADMIN._id
   );
   assert.strictEqual(result.ok, true, `发布赛事失败：${result.firstError}`);
   return result.record;
@@ -1188,14 +1214,20 @@ test('赛事页 —— 点空白行不会乱跳', async () => {
 });
 
 test('赛事页 —— 有管理权才渲染发布入口', async () => {
-  loginAs();
+  loginAs(STAFF);
   const allowed = instantiate(eventsConfig);
   await allowed.onLoad();
-  assert.strictEqual(allowed.data.view.canPublish, true, '演示数据源下登录会员即可发布');
+  assert.strictEqual(allowed.data.view.canPublish, true, '干事才给发布入口');
 
   calls.navigations.length = 0;
   allowed.onOpenPublish();
   assert.deepStrictEqual(calls.navigations, ['/pages/event-edit/event-edit']);
+
+  // 普通会员登录也一样看不到：演示数据源不再放宽
+  loginAs();
+  const member = instantiate(eventsConfig);
+  await member.onLoad();
+  assert.strictEqual(member.data.view.canPublish, false, '普通会员不给发布入口');
 
   resetSession();
   const blocked = instantiate(eventsConfig);
@@ -1245,7 +1277,7 @@ test('赛事详情 —— 找不到的赛事给出提示而不是白屏', async 
 });
 
 test('赛事详情 —— 开始赛事之后可以给报名者代签', async () => {
-  loginAs();
+  loginAs(STAFF);
   const created = await publishTestEvent();
   await facade.signUpEvent(created._id, 'u06');
 
@@ -1264,7 +1296,7 @@ test('赛事详情 —— 开始赛事之后可以给报名者代签', async () 
 });
 
 test('赛事详情 —— 手工指定种子：点抽签先弹面板，凑齐人数才真正落签', async () => {
-  loginAs();
+  loginAs(STAFF);
   const created = await publishTestEvent({ seedMode: SEED_MODE.MANUAL, seedCount: 2 });
   for (const userId of ['u06', 'u01', 'u02']) await facade.signUpEvent(created._id, userId);
 
@@ -1320,7 +1352,7 @@ test('赛事详情 —— 手工指定种子：点抽签先弹面板，凑齐人
 });
 
 test('赛事详情 —— 手工种子面板可以清空重选、点遮罩关掉', async () => {
-  loginAs();
+  loginAs(STAFF);
   const created = await publishTestEvent({ seedMode: SEED_MODE.MANUAL, seedCount: 2 });
   for (const userId of ['u06', 'u01', 'u02']) await facade.signUpEvent(created._id, userId);
 
@@ -1349,7 +1381,7 @@ test('发布赛事 —— 未登录时不给表单', () => {
 });
 
 test('发布赛事 —— 等级与三四名赛没选就提交，逐字段报错', async () => {
-  loginAs();
+  loginAs(STAFF);
   const page = instantiate(eventEditConfig);
   page.onLoad();
 
@@ -1367,7 +1399,7 @@ test('发布赛事 —— 等级与三四名赛没选就提交，逐字段报错
 });
 
 test('发布赛事 —— 填全后提交落库，并退回上一页', async () => {
-  loginAs();
+  loginAs(STAFF);
   const page = instantiate(eventEditConfig);
   page.onLoad();
 
@@ -1408,10 +1440,10 @@ test('录入名次 —— 未登录时整页挡住，不给名单', async () => 
 });
 
 test('录入名次 —— 一个名次都没填就提交，给出提示', async () => {
-  loginAs();
+  loginAs(STAFF);
   const created = await publishTestEvent();
   await facade.signUpEvent(created._id, 'u06');
-  await facade.startEvent(created._id, 'u06');
+  await facade.startEvent(created._id, ADMIN._id);
 
   const page = instantiate(eventPlacementConfig);
   await page.onLoad({ eventId: created._id });
@@ -1422,10 +1454,10 @@ test('录入名次 —— 一个名次都没填就提交，给出提示', async 
 });
 
 test('录入名次 —— 提交后赛事结束、名次落定', async () => {
-  loginAs();
+  loginAs(STAFF);
   const created = await publishTestEvent();
   await facade.signUpEvent(created._id, 'u06');
-  await facade.startEvent(created._id, 'u06');
+  await facade.startEvent(created._id, ADMIN._id);
 
   const page = instantiate(eventPlacementConfig);
   await page.onLoad({ eventId: created._id });
@@ -2255,9 +2287,9 @@ test('会员审核页 —— 待审核账号自己还没转正，不能去审别
   assert.match(page.data.view.blockedText, /权限/);
 });
 
-test('会员审核页 —— 正常会员看到两条待审申请，并挂出演示口径提示', async () => {
+test('会员审核页 —— 干事看到两条待审申请', async () => {
   resetSession();
-  app.globalData.userInfo = activeMember();
+  app.globalData.userInfo = fakeMember(STAFF);
 
   const page = instantiate(memberReviewConfig);
   await page.onLoad();
@@ -2265,9 +2297,8 @@ test('会员审核页 —— 正常会员看到两条待审申请，并挂出演
   assert.strictEqual(page.data.view.allowed, true);
   assert.strictEqual(page.data.view.rows.length, 2);
   assert.strictEqual(page.data.view.pendingCount, 2);
-  assert.ok(page.data.view.demoNotice, 'mock 放宽了审核权，必须在页面上写明这是演示口径');
   assert.strictEqual(page.data.view.tabs.filter((item) => item.active).length, 1);
-  assert.strictEqual(page.data.view.viewer.roleLabel, '会员');
+  assert.strictEqual(page.data.view.viewer.roleLabel, '干事');
 
   const text = JSON.stringify(page.data.view);
   assert.ok(!text.includes('undefined'), '视图数据里出现了 undefined');
@@ -2277,7 +2308,7 @@ test('会员审核页 —— 正常会员看到两条待审申请，并挂出演
 
 test('会员审核页 —— 通过后申请离开待审列表，申请人成为正式会员', async () => {
   resetSession();
-  app.globalData.userInfo = activeMember();
+  app.globalData.userInfo = fakeMember(STAFF);
 
   const page = instantiate(memberReviewConfig);
   await page.onLoad();
@@ -2297,7 +2328,7 @@ test('会员审核页 —— 通过后申请离开待审列表，申请人成为
 
 test('会员审核页 —— 驳回不填理由被拦下，申请原样不动', async () => {
   resetSession();
-  app.globalData.userInfo = activeMember();
+  app.globalData.userInfo = fakeMember(STAFF);
 
   const page = instantiate(memberReviewConfig);
   await page.onLoad();
@@ -2315,7 +2346,7 @@ test('会员审核页 —— 驳回不填理由被拦下，申请原样不动', 
 
 test('会员审核页 —— 驳回后进「已处理」标签页，理由留在卡片上', async () => {
   resetSession();
-  app.globalData.userInfo = activeMember();
+  app.globalData.userInfo = fakeMember(STAFF);
 
   const page = instantiate(memberReviewConfig);
   await page.onLoad();
@@ -2342,7 +2373,7 @@ test('会员审核页 —— 驳回后进「已处理」标签页，理由留在
 
 test('会员审核页 —— 重复点当前标签不做无谓的重新加载', async () => {
   resetSession();
-  app.globalData.userInfo = activeMember();
+  app.globalData.userInfo = fakeMember(STAFF);
 
   const page = instantiate(memberReviewConfig);
   await page.onLoad();
@@ -2356,7 +2387,7 @@ test('会员审核页 —— 重复点当前标签不做无谓的重新加载', 
 
 test('会员审核页 —— 下拉刷新会收起刷新动画', async () => {
   resetSession();
-  app.globalData.userInfo = activeMember();
+  app.globalData.userInfo = fakeMember(STAFF);
 
   const page = instantiate(memberReviewConfig);
   await page.onLoad();
@@ -2449,9 +2480,9 @@ test('公告管理页 —— 访客被整页挡住，一条公告台账都拿不
   assert.match(page.data.view.blockedText, /登录/);
 });
 
-test('公告管理页 —— 正常会员看到台账，并挂出演示口径提示', async () => {
+test('公告管理页 —— 干事看到台账', async () => {
   resetSession();
-  app.globalData.userInfo = activeMember();
+  app.globalData.userInfo = fakeMember(STAFF);
 
   const page = instantiate(announcementManageConfig);
   await page.onLoad();
@@ -2460,14 +2491,13 @@ test('公告管理页 —— 正常会员看到台账，并挂出演示口径提
   assert.strictEqual(page.data.view.total, 6);
   assert.strictEqual(page.data.view.publishedCount, 6);
   assert.strictEqual(page.data.view.archivedCount, 0);
-  assert.ok(page.data.view.demoNotice.length > 0);
   // 有发布权时每一行都给下架按钮
   assert.strictEqual(page.data.view.rows[0].canArchive, true);
 });
 
 test('公告管理页 —— 下架后台账里仍在、沉到底部且不再给按钮，公开页少一条', async () => {
   resetSession();
-  app.globalData.userInfo = activeMember();
+  app.globalData.userInfo = fakeMember(STAFF);
 
   const page = instantiate(announcementManageConfig);
   await page.onLoad();
@@ -2489,7 +2519,7 @@ test('公告管理页 —— 下架后台账里仍在、沉到底部且不再给
 
 test('公告管理页 —— 点发布跳到发布页', async () => {
   resetSession();
-  app.globalData.userInfo = activeMember();
+  app.globalData.userInfo = fakeMember(STAFF);
 
   const page = instantiate(announcementManageConfig);
   await page.onLoad();
@@ -2501,7 +2531,7 @@ test('公告管理页 —— 点发布跳到发布页', async () => {
 
 test('公告管理页 —— 从发布页返回时刷新台账', async () => {
   resetSession();
-  app.globalData.userInfo = activeMember();
+  app.globalData.userInfo = fakeMember(STAFF);
 
   const page = instantiate(announcementManageConfig);
   await page.onLoad();
@@ -2510,7 +2540,7 @@ test('公告管理页 —— 从发布页返回时刷新台账', async () => {
   // 模拟在发布页里发了一条，返回时 onShow 应当把它带出来
   await facade.publishAnnouncement(
     { title: '临时通知', content: '明天停训一次。', category: '通知' },
-    'u06'
+    STAFF._id
   );
   await page.onShow();
 
@@ -2530,9 +2560,9 @@ test('发布公告页 —— 未登录被整页挡住，表单都不给', () => 
   assert.match(page.data.blockReason, /登录/);
 });
 
-test('发布公告页 —— 正常会员能填表，填好后提交落进数据源并返回上一页', async () => {
+test('发布公告页 —— 干事能填表，填好后提交落进数据源并返回上一页', async () => {
   resetSession();
-  app.globalData.userInfo = activeMember();
+  app.globalData.userInfo = fakeMember(STAFF);
 
   const page = instantiate(announcementEditConfig);
   page.onLoad();
@@ -2554,7 +2584,7 @@ test('发布公告页 —— 正常会员能填表，填好后提交落进数据
 
 test('发布公告页 —— 标题为空时不提交，逐字段报错', async () => {
   resetSession();
-  app.globalData.userInfo = activeMember();
+  app.globalData.userInfo = fakeMember(STAFF);
 
   const page = instantiate(announcementEditConfig);
   page.onLoad();
@@ -2574,7 +2604,7 @@ test('发布公告页 —— 标题为空时不提交，逐字段报错', async 
 
 test('发布公告页 —— 输入标题会把该项的旧错误清掉', async () => {
   resetSession();
-  app.globalData.userInfo = activeMember();
+  app.globalData.userInfo = fakeMember(STAFF);
 
   const page = instantiate(announcementEditConfig);
   page.onLoad();
@@ -2760,9 +2790,9 @@ test('赛季管理页 —— 访客被整页挡住，赛季数据一个字段都
   assert.strictEqual(page.data.view.policyText, '');
 });
 
-test('赛季管理页 —— 正常会员看到赛季状态与压分说明，并挂出演示口径提示', async () => {
+test('赛季管理页 —— 管理员看到赛季状态与压分说明', async () => {
   resetSession();
-  app.globalData.userInfo = activeMember();
+  app.globalData.userInfo = fakeMember(ADMIN);
 
   const page = instantiate(seasonManageConfig);
   await page.onLoad();
@@ -2771,12 +2801,11 @@ test('赛季管理页 —— 正常会员看到赛季状态与压分说明，并
   assert.strictEqual(page.data.view.hasReset, false);
   assert.strictEqual(page.data.view.resetText, '本赛季尚未重置');
   assert.ok(page.data.view.policyText, '要说明重置后会怎么压分');
-  assert.ok(page.data.view.demoNotice.length > 0);
 });
 
 test('赛季管理页 —— 执行重置后状态翻新并给出成功提示', async () => {
   resetSession();
-  app.globalData.userInfo = activeMember();
+  app.globalData.userInfo = fakeMember(ADMIN);
 
   const page = instantiate(seasonManageConfig);
   await page.onLoad();
@@ -2793,14 +2822,14 @@ test('赛季管理页 —— 执行重置后状态翻新并给出成功提示', 
 
 test('赛季管理页 —— 从别处返回时刷新状态', async () => {
   resetSession();
-  app.globalData.userInfo = activeMember();
+  app.globalData.userInfo = fakeMember(ADMIN);
 
   const page = instantiate(seasonManageConfig);
   await page.onLoad();
   assert.strictEqual(page.data.view.hasReset, false);
 
   // 模拟管理员在别处刚重置过，返回本页时不该仍显示「尚未重置」
-  await facade.resetSeason('u06');
+  await facade.resetSeason(ADMIN._id);
   await page.onShow();
 
   assert.strictEqual(page.data.view.hasReset, true);
@@ -2808,7 +2837,7 @@ test('赛季管理页 —— 从别处返回时刷新状态', async () => {
 
 test('赛季管理页 —— 下拉刷新会收掉刷新动画', async () => {
   resetSession();
-  app.globalData.userInfo = activeMember();
+  app.globalData.userInfo = fakeMember(ADMIN);
 
   const page = instantiate(seasonManageConfig);
   await page.onLoad();

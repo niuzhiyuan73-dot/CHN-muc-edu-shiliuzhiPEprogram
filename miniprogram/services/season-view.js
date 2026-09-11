@@ -59,15 +59,12 @@ function describePolicy(policy) {
  *
  * @param {Object} [options]
  * @param {Object|null} [options.user] 当前登录会员；传 null 或不传都算访客
- * @param {boolean} [options.isMock=false] 是否演示数据源（放宽为「会员即可」）
  * @returns {Promise<Object>}
  */
 async function loadSeasonManageView(options = {}) {
-  const { user = null, isMock: mock = false } = options;
+  const { user = null } = options;
 
-  const relaxed = canResetSeason(user, { isMock: true });
-  const strict = canResetSeason(user, { isMock: false });
-  const allowed = canResetSeason(user, { isMock: mock });
+  const allowed = canResetSeason(user);
 
   const viewer = {
     userId: user ? user._id : null,
@@ -87,7 +84,6 @@ async function loadSeasonManageView(options = {}) {
       resetText: '',
       versionText: '',
       policyText: '',
-      demoNotice: '',
     };
   }
 
@@ -106,10 +102,6 @@ async function loadSeasonManageView(options = {}) {
     // 拿它当赛季数会让界面上的赛季随日常操作一路虚涨
     versionText: `第 ${Number(state.seasonNumber || 1)} 赛季`,
     policyText: describePolicy(state.policy),
-    demoNotice:
-      relaxed && !strict
-        ? '当前为演示数据源：任何已登录会员都可以执行赛季重置，正式环境需由管理员操作'
-        : '',
   };
 }
 

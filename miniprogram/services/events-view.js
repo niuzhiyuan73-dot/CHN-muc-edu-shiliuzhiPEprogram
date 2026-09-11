@@ -227,14 +227,13 @@ function bronzeHintOf(event) {
  * @param {Object} [ctx]
  * @param {Object|null} [ctx.actor] 当前看页面的会员
  * @param {Map<string, Array<Object>>} [ctx.signupMap] 赛事编号 → 报名记录
- * @param {boolean} [ctx.isMock=false] 演示数据源下放宽管理权
  * @returns {Array<Object>}
  */
 function buildEventListRows(events, ctx = {}) {
-  const { actor = null, signupMap = new Map(), isMock: mock = false } = ctx;
+  const { actor = null, signupMap = new Map() } = ctx;
   return sortEvents(events).map((event) => {
     const signups = signupMap.get(event._id) || [];
-    return buildEventRow(event, { actor, signups, isMock: mock });
+    return buildEventRow(event, { actor, signups });
   });
 }
 
@@ -262,12 +261,11 @@ async function loadSignupMap(events) {
  * @param {Object} [ctx]
  * @param {Object|null} [ctx.actor]
  * @param {Object|null} [ctx.event] 所属赛事，用于判代签权
- * @param {boolean} [ctx.isMock=false]
  * @returns {Array<Object>}
  */
 function buildSignupRows(signups, memberMap, ctx = {}) {
-  const { actor = null, event = null, isMock: mock = false } = ctx;
-  const mayCheckIn = canCheckIn(event, actor, { isMock: mock });
+  const { actor = null, event = null } = ctx;
+  const mayCheckIn = canCheckIn(event, actor);
 
   return asArray(signups)
     .filter((signup) => signup && signup.status !== SIGNUP_STATUS.CANCELED)
@@ -389,7 +387,7 @@ function byeTextOf(draw, memberMap) {
  * @param {Map<string, Object>} memberMap 会员编号 → 档案
  * @param {Object} [ctx]
  * @param {Object|null} [ctx.actor] 当前登录会员
- * @param {boolean} [ctx.isMock=false]
+ * @param {boolean} [ctx.isMock=false] 是否放宽「确认」权（与 match-record 同一口径）
  * @returns {Array<Object>}
  */
 function buildBracketRows(records, event, memberMap, ctx = {}) {
@@ -398,11 +396,10 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
   const totalRounds = totalRoundsOf(event && event.draw);
   const nameOf = (id) => (id ? (memberMap.get(id) || {}).nickName || id : '待定');
 
-  // 录分的权限要和真正写入时一致：云端只认参赛者与管理员；演示数据源
-  // 放宽为「登录即可」，否则单账号演示下没法把签表走完（见 mock.submitMatch）
-  const mayManage = mock
-    ? canManageEvent(actor, { isMock: true })
-    : Boolean(actor && actor.role === ROLE.ADMIN);
+  // 录分的权限要和真正写入时一致：只认参赛者本人，或管理员代录
+  // （见 mock.submitMatch 与云端 submitScheduledMatch）。这里不按数据源
+  // 放宽——否则普通会员会在签表上看到一列不属于自己的「录分」入口。
+  const mayManage = Boolean(actor && actor.role === ROLE.ADMIN);
   const actorId = actor ? actor._id : null;
 
   return asArray(records)
@@ -439,13 +436,6 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
     });
 }
 
-/** 演示口径的说明。只有「数据源放宽了权限、正式规则不允许」时才提示 */
-function demoNoticeOf(mock, actor) {
-  const relaxed = canManageEvent(actor, { isMock: true });
-  const strict = canManageEvent(actor, { isMock: false });
-  if (!mock || !relaxed || strict) return '';
-  return '当前为演示数据源：任何已登录会员都可以管理赛事，正式环境需由管理员操作';
-}
 
 /**
  * 装载赛事页的全部数据（赛事列表 + 赛季积分榜）。
@@ -457,12 +447,10 @@ function demoNoticeOf(mock, actor) {
  *
  * @param {Object} [options]
  * @param {Object|null} [options.user] 当前登录会员
- * @param {boolean} [options.isMock=false] 是否演示数据源
  * @returns {Promise<Object>}
  */
 async function loadEventsView(options = {}) {
   const usesExplicitUser = Object.prototype.hasOwnProperty.call(options, 'user');
-  const { isMock: mock = false } = options;
 
   const [current, members, events, season] = await Promise.all([
     getCurrentUser(),
@@ -478,8 +466,8 @@ async function loadEventsView(options = {}) {
   const myRow = (myId && rows.find((row) => row.isMe)) || null;
 
   const signupMap = await loadSignupMap(events);
-  const eventRows = buildEventListRows(events, { actor, signupMap, isMock: mock });
-  const canPublish = canManageEvent(actor, { isMock: mock });
+  const eventRows = buildEventListRows(events, { actor, signupMap });
+  const canPublish = canManageEvent(actor);
 
   return {
     seasonText: describeSeason(season),
@@ -511,7 +499,7 @@ async function loadEventsView(options = {}) {
  * @param {string} eventId
  * @param {Object} [options]
  * @param {Object|null} [options.user]
- * @param {boolean} [options.isMock=false]
+ * @param {boolean} [options.isMock=false] 是否放宽签表上的「确认」权
  * @returns {Promise<Object>}
  */
 async function loadEventDetailView(eventId, options = {}) {
@@ -542,7 +530,6 @@ async function loadEventDetailView(eventId, options = {}) {
       manualSeedNeeded: 0,
       resultRows: [],
       hasResults: false,
-      demoNotice: '',
     };
   }
 
@@ -552,10 +539,10 @@ async function loadEventDetailView(eventId, options = {}) {
     getEventSignups(eventId),
     getMatchRecords({ eventId }),
   ]);
-  const row = buildEventRow(event, { actor, signups, isMock: mock });
+  const row = buildEventRow(event, { actor, signups });
   const memberMap = new Map(asArray(members).map((member) => [member._id, member]));
 
-  const signupRows = buildSignupRows(signups, memberMap, { actor, event, isMock: mock });
+  const signupRows = buildSignupRows(signups, memberMap, { actor, event });
   const bracketRows = buildBracketRows(ledger, event, memberMap, { actor, isMock: mock });
   const resultRows = buildResultRows(event, memberMap, actor);
 
@@ -584,7 +571,6 @@ async function loadEventDetailView(eventId, options = {}) {
     manualSeedNeeded: actualSeedCount(row.seedCount, seedCandidates.length),
     resultRows,
     hasResults: resultRows.length > 0,
-    demoNotice: demoNoticeOf(mock, actor),
   };
 }
 
@@ -598,12 +584,10 @@ async function loadEventDetailView(eventId, options = {}) {
  * @param {string} eventId
  * @param {Object} [options]
  * @param {Object|null} [options.user]
- * @param {boolean} [options.isMock=false]
  * @returns {Promise<Object>}
  */
 async function loadEventPlacementView(eventId, options = {}) {
   const usesExplicitUser = Object.prototype.hasOwnProperty.call(options, 'user');
-  const { isMock: mock = false } = options;
 
   const [current, members, events] = await Promise.all([
     getCurrentUser(),
@@ -612,7 +596,7 @@ async function loadEventPlacementView(eventId, options = {}) {
   ]);
   const actor = usesExplicitUser ? options.user : current;
 
-  const allowed = canManageEvent(actor, { isMock: mock });
+  const allowed = canManageEvent(actor);
 
   // 闸门：没有管理权就到此为止，一个字段都不下发
   if (!allowed) {
@@ -627,7 +611,6 @@ async function loadEventPlacementView(eventId, options = {}) {
       hasRows: false,
       emptyNote: '',
       bronzeHint: '',
-      demoNotice: '',
     };
   }
 
@@ -644,15 +627,14 @@ async function loadEventPlacementView(eventId, options = {}) {
       hasRows: false,
       emptyNote: '',
       bronzeHint: '',
-      demoNotice: demoNoticeOf(mock, actor),
     };
   }
 
   const signups = await getEventSignups(eventId);
-  const row = buildEventRow(event, { actor, signups, isMock: mock });
+  const row = buildEventRow(event, { actor, signups });
   const memberMap = new Map(asArray(members).map((member) => [member._id, member]));
-  const rows = buildSignupRows(signups, memberMap, { actor, event, isMock: mock });
-  const canEdit = canFinishEvent(event, actor, { isMock: mock });
+  const rows = buildSignupRows(signups, memberMap, { actor, event });
+  const canEdit = canFinishEvent(event, actor);
 
   let statusNote = '';
   if (!canEdit) {
@@ -672,7 +654,6 @@ async function loadEventPlacementView(eventId, options = {}) {
     hasRows: rows.length > 0,
     emptyNote: '还没有人报名，录入名次前先让会员报名',
     bronzeHint: bronzeHintOf(event),
-    demoNotice: demoNoticeOf(mock, actor),
   };
 }
 

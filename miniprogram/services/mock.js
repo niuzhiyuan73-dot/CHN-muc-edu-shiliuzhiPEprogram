@@ -592,14 +592,11 @@ async function submitMatch(params = {}) {
       return { ok: false, match: null, errors: {}, scoreErrors: [], firstError: '找不到这场比赛' };
     }
     const actor = (params.actor) || null;
-    // 抽签比赛的成绩由场上的人补录。演示数据源只有一个账号，若严格只认
-    // 参赛者，凡自己没上场的比赛都录不进去，整张签表走不到底——所以与
-    // canConfirm 一样放宽为「登录即可录入」，并在界面上标注这是演示口径。
-    // 云端不放宽：那里仍只认参赛者与管理员。
-    const mayRecord =
-      isParticipant(target, actor) ||
-      roleOf(actor) === ROLE.ADMIN ||
-      canManageEvent(accountOf(actor), { isMock: true });
+    // 抽签比赛的成绩由场上的人补录，或由管理员代录——与云端
+    // submitScheduledMatch 一字不差。这里不按数据源放宽：签表上的「录分」
+    // 按钮与之同源（见 events-view.buildBracketRows），两处一旦分叉，
+    // 就会出现「看得见按钮、点下去却被拒」。
+    const mayRecord = isParticipant(target, actor) || roleOf(actor) === ROLE.ADMIN;
     if (!mayRecord) {
       return {
         ok: false,
@@ -870,10 +867,9 @@ async function registerMember(profile, options = {}) {
  */
 async function reviewMember(applicationId, actor, action, reason) {
   const account = userStore.findAccount(applicationId);
-  // 本数据源就是模拟数据源：审核权按 mock 口径放宽为「已登录的正常会员
-  // 即可」，界面上会明确标注这是演示口径（见 member-review-view 的
-  // demoNotice）。但「不能审自己的申请」这条不放宽。
-  const verdict = validateReview(accountOf(actor), account, action, reason, { isMock: true });
+  // 审核权不再按数据源放宽：种子里 u02 张宇轩就是干事，切到该账号即可演示。
+  // 「不能审自己的申请」这条本来就不放宽。
+  const verdict = validateReview(accountOf(actor), account, action, reason);
   if (!verdict.ok) return { ok: false, account: null, message: verdict.message };
 
   userStore.setStatus(applicationId, {
@@ -919,9 +915,8 @@ async function rejectMember(applicationId, actor, reason) {
  */
 async function publishAnnouncement(form, actor) {
   const account = accountOf(actor);
-  // 本数据源就是模拟数据源：发布权按 mock 口径放宽为「已登录的正常会员
-  // 即可」，界面上会明确标注这是演示口径（见 announcement-view 的 demoNotice）
-  if (!canPublish(account, { isMock: true })) {
+  // 发布权不再按数据源放宽：种子里 u02 张宇轩就是干事，切到该账号即可演示
+  if (!canPublish(account)) {
     return { ok: false, record: null, errors: {}, firstError: '当前账号没有发布公告的权限' };
   }
 
@@ -945,7 +940,7 @@ async function publishAnnouncement(form, actor) {
  */
 async function archiveAnnouncement(id, actor) {
   const account = accountOf(actor);
-  if (!canPublish(account, { isMock: true })) {
+  if (!canPublish(account)) {
     return { ok: false, record: null, message: '当前账号没有管理公告的权限' };
   }
 
@@ -993,16 +988,16 @@ async function getSeasonState() {
 /**
  * 执行一次赛季软重置。
  *
- * 权限判定与云端同源（services/season.js），mock 下放宽为「已登录的
- * 正常会员即可」——种子里没有管理员，否则这条链路在演示数据里就是死的。
- * 只记分界点与策略，压分交给回放引擎，与云端的行为一致。
+ * 权限判定与云端同源（services/season.js）：只有管理员可以执行。
+ * 种子里 u01 巴特尔就是管理员（见 seed.js 的 MEMBER_SEED），演示时把
+ * 当前账号切到 u01 即可。只记分界点与策略，压分交给回放引擎。
  *
  * @param {string} actor 操作者编号
  * @returns {Promise<{ok:boolean, season:Object|null, message:string}>}
  */
 async function resetSeason(actor) {
   const account = accountOf(actor);
-  if (!canResetSeason(account, { isMock: true })) {
+  if (!canResetSeason(account)) {
     return { ok: false, season: null, message: '只有管理员可以执行赛季重置' };
   }
 
@@ -1082,8 +1077,8 @@ function signUpRefusal(event, signup) {
  */
 async function publishEvent(form, actor) {
   const account = accountOf(actor);
-  // 本数据源就是模拟数据源：发布权按 mock 口径放宽为「是会员即可」
-  if (!canManageEvent(account, { isMock: true })) {
+  // 发布权不再按数据源放宽：普通会员看不到、也点不动「发布赛事」
+  if (!canManageEvent(account)) {
     return { ok: false, record: null, errors: {}, firstError: '当前账号没有发布赛事的权限' };
   }
 
@@ -1109,7 +1104,7 @@ async function startEvent(id, actor) {
   const target = findEvent(id);
   if (!target) return { ok: false, record: null, message: '找不到这场赛事' };
 
-  if (!canStartEvent(target, account, { isMock: true })) {
+  if (!canStartEvent(target, account)) {
     // 状态先判：已经开始了还说「没有权限」会让人以为是自己账号的问题
     if (target.status !== EVENT_STATUS.SIGNUP) {
       return { ok: false, record: null, message: '这场赛事已经开始了' };
@@ -1144,7 +1139,7 @@ async function drawEvent(id, actor, options = {}) {
     return { ok: false, record: null, draw: null, matches: [], message: '找不到这场赛事' };
   }
 
-  if (!canDrawEvent(target, account, { isMock: true })) {
+  if (!canDrawEvent(target, account)) {
     // 逐条说清是哪一样不满足，别把「已经开赛」混进「没有权限」
     if (target.matchType !== MATCH_TYPE.SINGLES) {
       return { ok: false, record: null, draw: null, matches: [], message: '双打赛事暂不支持抽签' };
@@ -1260,7 +1255,7 @@ async function checkInEvent(id, userId, actor) {
   const target = findEvent(id);
   if (!target) return { ok: false, record: null, message: '找不到这场赛事' };
 
-  if (!canCheckIn(target, account, { isMock: true })) {
+  if (!canCheckIn(target, account)) {
     return { ok: false, record: null, message: '当前账号不能为会员签到' };
   }
   if (!userId) return { ok: false, record: null, message: '请指定要签到的会员' };
@@ -1292,7 +1287,7 @@ async function finishEvent(id, results, actor) {
     return { ok: false, record: null, errors: {}, firstError: '找不到这场赛事' };
   }
 
-  if (!canFinishEvent(target, account, { isMock: true })) {
+  if (!canFinishEvent(target, account)) {
     const firstError =
       target.status !== EVENT_STATUS.ONGOING ? '只有进行中的赛事可以录入名次' : '当前账号没有管理赛事的权限';
     return { ok: false, record: null, errors: {}, firstError };

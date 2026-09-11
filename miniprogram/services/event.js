@@ -86,8 +86,7 @@ const VALID_SEED_COUNTS = SEED_COUNTS;
  * 有没有发布 / 管理赛事的资格。
  *
  * @param {Object|null} actor
- * @param {Object} [options]
- * @param {boolean} [options.isMock=false] 演示数据源下放宽为「是会员即可」
+ * @param {Object} [options] 透传给 permission.canManage（如 minRole）
  * @returns {boolean}
  */
 function canManageEvent(actor, options = {}) {
@@ -640,11 +639,10 @@ function signupStateOf(signup) {
  * @param {Object} [ctx]
  * @param {Object|null} [ctx.actor] 当前看页面的会员
  * @param {Array<Object>} [ctx.signups] 这场赛事的报名记录
- * @param {boolean} [ctx.isMock=false] 是否放宽管理权
  * @returns {Object}
  */
 function buildEventRow(event, ctx = {}) {
-  const { actor = null, signups = [], isMock: mock = false } = ctx;
+  const { actor = null, signups = [] } = ctx;
 
   const mySignup = signupOf(signups, actor ? actor._id : null);
   const state = signupStateOf(mySignup);
@@ -686,12 +684,12 @@ function buildEventRow(event, ctx = {}) {
     canSignUp: canSignUp(event, actor, { signup: mySignup, signups }),
     canCancelSignup: canCancelSignup(event, actor, { signup: mySignup }),
     // 管理端按钮
-    canStart: canStartEvent(event, actor, { isMock: mock }),
-    canCheckIn: canCheckIn(event, actor, { isMock: mock }),
-    canFinish: canFinishEvent(event, actor, { isMock: mock }),
+    canStart: canStartEvent(event, actor),
+    canCheckIn: canCheckIn(event, actor),
+    canFinish: canFinishEvent(event, actor),
     // 抽签入口：仅单打、报名中、有管理权。已抽过签后仍为 true，
     // 好让管理员在开赛前重抽；已开赛 / 已有比赛生效由服务端最终把关
-    canDraw: canDrawEvent(event, actor, { isMock: mock }),
+    canDraw: canDrawEvent(event, actor),
   };
 }
 

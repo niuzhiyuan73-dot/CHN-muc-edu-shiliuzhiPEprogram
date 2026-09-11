@@ -7,7 +7,6 @@
  *
  * 其余部分与比赛页视图模型同一个套路：
  *   - 权限算进行数据（canApprove / canReject），模板不写业务逻辑
- *   - 放宽出来的权限必须能被界面标出来（demoNotice）
  *   - 渲染字段里不许出现 undefined / null / NaN
  * ============================================================
  */
@@ -19,8 +18,11 @@ const { REVIEW_TAB, filterApplications, loadMemberReviewView } = require('../min
 const facade = require('../miniprogram/services/index.js');
 const { ROLE, USER_STATUS } = require('../miniprogram/utils/constants.js');
 
-/** 一位审核通过的普通会员。mock 下放宽口径，他有审核权 */
-const MEMBER = { _id: 'u06', nickName: '赵明宇', role: ROLE.MEMBER, status: USER_STATUS.ACTIVE };
+/** 看审核页的人。审核权只看角色，所以这里得是干事 */
+const REVIEWER = { _id: 'u02', nickName: '张宇轩', role: ROLE.STAFF, status: USER_STATUS.ACTIVE };
+
+/** 已转正但没有审核权的普通会员，用来验证「一行都不下发」 */
+const MEMBER = { _id: 'u05', nickName: '李思远', role: ROLE.MEMBER, status: USER_STATUS.ACTIVE };
 
 /** 一条申请都还没处理过的基线 */
 beforeEach(() => facade.resetCache());
@@ -65,8 +67,8 @@ describe('会员审核视图 —— 防泄漏', () => {
  * ============================================================ */
 
 describe('会员审核视图 —— 内容', () => {
-  test('正常会员看到两条待审申请，并被告知这是演示口径', async () => {
-    const view = await loadMemberReviewView({ user: MEMBER });
+  test('干事看到两条待审申请', async () => {
+    const view = await loadMemberReviewView({ user: REVIEWER });
 
     assert.strictEqual(view.allowed, true);
     assert.strictEqual(view.blockedText, '');
@@ -74,12 +76,18 @@ describe('会员审核视图 —— 内容', () => {
     assert.strictEqual(view.rows.length, 2);
     assert.strictEqual(view.pendingCount, 2);
     assert.strictEqual(view.handledCount, 0);
-    // 权限是放宽出来的（严格口径下普通会员不能审），必须说清楚
-    assert.ok(view.demoNotice.length > 0);
+  });
+
+  test('普通会员看到的仍是「没有权限」，一行申请都不下发', async () => {
+    const view = await loadMemberReviewView({ user: MEMBER });
+
+    assert.strictEqual(view.allowed, false);
+    assert.deepStrictEqual(view.rows, []);
+    assert.match(view.blockedText, /权限/);
   });
 
   test('标签页带数量，且当前页被标成 active', async () => {
-    const view = await loadMemberReviewView({ user: MEMBER });
+    const view = await loadMemberReviewView({ user: REVIEWER });
 
     assert.deepStrictEqual(
       view.tabs.map((item) => item.tab),
@@ -94,13 +102,13 @@ describe('会员审核视图 —— 内容', () => {
   });
 
   test('非法标签页退回「待审核」，不至于白屏', async () => {
-    const view = await loadMemberReviewView({ user: MEMBER, tab: 'nonsense' });
+    const view = await loadMemberReviewView({ user: REVIEWER, tab: 'nonsense' });
     assert.strictEqual(view.activeTab, REVIEW_TAB.PENDING);
     assert.strictEqual(view.rows.length, 2);
   });
 
   test('每一行都带上申请人资料与放行的两个按钮', async () => {
-    const view = await loadMemberReviewView({ user: MEMBER });
+    const view = await loadMemberReviewView({ user: REVIEWER });
     const row = view.rows[0];
 
     // 实名信息是审核的依据，六项缺一不可
@@ -116,8 +124,9 @@ describe('会员审核视图 —— 内容', () => {
   });
 
   test('本人那条只留提示，不给按钮', async () => {
-    // 演示申请 local_demo01 就是「自己」时，不该出现批准 / 驳回按钮
-    const self = { _id: 'local_demo01', role: ROLE.MEMBER, status: USER_STATUS.ACTIVE };
+    // 演示申请 local_demo01 就是「自己」时，不该出现批准 / 驳回按钮。
+    // 账号本身得有审核权（干事），冲突只出在「不能审自己」这一条上
+    const self = { _id: 'local_demo01', role: ROLE.STAFF, status: USER_STATUS.ACTIVE };
     const view = await loadMemberReviewView({ user: self });
 
     const mine = view.rows.find((row) => row.applicationId === 'local_demo01');
@@ -128,7 +137,7 @@ describe('会员审核视图 —— 内容', () => {
   });
 
   test('新提交的申请排在前面', async () => {
-    const view = await loadMemberReviewView({ user: MEMBER });
+    const view = await loadMemberReviewView({ user: REVIEWER });
     // 演示数据里 local_demo02（9月2日）比 local_demo01（8月24日）新
     assert.deepStrictEqual(
       view.rows.map((row) => row.applicationId),
@@ -144,14 +153,14 @@ describe('会员审核视图 —— 内容', () => {
 
 describe('会员审核视图 —— 处理之后', () => {
   test('驳回一条之后，它从待审移到已处理', async () => {
-    await facade.rejectMember('local_demo01', MEMBER._id, '学号与姓名对不上');
+    await facade.rejectMember('local_demo01', REVIEWER._id, '学号与姓名对不上');
 
-    const pendingTab = await loadMemberReviewView({ user: MEMBER });
+    const pendingTab = await loadMemberReviewView({ user: REVIEWER });
     assert.strictEqual(pendingTab.pendingCount, 1);
     assert.strictEqual(pendingTab.handledCount, 1);
     assert.ok(!pendingTab.rows.some((row) => row.applicationId === 'local_demo01'));
 
-    const handled = await loadMemberReviewView({ user: MEMBER, tab: REVIEW_TAB.HANDLED });
+    const handled = await loadMemberReviewView({ user: REVIEWER, tab: REVIEW_TAB.HANDLED });
     assert.strictEqual(handled.rows.length, 1);
     assert.strictEqual(handled.rows[0].applicationId, 'local_demo01');
     assert.strictEqual(handled.rows[0].statusLabel, '已驳回');
@@ -161,10 +170,10 @@ describe('会员审核视图 —— 处理之后', () => {
   });
 
   test('处理完最后一条，空态有话说', async () => {
-    await facade.approveMember('local_demo01', MEMBER._id);
-    await facade.approveMember('local_demo02', MEMBER._id);
+    await facade.approveMember('local_demo01', REVIEWER._id);
+    await facade.approveMember('local_demo02', REVIEWER._id);
 
-    const view = await loadMemberReviewView({ user: MEMBER });
+    const view = await loadMemberReviewView({ user: REVIEWER });
     assert.strictEqual(view.rows.length, 0);
     assert.strictEqual(view.pendingCount, 0);
     assert.match(view.emptyText, /没有待审核/);
@@ -177,8 +186,8 @@ describe('会员审核视图 —— 处理之后', () => {
 
 describe('会员审核视图 —— 渲染字段', () => {
   test('每一行都不含 undefined / null / NaN', async () => {
-    await facade.rejectMember('local_demo01', MEMBER._id, '资料不清晰');
-    const view = await loadMemberReviewView({ user: MEMBER, tab: REVIEW_TAB.HANDLED });
+    await facade.rejectMember('local_demo01', REVIEWER._id, '资料不清晰');
+    const view = await loadMemberReviewView({ user: REVIEWER, tab: REVIEW_TAB.HANDLED });
 
     assert.ok(view.rows.length > 0);
     for (const row of view.rows) {
@@ -196,10 +205,10 @@ describe('会员审核视图 —— 渲染字段', () => {
   });
 
   test('viewer 带出当前登录者的角色文案', async () => {
-    const view = await loadMemberReviewView({ user: MEMBER });
-    assert.strictEqual(view.viewer.userId, 'u06');
+    const view = await loadMemberReviewView({ user: REVIEWER });
+    assert.strictEqual(view.viewer.userId, 'u02');
     assert.strictEqual(view.viewer.loggedIn, true);
-    assert.strictEqual(view.viewer.roleLabel, '会员');
+    assert.strictEqual(view.viewer.roleLabel, '干事');
   });
 });
 

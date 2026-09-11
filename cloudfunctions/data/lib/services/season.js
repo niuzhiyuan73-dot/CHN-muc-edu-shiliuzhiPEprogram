@@ -41,8 +41,7 @@ const DEFAULT_RESET_POLICY = {
  * 不另写一套判定，免得某天权限规则改了这两处还各说各话。
  *
  * @param {Object|null} actor
- * @param {Object} [options]
- * @param {boolean} [options.isMock=false] mock 下放宽为「已登录的正常会员即可」
+ * @param {Object} [options] 透传给 permission.canManage
  * @returns {boolean}
  */
 function canResetSeason(actor, options = {}) {

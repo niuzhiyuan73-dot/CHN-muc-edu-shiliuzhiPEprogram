@@ -271,12 +271,12 @@ test('buildBracketRows —— 管理员不是参赛者也能代为录分', () =>
   assert.strictEqual(rows[0].canRecord, true);
 });
 
-test('buildBracketRows —— 演示数据源下登录即可录分，与 mock 的写入口径一致', () => {
+test('buildBracketRows —— 录分不再按数据源放宽，普通会员登录也不是想录就录', () => {
   const rows = buildBracketRows([scheduledRecord()], BRACKET_EVENT, BRACKET_MEMBERS, {
     actor: { _id: 'z', role: ROLE.MEMBER, status: USER_STATUS.ACTIVE },
     isMock: true,
   });
-  assert.strictEqual(rows[0].canRecord, true);
+  assert.strictEqual(rows[0].canRecord, false, '录分只认参赛者与管理员，与真正写入时一致');
 });
 
 test('buildBracketRows —— 录完分换成对手确认，且不再出现「录分」', () => {
@@ -392,9 +392,10 @@ test('赛事详情 —— 抽签后签表随详情下发，逐轮推进后决赛
   facade.resetCache();
   try {
     const members = await facade.getMembers();
-    const actor = await facade.getCurrentUser();
     const players = members.slice(0, 4).map((member) => member._id);
     const host = players[0];
+    // 录分要参赛者本人或管理员；host 既是发布者（u01 管理员）也是选手
+    const actor = await facade.getMember(host);
 
     const { record } = await facade.publishEvent(
       {
@@ -424,7 +425,7 @@ test('赛事详情 —— 抽签后签表随详情下发，逐轮推进后决赛
     assert.strictEqual(view.drawText, '第 1 次抽签 · 4 个签位 · 2 位种子');
     for (const row of view.bracketRows) {
       assert.strictEqual(row.roundText, '半决赛', '4 签 2 轮，首轮即半决赛');
-      assert.strictEqual(row.canRecord, true, '演示数据源下登录即可录分');
+      assert.strictEqual(row.canRecord, true, '管理员可代为录分');
       assert.strictEqual(row.canConfirm, false, '还没比分，先录后确认');
       assert.strictEqual(row.scoreText, '');
     }

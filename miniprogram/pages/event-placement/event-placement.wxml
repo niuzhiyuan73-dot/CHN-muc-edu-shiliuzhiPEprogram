@@ -86,8 +86,6 @@
       </view>
     </block>
 
-    <view wx:if="{{view.demoNotice}}" class="demo-notice">{{view.demoNotice}}</view>
-
     <view wx:if="{{isMock}}" class="mock-note">
       当前为本地模拟数据，名次与积分只写入内存，重启小程序即清空
     </view>

@@ -101,12 +101,10 @@ describe('canManageEvent —— 发布 / 管理权', () => {
     assert.equal(canManageEvent(staff('a1', { role: ROLE.ADMIN })), true);
   });
 
-  test('普通会员没有管理权', () => {
+  test('普通会员没有管理权，本地模拟数据源也不放宽', () => {
     assert.equal(canManageEvent(member('m1')), false);
-  });
-
-  test('mock 下放宽为「在册会员即可」，界面须明示', () => {
-    assert.equal(canManageEvent(member('m1'), { isMock: true }), true);
+    // 判定只看角色——否则本地上每位会员都会看到「＋发布」
+    assert.equal(canManageEvent(member('m1'), { isMock: true }), false);
   });
 
   test('待审核 / 离校 / 已禁用 / 未登录一律不行', () => {

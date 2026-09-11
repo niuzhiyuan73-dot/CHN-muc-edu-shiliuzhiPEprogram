@@ -16,16 +16,12 @@
  * 传 null 是访客，干脆不传也按访客处理（失败关闭）。
  * loadMatchView 在不传时会回退到数据源的当前用户，那是为了方便「看谁的
  * 比赛」这类公开查询；审核页没有这种用法，漏传一个参数不该换来权限。
- *
- * 【演示口径怎么标出来的】
- * 逐层比对「放宽后的权限」与「严格口径的权限」，两者不一致才置
- * demoNotice。这样文案的触发条件是算出来的，不是页面猜的。
  * ============================================================
  */
 
 const { USER_STATUS, ROLE_LABEL } = require('../utils/constants.js');
 const { canReview, buildApplicationRow } = require('./member-review.js');
-const { getMemberApplications, isMock } = require('./index.js');
+const { getMemberApplications } = require('./index.js');
 
 /** 页面上的两个标签页 */
 const REVIEW_TAB = {
@@ -46,7 +42,7 @@ const TAB_EMPTY = {
 
 /** 兜底的空视图。没有权限时下发它——一行数据都不带 */
 function emptyView() {
-  return { tabs: [], rows: [], pendingCount: 0, handledCount: 0, emptyText: '', demoNotice: '' };
+  return { tabs: [], rows: [], pendingCount: 0, handledCount: 0, emptyText: '' };
 }
 
 /**
@@ -83,9 +79,7 @@ async function loadMemberReviewView(options = {}) {
   const { tab = REVIEW_TAB.PENDING, user = null } = options;
   const viewerId = user ? user._id : null;
 
-  const relaxed = canReview(user, { isMock: true });
-  const strict = canReview(user, { isMock: false });
-  const allowed = canReview(user, { isMock });
+  const allowed = canReview(user);
 
   const activeTab = TAB_LABEL[tab] ? tab : REVIEW_TAB.PENDING;
   const viewer = {
@@ -126,14 +120,10 @@ async function loadMemberReviewView(options = {}) {
       active: key === activeTab,
     })),
     activeTab,
-    rows: current.map((application) => buildApplicationRow(application, { actor: user, isMock })),
+    rows: current.map((application) => buildApplicationRow(application, { actor: user })),
     pendingCount: pending.length,
     handledCount: handled.length,
     emptyText: TAB_EMPTY[activeTab],
-    demoNotice:
-      relaxed && !strict
-        ? '当前为演示数据源：任何已登录会员都可以审核入会申请，正式环境需由干事或管理员操作'
-        : '',
   };
 }
 

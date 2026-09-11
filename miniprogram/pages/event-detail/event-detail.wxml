@@ -199,8 +199,6 @@
       </view>
     </view>
 
-    <view wx:if="{{view.demoNotice}}" class="demo-notice">{{view.demoNotice}}</view>
-
     <view wx:if="{{isMock}}" class="mock-note">
       当前为本地模拟数据，报名与名次只写入内存，重启小程序即清空
     </view>

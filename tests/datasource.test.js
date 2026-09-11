@@ -28,6 +28,14 @@ const {
   SEED_MODE,
 } = require('../miniprogram/utils/constants.js');
 
+/**
+ * 管理类写入要由管理员或有干事权限的账号执行。
+ * 种子里 u01 巴特尔是管理员、u02 张宇轩是干事；getCurrentUser() 答的是
+ * 普通会员 u06，拿它去审核 / 发公告 / 管理赛事都会被权限闸门挡回来。
+ */
+const ADMIN_ID = 'u01';
+const getManager = () => mock.getMember(ADMIN_ID);
+
 describe('数据源门面 —— 实现可互换', () => {
   test('mock 与 cloud 导出同一组接口', () => {
     const mockKeys = Object.keys(mock).filter((k) => typeof mock[k] === 'function').sort();
@@ -629,7 +637,7 @@ describe('mock 数据源 —— 会员注册与审核', () => {
   test(
     '通过审核后才成为会员，榜单多出一行',
     withCleanStore(async () => {
-      const me = await mock.getCurrentUser();
+      const me = await getManager();
       const before = await mock.getLeaderboard(RANK_PROJECT.DOUBLES);
 
       const { account } = await mock.registerMember(draft);
@@ -650,7 +658,7 @@ describe('mock 数据源 —— 会员注册与审核', () => {
   test(
     '驳回一条申请：账号作废，分数纹丝不动',
     withCleanStore(async () => {
-      const me = await mock.getCurrentUser();
+      const me = await getManager();
       const doublesBefore = await mock.getLeaderboard(RANK_PROJECT.DOUBLES);
       const [application] = await mock.getMemberApplications();
 
@@ -669,7 +677,7 @@ describe('mock 数据源 —— 会员注册与审核', () => {
   test(
     '驳回必须给理由',
     withCleanStore(async () => {
-      const me = await mock.getCurrentUser();
+      const me = await getManager();
       const [application] = await mock.getMemberApplications();
 
       const noReason = await mock.rejectMember(application._id, me._id, '   ');
@@ -683,7 +691,7 @@ describe('mock 数据源 —— 会员注册与审核', () => {
   test(
     '已经处理过的申请不能再处理一次',
     withCleanStore(async () => {
-      const me = await mock.getCurrentUser();
+      const me = await getManager();
       const [application] = await mock.getMemberApplications();
       await mock.approveMember(application._id, me._id);
 
@@ -696,7 +704,7 @@ describe('mock 数据源 —— 会员注册与审核', () => {
   test(
     '查不到的申请给出明确的失败，而不是抛异常',
     withCleanStore(async () => {
-      const me = await mock.getCurrentUser();
+      const me = await getManager();
 
       const approved = await mock.approveMember('nope', me._id);
       const rejected = await mock.rejectMember('nope', me._id, '理由');
@@ -744,7 +752,7 @@ describe('mock 数据源 —— 公告发布与下架', () => {
   test(
     '发布后同时出现在公开列表与台账里，并带上发布者',
     withCleanStore(async () => {
-      const me = await mock.getCurrentUser();
+      const me = await getManager();
       const before = (await mock.getAnnouncements()).length;
 
       const result = await mock.publishAnnouncement(draft, me._id);
@@ -764,7 +772,7 @@ describe('mock 数据源 —— 公告发布与下架', () => {
   test(
     '新公告按发布时间插到正确的位置，公开列表仍是倒序',
     withCleanStore(async () => {
-      const me = await mock.getCurrentUser();
+      const me = await getManager();
       await mock.publishAnnouncement(draft, me._id);
 
       const list = await mock.getAnnouncements();
@@ -777,7 +785,7 @@ describe('mock 数据源 —— 公告发布与下架', () => {
   test(
     '校验不过则原样报错，不落台账',
     withCleanStore(async () => {
-      const me = await mock.getCurrentUser();
+      const me = await getManager();
       const before = (await mock.getAnnouncements()).length;
 
       const result = await mock.publishAnnouncement({ ...draft, title: '' }, me._id);
@@ -807,7 +815,7 @@ describe('mock 数据源 —— 公告发布与下架', () => {
   test(
     '下架种子公告：公开列表少一条，台账里仍留着',
     withCleanStore(async () => {
-      const me = await mock.getCurrentUser();
+      const me = await getManager();
       const [first] = await mock.getAnnouncements();
       const before = (await mock.getAnnouncements()).length;
 
@@ -831,7 +839,7 @@ describe('mock 数据源 —— 公告发布与下架', () => {
   test(
     '下架本地新发的公告同样生效',
     withCleanStore(async () => {
-      const me = await mock.getCurrentUser();
+      const me = await getManager();
       const { record } = await mock.publishAnnouncement(draft, me._id);
 
       const archived = await mock.archiveAnnouncement(record._id, me._id);
@@ -843,7 +851,7 @@ describe('mock 数据源 —— 公告发布与下架', () => {
   test(
     '已下架的不能再下架一次',
     withCleanStore(async () => {
-      const me = await mock.getCurrentUser();
+      const me = await getManager();
       const [first] = await mock.getAnnouncements();
       await mock.archiveAnnouncement(first._id, me._id);
 
@@ -869,7 +877,7 @@ describe('mock 数据源 —— 公告发布与下架', () => {
   test(
     '查不到的公告给出明确的失败，而不是抛异常',
     withCleanStore(async () => {
-      const me = await mock.getCurrentUser();
+      const me = await getManager();
       const result = await mock.archiveAnnouncement('nope', me._id);
       assert.equal(result.ok, false);
       assert.match(result.message, /找不到/);
@@ -1037,7 +1045,7 @@ describe('mock 数据源 —— 赛事闭环', () => {
   test(
     '发布赛事 —— 落库即报名中，编号从 le0001 起',
     withCleanStore(async () => {
-      const me = await mock.getCurrentUser();
+      const me = await getManager();
       const before = (await mock.getEvents()).length;
 
       const result = await mock.publishEvent(eventDraft(), me._id);
@@ -1056,7 +1064,7 @@ describe('mock 数据源 —— 赛事闭环', () => {
   test(
     '发布赛事 —— 等级缺失被拒，不落台账',
     withCleanStore(async () => {
-      const me = await mock.getCurrentUser();
+      const me = await getManager();
       const before = (await mock.getEvents()).length;
 
       const result = await mock.publishEvent(eventDraft({ level: undefined }), me._id);
@@ -1070,7 +1078,7 @@ describe('mock 数据源 —— 赛事闭环', () => {
   test(
     '报名 → 签到 → 录入名次：走通并发出积分',
     withCleanStore(async () => {
-      const me = await mock.getCurrentUser();
+      const me = await getManager();
       const pointsBefore = me.points;
 
       const { record } = await mock.publishEvent(eventDraft(), me._id);
@@ -1095,7 +1103,7 @@ describe('mock 数据源 —— 赛事闭环', () => {
       assert.deepEqual(finished.record.results, [{ userId: me._id, placement: 1 }]);
 
       // 名次落定 → 回放重算 → 冠军拿到积分（二级赛事封顶倍数）
-      const after = await mock.getCurrentUser();
+      const after = await mock.getMember(me._id);
       assert.ok(after.points > pointsBefore, '冠军应当拿到赛事积分');
     })
   );
@@ -1103,7 +1111,7 @@ describe('mock 数据源 —— 赛事闭环', () => {
   test(
     '录入名次 —— 没报名的人拿不到名次',
     withCleanStore(async () => {
-      const me = await mock.getCurrentUser();
+      const me = await getManager();
       const { record } = await mock.publishEvent(eventDraft(), me._id);
       await mock.startEvent(record._id, me._id);
 
@@ -1117,7 +1125,7 @@ describe('mock 数据源 —— 赛事闭环', () => {
   test(
     '录入名次 —— 3 人打三四名赛也能结赛（签表排不出季军赛，名次到第 3 名为止）',
     withCleanStore(async () => {
-      const me = await mock.getCurrentUser();
+      const me = await getManager();
       const members = await mock.getMembers();
       const others = members.filter((m) => m._id !== me._id).slice(0, 2);
       const players = [me._id, ...others.map((m) => m._id)];
@@ -1149,7 +1157,7 @@ describe('mock 数据源 —— 赛事闭环', () => {
   test(
     '取消报名 —— 只置状态不删记录，重新报名落回同一条',
     withCleanStore(async () => {
-      const me = await mock.getCurrentUser();
+      const me = await getManager();
       const { record } = await mock.publishEvent(eventDraft(), me._id);
       const id = record._id;
 
@@ -1173,7 +1181,7 @@ describe('mock 数据源 —— 赛事闭环', () => {
   test(
     '报名 —— 赛事开始后就截止了',
     withCleanStore(async () => {
-      const me = await mock.getCurrentUser();
+      const me = await getManager();
       const { record } = await mock.publishEvent(eventDraft(), me._id);
       await mock.startEvent(record._id, me._id);
 
@@ -1186,7 +1194,7 @@ describe('mock 数据源 —— 赛事闭环', () => {
   test(
     '未报名的人不能报名同一场两次',
     withCleanStore(async () => {
-      const me = await mock.getCurrentUser();
+      const me = await getManager();
       const { record } = await mock.publishEvent(eventDraft(), me._id);
 
       await mock.signUpEvent(record._id, me._id);
@@ -1305,7 +1313,7 @@ describe('mock 数据源 —— 赛事闭环', () => {
   test(
     'resetCache 清掉赛事与报名，编号也复位',
     withCleanStore(async () => {
-      const me = await mock.getCurrentUser();
+      const me = await getManager();
       const { record } = await mock.publishEvent(eventDraft(), me._id);
       await mock.signUpEvent(record._id, me._id);
 

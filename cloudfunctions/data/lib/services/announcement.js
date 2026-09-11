@@ -70,8 +70,7 @@ function sortAnnouncements(list) {
  * 包一层，留住「发布」这个业务语义的函数名。
  *
  * @param {Object|null} actor
- * @param {Object} [options]
- * @param {boolean} [options.isMock=false] mock 下放宽为「已登录的正常会员即可」
+ * @param {Object} [options] 透传给 permission.canManage（如 minRole）
  * @returns {boolean}
  */
 function canPublish(actor, options = {}) {
@@ -177,14 +176,13 @@ function buildAnnouncementRecord(form, ctx = {}) {
  * @param {Object} item 一条公告
  * @param {Object} [ctx]
  * @param {Object|null} [ctx.actor] 当前看页面的会员
- * @param {boolean} [ctx.isMock=false] 是否放宽发布权
  * @returns {Object}
  */
 function buildAnnouncementRow(item, ctx = {}) {
-  const { actor = null, isMock: mock = false } = ctx;
+  const { actor = null } = ctx;
 
   const archived = item.status === ANNOUNCEMENT_STATUS.ARCHIVED;
-  const allowed = canPublish(actor, { isMock: mock });
+  const allowed = canPublish(actor);
 
   return {
     id: item._id,

@@ -30,6 +30,7 @@ const {
   EVENT_BRONZE_MODE,
   SEED_MODE,
   SIGNUP_STATUS,
+  ROLE,
 } = require('../utils/constants.js');
 const { DEFAULT_FORMAT, gamesToWin } = require('../utils/match-format.js');
 
@@ -167,10 +168,18 @@ function buildAnnouncements(baseDate) {
  *   女队：均值约 1300，最高 1500
  * 整体差距约 170 分，落在 150~200 分的预期区间内。这个差距只体现在
  * 隐藏的 trueSkill 上，等级分仍然要靠回放自己长出来。
+ *
+ * 【role 为什么不再是清一色的普通会员】
+ * 权限判定只看角色（见 permission.canManage），种子里必须真的有干事与
+ * 管理员，否则本地演示里审核、发公告、发布赛事、赛季重置这些入口会
+ * 一并消失，链路根本走不通。这里正好对应俱乐部的实际分工：
+ *   巴特尔（u01）—— 会长，管得了全部
+ *   张宇轩（u02）—— 干事，管得了审核与公告
+ * 其余人 role 缺省为普通会员，界面不会给他们显示任何管理入口。
  */
 const MEMBER_SEED = [
-  { nickName: '巴特尔', realName: '巴特尔', gender: 'M', college: '体育学院', trueSkill: 1690 },
-  { nickName: '宇轩', realName: '张宇轩', gender: 'M', college: '信息工程学院', trueSkill: 1655 },
+  { nickName: '巴特尔', realName: '巴特尔', gender: 'M', college: '体育学院', trueSkill: 1690, role: ROLE.ADMIN },
+  { nickName: '宇轩', realName: '张宇轩', gender: 'M', college: '信息工程学院', trueSkill: 1655, role: ROLE.STAFF },
   { nickName: '思远', realName: '李思远', gender: 'M', college: '经济学院', trueSkill: 1620 },
   { nickName: '浩然', realName: '王浩然', gender: 'M', college: '管理学院', trueSkill: 1585 },
   { nickName: '子涵', realName: '刘子涵', gender: 'M', college: '理学院', trueSkill: 1550 },
@@ -493,7 +502,8 @@ function generateSeed(options = {}) {
     college: item.college,
     avatarUrl: '',
     points: 0,
-    role: 0,
+    // 缺省即普通会员；干事与管理员在 MEMBER_SEED 里点名
+    role: item.role || ROLE.MEMBER,
     status: 1,
     joinDate: addDays(baseDate, (item.joinWeek || 0) * 7),
     // 以下两个字段仅供模拟使用，回放结束时会被剔除，不进入对外数据

@@ -25,7 +25,7 @@
 
 const { ANNOUNCEMENT_CATEGORIES } = require('../utils/constants.js');
 const { sortAnnouncements, buildAnnouncementRow, canPublish } = require('./announcement.js');
-const { getAnnouncements, getAnnouncementRecords, isMock } = require('./index.js');
+const { getAnnouncements, getAnnouncementRecords } = require('./index.js');
 
 /** 「全部」标签：不分分类 */
 const ALL_TAB = 'all';
@@ -88,9 +88,7 @@ async function loadAnnouncementListView(options = {}) {
 async function loadAnnouncementManageView(options = {}) {
   const { user = null } = options;
 
-  const relaxed = canPublish(user, { isMock: true });
-  const strict = canPublish(user, { isMock: false });
-  const allowed = canPublish(user, { isMock });
+  const allowed = canPublish(user);
 
   const viewer = {
     userId: user ? user._id : null,
@@ -109,13 +107,12 @@ async function loadAnnouncementManageView(options = {}) {
       total: 0,
       publishedCount: 0,
       archivedCount: 0,
-      demoNotice: '',
     };
   }
 
   const items = await getAnnouncementRecords();
   const rows = sortAnnouncements(items)
-    .map((item) => buildAnnouncementRow(item, { actor: user, isMock }))
+    .map((item) => buildAnnouncementRow(item, { actor: user }))
     // 已下架的沉到底部，好让「还能操作的那些」先被看到。
     // sort 是稳定的，所以组内仍保持「置顶在前、其余按时间倒序」。
     .sort((a, b) => Number(a.archived) - Number(b.archived));
@@ -128,10 +125,6 @@ async function loadAnnouncementManageView(options = {}) {
     total: rows.length,
     publishedCount: rows.filter((row) => !row.archived).length,
     archivedCount: rows.filter((row) => row.archived).length,
-    demoNotice:
-      relaxed && !strict
-        ? '当前为演示数据源：任何已登录会员都可以发布与下架公告，正式环境需由干事或管理员操作'
-        : '',
   };
 }
 

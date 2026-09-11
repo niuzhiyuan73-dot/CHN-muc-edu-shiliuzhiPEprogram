@@ -7,7 +7,6 @@
  *
  * 其余与别处同一个套路：
  *   - 权限算进数据（canArchive），模板不写业务逻辑
- *   - 放宽出来的权限必须能被界面标出来（demoNotice）
  *   - 渲染字段里不许出现 undefined / null / NaN
  * ============================================================
  */
@@ -24,8 +23,8 @@ const {
 const facade = require('../miniprogram/services/index.js');
 const { ROLE, USER_STATUS, ANNOUNCEMENT_CATEGORIES } = require('../miniprogram/utils/constants.js');
 
-/** 一位审核通过的普通会员。mock 下放宽口径，他有发布权 */
-const MEMBER = { _id: 'u06', nickName: '赵明宇', role: ROLE.MEMBER, status: USER_STATUS.ACTIVE };
+/** 有发布权的干事。不再按数据源放宽，只有干事及以上才看得到台账 */
+const PUBLISHER = { _id: 'u02', nickName: '张宇轩', role: ROLE.STAFF, status: USER_STATUS.ACTIVE };
 
 /** 每条用例都从「只有种子公告」的基线开始 */
 beforeEach(() => facade.resetCache());
@@ -81,8 +80,8 @@ describe('公告公开列表 —— 谁都能看', () => {
   });
 
   test('某个分类被下架光之后，空态有话说', async () => {
-    await facade.archiveAnnouncement('a04', MEMBER._id); // 战报
-    await facade.archiveAnnouncement('a06', MEMBER._id); // 战报
+    await facade.archiveAnnouncement('a04', PUBLISHER._id); // 战报
+    await facade.archiveAnnouncement('a06', PUBLISHER._id); // 战报
 
     const view = await loadAnnouncementListView({ tab: '战报' });
     assert.strictEqual(view.rows.length, 0);
@@ -122,7 +121,7 @@ describe('公告管理视图 —— 防泄漏', () => {
   });
 
   test('访客即便公告已被下架，也一条都看不到', async () => {
-    await facade.archiveAnnouncement('a01', MEMBER._id);
+    await facade.archiveAnnouncement('a01', PUBLISHER._id);
 
     const view = await loadAnnouncementManageView({ user: null });
     assert.deepStrictEqual(view.rows, []);
@@ -134,25 +133,23 @@ describe('公告管理视图 —— 防泄漏', () => {
  * ============================================================ */
 
 describe('公告管理视图 —— 内容', () => {
-  test('有管理权时看到全量，并被告知这是演示口径', async () => {
-    const view = await loadAnnouncementManageView({ user: MEMBER });
+  test('干事看到全量，不必再标演示口径', async () => {
+    const view = await loadAnnouncementManageView({ user: PUBLISHER });
 
     assert.strictEqual(view.allowed, true);
     assert.strictEqual(view.blockedText, '');
     assert.strictEqual(view.total, 6);
     assert.strictEqual(view.publishedCount, 6);
     assert.strictEqual(view.archivedCount, 0);
-    // 权限是放宽出来的（严格口径下普通会员不能发公告），必须说清楚
-    assert.ok(view.demoNotice.length > 0);
   });
 
   test('新发的公告随即出现在台账里', async () => {
     await facade.publishAnnouncement(
       { title: '临时通知', content: '明天停训一次。', category: '通知' },
-      MEMBER._id
+      PUBLISHER._id
     );
 
-    const view = await loadAnnouncementManageView({ user: MEMBER });
+    const view = await loadAnnouncementManageView({ user: PUBLISHER });
     assert.strictEqual(view.total, 7);
     assert.strictEqual(view.publishedCount, 7);
 
@@ -164,9 +161,9 @@ describe('公告管理视图 —— 内容', () => {
   });
 
   test('下架后：公开列表少一条，台账里仍在、沉到底部、不再给按钮', async () => {
-    await facade.archiveAnnouncement('a01', MEMBER._id);
+    await facade.archiveAnnouncement('a01', PUBLISHER._id);
 
-    const view = await loadAnnouncementManageView({ user: MEMBER });
+    const view = await loadAnnouncementManageView({ user: PUBLISHER });
     assert.strictEqual(view.total, 6);
     assert.strictEqual(view.publishedCount, 5);
     assert.strictEqual(view.archivedCount, 1);
@@ -183,8 +180,8 @@ describe('公告管理视图 —— 内容', () => {
   });
 
   test('每一行都不含 undefined / null / NaN', async () => {
-    await facade.archiveAnnouncement('a02', MEMBER._id);
-    const view = await loadAnnouncementManageView({ user: MEMBER });
+    await facade.archiveAnnouncement('a02', PUBLISHER._id);
+    const view = await loadAnnouncementManageView({ user: PUBLISHER });
 
     assert.ok(view.rows.length > 0);
     for (const row of view.rows) {

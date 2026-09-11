@@ -16,12 +16,10 @@
  * 打球。所以 auth.buildAccount 一律产出 PENDING，而把 PENDING 变成 ACTIVE
  * 的权力收在这里——这是防刷分的第一道闸门。
  *
- * 【mock 下的审核权为什么放宽】
- * 种子里 24 位会员的 role 全是普通会员，没有管理员可演示；真要严格按
- * 「role >= 干事」，本地任何一条申请都永远批不了，这条链路走不通。
- * 所以 isMock 时放宽为「已登录的正常会员即可审」，界面必须把这一点
- * 明示出来（见 member-review-view 的 demoNotice）。放宽只影响 mock，
- * 云端仍走严格口径。
+ * 【审核权只看角色，演示数据源也不放宽】
+ * 种子里点明了干事与管理员（见 seed.js 的 MEMBER_SEED），本地与云端都是
+ * 「role >= 干事」这一条规则。原先 mock 下放宽为「是会员即可审」，会让
+ * 普通会员在自己手机上也看到审核入口，与线上不一致，已收回。
  *
  * 【有一条规则 mock 下也不放宽】
  * 任何人不能审核自己的申请。若连这条也放开，放开的那一瞬就变成了
@@ -84,7 +82,6 @@ function isSelf(actor, application) {
  *
  * @param {Object|null} actor
  * @param {Object} [options]
- * @param {boolean} [options.isMock=false] mock 下放宽为「已登录的正常会员即可」
  * @returns {boolean}
  */
 function canReview(actor, options = {}) {
@@ -94,13 +91,11 @@ function canReview(actor, options = {}) {
 /**
  * 能不能审这一条。
  *
- * 「自己审自己」先于其它条件挡住：即便放宽口径下人人可审，本人的申请
- * 也一律不出按钮。
+ * 「自己审自己」先于其它条件挡住：会长自己注册一个号，也不能自己盖章。
  *
  * @param {Object|null} actor
  * @param {Object|null} application
  * @param {Object} [options]
- * @param {boolean} [options.isMock=false]
  * @returns {boolean}
  */
 function canReviewApplication(actor, application, options = {}) {
@@ -121,8 +116,7 @@ function canReviewApplication(actor, application, options = {}) {
  * @param {Object|null} application
  * @param {string} action 取值见 REVIEW_ACTION
  * @param {string} [reason] 驳回理由，通过时可以不填
- * @param {Object} [options]
- * @param {boolean} [options.isMock=false]
+ * @param {Object} [options] 透传给 permission.canManage（如 minRole）
  * @returns {{ok:boolean, message:string}}
  */
 function validateReview(actor, application, action, reason, options = {}) {
@@ -153,17 +147,14 @@ function validateReview(actor, application, action, reason, options = {}) {
  * @param {Object} application 一条账号记录（待审核 / 已驳回 / 已禁用）
  * @param {Object} [ctx]
  * @param {Object|null} [ctx.actor] 当前看页面的会员
- * @param {boolean} [ctx.isMock=false] 是否放宽审核权
  * @returns {Object}
  */
 function buildApplicationRow(application, ctx = {}) {
-  const { actor = null, isMock: mock = false } = ctx;
+  const { actor = null } = ctx;
 
   const tag = statusTagOf(application.status, application.action);
   const self = isSelf(actor, application);
-  const relaxed = canReview(actor, { isMock: mock });
-  const strict = canReview(actor, { isMock: false });
-  const allowed = canReviewApplication(actor, application, { isMock: mock });
+  const allowed = canReviewApplication(actor, application);
 
   return {
     applicationId: application._id,
@@ -185,8 +176,6 @@ function buildApplicationRow(application, ctx = {}) {
     // 自己被自己审时模板据此渲染一句提示，而不是两个按不动的按钮
     canApprove: allowed,
     canReject: allowed,
-    // 权限只来自 mock 放宽时置真——界面据此标注「演示口径」
-    reviewRelaxed: relaxed && !strict,
   };
 }
 
