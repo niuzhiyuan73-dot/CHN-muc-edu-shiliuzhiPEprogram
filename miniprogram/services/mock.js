@@ -28,13 +28,20 @@ const seasonStore = require('./season-store.js');
 const { register: registerAccount } = require('./auth.js');
 const { DEFAULT_RESET_POLICY, canResetSeason } = require('./season.js');
 const { REVIEW_ACTION, validateReview } = require('./member-review.js');
-const { canConfirm, canRevoke, buildMatchRecord } = require('./match-record.js');
+const {
+  canConfirm,
+  canRevoke,
+  buildMatchRecord,
+  fillScheduledMatch,
+  isParticipant,
+} = require('./match-record.js');
 const { canPublish, buildAnnouncementRecord } = require('./announcement.js');
 const {
   canManageEvent,
   canStartEvent,
   canCheckIn,
   canFinishEvent,
+  canDrawEvent,
   canSignUp,
   canCancelSignup,
   // 与 utils/stats.js 的「个人赛事战绩」buildEventRecord 同名，这里改个名字
@@ -43,6 +50,14 @@ const {
   buildCheckInPatch,
   validatePlacements,
 } = require('./event.js');
+const {
+  planDraw,
+  buildDrawRecord,
+  buildBracketMatches,
+  planNextRound,
+  buildRoundMatches,
+  canRedraw,
+} = require('./draw.js');
 const { buildProfilePatch } = require('./profile.js');
 const { getPoolRating } = require('../utils/rating.js');
 const {
@@ -50,6 +65,7 @@ const {
   ALL_RANK_PROJECTS,
   RANK_PROJECT_CONFIG,
   MATCH_STATUS,
+  MATCH_TYPE,
   USER_STATUS,
   ANNOUNCEMENT_STATUS,
   EVENT_STATUS,
@@ -527,16 +543,19 @@ async function getHomeSummary() {
  *
  * @param {Object} [options]
  * @param {string} [options.userId] 只看这位会员参加的
+ * @param {string} [options.eventId] 只看这场赛事的（抽签生成的待确认比赛也在这里）
  * @param {number} [options.status] 只看某个状态，取值见 constants.MATCH_STATUS
  * @param {number} [options.limit] 最多返回多少场
  * @returns {Promise<Array<Object>>} 按时间倒序
  */
 async function getMatchRecords(options = {}) {
-  const { userId, status, limit } = options;
+  const { id, userId, eventId, status, limit } = options;
   const { ledger } = load();
 
-  let list = ledger;
+  // id 用来取单独一场（录入页按编号回填比分）；其余过滤条件可叠加
+  let list = id ? ledger.filter((m) => m._id === id) : ledger;
   if (userId) list = list.filter((m) => [...m.teamA, ...m.teamB].includes(userId));
+  if (eventId) list = list.filter((m) => m.eventId === eventId);
   // 0（待确认）是合法取值，所以只能判类型，不能用真值判断
   if (typeof status === 'number') list = list.filter((m) => m.status === status);
 
@@ -553,7 +572,54 @@ async function getMatchRecords(options = {}) {
  */
 async function submitMatch(params = {}) {
   const { users, meta } = load();
-  const { now, ...fields } = params;
+  const { now, id, ...fields } = params;
+
+  // 抽签生成的比赛已经有主：补录比分，而不是另立一条新记录
+  if (id) {
+    const target = findRecord(id);
+    if (!target) {
+      return { ok: false, match: null, errors: {}, scoreErrors: [], firstError: '找不到这场比赛' };
+    }
+    const actor = (params.actor) || null;
+    // 抽签比赛的成绩由场上的人补录。演示数据源只有一个账号，若严格只认
+    // 参赛者，凡自己没上场的比赛都录不进去，整张签表走不到底——所以与
+    // canConfirm 一样放宽为「登录即可录入」，并在界面上标注这是演示口径。
+    // 云端不放宽：那里仍只认参赛者与管理员。
+    const mayRecord =
+      isParticipant(target, actor) ||
+      roleOf(actor) === ROLE.ADMIN ||
+      canManageEvent(accountOf(actor), { isMock: true });
+    if (!mayRecord) {
+      return {
+        ok: false,
+        match: null,
+        errors: {},
+        scoreErrors: [],
+        firstError: '只有参赛者可以录入这场比赛的成绩',
+      };
+    }
+
+    const filled = fillScheduledMatch(target, fields, {
+      members: users,
+      now: now || new Date(),
+      minMatchTime: meta.firstMatchTime,
+      // 录入人按登录者记：确认权要靠它区分「自己」与「对手」
+      recorder: actor,
+    });
+    if (!filled.ok) {
+      return {
+        ok: false,
+        match: null,
+        errors: filled.errors,
+        scoreErrors: filled.scoreErrors,
+        firstError: filled.firstError,
+      };
+    }
+
+    const match = matchStore.saveMatch({ ...target, ...filled.patch });
+    cache = null;
+    return { ok: true, match, errors: {}, scoreErrors: [], firstError: '' };
+  }
 
   const result = buildMatchRecord(fields, {
     // 名单必须来自 getMembers：本地注册账号不在种子里，回放时遇到会直接抛错，
@@ -615,6 +681,12 @@ async function confirmMatch(id, actor) {
     return { ok: false, match: null, message: '你无权确认这场比赛' };
   }
 
+  // 抽签排出来的比赛没有比分，胜方要等录入后才产生。没有胜方就确认，
+  // 回放会算不出等级分。
+  if (!match.winner) {
+    return { ok: false, match: null, message: '这场比赛还没有比分，请先录入成绩' };
+  }
+
   matchStore.setStatus(id, {
     status: MATCH_STATUS.ACTIVE,
     action: 'confirm',
@@ -622,7 +694,43 @@ async function confirmMatch(id, actor) {
     actedAt: new Date(),
   });
   cache = null;
+  // 刚打完的若是某一轮的最后一场，把下一轮排出来
+  advanceEvent(match.eventId);
   return { ok: true, match, message: '' };
+}
+
+/**
+ * 一轮打完后排出下一轮（决策 5.2）。内部用，不对外暴露。
+ *
+ * 与重抽不同，这里「只补不覆盖」：下一轮的编号同样是确定的，若覆盖，
+ * 会把已经录好的比分冲掉。排不出来（还没打完 / 早排过了）就静默返回。
+ *
+ * @param {string|undefined} id 赛事编号
+ */
+function advanceEvent(id) {
+  if (!id) return;
+  const { events, ledger } = load();
+  const event = events.find((item) => item._id === id);
+  if (!event || !event.draw) return;
+
+  const plan = planNextRound({
+    eventId: id,
+    draw: event.draw,
+    matches: ledger.filter((match) => match.eventId === id),
+    bronzeMode: event.bronzeMode,
+  });
+  if (!plan.ok) return;
+
+  const taken = new Set(ledger.map((match) => match._id));
+  let inserted = false;
+  plan.rounds.forEach((roundPlan) => {
+    buildRoundMatches(event, roundPlan).forEach((draft) => {
+      if (taken.has(draft._id)) return; // 排过的轮次不覆盖
+      matchStore.saveMatch(draft);
+      inserted = true;
+    });
+  });
+  if (inserted) cache = null;
 }
 
 /**
@@ -944,6 +1052,8 @@ function findEvent(id) {
  */
 function signUpRefusal(event, signup) {
   if (event.status !== EVENT_STATUS.SIGNUP) return '报名已经截止了';
+  // 抽签后的冻结要单独说（与云端同款文案）
+  if (event.draw) return '抽签后报名已锁定，如需变更请联系管理员重抽';
   if (signup && signup.status === SIGNUP_STATUS.CHECKED_IN) return '你已经签过到了';
   if (signup && signup.status === SIGNUP_STATUS.SIGNED) return '你已经报过名了';
   return '当前状态不能报名这场赛事';
@@ -999,6 +1109,74 @@ async function startEvent(id, actor) {
   eventStore.setStatus(id, { status: EVENT_STATUS.ONGOING, actor, actedAt: new Date() });
   cache = null;
   return { ok: true, record: findEvent(id), message: '' };
+}
+
+/**
+ * 抽签（含重抽）：把签表写进赛事，并按签表生成首轮比赛。
+ *
+ * 与云端同一套纯逻辑（services/draw.js）：名单、种子、落位都由它算，
+ * 这里只负责读写内存台账。编号用 draw.eventMatchKey 的确定性键，重抽
+ * 时覆盖同一批比赛，不会越抽越多。
+ *
+ * @param {string} id
+ * @param {string} actor
+ * @param {Object} [options]
+ * @param {number} [options.seedValue] 随机种子值，便于测试与复核
+ * @param {string[]} [options.manualOrder] 手工指定的种子顺序
+ * @returns {Promise<{ok:boolean, record:Object|null, draw:Object|null, matches:Array<Object>, message:string}>}
+ */
+async function drawEvent(id, actor, options = {}) {
+  const { members } = load();
+  const account = accountOf(actor);
+  const target = findEvent(id);
+  if (!target) {
+    return { ok: false, record: null, draw: null, matches: [], message: '找不到这场赛事' };
+  }
+
+  if (!canDrawEvent(target, account, { isMock: true })) {
+    // 逐条说清是哪一样不满足，别把「已经开赛」混进「没有权限」
+    if (target.matchType !== MATCH_TYPE.SINGLES) {
+      return { ok: false, record: null, draw: null, matches: [], message: '双打赛事暂不支持抽签' };
+    }
+    if (target.status !== EVENT_STATUS.SIGNUP) {
+      return { ok: false, record: null, draw: null, matches: [], message: '只能在报名阶段抽签' };
+    }
+    return { ok: false, record: null, draw: null, matches: [], message: '当前账号没有抽签的权限' };
+  }
+
+  const signups = eventStore.listSignups(id);
+  // 重抽前置：已有比赛被确认生效过就禁止重抽（决策 9.5）
+  const existing = load().ledger.filter((match) => match.eventId === id);
+  if (target.draw && !canRedraw(existing)) {
+    return {
+      ok: false,
+      record: null,
+      draw: null,
+      matches: [],
+      message: '该赛事已有比赛确认生效，不能再重抽',
+    };
+  }
+
+  const { seedValue, manualOrder } = options || {};
+  const value = seedValue === undefined || seedValue === null ? Date.now() : Number(seedValue);
+
+  const plan = planDraw({ event: target, signups, members, seedValue: value, manualOrder });
+  if (!plan.ok) {
+    return { ok: false, record: null, draw: null, matches: [], message: plan.message };
+  }
+
+  const draw = buildDrawRecord(plan, {
+    drawnAt: new Date(),
+    drawnBy: actor,
+    drawCount: (target.draw && target.draw.drawCount ? target.draw.drawCount : 0) + 1,
+  });
+  const matches = buildBracketMatches(plan, { event: target }).map((draft) =>
+    matchStore.saveMatch(draft)
+  );
+
+  eventStore.setStatus(id, { draw });
+  cache = null;
+  return { ok: true, record: findEvent(id), draw, matches, message: '' };
 }
 
 /**
@@ -1156,6 +1334,7 @@ module.exports = {
   resetSeason,
   publishEvent,
   startEvent,
+  drawEvent,
   signUpEvent,
   cancelSignupEvent,
   checkInEvent,

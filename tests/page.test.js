@@ -27,6 +27,7 @@ const {
   EVENT_STATUS,
   EVENT_LEVEL,
   EVENT_BRONZE_MODE,
+  SEED_MODE,
   SIGNUP_STATUS,
 } = require('../miniprogram/utils/constants.js');
 
@@ -1127,6 +1128,8 @@ async function publishTestEvent(overrides = {}) {
       matchType: MATCH_TYPE.SINGLES,
       level: EVENT_LEVEL.SECOND,
       bronzeMode: EVENT_BRONZE_MODE.TIED,
+      seedMode: SEED_MODE.ELO,
+      seedCount: 8,
       location: '体育馆 1 号场',
       startTime: '2026-06-10T09:00:00',
       quota: 8,
@@ -1288,6 +1291,7 @@ test('发布赛事 —— 填全后提交落库，并退回上一页', async () 
   page.onInputTitle({ detail: { value: '秋季单打赛' } });
   page.onPickLevel({ detail: { value: '1' } }); // 下拉第 2 项 = 二级赛事
   page.onPickBronzeMode({ detail: { value: '1' } }); // 下拉第 2 项 = 打三四名
+  page.onPickSeedMode({ detail: { value: '1' } }); // 下拉第 2 项 = 按等级分
   page.onPickDate({ detail: { value: '2026-06-10' } });
   page.onPickTime({ detail: { value: '09:00' } });
   page.onInputQuota({ detail: { value: '8' } });
@@ -1301,6 +1305,9 @@ test('发布赛事 —— 填全后提交落库，并退回上一页', async () 
   assert.ok(created, '发布后赛事应在台账里');
   assert.strictEqual(created.level, EVENT_LEVEL.SECOND);
   assert.strictEqual(created.bronzeMode, EVENT_BRONZE_MODE.PLAYOFF);
+  assert.strictEqual(created.seedMode, SEED_MODE.ELO);
+  assert.strictEqual(created.seedCount, 8, '种子数量默认 8');
+  assert.strictEqual(created.draw, null, '创建时还没抽签');
   assert.strictEqual(created.status, EVENT_STATUS.SIGNUP);
 });
 

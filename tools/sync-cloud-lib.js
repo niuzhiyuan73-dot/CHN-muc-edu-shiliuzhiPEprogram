@@ -18,7 +18,8 @@
  *
  * 【清单的选取标准】
  * 只收「纯模块」——不碰 wx API、不碰 Node API、不做 I/O，只有纯计算与校验。
- * seed/random 是造模拟数据用的，store 系列是内存台账，都不该上云。
+ * seed 是造模拟数据用的，store 系列是内存台账，都不该上云；random 与
+ * bracket 虽然也为 seed 服务，但正式抽签要在云端跑同一套落位算法，故一并上云。
  * 注意 auth.js 里的 login() 会延迟 require 门面 index.js，云函数不要调用
  * 它（云端自行按 OpenID 取用户），其余函数（register/buildAccount 等）可以。
  *
@@ -39,6 +40,8 @@ const DEST_ROOT = path.join(ROOT, 'cloudfunctions', 'data', 'lib');
 const MANIFEST = [
   // 纯计算与常量
   'utils/constants.js',
+  'utils/random.js',
+  'utils/bracket.js',
   'utils/elo.js',
   'utils/rating.js',
   'utils/points.js',
@@ -52,6 +55,7 @@ const MANIFEST = [
   'services/member-review.js',
   'services/announcement.js',
   'services/event.js',
+  'services/draw.js',
   'services/profile.js',
   'services/permission.js',
   'services/season.js',

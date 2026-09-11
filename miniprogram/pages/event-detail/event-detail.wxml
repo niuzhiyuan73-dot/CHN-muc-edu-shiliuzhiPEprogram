@@ -67,6 +67,60 @@
       <view wx:if="{{view.event.canFinish}}" class="btn btn-accent btn-block btn-gap" bindtap="onOpenPlacement">录入名次并结束</view>
     </view>
 
+    <!-- ========== 抽签 ========== -->
+    <!-- 只有「已抽签」或「当前能抽签」时才出现，普通会员看没抽签的赛事不必被打扰 -->
+    <view wx:if="{{view.event.canDraw || view.event.drawn}}" class="card">
+      <view class="rank-head">
+        <view class="rank-head-title">抽签</view>
+        <view wx:if="{{view.drawText}}" class="rank-head-count">{{view.drawText}}</view>
+      </view>
+
+      <view wx:if="{{view.byeText}}" class="empty-note">{{view.byeText}}</view>
+
+      <view
+        wx:if="{{view.event.canDraw}}"
+        class="btn btn-primary btn-block {{acting ? 'btn-disabled' : ''}}"
+        bindtap="onDraw"
+      >{{view.event.drawn ? '重新抽签' : '开始抽签'}}</view>
+    </view>
+
+    <!-- ========== 签表 ========== -->
+    <view wx:if="{{view.hasBracket}}" class="card">
+      <view class="rank-head">
+        <view class="rank-head-title">签表</view>
+      </view>
+
+      <view wx:for="{{view.bracketRows}}" wx:key="matchId" class="bracket-row">
+        <view class="bracket-round">{{item.roundText}}</view>
+
+        <view class="bracket-main">
+          <view class="bracket-teams">
+            <text class="bracket-team {{item.winnerSide === 'A' ? 'is-winner' : ''}}">{{item.teamAText}}</text>
+            <text class="bracket-vs">vs</text>
+            <text class="bracket-team {{item.winnerSide === 'B' ? 'is-winner' : ''}}">{{item.teamBText}}</text>
+          </view>
+          <view class="bracket-meta">
+            <text wx:if="{{item.scoreText}}" class="bracket-score">{{item.scoreText}}</text>
+            <text class="tag {{item.statusClass}}">{{item.statusLabel}}</text>
+          </view>
+        </view>
+
+        <!-- 还没比分先录分；录完才轮到对手确认 -->
+        <view
+          wx:if="{{item.canRecord}}"
+          class="mini-btn is-primary"
+          data-match-id="{{item.matchId}}"
+          bindtap="onRecordMatch"
+        >录分</view>
+        <view
+          wx:elif="{{item.canConfirm}}"
+          class="mini-btn is-primary"
+          data-match-id="{{item.matchId}}"
+          bindtap="onConfirmMatch"
+        >确认</view>
+      </view>
+    </view>
+
     <!-- ========== 报名名单（未结束） ========== -->
     <view wx:if="{{!view.event.isFinished}}" class="card">
       <view class="rank-head">

@@ -24,12 +24,14 @@
 const { ok, fail } = require('../envelope.js');
 const { callerError } = require('./context.js');
 const { bumpSeason } = require('./season.js');
+const { getDataset } = require('./derive.js');
 const { eventNaturalKey, signupNaturalKey } = require('./idempotency.js');
 const {
   canManageEvent,
   canStartEvent,
   canCheckIn,
   canFinishEvent,
+  canDrawEvent,
   canSignUp,
   canCancelSignup,
   buildEventRecord,
@@ -37,7 +39,13 @@ const {
   buildCheckInPatch,
   validatePlacements,
 } = require('../../lib/services/event.js');
-const { EVENT_STATUS, SIGNUP_STATUS } = require('../../lib/utils/constants.js');
+const {
+  planDraw,
+  buildDrawRecord,
+  buildBracketMatches,
+  canRedraw,
+} = require('../../lib/services/draw.js');
+const { EVENT_STATUS, SIGNUP_STATUS, MATCH_STATUS, MATCH_TYPE } = require('../../lib/utils/constants.js');
 
 /* ============================================================
  * 读接口
@@ -194,6 +202,9 @@ async function signUpEvent(payload = {}, ctx) {
  */
 function signUpRefusal(event, signup) {
   if (event.status !== EVENT_STATUS.SIGNUP) return '报名已经截止了';
+  // 抽签后的冻结要单独说：此时赛事仍在「报名中」，笼统说「状态不能报名」
+  // 会让人以为是自己账号的问题
+  if (event.draw) return '抽签后报名已锁定，如需变更请联系管理员重抽';
   if (signup && signup.status === SIGNUP_STATUS.CHECKED_IN) return '你已经签过到了';
   if (signup && signup.status === SIGNUP_STATUS.SIGNED) return '你已经报过名了';
   return '当前状态不能报名这场赛事';
@@ -325,10 +336,110 @@ async function finishEvent(payload = {}, ctx) {
   return ok({ ok: true, record, errors: {}, firstError: '' });
 }
 
+/**
+ * 抽签（含重抽）：把签表落进赛事文档，并按签表生成首轮比赛。
+ *
+ * 【为什么一次读写要分「事务外算、事务内写」】
+ * 事务里不能做集合查询，而抽签要读报名记录、会员名单与既有比赛三份数据
+ * （分别算参赛者、排种子、判能否重抽）。所以全部在事务外读齐算好，事务
+ * 里只做按确定性编号的写入。签表的算法本身是纯函数，见 services/draw.js。
+ *
+ * 【为什么用确定性编号 upsert 而不是先删后插】
+ * 重抽时新首轮与旧首轮占据同一批签位。按编号覆盖，抽多少次都只有一批
+ * 比赛；若改成先删后插，中途失败会留下「删了还没插」的空签表。
+ *
+ * @param {Object} payload { id, seedValue?, manualOrder? }
+ * @param {Object} ctx
+ * @returns {Promise<Object>} {ok, record, draw, matches, message}
+ */
+async function drawEvent(payload = {}, ctx) {
+  const guard = callerError(ctx);
+  if (guard) return fail(guard);
+
+  const event = await ctx.repo.events.getById(payload.id);
+  if (!event) {
+    return ok({ ok: false, record: null, draw: null, matches: [], message: '找不到这场赛事' });
+  }
+
+  if (!canDrawEvent(event, ctx.actor, { isMock: false })) {
+    // 逐条说清是哪一样不满足，别把「已经开赛」混进「没有权限」
+    if (event.matchType !== MATCH_TYPE.SINGLES) {
+      return ok({ ok: false, record: null, draw: null, matches: [], message: '双打赛事暂不支持抽签' });
+    }
+    if (event.status !== EVENT_STATUS.SIGNUP) {
+      return ok({ ok: false, record: null, draw: null, matches: [], message: '只能在报名阶段抽签' });
+    }
+    return ok({ ok: false, record: null, draw: null, matches: [], message: '当前账号没有抽签的权限' });
+  }
+
+  const signups = await ctx.repo.eventSignups.listByEvent(payload.id);
+  const { members } = await getDataset(ctx);
+
+  // 重抽前置：已有比赛被确认生效过就禁止重抽（决策 9.5）。
+  // 集合查询不能进事务，所以在这里先把该赛事的比赛读齐
+  const existing = (await ctx.repo.matches.list()).filter((match) => match.eventId === payload.id);
+  if (event.draw && !canRedraw(existing)) {
+    return ok({
+      ok: false,
+      record: null,
+      draw: null,
+      matches: [],
+      message: '该赛事已有比赛确认生效，不能再重抽',
+    });
+  }
+
+  // 随机种子值没传就取当前时刻。它是可复核的唯一凭据：落库后任何人拿
+  // 同一个值重跑一遍，都能得到同一张签表（决策 4.4）
+  const seedValue =
+    payload.seedValue === undefined || payload.seedValue === null
+      ? ctx.now.getTime()
+      : Number(payload.seedValue);
+
+  const plan = planDraw({
+    event,
+    signups,
+    members,
+    seedValue,
+    manualOrder: payload.manualOrder,
+  });
+  if (!plan.ok) {
+    return ok({ ok: false, record: null, draw: null, matches: [], message: plan.message });
+  }
+
+  const draw = buildDrawRecord(plan, {
+    drawnAt: ctx.now,
+    drawnBy: ctx.actorId,
+    // 第几次抽签：历史参数与操作人都在这里累加，便于追溯
+    drawCount: (event.draw && event.draw.drawCount ? event.draw.drawCount : 0) + 1,
+  });
+  const drafts = buildBracketMatches(plan, { event });
+
+  const written = await ctx.repo.transaction(async (tx) => {
+    await tx.events.update(payload.id, { draw });
+
+    const docs = [];
+    for (const draft of drafts) {
+      const doc = { ...draft, status: MATCH_STATUS.PENDING, createdAt: ctx.now };
+      const found = await tx.matches.getById(draft._id);
+      if (found) await tx.matches.update(draft._id, doc);
+      else await tx.matches.insert(doc);
+      docs.push(doc);
+    }
+
+    // 签表与首轮比赛都进了回放输入（getEvents / getMatches 读的是缓存），
+    // 不失效缓存，页面上就看不到刚抽的签
+    await bumpSeason(tx, { anchorTime: null, now: ctx.now });
+    return { record: { ...event, draw }, docs };
+  });
+
+  return ok({ ok: true, record: written.record, draw, matches: written.docs, message: '' });
+}
+
 module.exports = {
   getEventSignups,
   publishEvent,
   startEvent,
+  drawEvent,
   signUpEvent,
   cancelSignupEvent,
   checkInEvent,

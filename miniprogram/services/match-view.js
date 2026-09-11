@@ -23,11 +23,11 @@
  * ============================================================
  */
 
-const { MATCH_STATUS, MATCH_STATUS_LABEL, MATCH_TYPE_LABEL, ROLE_LABEL } = require('../utils/constants.js');
+const { MATCH_STATUS, MATCH_STATUS_LABEL, MATCH_TYPE_LABEL, ROLE, ROLE_LABEL } = require('../utils/constants.js');
 const { formatDateTime, formatScore } = require('../utils/format.js');
 const { formatMatchFormat } = require('../utils/match-format.js');
 const { createNameResolver } = require('../utils/stats.js');
-const { canConfirm, canRevoke, sideOf } = require('./match-record.js');
+const { canConfirm, canRevoke, needsScore, sideOf } = require('./match-record.js');
 const { getCurrentUser, getMember, getMembers, getMatchRecords, isMock } = require('./index.js');
 
 /** 页面上的三个标签页 */
@@ -122,8 +122,11 @@ function buildRecordRow(record, ctx = {}) {
   // 旁观者看别人的比赛不该被标一个「负」，所以 resultText 留空由模板挡掉
   const isWin = Boolean(isMine && winner && winner === side);
 
-  const relaxedConfirm = canConfirm(record, userId, { isMock: mock });
-  const strictConfirm = canConfirm(record, userId, { isMock: false });
+  // 抽签排出的比赛还没比分，此时谈「确认」为时过早：确认要按胜方计分，
+  // 没有胜方就无从计起。先在比赛页给一个「录分」入口。
+  const waiting = needsScore(record);
+  const relaxedConfirm = !waiting && canConfirm(record, userId, { isMock: mock });
+  const strictConfirm = !waiting && canConfirm(record, userId, { isMock: false });
 
   return {
     matchId: record._id,
@@ -150,6 +153,12 @@ function buildRecordRow(record, ctx = {}) {
     canConfirm: relaxedConfirm,
     // 权限只来自 mock 放宽时置真——界面据此标注「演示口径」
     confirmRelaxed: relaxedConfirm && !strictConfirm,
+    // 还没比分的赛事比赛：给「录分」而不是「确认」
+    needsScore: waiting,
+    // 录分权与写入端一致：参赛者或管理员；演示数据源放宽为登录即可
+    canRecord: Boolean(
+      waiting && userId && (isMine || role === ROLE.ADMIN || mock)
+    ),
     canRevoke: canRevoke(record, userId, { role }),
   };
 }

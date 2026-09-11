@@ -18,6 +18,8 @@
  */
 
 const { createSeededRandom, randomInt, pick, shuffle } = require('../utils/random.js');
+// 标准种子排位表搬到工具层，正式抽签与这里的模拟数据共用同一份
+const { standardSeedOrder } = require('../utils/bracket.js');
 const {
   MATCH_TYPE,
   MATCH_TYPE_LABEL,
@@ -368,38 +370,6 @@ function buildMatch({ id, matchType, teamA, teamB, teamAWins, probA, matchTime, 
 function simulateOutcome(random, skillA, skillB) {
   const probA = winProbability(skillA, skillB);
   return { teamAWins: random() < probA, probA };
-}
-
-/**
- * 生成标准种子排位表。
- *
- * 【为什么不能按实力两两相邻配对】
- * 若把 8 人按实力排成 1,2,3,4,5,6,7,8 再 (1,2)(3,4)(5,6)(7,8) 配对，
- * 头号种子与二号种子第一轮就要碰面，最强的两人必有一个首轮出局，
- * 赛事含金量大打折扣。标准排位把强手分散到不同半区，让高种子在决赛前
- * 都遇不上彼此，这才是真实赛事的编排习惯。
- *
- * 返回「位置 → 种子序号」的数组。8 人时为 [1,8,4,5,2,7,3,6]，
- * 即 (1 对 8)(4 对 5)(2 对 7)(3 对 6)。
- *
- * 递推构造：规模每扩大一倍，原有序列中每个种子 s 后面补一个
- * (新规模 + 1 - s)，凑成「和为 新规模+1」的对称对。
- *
- * @param {number} size 参赛规模，必须是 2 的幂次
- * @returns {number[]} 各位置应放置的种子序号（从 1 开始）
- */
-function standardSeedOrder(size) {
-  let order = [1];
-  while (order.length < size) {
-    const roundSize = order.length * 2;
-    const next = [];
-    for (const seed of order) {
-      next.push(seed);
-      next.push(roundSize + 1 - seed);
-    }
-    order = next;
-  }
-  return order;
 }
 
 /**

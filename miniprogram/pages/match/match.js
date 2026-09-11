@@ -187,6 +187,17 @@ Page({
     wx.navigateTo({ url: `/pages/member/member?userId=${userId}` });
   },
 
+  /**
+   * 给抽签排出的比赛录分。
+   * 这类比赛已经在签表里占好位置，只需补上比分，所以带着编号进录入页，
+   * 由那一页把比分写回原记录，而不是另立一条新比赛。
+   */
+  onRecordMatch(event) {
+    const matchId = event.currentTarget.dataset.matchId;
+    if (!matchId) return;
+    wx.navigateTo({ url: `/pages/match-entry/match-entry?matchId=${matchId}` });
+  },
+
   /* ---------- 确认 ---------- */
 
   /** 确认对手录入的比分，成绩随即计入等级分 */

@@ -24,6 +24,10 @@ const {
   EVENT_LEVEL_LABEL,
   EVENT_BRONZE_MODE,
   EVENT_BRONZE_MODE_LABEL,
+  SEED_MODE,
+  SEED_MODE_LABEL,
+  SEED_COUNTS,
+  DEFAULT_SEED_COUNT,
 } = require('../../utils/constants.js');
 const {
   TITLE_MAX,
@@ -44,6 +48,15 @@ const BRONZE_LABELS = BRONZE_MODES.map((mode) => EVENT_BRONZE_MODE_LABEL[mode]);
 /** 项目下拉。默认单打——双打赛事不计积分，别让人一进来就踩坑 */
 const MATCH_TYPES = [MATCH_TYPE.SINGLES, MATCH_TYPE.DOUBLES];
 const MATCH_TYPE_LABELS = ['单打', '双打'];
+
+/** 种子来源下拉。仅单打赛事显示（决策 1） */
+const SEED_MODES = [SEED_MODE.MANUAL, SEED_MODE.ELO, SEED_MODE.POINTS];
+const SEED_MODE_LABELS = SEED_MODES.map((mode) => SEED_MODE_LABEL[mode]);
+
+/** 种子数量下拉。只认 2 / 4 / 8（决策 3），默认 8 */
+const SEED_COUNT_OPTIONS = SEED_COUNTS;
+const SEED_COUNT_LABELS = SEED_COUNTS.map((count) => `${count} 位`);
+const DEFAULT_SEED_COUNT_INDEX = SEED_COUNTS.indexOf(DEFAULT_SEED_COUNT);
 
 /** 日期选择器的下界：今天。赛事不该往过去发 */
 function todayText(now = new Date()) {
@@ -67,6 +80,11 @@ Page({
     levelIndex: 0,
     bronzeModes: BRONZE_LABELS,
     bronzeIndex: 0,
+    seedModes: SEED_MODE_LABELS,
+    seedModeIndex: 0,
+    seedCounts: SEED_COUNT_LABELS,
+    // 数量按决策 3 预填 8，来源仍需管理员显式选定
+    seedCountIndex: DEFAULT_SEED_COUNT_INDEX,
 
     /** 日期选择器的下界 */
     today: todayText(),
@@ -83,6 +101,9 @@ Page({
       matchType: MATCH_TYPES[0],
       level: null,
       bronzeMode: '',
+      // 种子来源留空必须显式选；数量预填默认值（决策 2 / 3）
+      seedMode: '',
+      seedCount: DEFAULT_SEED_COUNT,
       location: '',
       date: '',
       time: '',
@@ -173,6 +194,22 @@ Page({
     if (mode === undefined) return;
     this.setData({ bronzeIndex: index });
     this.setField('bronzeMode', mode);
+  },
+
+  onPickSeedMode(event) {
+    const index = Number(event.detail.value);
+    const mode = SEED_MODES[index];
+    if (mode === undefined) return;
+    this.setData({ seedModeIndex: index });
+    this.setField('seedMode', mode);
+  },
+
+  onPickSeedCount(event) {
+    const index = Number(event.detail.value);
+    const count = SEED_COUNT_OPTIONS[index];
+    if (count === undefined) return;
+    this.setData({ seedCountIndex: index });
+    this.setField('seedCount', count);
   },
 
   onPickDate(event) {

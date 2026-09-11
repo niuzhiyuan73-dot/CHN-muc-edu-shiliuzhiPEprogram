@@ -131,6 +131,9 @@ const resetSeason = (actor) => request('resetSeason', { actor });
 const getEventSignups = (eventId) => request('getEventSignups', { eventId });
 const publishEvent = (form, actor) => request('publishEvent', { form, actor });
 const startEvent = (id, actor) => request('startEvent', { id, actor });
+// 抽签（含重抽）。seedValue / manualOrder 都是可选：前者用于固定随机结果
+// （主要是测试与复核），后者只在「手工指定种子」模式下才带。
+const drawEvent = (id, actor, options) => request('drawEvent', { id, actor, ...options });
 const signUpEvent = (id, actor) => request('signUpEvent', { id, actor });
 const cancelSignupEvent = (id, actor) => request('cancelSignupEvent', { id, actor });
 const checkInEvent = (id, userId, actor) => request('checkInEvent', { id, userId, actor });
@@ -174,6 +177,7 @@ module.exports = {
   getEventSignups,
   publishEvent,
   startEvent,
+  drawEvent,
   signUpEvent,
   cancelSignupEvent,
   checkInEvent,

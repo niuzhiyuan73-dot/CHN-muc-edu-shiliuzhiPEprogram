@@ -9,6 +9,7 @@ const {
   canStartEvent,
   canCheckIn,
   canFinishEvent,
+  canDrawEvent,
   canSignUp,
   canCancelSignup,
   signupCountOf,
@@ -34,6 +35,7 @@ const {
   EVENT_STATUS,
   EVENT_LEVEL,
   EVENT_BRONZE_MODE,
+  SEED_MODE,
   SIGNUP_STATUS,
 } = require('../miniprogram/utils/constants.js');
 
@@ -62,6 +64,8 @@ const openEvent = (extra = {}) => ({
   matchType: MATCH_TYPE.SINGLES,
   level: EVENT_LEVEL.THIRD,
   bronzeMode: EVENT_BRONZE_MODE.TIED,
+  seedMode: SEED_MODE.ELO,
+  seedCount: 8,
   status: EVENT_STATUS.SIGNUP,
   quota: 8,
   results: [],
@@ -83,6 +87,8 @@ const validForm = (extra = {}) => ({
   matchType: MATCH_TYPE.SINGLES,
   level: EVENT_LEVEL.SECOND,
   bronzeMode: EVENT_BRONZE_MODE.PLAYOFF,
+  seedMode: SEED_MODE.ELO,
+  seedCount: 8,
   location: '学校体育馆 1 号场',
   startTime: new Date('2026-05-01T10:00:00'),
   quota: 8,
@@ -132,6 +138,26 @@ describe('赛事状态机 —— 开始 / 签到 / 结束', () => {
     assert.equal(canStartEvent(openEvent(), member('m1')), false);
     assert.equal(canCheckIn(openEvent({ status: EVENT_STATUS.ONGOING }), member('m1')), false);
     assert.equal(canFinishEvent(openEvent({ status: EVENT_STATUS.ONGOING }), member('m1')), false);
+  });
+});
+
+describe('canDrawEvent —— 抽签资格', () => {
+  test('干事在报名中可抽签', () => {
+    assert.equal(canDrawEvent(openEvent(), staff()), true);
+  });
+
+  test('开赛后不可抽签 / 重抽（决策 7）', () => {
+    assert.equal(canDrawEvent(openEvent({ status: EVENT_STATUS.ONGOING }), staff()), false);
+    assert.equal(canDrawEvent(openEvent({ status: EVENT_STATUS.FINISHED }), staff()), false);
+  });
+
+  test('双打赛事不出现抽签（决策 1）', () => {
+    assert.equal(canDrawEvent(openEvent({ matchType: MATCH_TYPE.DOUBLES }), staff()), false);
+  });
+
+  test('普通会员与访客都不行', () => {
+    assert.equal(canDrawEvent(openEvent(), member('m1')), false);
+    assert.equal(canDrawEvent(openEvent(), null), false);
   });
 });
 
@@ -189,6 +215,13 @@ describe('canSignUp —— 报名判定', () => {
     assert.equal(signupCountOf(openEvent(), list), 1);
     assert.equal(canSignUp(openEvent({ quota: 2 }), member('m1'), { signups: list }), true);
   });
+
+  test('抽签后名单冻结，再多的人也不能报名（决策 5）', () => {
+    // 赛事仍是「报名中」，所以挡住他的必须是 draw 而不是状态
+    const drawn = openEvent({ draw: { seedValue: 1 } });
+    assert.equal(drawn.status, EVENT_STATUS.SIGNUP);
+    assert.equal(canSignUp(drawn, member('m1')), false);
+  });
 });
 
 describe('canCancelSignup —— 退赛判定', () => {
@@ -219,6 +252,13 @@ describe('canCancelSignup —— 退赛判定', () => {
       canCancelSignup(openEvent({ status: EVENT_STATUS.ONGOING }), actor, {
         signup: signupRecord('m1'),
       }),
+      false
+    );
+  });
+
+  test('抽签后名单冻结，已报名的人也不能退赛（决策 5）', () => {
+    assert.equal(
+      canCancelSignup(openEvent({ draw: { seedValue: 1 } }), actor, { signup: signupRecord('m1') }),
       false
     );
   });
@@ -314,6 +354,29 @@ describe('validateEvent —— 发布校验', () => {
     assert.match(result.errors.bronzeMode, /三四名/);
   });
 
+  test('单打必须显式选择种子来源与数量（决策 2 / 3）', () => {
+    const noMode = validateEvent(validForm({ seedMode: '' }));
+    assert.equal(noMode.ok, false);
+    assert.match(noMode.errors.seedMode, /种子来源/);
+
+    const noCount = validateEvent(validForm({ seedCount: '' }));
+    assert.equal(noCount.ok, false);
+    assert.match(noCount.errors.seedCount, /种子数量/);
+
+    // 只认 2 / 4 / 8
+    assert.equal(validateEvent(validForm({ seedCount: 3 })).ok, false);
+    assert.equal(validateEvent(validForm({ seedCount: 4 })).ok, true);
+  });
+
+  test('双打不需要种子来源与数量', () => {
+    const result = validateEvent(
+      validForm({ matchType: MATCH_TYPE.DOUBLES, seedMode: '', seedCount: '' })
+    );
+    assert.equal(result.ok, true);
+    assert.equal(result.draft.seedMode, '');
+    assert.equal(result.draft.seedCount, null);
+  });
+
   test('必须选择单打或双打', () => {
     assert.equal(validateEvent(validForm({ matchType: '' })).ok, false);
     assert.equal(validateEvent(validForm({ matchType: 99 })).ok, false);
@@ -352,6 +415,21 @@ describe('buildEventRecord —— 组装赛事记录', () => {
     assert.equal(result.record.level, EVENT_LEVEL.SECOND);
     assert.equal(result.record.bronzeMode, EVENT_BRONZE_MODE.PLAYOFF);
     assert.deepEqual(result.record.results, []);
+  });
+
+  test('单打记下种子来源与数量，尚未抽签时 draw 为空', () => {
+    const result = buildEventRecord(validForm(), { actor: staff('s1') });
+    assert.equal(result.record.seedMode, SEED_MODE.ELO);
+    assert.equal(result.record.seedCount, 8);
+    assert.equal(result.record.draw, null, '创建时还没抽签');
+  });
+
+  test('双打不写种子字段——抽签只对单打开放', () => {
+    const result = buildEventRecord(validForm({ matchType: MATCH_TYPE.DOUBLES }), {
+      actor: staff('s1'),
+    });
+    assert.equal(result.record.seedMode, null);
+    assert.equal(result.record.seedCount, null);
   });
 
   test('记下发布人，昵称缺失时逐层兜底', () => {

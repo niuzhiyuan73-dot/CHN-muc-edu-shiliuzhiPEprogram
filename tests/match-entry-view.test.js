@@ -23,6 +23,7 @@ const {
   BEST_OF_LABELS,
   teamSizeOf,
   createForm,
+  scheduledForm,
   createTeams,
   resizeTeams,
   resizeScores,
@@ -237,7 +238,64 @@ test('toSubmitParams —— 绝不带 winner 与 recorder，它们由数据层�
 });
 
 /* ============================================================
- * 六、找人面板的筛选
+ * 六、抽签排定的比赛 → 表单
+ * ============================================================ */
+
+/** 一条抽签生成的待确认比赛，字段与 draw.js 的产出一致 */
+const SCHEDULED = {
+  _id: 'x_e1_r1_main_1',
+  eventId: 'e1',
+  round: 1,
+  stage: 'main',
+  slot: 1,
+  matchType: MATCH_TYPE.SINGLES,
+  teamA: ['u06'],
+  teamB: ['u02'],
+  gamePoints: 11,
+  bestOf: 3,
+  winner: null,
+  recorder: 'u06',
+  matchTime: '2026-05-20T09:30:00',
+  location: '学校体育馆 2 号场',
+};
+
+test('scheduledForm —— 对阵、赛制、时间、场地全部照抄，一个字都不给改', () => {
+  const form = scheduledForm(SCHEDULED);
+
+  assert.strictEqual(form.matchType, MATCH_TYPE.SINGLES);
+  assert.deepStrictEqual(form.teamA, ['u06']);
+  assert.deepStrictEqual(form.teamB, ['u02']);
+  assert.strictEqual(form.gamePoints, 11);
+  assert.strictEqual(form.bestOf, 3);
+  assert.strictEqual(form.date, '2026-05-20');
+  assert.strictEqual(form.time, '09:30', '拿到时分即可，秒交给 picker 不管');
+  assert.strictEqual(form.location, '学校体育馆 2 号场');
+});
+
+test('scheduledForm —— 比分按局制留空，不把待填的格子填成 0', () => {
+  const form = scheduledForm(SCHEDULED);
+  assert.deepStrictEqual(form.scoreA, ['', '', '']);
+  assert.deepStrictEqual(form.scoreB, ['', '', '']);
+});
+
+test('scheduledForm —— 缺字段时退回默认赛制，不抛错', () => {
+  const form = scheduledForm({ teamA: ['u06'], teamB: ['u02'] });
+  assert.strictEqual(form.bestOf, 3);
+  assert.strictEqual(form.gamePoints, 11);
+  assert.strictEqual(form.date, '');
+  assert.strictEqual(form.time, '');
+  assert.deepStrictEqual(form.teamA, ['u06']);
+});
+
+test('scheduledForm —— 空记录不抛错，给一份能渲染的空表', () => {
+  const form = scheduledForm(null);
+  assert.deepStrictEqual(form.teamA, []);
+  assert.deepStrictEqual(form.teamB, []);
+  assert.strictEqual(form.matchType, MATCH_TYPE.SINGLES);
+});
+
+/* ============================================================
+ * 七、找人面板的筛选
  * ============================================================ */
 
 const ROSTER = [

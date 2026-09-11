@@ -65,6 +65,36 @@ function createForm(user) {
 }
 
 /**
+ * 用抽签排定的比赛记录建一份录入表单。
+ *
+ * 对阵、赛制、时间、场地全部照抄那条记录，一个字都不给改——抽签生成的
+ * 比赛在签表里占着一个位置，若在这里改了对手或赛制，录进去的比分就与
+ * 签表里那一场对不上，签表会自相矛盾。
+ *
+ * @param {Object} record 比赛记录（来自 getMatchRecords）
+ * @returns {Object} 与 createForm 同形状的表单
+ */
+function scheduledForm(record) {
+  const bestOf = Number(record && record.bestOf) || DEFAULT_FORMAT.bestOf;
+  const gamePoints = Number(record && record.gamePoints) || DEFAULT_FORMAT.gamePoints;
+  // '2026-05-20T09:00:00' → 日期与时分，交给 picker 的展示格式
+  const [date, clock] = String((record && record.matchTime) || '').split('T');
+
+  return {
+    matchType: (record && record.matchType) || MATCH_TYPE.SINGLES,
+    teamA: [...((record && record.teamA) || [])],
+    teamB: [...((record && record.teamB) || [])],
+    scoreA: new Array(bestOf).fill(''),
+    scoreB: new Array(bestOf).fill(''),
+    gamePoints,
+    bestOf,
+    date: date || '',
+    time: clock ? clock.slice(0, 5) : '',
+    location: (record && record.location) || '',
+  };
+}
+
+/**
  * 按项目建队伍格子。
  * @param {number} matchType
  * @param {Object|null} user
@@ -203,6 +233,7 @@ module.exports = {
   BEST_OF_LABELS,
   teamSizeOf,
   createForm,
+  scheduledForm,
   createTeams,
   resizeTeams,
   resizeScores,

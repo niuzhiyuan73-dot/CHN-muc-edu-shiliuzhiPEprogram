@@ -88,6 +88,28 @@ function addMatch(draft) {
 }
 
 /**
+ * 记入或覆盖一场比赛。专供抽签生成的赛事比赛使用。
+ *
+ * 【与 addMatch 的差别】
+ * addMatch 每次分配一个新编号，同一场录入两次就是两条；抽签生成的比赛
+ * 自带确定性编号（见 draw.eventMatchKey），重抽时要用同一批编号覆盖旧
+ * 对阵，而不是再追加一批。所以这里按 _id 找位置：找到就替换，没有才追加。
+ *
+ * 状态一律重置为「待确认」：重抽会作废尚未确认的比分，覆盖上去的就该是
+ * 一场干干净净、等开打的新对阵。
+ *
+ * @param {Object} draft 带 _id 的比赛记录（见 draw.buildBracketMatches）
+ * @returns {Object} 落库后的副本
+ */
+function saveMatch(draft) {
+  const record = cloneMatch({ ...draft, status: MATCH_STATUS.PENDING });
+  const index = submitted.findIndex((item) => item._id === record._id);
+  if (index >= 0) submitted[index] = record;
+  else submitted.push(record);
+  return cloneMatch(record);
+}
+
+/**
  * 取某场比赛的改判记录。
  * @param {string} id
  * @returns {Object|null} 没有改判时返回 null
@@ -130,6 +152,7 @@ module.exports = {
   LOCAL_ID_PREFIX,
   nextId,
   addMatch,
+  saveMatch,
   overrideOf,
   setStatus,
   listSubmitted,

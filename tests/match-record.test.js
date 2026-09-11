@@ -7,8 +7,10 @@ const {
   isRecorder,
   canConfirm,
   canRevoke,
+  needsScore,
   normalizeScores,
   buildMatchRecord,
+  fillScheduledMatch,
 } = require('../miniprogram/services/match-record.js');
 const { MATCH_TYPE, MATCH_STATUS, ROLE } = require('../miniprogram/utils/constants.js');
 
@@ -96,6 +98,28 @@ test('canRevoke —— 普通会员只能撤自己录的', () => {
 });
 
 /* ============================================================
+ * 三、录分与确认的边界
+ * ============================================================ */
+
+test('needsScore —— 没比分的待确认比赛要人先录分', () => {
+  // 抽签排出来的比赛就是这个样子：状态是待确认，但比分与胜方都还没有
+  const scheduled = { ...DOUBLES, scoreA: [], scoreB: [], winner: null };
+  assert.strictEqual(needsScore(scheduled), true);
+});
+
+test('needsScore —— 已有胜方的待确认比赛不用再录', () => {
+  // 日常约球录完就是这个状态，等着对手确认即可
+  assert.strictEqual(needsScore({ ...DOUBLES, winner: 'A' }), false);
+});
+
+test('needsScore —— 已生效、已撤销、空记录都不算「待录分」', () => {
+  assert.strictEqual(needsScore({ ...DOUBLES, status: MATCH_STATUS.ACTIVE }), false);
+  assert.strictEqual(needsScore({ ...DOUBLES, status: MATCH_STATUS.REVOKED }), false);
+  assert.strictEqual(needsScore(null), false);
+  assert.strictEqual(needsScore(undefined), false);
+});
+
+/* ============================================================
  * 四、比分整理
  * ============================================================ */
 
@@ -160,7 +184,16 @@ test('buildMatchRecord —— 合法单打能组装出完整记录', () => {
   assert.strictEqual(record.bestOf, 3);
   assert.strictEqual(record.winner, 'A');
   assert.strictEqual(record.recorder, 'u01', '录入者默认是 A 队第一位');
-  assert.strictEqual(record.eventId, null, '赛事成绩不由这里录入');
+  assert.strictEqual(record.eventId, null, '日常约球没有赛事归属');
+});
+
+test('buildMatchRecord —— 带上 eventId 时原样落库', () => {
+  const inEvent = buildMatchRecord(singlesParams({ eventId: 'e07' }), {
+    now: NOW,
+    minMatchTime: MIN,
+  });
+  assert.strictEqual(inEvent.ok, true);
+  assert.strictEqual(inEvent.record.eventId, 'e07');
 });
 
 test('buildMatchRecord —— 胜负由比分推出，不接受外部指定', () => {
@@ -366,4 +399,88 @@ test('buildMatchRecord —— 报错顺序从粗到细，先说该做的事', ()
 
   // 什么都没填时，先提醒选项目，而不是甩一条比分错误
   assert.strictEqual(result.firstError, '请选择单打或双打');
+});
+
+/* ============================================================
+ * 六、给抽签生成的比赛补录比分
+ * ============================================================ */
+
+/** 抽签生成的一场待确认比赛 */
+function scheduled(overrides = {}) {
+  return {
+    _id: 'x_e07_r1_main_0',
+    matchType: MATCH_TYPE.SINGLES,
+    pool: 'singles',
+    teamA: ['u01'],
+    teamB: ['u02'],
+    scoreA: [],
+    scoreB: [],
+    gamePoints: 11,
+    bestOf: 3,
+    winner: null,
+    location: '学校体育馆 1 号场',
+    matchTime: '2026-05-01T18:00:00',
+    recorder: null,
+    eventId: 'e07',
+    round: 1,
+    stage: 'main',
+    slot: 0,
+    status: MATCH_STATUS.PENDING,
+    ...overrides,
+  };
+}
+
+test('fillScheduledMatch —— 补上比分，胜方由比分推出', () => {
+  const result = fillScheduledMatch(scheduled(), { scoreA: ['11', '11'], scoreB: ['9', '7'] }, {
+    now: NOW,
+    minMatchTime: MIN,
+    recorder: 'u01',
+  });
+
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.patch.winner, 'A');
+  assert.deepStrictEqual(result.patch.scoreA, [11, 11]);
+  assert.strictEqual(result.patch.recorder, 'u01');
+  // 签位与赛事归属必须原样带回来，否则重抽去重会认不出这一场
+  assert.strictEqual(result.patch._id, undefined, '补丁里不该带 _id，由调用方按既有编号合并');
+  assert.strictEqual(result.patch.round, 1);
+  assert.strictEqual(result.patch.stage, 'main');
+  assert.strictEqual(result.patch.slot, 0);
+  assert.strictEqual(result.patch.eventId, 'e07');
+});
+
+test('fillScheduledMatch —— 对阵与赛制取自记录，不吃入参', () => {
+  const result = fillScheduledMatch(scheduled(), { scoreA: ['11', '11'], scoreB: ['5', '3'] }, {
+    now: NOW,
+    minMatchTime: MIN,
+  });
+  assert.deepStrictEqual(result.patch.teamA, ['u01']);
+  assert.deepStrictEqual(result.patch.teamB, ['u02']);
+  assert.strictEqual(result.patch.gamePoints, 11);
+  assert.strictEqual(result.patch.bestOf, 3);
+});
+
+test('fillScheduledMatch —— 比分没打完仍按同一套校验拦下', () => {
+  const result = fillScheduledMatch(scheduled(), { scoreA: ['11', '9'], scoreB: ['9', '11'] }, {
+    now: NOW,
+    minMatchTime: MIN,
+  });
+  assert.strictEqual(result.ok, false);
+  assert.ok(result.scoreErrors.length > 0);
+});
+
+test('fillScheduledMatch —— 已生效的比赛不能再补录', () => {
+  const result = fillScheduledMatch(
+    scheduled({ status: MATCH_STATUS.ACTIVE }),
+    { scoreA: ['11'], scoreB: ['5'] },
+    { now: NOW, minMatchTime: MIN }
+  );
+  assert.strictEqual(result.ok, false);
+  assert.match(result.firstError, /待确认/);
+});
+
+test('fillScheduledMatch —— 没有记录时报找不到', () => {
+  const result = fillScheduledMatch(null, { scoreA: ['11'], scoreB: ['5'] });
+  assert.strictEqual(result.ok, false);
+  assert.match(result.firstError, /找不到/);
 });

@@ -59,6 +59,28 @@
       </view>
       <view wx:if="{{errors.bronzeMode}}" class="field-error">{{errors.bronzeMode}}</view>
       <view class="field-hint">并列：两位半决赛负者都记季军；打三四名：加赛一场，分出第三、第四名</view>
+
+      <!-- 抽签只对单打开放（决策 1），双打不显示这两项 -->
+      <block wx:if="{{form.matchType === 1}}">
+        <view class="field-row">
+          <view class="field-label">种子来源</view>
+          <picker mode="selector" range="{{seedModes}}" value="{{seedModeIndex}}" bindchange="onPickSeedMode">
+            <view class="field-value {{form.seedMode === '' ? 'is-placeholder' : ''}}">
+              {{form.seedMode === '' ? '请选择种子来源' : seedModes[seedModeIndex]}} ›
+            </view>
+          </picker>
+        </view>
+        <view wx:if="{{errors.seedMode}}" class="field-error">{{errors.seedMode}}</view>
+
+        <view class="field-row">
+          <view class="field-label">种子数量</view>
+          <picker mode="selector" range="{{seedCounts}}" value="{{seedCountIndex}}" bindchange="onPickSeedCount">
+            <view class="field-value">{{seedCounts[seedCountIndex]}} ›</view>
+          </picker>
+        </view>
+        <view wx:if="{{errors.seedCount}}" class="field-error">{{errors.seedCount}}</view>
+        <view class="field-hint">抽签时按来源排出种子，强手分散、轮空优先给高种子；只在报名阶段由管理员手动抽签</view>
+      </block>
     </view>
 
     <!-- ========== 时间与场地 ========== -->

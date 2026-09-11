@@ -31,11 +31,13 @@ const {
   EVENT_STATUS,
   EVENT_BRONZE_MODE,
   DEFAULT_BRONZE_MODE,
+  BRACKET_STAGE,
+  ROLE,
   SIGNUP_STATUS,
   isRankable,
 } = require('../utils/constants.js');
 const { buildLeaderboard } = require('../utils/leaderboard.js');
-const { formatDate, formatPercent } = require('../utils/format.js');
+const { formatDate, formatDateTime, formatPercent, formatScore } = require('../utils/format.js');
 const {
   canManageEvent,
   canCheckIn,
@@ -44,11 +46,14 @@ const {
   buildSignupRow,
   signupStateOf,
 } = require('./event.js');
+const { canConfirm, isParticipant, needsScore } = require('./match-record.js');
+const { statusTagOf } = require('./match-view.js');
 const {
   getCurrentUser,
   getMembers,
   getEvents,
   getEventSignups,
+  getMatchRecords,
   getSeasonState,
 } = require('./index.js');
 
@@ -306,6 +311,131 @@ function buildResultRows(event, memberMap, actor = null) {
     });
 }
 
+/* ============================================================
+ * 签表（抽签结果）
+ * ============================================================ */
+
+/** 阶段排序：正赛在前，季军赛在后 */
+function stageOrder(stage) {
+  return stage === BRACKET_STAGE.BRONZE ? 1 : 0;
+}
+
+/**
+ * 一轮叫什么。
+ *
+ * 从最后一轮倒着数才不会因为签表大小不同而叫错：8 人签的最后一轮是
+ * 决赛、倒数第二轮是半决赛、再往前是四分之一决赛。若从第一轮正着数，
+ * 4 人签和 8 人签的第一轮都叫「第 1 轮」，看不出哪轮是半决赛。
+ *
+ * @param {number} round 轮次
+ * @param {number} totalRounds 总轮数（由签表大小推得）
+ * @param {string} [stage] 见 constants.BRACKET_STAGE
+ * @returns {string}
+ */
+function roundLabelOf(round, totalRounds, stage) {
+  if (stage === BRACKET_STAGE.BRONZE) return '季军赛';
+  const fromEnd = Number(totalRounds) - Number(round);
+  if (fromEnd <= 0) return '决赛';
+  if (fromEnd === 1) return '半决赛';
+  if (fromEnd === 2) return '四分之一决赛';
+  return `第 ${round} 轮`;
+}
+
+/** 签表大小的总轮数：2 的几次幂就是几轮。非法值返回 0 */
+function totalRoundsOf(draw) {
+  const size = draw && Number(draw.size);
+  if (!Number.isFinite(size) || size < 2) return 0;
+  return Math.round(Math.log2(size));
+}
+
+/**
+ * 一句话说清这次抽签：第几次、几个签位、几位种子。
+ * @param {Object} draw 赛事的 draw 字段
+ * @returns {string}
+ */
+function describeDraw(draw) {
+  if (!draw) return '';
+  const round = Number(draw.drawCount) || 1;
+  const size = Number(draw.size) || 0;
+  const seeds = asArray(draw.seeds).length;
+  const parts = [`第 ${round} 次抽签`, `${size} 个签位`];
+  if (seeds) parts.push(`${seeds} 位种子`);
+  return parts.join(' · ');
+}
+
+/**
+ * 轮空名单的文案。轮空的人不动手就进下一轮，但必须让人看得见，
+ * 否则名单上少了两个人会以为抽签漏了。
+ *
+ * @param {Object} draw
+ * @param {Map<string, Object>} memberMap
+ * @returns {string}
+ */
+function byeTextOf(draw, memberMap) {
+  const byes = asArray(draw && draw.byes);
+  if (byes.length === 0) return '';
+  const names = byes.map((id) => (memberMap.get(id) || {}).nickName || id);
+  return `轮空直接晋级：${names.join('、')}`;
+}
+
+/**
+ * 把该赛事的比赛整形成签表行，按轮次 → 阶段 → 签位排。
+ *
+ * @param {Array<Object>} records getMatchRecords 的结果
+ * @param {Object} event 赛事记录（要它的 draw 与编号）
+ * @param {Map<string, Object>} memberMap 会员编号 → 档案
+ * @param {Object} [ctx]
+ * @param {Object|null} [ctx.actor] 当前登录会员
+ * @param {boolean} [ctx.isMock=false]
+ * @returns {Array<Object>}
+ */
+function buildBracketRows(records, event, memberMap, ctx = {}) {
+  const { actor = null, isMock: mock = false } = ctx;
+  const eventId = event && event._id;
+  const totalRounds = totalRoundsOf(event && event.draw);
+  const nameOf = (id) => (id ? (memberMap.get(id) || {}).nickName || id : '待定');
+
+  // 录分的权限要和真正写入时一致：云端只认参赛者与管理员；演示数据源
+  // 放宽为「登录即可」，否则单账号演示下没法把签表走完（见 mock.submitMatch）
+  const mayManage = mock
+    ? canManageEvent(actor, { isMock: true })
+    : Boolean(actor && actor.role === ROLE.ADMIN);
+  const actorId = actor ? actor._id : null;
+
+  return asArray(records)
+    .filter((record) => record && record.eventId === eventId)
+    .slice()
+    .sort(
+      (a, b) =>
+        timeValue(a.round) - timeValue(b.round) ||
+        stageOrder(a.stage) - stageOrder(b.stage) ||
+        Number(a.slot) - Number(b.slot)
+    )
+    .map((record) => {
+      const tag = statusTagOf(record.status, record.action);
+      // 还没比分的场次不渲染比分占位符——那会和「0:0」混在一起
+      const hasScore = asArray(record.scoreA).length > 0;
+      const waiting = needsScore(record);
+      return {
+        matchId: record._id,
+        roundText: roundLabelOf(record.round, totalRounds, record.stage),
+        teamAText: nameOf(record.teamA && record.teamA[0]),
+        teamBText: nameOf(record.teamB && record.teamB[0]),
+        timeText: record.matchTime ? formatDateTime(record.matchTime) : '',
+        scoreText: hasScore ? formatScore(record.scoreA, record.scoreB) : '',
+        winnerSide: record.winner || '',
+        statusLabel: tag.label,
+        statusClass: tag.className,
+        isMine: Boolean(actorId && (isParticipant(record, actorId))),
+        // 还没比分的场次先录分，录完才谈得上确认
+        canRecord: Boolean(waiting && actorId && (isParticipant(record, actorId) || mayManage)),
+        canConfirm: Boolean(
+          !waiting && canConfirm(record, actorId, { isMock: mock })
+        ),
+      };
+    });
+}
+
 /** 演示口径的说明。只有「数据源放宽了权限、正式规则不允许」时才提示 */
 function demoNoticeOf(mock, actor) {
   const relaxed = canManageEvent(actor, { isMock: true });
@@ -401,17 +531,27 @@ async function loadEventDetailView(eventId, options = {}) {
       signupRows: [],
       hasSignups: false,
       signupsEmptyNote: '',
+      bracketRows: [],
+      hasBracket: false,
+      drawText: '',
+      byeText: '',
       resultRows: [],
       hasResults: false,
       demoNotice: '',
     };
   }
 
-  const signups = await getEventSignups(eventId);
+  // 抽签排出的比赛状态是「待确认」，getMatches 只给已生效的，签表会空，
+  // 所以这里必须走台账（getMatchRecords），与「比赛」页同一条口径
+  const [signups, ledger] = await Promise.all([
+    getEventSignups(eventId),
+    getMatchRecords({ eventId }),
+  ]);
   const row = buildEventRow(event, { actor, signups, isMock: mock });
   const memberMap = new Map(asArray(members).map((member) => [member._id, member]));
 
   const signupRows = buildSignupRows(signups, memberMap, { actor, event, isMock: mock });
+  const bracketRows = buildBracketRows(ledger, event, memberMap, { actor, isMock: mock });
   const resultRows = buildResultRows(event, memberMap, actor);
 
   return {
@@ -421,6 +561,10 @@ async function loadEventDetailView(eventId, options = {}) {
     signupRows,
     hasSignups: signupRows.length > 0,
     signupsEmptyNote: '还没有人报名',
+    bracketRows,
+    hasBracket: bracketRows.length > 0,
+    drawText: describeDraw(event.draw),
+    byeText: byeTextOf(event.draw, memberMap),
     resultRows,
     hasResults: resultRows.length > 0,
     demoNotice: demoNoticeOf(mock, actor),
@@ -532,6 +676,12 @@ module.exports = {
   loadSignupMap,
   buildSignupRows,
   buildResultRows,
+  stageOrder,
+  roundLabelOf,
+  totalRoundsOf,
+  describeDraw,
+  byeTextOf,
+  buildBracketRows,
   loadEventsView,
   loadEventDetailView,
   loadEventPlacementView,

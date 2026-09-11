@@ -23,8 +23,15 @@ const { callerError } = require('./context.js');
 const { getDataset } = require('./derive.js');
 const { bumpSeason } = require('./season.js');
 const { matchNaturalKey } = require('./idempotency.js');
-const { canConfirm, canRevoke, buildMatchRecord } = require('../../lib/services/match-record.js');
-const { MATCH_STATUS } = require('../../lib/utils/constants.js');
+const {
+  canConfirm,
+  canRevoke,
+  buildMatchRecord,
+  fillScheduledMatch,
+  isParticipant,
+} = require('../../lib/services/match-record.js');
+const { planNextRound, buildRoundMatches } = require('../../lib/services/draw.js');
+const { MATCH_STATUS, ROLE } = require('../../lib/utils/constants.js');
 
 /**
  * 在台账里找一场比赛（含待确认与已撤销）。
@@ -54,6 +61,123 @@ function anchorCandidate(dataset, fallback) {
 }
 
 /**
+ * 给抽签生成的待确认比赛补录比分。
+ *
+ * 与「新录一场」不同，这里不吃队伍、赛制、时间——它们已经在记录上。
+ * 只有参赛者本人（或管理员代录）能补分；补完仍是待确认，等对手确认
+ * 才计入等级分，沿用同一道闸门。
+ *
+ * @param {string} id 抽签生成的比赛编号
+ * @param {Object} scores { scoreA, scoreB }
+ * @param {Object} params { dataset, ctx, now }
+ * @returns {Promise<Object>}
+ */
+async function submitScheduledMatch(id, scores, { dataset, ctx, now }) {
+  const target = findRecord(dataset, id);
+  if (!target) {
+    return ok({ ok: false, match: null, errors: {}, scoreErrors: [], firstError: '找不到这场比赛' });
+  }
+  if (!isParticipant(target, ctx.actorId) && ctx.role !== ROLE.ADMIN) {
+    return ok({
+      ok: false,
+      match: null,
+      errors: {},
+      scoreErrors: [],
+      firstError: '只有参赛者可以录入这场比赛的成绩',
+    });
+  }
+
+  const filled = fillScheduledMatch(target, scores, {
+    members: dataset.users,
+    now: now || ctx.now,
+    minMatchTime: dataset.meta.seasonStart || dataset.meta.firstMatchTime,
+    // 录入人按登录者记，而不是沿用记录上的空值：确认权要靠它区分「自己」与「对手」
+    recorder: ctx.actorId,
+  });
+  if (!filled.ok) {
+    return ok({
+      ok: false,
+      match: null,
+      errors: filled.errors,
+      scoreErrors: filled.scoreErrors,
+      firstError: filled.firstError,
+    });
+  }
+
+  const match = await ctx.repo.transaction(async (tx) => {
+    const current = await tx.matches.getById(id);
+    // 事务内再核一次：并发的补录与撤销，只有一侧能落地
+    if (!current || current.status !== MATCH_STATUS.PENDING) return null;
+
+    const patch = {
+      ...filled.patch,
+      status: MATCH_STATUS.PENDING,
+      action: 'score',
+      actor: ctx.actorId,
+      actedAt: ctx.now,
+    };
+    await tx.matches.update(id, patch);
+    await bumpSeason(tx, {
+      anchorTime: anchorCandidate(dataset, current.matchTime),
+      now: ctx.now,
+    });
+    return { ...current, ...patch };
+  });
+
+  if (!match) {
+    return ok({ ok: false, match: null, errors: {}, scoreErrors: [], firstError: '只有待确认的比赛可以录分' });
+  }
+  return ok({ ok: true, match, errors: {}, scoreErrors: [], firstError: '' });
+}
+
+/**
+ * 一轮打完后排出下一轮（决策 5.2）。
+ *
+ * 在确认事务提交之后调用，此时赛季版本号已经变过，getDataset 会重放，
+ * 读到的是刚确认完的最新台账。生成下一轮时必须「只补不覆盖」：这些
+ * 编号是确定的，若像重抽那样 upsert，会把下一轮里已经录好的比分冲掉。
+ *
+ * 排不出来就静默返回——还没打完、或这轮早排过了，都不是错误。
+ *
+ * @param {Object} ctx
+ * @param {string|undefined} eventId
+ */
+async function advanceAfterConfirm(ctx, eventId) {
+  if (!eventId) return;
+
+  const dataset = await getDataset(ctx);
+  const event = (dataset.events || []).find((item) => item._id === eventId);
+  if (!event || !event.draw) return;
+
+  const plan = planNextRound({
+    eventId,
+    draw: event.draw,
+    matches: dataset.ledger.filter((match) => match.eventId === eventId),
+    bronzeMode: event.bronzeMode,
+  });
+  if (!plan.ok) return;
+
+  const drafts = plan.rounds.reduce(
+    (all, roundPlan) => all.concat(buildRoundMatches(event, roundPlan)),
+    []
+  );
+  if (drafts.length === 0) return;
+
+  await ctx.repo.transaction(async (tx) => {
+    let inserted = false;
+    for (const draft of drafts) {
+      const existing = await tx.matches.getById(draft._id);
+      if (existing) continue; // 排过的轮次不覆盖，也就不会抹掉已录的比分
+      await tx.matches.insert({ ...draft, status: MATCH_STATUS.PENDING, createdAt: ctx.now });
+      inserted = true;
+    }
+    if (inserted) {
+      await bumpSeason(tx, { anchorTime: null, now: ctx.now });
+    }
+  });
+}
+
+/**
  * 录入一场比赛。一律以「待确认」入账。
  *
  * @param {Object} payload 见 match-record.buildMatchRecord，另可带 now
@@ -65,7 +189,13 @@ async function submitMatch(payload = {}, ctx) {
   if (guard) return fail(guard);
 
   const dataset = await getDataset(ctx);
-  const { now, ...fields } = payload;
+  const { now, id, ...fields } = payload;
+
+  // 抽签生成的比赛已经有主：它带着签位与 eventId，等着有人把比分补上。
+  // 若在这里另立一条新记录，签表里那场会永远空着，比分又挂到了另一条上。
+  if (id) {
+    return submitScheduledMatch(id, fields, { dataset, ctx, now });
+  }
 
   const result = buildMatchRecord(fields, {
     // 名单必须与回放名单一致：不在名单里的参赛者会让回放直接抛错，
@@ -136,6 +266,12 @@ async function confirmMatch(payload = {}, ctx) {
     return ok({ ok: false, match: null, message: '你无权确认这场比赛' });
   }
 
+  // 抽签排出来的比赛天生没有比分，确认前必须有人录过。若放行，回放会
+  // 读到一个没有胜方的比赛，整条赛季的等级分都算不出来。
+  if (!match.winner) {
+    return ok({ ok: false, match: null, message: '这场比赛还没有比分，请先录入成绩' });
+  }
+
   const patched = await ctx.repo.transaction(async (tx) => {
     const current = await tx.matches.getById(id);
     // 事务内再核一次状态：并发的两次确认只有一次能落地
@@ -156,6 +292,10 @@ async function confirmMatch(payload = {}, ctx) {
   });
 
   if (!patched) return ok({ ok: false, match: null, message: '这场比赛已经处理过了' });
+
+  // 刚打完的若是某一轮的最后一场，把下一轮排出来
+  await advanceAfterConfirm(ctx, patched.eventId);
+
   return ok({ ok: true, match: patched, message: '' });
 }
 

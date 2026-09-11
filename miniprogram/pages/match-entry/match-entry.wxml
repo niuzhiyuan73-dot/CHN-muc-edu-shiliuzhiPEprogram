@@ -22,7 +22,8 @@
   <block wx:else>
 
     <!-- ========== 项目 ========== -->
-    <view class="card">
+    <!-- 签表里的比赛项目由抽签定死，不给改 -->
+    <view wx:if="{{!scheduled}}" class="card">
       <view class="card-title">比赛项目</view>
       <view class="pool-tabs local-tabs">
         <view
@@ -40,14 +41,14 @@
     <!-- ========== 参赛双方 ========== -->
     <view class="card">
       <view class="card-title">参赛双方</view>
-      <view class="card-subtitle">A 队第一格是你自己，另一格选搭档；B 队是对手。点格子按名字搜索</view>
+      <view class="card-subtitle">{{scheduled ? '对阵由抽签排定，不可更改' : 'A 队第一格是你自己，另一格选搭档；B 队是对手。点格子按名字搜索'}}</view>
 
       <view class="team-block">
         <view class="team-label">A 队</view>
         <block wx:for="{{teamARows}}" wx:key="slot">
           <view wx:if="{{item.locked}}" class="player-slot is-locked">
             <text class="player-name">{{item.name}}</text>
-            <text class="player-lock">我</text>
+            <text wx:if="{{item.lockLabel}}" class="player-lock">{{item.lockLabel}}</text>
           </view>
           <view
             wx:else
@@ -66,7 +67,12 @@
       <view class="team-block">
         <view class="team-label">B 队</view>
         <block wx:for="{{teamBRows}}" wx:key="slot">
+          <view wx:if="{{item.locked}}" class="player-slot is-locked">
+            <text class="player-name">{{item.name}}</text>
+            <text wx:if="{{item.lockLabel}}" class="player-lock">{{item.lockLabel}}</text>
+          </view>
           <view
+            wx:else
             class="player-slot"
             data-side="B"
             data-slot="{{item.slot}}"
@@ -90,16 +96,18 @@
 
       <view class="field-row">
         <view class="field-label">分制</view>
-        <picker mode="selector" range="{{gamePointsLabels}}" value="{{gamePointsIndex}}" bindchange="onPickGamePoints">
+        <picker wx:if="{{!scheduled}}" mode="selector" range="{{gamePointsLabels}}" value="{{gamePointsIndex}}" bindchange="onPickGamePoints">
           <view class="field-value">{{gamePointsLabels[gamePointsIndex]}} ›</view>
         </picker>
+        <view wx:else class="field-value">{{gamePointsLabels[gamePointsIndex]}}</view>
       </view>
 
       <view class="field-row">
         <view class="field-label">局制</view>
-        <picker mode="selector" range="{{bestOfLabels}}" value="{{bestOfIndex}}" bindchange="onPickBestOf">
+        <picker wx:if="{{!scheduled}}" mode="selector" range="{{bestOfLabels}}" value="{{bestOfIndex}}" bindchange="onPickBestOf">
           <view class="field-value">{{bestOfLabels[bestOfIndex]}} ›</view>
         </picker>
+        <view wx:else class="field-value">{{bestOfLabels[bestOfIndex]}}</view>
       </view>
 
       <view class="format-preview">
@@ -144,32 +152,46 @@
     </view>
 
     <!-- ========== 时间与场地 ========== -->
+    <!-- 签表里的比赛时间与场地随赛事定下，不给改；只把抽签时排定的值亮出来 -->
     <view class="card">
       <view class="card-title">时间与场地</view>
 
-      <view class="field-row">
-        <view class="field-label">日期</view>
-        <picker mode="date" value="{{form.date}}" start="{{seasonStart}}" bindchange="onPickDate">
-          <view class="field-value">{{form.date}} ›</view>
-        </picker>
-      </view>
+      <block wx:if="{{scheduled}}">
+        <view class="field-row">
+          <view class="field-label">时间</view>
+          <view class="field-value">{{form.date}} {{form.time}}</view>
+        </view>
+        <view class="field-row">
+          <view class="field-label">场地</view>
+          <view class="field-value">{{form.location || '待定'}}</view>
+        </view>
+      </block>
 
-      <view class="field-row">
-        <view class="field-label">时间</view>
-        <picker mode="time" value="{{form.time}}" bindchange="onPickTime">
-          <view class="field-value">{{form.time}} ›</view>
-        </picker>
-      </view>
+      <block wx:else>
+        <view class="field-row">
+          <view class="field-label">日期</view>
+          <picker mode="date" value="{{form.date}}" start="{{seasonStart}}" bindchange="onPickDate">
+            <view class="field-value">{{form.date}} ›</view>
+          </picker>
+        </view>
 
-      <view class="field-row">
-        <view class="field-label">场地</view>
-        <input
-          class="field-input"
-          value="{{form.location}}"
-          placeholder="例如：学校体育馆 1 号场"
-          bindinput="onInputLocation"
-        />
-      </view>
+        <view class="field-row">
+          <view class="field-label">时间</view>
+          <picker mode="time" value="{{form.time}}" bindchange="onPickTime">
+            <view class="field-value">{{form.time}} ›</view>
+          </picker>
+        </view>
+
+        <view class="field-row">
+          <view class="field-label">场地</view>
+          <input
+            class="field-input"
+            value="{{form.location}}"
+            placeholder="例如：学校体育馆 1 号场"
+            bindinput="onInputLocation"
+          />
+        </view>
+      </block>
     </view>
 
     <view wx:if="{{errorText}}" class="submit-error">{{errorText}}</view>

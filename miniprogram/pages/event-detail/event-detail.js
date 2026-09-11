@@ -23,6 +23,8 @@ const {
   cancelSignupEvent,
   startEvent,
   checkInEvent,
+  drawEvent,
+  confirmMatch,
   isMock,
 } = require('../../services/index.js');
 
@@ -168,6 +170,58 @@ Page({
     const userId = event.currentTarget.dataset.userId;
     if (!userId) return undefined;
     return this.runWrite((actorId) => checkInEvent(this.eventId, userId, actorId), '已签到');
+  },
+
+  /**
+   * 抽签 / 重抽。
+   *
+   * 【为什么随机值取此刻的时间戳并落库】
+   * 决策 4.4：抽签结果必须可复核。把 seedValue 一并存进 draw 字段后，
+   * 任何人拿同一个值重跑就能得到同一张签表。这里只负责给一个值。
+   */
+  async onDraw() {
+    if (this.data.acting) return undefined;
+
+    const user = this.currentUser();
+    if (!user) {
+      this.showToast('请先登录后再操作');
+      return undefined;
+    }
+
+    const times = this.data.view.event.drawCount || 0;
+    const confirmed = await this.confirm(
+      times
+        ? '重抽会作废现有签表与其中未确认的比赛，确定重抽吗？'
+        : '抽签后名单会锁定，报名随即截止。确定开始抽签吗？',
+      times ? '重新抽签' : '开始抽签'
+    );
+    if (!confirmed) return undefined;
+
+    this.setData({ acting: true });
+    const result = await drawEvent(this.eventId, user._id, { seedValue: Date.now() });
+    this.setData({ acting: false });
+
+    if (!result || !result.ok) {
+      this.showToast((result && result.message) || '抽签失败');
+      return undefined;
+    }
+
+    this.showToast(times ? '已重新抽签' : '抽签完成', 'success');
+    return this.refresh();
+  },
+
+  /** 给抽签排出的比赛录分：跳到录入页，带上这一场的编号 */
+  onRecordMatch(event) {
+    const matchId = event.currentTarget.dataset.matchId;
+    if (!matchId) return;
+    wx.navigateTo({ url: `/pages/match-entry/match-entry?matchId=${matchId}` });
+  },
+
+  /** 确认一场已录分的比赛，成绩随即计入等级分 */
+  async onConfirmMatch(event) {
+    const matchId = event.currentTarget.dataset.matchId;
+    if (!matchId) return undefined;
+    return this.runWrite((actorId) => confirmMatch(matchId, actorId), '已确认，成绩已计入等级分');
   },
 
   /** 进名次录入页 */

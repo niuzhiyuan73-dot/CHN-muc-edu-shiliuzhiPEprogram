@@ -37,6 +37,9 @@ const {
   EVENT_BRONZE_MODE,
   EVENT_BRONZE_MODE_LABEL,
   DEFAULT_BRONZE_MODE,
+  SEED_MODE,
+  SEED_MODE_LABEL,
+  SEED_COUNTS,
   SIGNUP_STATUS,
   SIGNUP_STATUS_LABEL,
   isRankable,
@@ -59,6 +62,8 @@ const FIELD_ORDER = [
   'matchType',
   'level',
   'bronzeMode',
+  'seedMode',
+  'seedCount',
   'startTime',
   'location',
   'quota',
@@ -68,6 +73,10 @@ const FIELD_ORDER = [
 const VALID_LEVELS = Object.values(EVENT_LEVEL);
 /** 合法的三四名赛方式集合 */
 const VALID_BRONZE_MODES = Object.values(EVENT_BRONZE_MODE);
+/** 合法的种子来源集合（仅单打赛事需要） */
+const VALID_SEED_MODES = Object.values(SEED_MODE);
+/** 合法的种子数量集合（仅单打赛事需要） */
+const VALID_SEED_COUNTS = SEED_COUNTS;
 
 /* ============================================================
  * 权限
@@ -127,6 +136,25 @@ function canFinishEvent(event, actor, options = {}) {
 }
 
 /**
+ * 能不能对这场赛事抽签 / 重抽。
+ *
+ * 【为什么资格、状态、项目三样都要判】
+ * 抽签会定下整张签表并连带生成比赛，只有管理端能做；且只在「报名中」
+ * 阶段（决策：仅管理员、仅开赛前可抽签与重抽）；项目必须是单打（决策 1）。
+ * 人数下限（≥2）要数报名记录，属于数据层，故不在这里判。
+ *
+ * @param {Object} event
+ * @param {Object|null} actor
+ * @param {Object} [options]
+ * @returns {boolean}
+ */
+function canDrawEvent(event, actor, options = {}) {
+  if (!event || event.status !== EVENT_STATUS.SIGNUP) return false;
+  if (event.matchType !== MATCH_TYPE.SINGLES) return false;
+  return canManageEvent(actor, options);
+}
+
+/**
  * 能不能报名这一场。
  *
  * 【为什么离校的人不能报名】
@@ -144,6 +172,9 @@ function canSignUp(event, actor, options = {}) {
   const { signup = null } = options;
 
   if (!event || event.status !== EVENT_STATUS.SIGNUP) return false;
+  // 抽签之后名单就定死了（决策 5）：签表是按当时的人排的，再放人进来
+  // 会让签位与人数对不上，只能由管理员在开赛前重抽
+  if (event.draw) return false;
   // 离校的人不能报名——但挡的是「报名」，不是「看」，他的旧成绩仍在
   if (!isRankable(actor)) return false;
   // 待审核 / 已禁用 / 未登录同样不行：还没转正的人不能承诺到场
@@ -172,6 +203,8 @@ function canCancelSignup(event, actor, options = {}) {
   const { signup = null } = options;
 
   if (!event || event.status !== EVENT_STATUS.SIGNUP) return false;
+  // 与报名同一把锁（决策 5）：抽签后名单冻结，退赛同样不允许
+  if (event.draw) return false;
   if (!actor || !actor._id) return false;
   if (!signup || signup.userId !== actor._id) return false;
 
@@ -320,6 +353,9 @@ function normalizeDraft(form) {
     matchType: int(source.matchType),
     level: int(source.level),
     bronzeMode: text(source.bronzeMode),
+    // 种子来源与数量只对单打有意义；双打留空即可，校验时也不要求
+    seedMode: text(source.seedMode),
+    seedCount: int(source.seedCount),
     location: text(source.location),
     startTime: source.startTime ? new Date(source.startTime) : null,
     // 名额：未填视为不限（0）
@@ -335,6 +371,8 @@ function normalizeDraft(form) {
  * 有没有第 4 名）。若允许留空再取默认值，一次「忘了选」就会静默改变
  * 全场的分数，而且事后无法从记录里看出当初选过没有。所以缺失即报错，
  * 默认值只由界面预填，落库的必须是用户确认过的。
+ * 单打赛事另需显式选择种子来源与数量（决策 2 / 3）——它决定谁在签表里
+ * 受保护，同样不许留空取默认。
  *
  * @param {Object} [form] 原始表单，内部会先做 normalize
  * @returns {{ok:boolean, draft:Object, errors:Object<string,string>, firstError:string}}
@@ -357,6 +395,16 @@ function validateEvent(form = {}) {
 
   if (!VALID_BRONZE_MODES.includes(draft.bronzeMode)) {
     errors.bronzeMode = '请选择三四名赛方式';
+  }
+
+  // 抽签只对单打开放（决策 1），种子来源与数量因此也只有单打必须选
+  if (draft.matchType === MATCH_TYPE.SINGLES) {
+    if (!VALID_SEED_MODES.includes(draft.seedMode)) {
+      errors.seedMode = '请选择种子来源';
+    }
+    if (!VALID_SEED_COUNTS.includes(draft.seedCount)) {
+      errors.seedCount = '请选择种子数量';
+    }
   }
 
   if (draft.description.length > DESCRIPTION_MAX) {
@@ -417,12 +465,17 @@ function buildEventRecord(form, ctx = {}) {
       pool: MATCH_TYPE_TO_POOL[draft.matchType],
       level: draft.level,
       bronzeMode: draft.bronzeMode,
+      // 种子设置只跟单打走；双打赛事不抽签，两项留 null 表明「本场无此概念」
+      seedMode: draft.matchType === MATCH_TYPE.SINGLES ? draft.seedMode : null,
+      seedCount: draft.matchType === MATCH_TYPE.SINGLES ? draft.seedCount : null,
       location: draft.location,
       startTime: draft.startTime,
       quota: draft.quota,
       status: EVENT_STATUS.SIGNUP,
       // 名次在赛事结束后才录入，这里先占好位置，读的时候不必判 undefined
       results: [],
+      // 签表在抽签后才有；先占位，读的时候不必判 undefined
+      draw: null,
       publishTime: now,
       publisherId: actor ? actor._id : '',
       // 昵称逐层兜底：注册资料里昵称可能没填，绝不落库一个空字符串
@@ -581,6 +634,12 @@ function buildEventRow(event, ctx = {}) {
     isFinished: event.status === EVENT_STATUS.FINISHED,
     timeText: formatDateTime(event.startTime),
     location: event.location || '',
+    // 抽签参数：仅单打赛事有，双打为 null
+    seedModeLabel: SEED_MODE_LABEL[event.seedMode] || '',
+    seedCount: Number(event.seedCount) || 0,
+    // 是否已抽过签（决定入口文案是「抽签」还是「重抽」）
+    drawn: Boolean(event.draw),
+    drawCount: (event.draw && event.draw.drawCount) || 0,
     signupCount: count,
     quotaText: quota > 0 ? `${count}/${quota} 人` : `${count} 人`,
     mySignupLabel: state.label,
@@ -593,6 +652,9 @@ function buildEventRow(event, ctx = {}) {
     canStart: canStartEvent(event, actor, { isMock: mock }),
     canCheckIn: canCheckIn(event, actor, { isMock: mock }),
     canFinish: canFinishEvent(event, actor, { isMock: mock }),
+    // 抽签入口：仅单打、报名中、有管理权。已抽过签后仍为 true，
+    // 好让管理员在开赛前重抽；已开赛 / 已有比赛生效由服务端最终把关
+    canDraw: canDrawEvent(event, actor, { isMock: mock }),
   };
 }
 
@@ -627,10 +689,13 @@ module.exports = {
   LOCATION_MAX,
   VALID_LEVELS,
   VALID_BRONZE_MODES,
+  VALID_SEED_MODES,
+  VALID_SEED_COUNTS,
   canManageEvent,
   canStartEvent,
   canCheckIn,
   canFinishEvent,
+  canDrawEvent,
   canSignUp,
   canCancelSignup,
   signupCountOf,

@@ -254,14 +254,20 @@ async function getHomeSummary(payload, ctx) {
 
 /**
  * 比赛台账，含待确认与已撤销的那些，专供比赛页做流转。
- * @param {Object} payload { userId, status, limit }
+ * 抽签生成的待确认比赛只在这里出现——getMatches 是成绩公示，不收未生效的。
+ *
+ * id 用来取单独一场：录入页要按编号把比分写回抽签排好的那条，得先读到它。
+ * 走这个接口而不是另开一个「取一场」，是为了让鉴权与取数口径只有一处。
+ *
+ * @param {Object} payload { id, userId, eventId, status, limit }
  */
 async function getMatchRecords(payload = {}, ctx) {
-  const { userId, status, limit } = payload;
+  const { id, userId, eventId, status, limit } = payload;
   const { ledger } = await getDataset(ctx);
 
-  let list = ledger;
+  let list = id ? ledger.filter((m) => m._id === id) : ledger;
   if (userId) list = list.filter((m) => [...m.teamA, ...m.teamB].includes(userId));
+  if (eventId) list = list.filter((m) => m.eventId === eventId);
   // 0（待确认）是合法取值，只能判类型，不能用真值判断
   if (typeof status === 'number') list = list.filter((m) => m.status === status);
 

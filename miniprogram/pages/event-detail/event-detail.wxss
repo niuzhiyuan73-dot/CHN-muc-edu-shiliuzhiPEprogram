@@ -99,6 +99,79 @@
   color: var(--color-success);
 }
 
+/* ==================== 签表 ==================== */
+
+/* 一轮一行：左边轮次标签，右边对阵与动作，窄屏也好读 */
+.bracket-row {
+  display: flex;
+  align-items: center;
+  padding: var(--space-sm) 0;
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.bracket-row:last-child {
+  border-bottom: none;
+}
+
+.bracket-round {
+  flex-shrink: 0;
+  width: 130rpx;
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+}
+
+.bracket-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.bracket-teams {
+  display: flex;
+  align-items: center;
+  font-size: var(--font-sm);
+}
+
+.bracket-team.is-winner {
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.bracket-vs {
+  margin: 0 var(--space-sm);
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+}
+
+.bracket-meta {
+  display: flex;
+  align-items: center;
+  margin-top: 4rpx;
+}
+
+.bracket-score {
+  margin-right: var(--space-sm);
+  font-size: var(--font-xs);
+  color: var(--color-text-secondary);
+}
+
+/* 与「比赛」页的小按钮同款：这里不 import 那张样式表，只抄这一小块 */
+.mini-btn {
+  flex-shrink: 0;
+  height: 60rpx;
+  line-height: 60rpx;
+  padding: 0 var(--space-md);
+  margin-left: var(--space-sm);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+  border: 2rpx solid var(--color-border);
+  color: var(--color-text-secondary);
+}
+
+.mini-btn.is-primary {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
 /* ==================== 演示口径提示 ==================== */
 
 .demo-notice {

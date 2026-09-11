@@ -126,6 +126,25 @@ function canRevoke(match, userId, options = {}) {
 }
 
 /**
+ * 这场比赛是否「还没比分、等着有人来录」。
+ *
+ * 抽签排出来的比赛天生没有比分，胜方要等赛后录入才产生。此时状态虽是
+ * 待确认，却不能像日常约球那样直接「确认」——把一场没有胜方的比赛
+ * 确认生效，回放算等级分时会读到一个空 win，整条赛季回放都会崩。
+ *
+ * 【为什么单独一个函数，而不并进 canConfirm】
+ * canConfirm 回答的是「这个人有没有资格确认」，与「这场比赛有没有可确认
+ * 的内容」是两回事：录分后该由谁确认，规则不变；只是没比分前谁都确认
+ * 不了。分开表述，界面才好分别给出「录分」与「确认」两个入口。
+ *
+ * @param {Object} match
+ * @returns {boolean}
+ */
+function needsScore(match) {
+  return Boolean(match) && match.status === MATCH_STATUS.PENDING && !match.winner;
+}
+
+/**
  * 把一行输入转成比分。
  * 空行返回 null（而不是 0），非数字返回 NaN——两者交给校验去报错，
  * 在这里悄悄当成 0 会让「11:0」和「没填」看起来一模一样。
@@ -206,6 +225,7 @@ function overlapOf(teamA, teamB) {
  * @param {Date|string|number} params.matchTime 比赛时间
  * @param {string} [params.location] 场地
  * @param {string} [params.recorder] 录入者，默认取 A 队第一位
+ * @param {string|null} [params.eventId] 所属赛事；日常约球留空
  * @param {Object} [options]
  * @param {Array<Object|string>} [options.members] 会员名单，传了就校验参赛者在名单内
  * @param {Date|string|number} [options.now] 当前时间，注入以便测试
@@ -224,6 +244,7 @@ function buildMatchRecord(params = {}, options = {}) {
     matchTime,
     location = '',
     recorder,
+    eventId = null,
   } = params;
   const { members, now, minMatchTime } = options;
 
@@ -309,9 +330,72 @@ function buildMatchRecord(params = {}, options = {}) {
       matchTime: time,
       // 录入方默认是 A 队第一位，与 seed.js 的模拟数据保持一致
       recorder: recorder || (Array.isArray(teamA) ? teamA[0] : null),
-      // 赛事成绩由赛事模块单独录入，这里恒为空
-      eventId: null,
+      // 抽签生成的赛事比赛带上赛事编号，日常约球留空。
+      // 靠它把赛事详情页的对阵与「比赛」页的比赛串成同一批记录
+      eventId: eventId || null,
     },
+    errors: {},
+    scoreErrors: [],
+    firstError: '',
+  };
+}
+
+/**
+ * 给抽签生成的待确认比赛补录比分。
+ *
+ * 【为什么几支队伍、什么赛制不从入参取】
+ * 抽签已经把「谁打谁、第几轮、哪个签位」定死了。录分只该补上比分与录入
+ * 人；若允许改队伍，签表里写的是一组对阵、记录里却是另一组，账就对不上
+ * 了。所以对阵、赛制、时间一律取自那条待确认记录，这里只收比分。
+ *
+ * 【为什么返回的是补丁而不是整条记录】
+ * 签位信息（轮次 / 阶段 / 签位）不在 buildMatchRecord 的产出里，只在这条
+ * 既有记录上。调用方拿补丁去合并，才不会把签位冲掉——冲掉了重抽去重
+ * 就认不出同一场，比赛会翻倍。
+ *
+ * @param {Object} match 抽签生成的待确认比赛
+ * @param {Object} scores { scoreA, scoreB }
+ * @param {Object} [options] 同 buildMatchRecord，另可传 recorder（服务端按登录者填）
+ * @returns {{ok:boolean, patch:Object|null, errors:Object, scoreErrors:string[], firstError:string}}
+ */
+function fillScheduledMatch(match, scores = {}, options = {}) {
+  if (!match) {
+    return { ok: false, patch: null, errors: {}, scoreErrors: [], firstError: '找不到这场比赛' };
+  }
+  if (match.status !== MATCH_STATUS.PENDING) {
+    return { ok: false, patch: null, errors: {}, scoreErrors: [], firstError: '只有待确认的比赛可以录分' };
+  }
+
+  const result = buildMatchRecord(
+    {
+      matchType: match.matchType,
+      teamA: match.teamA,
+      teamB: match.teamB,
+      scoreA: scores.scoreA,
+      scoreB: scores.scoreB,
+      gamePoints: match.gamePoints,
+      bestOf: match.bestOf,
+      matchTime: match.matchTime,
+      location: match.location,
+      recorder: options.recorder || match.recorder,
+      eventId: match.eventId,
+    },
+    options
+  );
+
+  if (!result.ok) {
+    return {
+      ok: false,
+      patch: null,
+      errors: result.errors,
+      scoreErrors: result.scoreErrors,
+      firstError: result.firstError,
+    };
+  }
+
+  return {
+    ok: true,
+    patch: { ...result.record, round: match.round, stage: match.stage, slot: match.slot },
     errors: {},
     scoreErrors: [],
     firstError: '',
@@ -325,7 +409,9 @@ module.exports = {
   isRecorder,
   canConfirm,
   canRevoke,
+  needsScore,
   toScore,
   normalizeScores,
   buildMatchRecord,
+  fillScheduledMatch,
 };

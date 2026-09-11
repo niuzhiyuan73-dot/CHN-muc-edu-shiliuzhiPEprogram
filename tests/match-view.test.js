@@ -179,6 +179,45 @@ test('buildRecordRow —— 已生效的比赛不再提供确认按钮', () => {
   assert.strictEqual(row.canConfirm, false);
 });
 
+test('buildRecordRow —— 抽签比赛没录分时给「录分」而不是「确认」', () => {
+  const row = buildRecordRow(pendingRecord({ scoreA: [], scoreB: [], winner: null }), {
+    userId: ME,
+    nameOf: fakeNameOf,
+    isMock: true,
+  });
+
+  assert.strictEqual(row.needsScore, true);
+  assert.strictEqual(row.canRecord, true, '参赛者可以录分');
+  assert.strictEqual(row.canConfirm, false, '确认要按胜方计分，没比分就无从确认');
+});
+
+test('buildRecordRow —— 录分权与写入口径一致：参赛者或管理员', () => {
+  const waiting = pendingRecord({ scoreA: [], scoreB: [], winner: null });
+  const base = { nameOf: fakeNameOf, isMock: false };
+
+  assert.strictEqual(
+    buildRecordRow(waiting, { ...base, userId: ME, role: ROLE.MEMBER }).canRecord,
+    true,
+    '参赛者'
+  );
+  assert.strictEqual(
+    buildRecordRow(waiting, { ...base, userId: 'u99', role: ROLE.ADMIN }).canRecord,
+    true,
+    '管理员可以代为录分'
+  );
+  assert.strictEqual(
+    buildRecordRow(waiting, { ...base, userId: 'u99', role: ROLE.MEMBER }).canRecord,
+    false,
+    '非参赛的普通会员不行'
+  );
+});
+
+test('buildRecordRow —— 已经有比分的比赛不再给「录分」', () => {
+  const row = buildRecordRow(pendingRecord(), { userId: ME, nameOf: fakeNameOf, isMock: true });
+  assert.strictEqual(row.needsScore, false);
+  assert.strictEqual(row.canRecord, false);
+});
+
 test('buildRecordRow —— 撤销权：录入者可撤，管理员可撤，旁人不可撤', () => {
   const base = { userId: ME, nameOf: fakeNameOf, role: ROLE.MEMBER };
   assert.strictEqual(buildRecordRow(pendingRecord(), base).canRevoke, true);

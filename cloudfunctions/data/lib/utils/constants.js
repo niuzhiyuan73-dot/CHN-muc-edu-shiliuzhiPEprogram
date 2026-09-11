@@ -211,6 +211,20 @@ const EVENT_STATUS_LABEL = {
 const DEFAULT_EVENT_STATUS = EVENT_STATUS.SIGNUP;
 
 /**
+ * 赛事签表的阶段。
+ *
+ *   main   —— 主赛（淘汰赛各轮）
+ *   bronze —— 三四名决赛（仅 bronzeMode = playoff 时生成）
+ *
+ * 它是比赛记录上的一个字段：主赛与三四名赛都挂在同一场赛事下，靠 stages
+ * 区分归属，读的时候才不会把季军赛混进半决赛的轮次里。
+ */
+const BRACKET_STAGE = {
+  MAIN: 'main',
+  BRONZE: 'bronze',
+};
+
+/**
  * 三四名赛的两种办赛方式（决策 2.3）。
  *
  *   tied    —— 并列季军：两个半决赛负者都记第 3 名，不再加赛
@@ -284,6 +298,35 @@ const EVENT_LEVEL_MULTIPLIER = {
  * 历史 / 种子赛事没有等级字段时按三级处理（决策 13：默认三级，但新建时必选）。
  */
 const DEFAULT_EVENT_LEVEL = EVENT_LEVEL.THIRD;
+
+/**
+ * 种子来源（决策 2：创建赛事时必选）。
+ *
+ *   manual —— 手工指定：管理员在抽签时逐个指定 1 号、2 号…
+ *   elo    —— 按等级分：取当前单打池 elo 最高的前若干位
+ *   points —— 按赛季积分：取本赛季积分最高的前若干位
+ *
+ * 【为什么和「三四名赛」一样必须显式选】
+ * 它决定谁是种子、进而决定谁在签表里受保护。若留空取默认，一次「忘了选」
+ * 就会静默改变整张签表，事后也看不出当初本想按什么排。
+ */
+const SEED_MODE = {
+  MANUAL: 'manual',
+  ELO: 'elo',
+  POINTS: 'points',
+};
+
+const SEED_MODE_LABEL = {
+  [SEED_MODE.MANUAL]: '手工指定',
+  [SEED_MODE.ELO]: '按等级分',
+  [SEED_MODE.POINTS]: '按赛季积分',
+};
+
+/** 允许的种子数量（决策 3：只有 2 / 4 / 8，不考虑其它数字） */
+const SEED_COUNTS = [2, 4, 8];
+
+/** 默认种子数量（决策 3） */
+const DEFAULT_SEED_COUNT = 8;
 
 /** 参赛队伍标识 */
 const TEAM = {
@@ -385,6 +428,7 @@ module.exports = {
   EVENT_STATUS,
   EVENT_STATUS_LABEL,
   DEFAULT_EVENT_STATUS,
+  BRACKET_STAGE,
   EVENT_BRONZE_MODE,
   EVENT_BRONZE_MODE_LABEL,
   DEFAULT_BRONZE_MODE,
@@ -394,6 +438,10 @@ module.exports = {
   EVENT_LEVEL_LABEL,
   EVENT_LEVEL_MULTIPLIER,
   DEFAULT_EVENT_LEVEL,
+  SEED_MODE,
+  SEED_MODE_LABEL,
+  SEED_COUNTS,
+  DEFAULT_SEED_COUNT,
   TEAM,
   RANK_PERIOD,
   RANK_PERIOD_LABEL,

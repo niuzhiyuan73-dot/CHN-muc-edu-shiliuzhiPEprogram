@@ -24,6 +24,8 @@ const {
   SIGNUP_STATUS,
   EVENT_LEVEL,
   EVENT_BRONZE_MODE,
+  BRACKET_STAGE,
+  SEED_MODE,
 } = require('../miniprogram/utils/constants.js');
 
 describe('数据源门面 —— 实现可互换', () => {
@@ -1022,6 +1024,8 @@ describe('mock 数据源 —— 赛事闭环', () => {
       matchType: MATCH_TYPE.SINGLES,
       level: EVENT_LEVEL.SECOND,
       bronzeMode: EVENT_BRONZE_MODE.PLAYOFF,
+      seedMode: SEED_MODE.ELO,
+      seedCount: 8,
       startTime: '2026-05-20T09:00:00',
       location: '学校体育馆',
       quota: 8,
@@ -1156,6 +1160,112 @@ describe('mock 数据源 —— 赛事闭环', () => {
       const again = await mock.signUpEvent(record._id, me._id);
       assert.equal(again.ok, false);
       assert.match(again.message, /已经报过名/);
+    })
+  );
+
+  test(
+    '抽签 —— 生成首轮比赛，重抽覆盖不追加，抽后报名冻结',
+    withCleanStore(async () => {
+      const members = await mock.getMembers();
+      const players = members.slice(0, 4).map((m) => m._id);
+      const host = players[0];
+
+      const { record } = await mock.publishEvent(eventDraft({ seedCount: 2 }), host);
+      const id = record._id;
+      for (const userId of players) await mock.signUpEvent(id, userId);
+
+      const drawn = await mock.drawEvent(id, host, { seedValue: 12345 });
+      assert.equal(drawn.ok, true, drawn.message);
+      assert.equal(drawn.draw.size, 4);
+      assert.equal(drawn.draw.drawCount, 1);
+      assert.equal(drawn.matches.length, 2, '4 人 4 签，正好两场');
+      // 待确认的比赛只在台账里，成绩公示 getMatches 不收未生效的
+      assert.equal((await mock.getMatches({ eventId: id })).length, 0);
+      assert.equal((await mock.getMatchRecords({ eventId: id })).length, 2);
+
+      // 重抽：编号不变，比赛不翻倍
+      const again = await mock.drawEvent(id, host, { seedValue: 999 });
+      assert.equal(again.ok, true, again.message);
+      assert.equal(again.draw.drawCount, 2);
+      assert.equal((await mock.getMatchRecords({ eventId: id })).length, 2, '重抽不该让比赛翻倍');
+
+      // 抽签后名单冻结：第 5 位会员报名被拒
+      const late = await mock.signUpEvent(id, members[4]._id);
+      assert.equal(late.ok, false);
+      assert.match(late.message, /锁定/);
+
+      // 已报名的人也不能退赛
+      const quit = await mock.cancelSignupEvent(id, players[1]);
+      assert.equal(quit.ok, false);
+    })
+  );
+
+  test(
+    '逐轮推进 —— 首轮打完自动排出决赛与季军赛',
+    withCleanStore(async () => {
+      const members = await mock.getMembers();
+      const players = members.slice(0, 4).map((m) => m._id);
+      const host = players[0];
+
+      const { record } = await mock.publishEvent(eventDraft({ seedCount: 2 }), host);
+      const id = record._id;
+      for (const userId of players) await mock.signUpEvent(id, userId);
+
+      const drawn = await mock.drawEvent(id, host, { seedValue: 5 });
+      assert.equal(drawn.matches.length, 2, '4 人 4 签，首轮两场');
+
+      // 两场都录分并确认（A 队胜）
+      for (const match of drawn.matches) {
+        const scored = await mock.submitMatch({
+          id: match._id,
+          scoreA: ['11', '11'],
+          scoreB: ['3', '5'],
+          actor: match.teamA[0],
+        });
+        assert.equal(scored.ok, true, scored.firstError);
+        assert.equal(scored.match.status, MATCH_STATUS.PENDING, '录完仍是待确认');
+
+        const confirmed = await mock.confirmMatch(match._id, match.teamB[0]);
+        assert.equal(confirmed.ok, true, confirmed.message);
+      }
+
+      const ledger = await mock.getMatchRecords({ eventId: id });
+      assert.equal(ledger.length, 4, '首轮两场 + 决赛 + 季军赛');
+
+      const final = ledger.find((m) => m.round === 2 && m.stage === BRACKET_STAGE.MAIN);
+      const bronze = ledger.find((m) => m.round === 2 && m.stage === BRACKET_STAGE.BRONZE);
+      assert.ok(final, '应排出决赛');
+      assert.ok(bronze, '打三四名模式下应排出季军赛');
+      assert.deepEqual([final.teamA[0], final.teamB[0]], [drawn.matches[0].teamA[0], drawn.matches[1].teamA[0]]);
+      assert.deepEqual([bronze.teamA[0], bronze.teamB[0]], [drawn.matches[0].teamB[0], drawn.matches[1].teamB[0]]);
+    })
+  );
+
+  test(
+    '录分前不许确认 —— 抽签排出的比赛必须先有人录分',
+    withCleanStore(async () => {
+      const members = await mock.getMembers();
+      const players = members.slice(0, 2).map((m) => m._id);
+
+      const { record } = await mock.publishEvent(eventDraft({ seedCount: 2 }), players[0]);
+      const id = record._id;
+      for (const userId of players) await mock.signUpEvent(id, userId);
+
+      const drawn = await mock.drawEvent(id, players[0], { seedValue: 5 });
+      const scheduled = drawn.matches[0];
+
+      const early = await mock.confirmMatch(scheduled._id, scheduled.teamB[0]);
+      assert.equal(early.ok, false);
+      assert.match(early.message, /还没有比分/);
+
+      await mock.submitMatch({
+        id: scheduled._id,
+        scoreA: ['11', '11'],
+        scoreB: ['3', '5'],
+        actor: scheduled.teamA[0],
+      });
+      const confirmed = await mock.confirmMatch(scheduled._id, scheduled.teamB[0]);
+      assert.equal(confirmed.ok, true, confirmed.message);
     })
   );
 

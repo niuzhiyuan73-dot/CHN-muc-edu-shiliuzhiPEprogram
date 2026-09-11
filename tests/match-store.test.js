@@ -58,6 +58,32 @@ test('addMatch —— 返回的是副本，改它动不到台账', () => {
   assert.deepStrictEqual(stored.teamA, ['u01']);
 });
 
+test('saveMatch —— 用自带的编号入账，状态同样是待确认', () => {
+  const record = store.saveMatch(draft({ _id: 'x_e9_r1_main_0' }));
+  assert.strictEqual(record._id, 'x_e9_r1_main_0');
+  assert.strictEqual(record.status, MATCH_STATUS.PENDING);
+});
+
+test('saveMatch —— 同一编号再写一次是覆盖，不是追加（重抽换人不换签位）', () => {
+  store.saveMatch(draft({ _id: 'x_e9_r1_main_0', teamA: ['u01'], teamB: ['u02'] }));
+  store.saveMatch(draft({ _id: 'x_e9_r1_main_0', teamA: ['u03'], teamB: ['u04'] }));
+
+  const list = store.listSubmitted();
+  assert.strictEqual(list.length, 1);
+  assert.deepStrictEqual(list[0].teamA, ['u03']);
+  assert.deepStrictEqual(list[0].teamB, ['u04']);
+});
+
+test('saveMatch —— 覆盖时把比分清掉，重抽后的对阵是干净的', () => {
+  store.saveMatch(draft({ _id: 'x_e9_r1_main_0', scoreA: [11], scoreB: [9] }));
+  store.saveMatch(draft({ _id: 'x_e9_r1_main_0', scoreA: [], scoreB: [], winner: null }));
+
+  const [stored] = store.listSubmitted();
+  assert.deepStrictEqual(stored.scoreA, []);
+  assert.deepStrictEqual(stored.scoreB, []);
+  assert.strictEqual(stored.winner, null);
+});
+
 test('listSubmitted —— 返回副本，外部改不动内部', () => {
   store.addMatch(draft());
 

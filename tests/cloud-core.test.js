@@ -22,7 +22,10 @@ const {
   SIGNUP_STATUS,
   EVENT_LEVEL,
   EVENT_BRONZE_MODE,
+  BRACKET_STAGE,
+  SEED_MODE,
   MATCH_TYPE,
+  MATCH_STATUS,
 } = require('../miniprogram/utils/constants.js');
 
 /** 用一份全新的夹具调一次接口 */
@@ -240,6 +243,8 @@ describe('云函数 —— 赛事闭环', () => {
     matchType: MATCH_TYPE.SINGLES,
     level: EVENT_LEVEL.SECOND,
     bronzeMode: EVENT_BRONZE_MODE.PLAYOFF,
+    seedMode: SEED_MODE.ELO,
+    seedCount: 8,
     startTime: '2026-06-10T09:00:00',
     location: '学校体育馆',
     quota: 8,
@@ -363,6 +368,273 @@ describe('云函数 —— 赛事闭环', () => {
     const res = await on(repo, 'checkInEvent', { id, userId: 'u01' }, admin);
     assert.equal(res.data.ok, false);
     assert.match(res.data.message, /不能为会员签到/);
+  });
+
+  /** 报名一场赛事（把若干 openid 拉进名单） */
+  const signUpAll = async (repo, id, openIds) => {
+    for (const openId of openIds) await on(repo, 'signUpEvent', { id }, openId);
+  };
+
+  test('抽签 —— 生成首轮比赛，同时写进赛事与比赛读路径', async () => {
+    const repo = createFixtureRepo();
+    const admin = 'openid-admin';
+    const { data: published } = await on(repo, 'publishEvent', { form: { ...draft, seedCount: 2 } }, admin);
+    const id = published.record._id;
+    await signUpAll(repo, id, ['openid-u01', 'openid-u02', 'openid-u03', 'openid-u04']);
+
+    const drawn = await on(repo, 'drawEvent', { id, seedValue: 12345 }, admin);
+    assert.equal(drawn.data.ok, true, drawn.data.message);
+    assert.equal(drawn.data.draw.seedValue, 12345);
+    assert.equal(drawn.data.draw.size, 4);
+    assert.equal(drawn.data.draw.drawCount, 1);
+    assert.equal(drawn.data.matches.length, 2, '4 人 4 签，正好两场');
+
+    const events = await on(repo, 'getEvents', {}, 'openid-u01');
+    assert.equal(events.data.find((e) => e._id === id).draw.seedValue, 12345);
+
+    // 待确认的比赛还没生效，只在台账里，不在成绩公示 getMatches 里
+    const shown = await on(repo, 'getMatches', { eventId: id }, 'openid-u01');
+    assert.equal(shown.data.length, 0);
+
+    const ledger = await on(repo, 'getMatchRecords', { eventId: id }, 'openid-u01');
+    assert.equal(ledger.data.length, 2);
+    for (const match of ledger.data) {
+      assert.equal(match.eventId, id);
+      assert.equal(match.round, 1);
+      assert.equal(match.stage, BRACKET_STAGE.MAIN);
+      assert.equal(match.status, MATCH_STATUS.PENDING);
+      assert.deepEqual(match.scoreA, []);
+      assert.equal(match.teamA.length, 1);
+    }
+  });
+
+  test('抽签 —— 重抽覆盖同一批比赛，不追加', async () => {
+    const repo = createFixtureRepo();
+    const admin = 'openid-admin';
+    const { data: published } = await on(repo, 'publishEvent', { form: { ...draft, seedCount: 2 } }, admin);
+    const id = published.record._id;
+    await signUpAll(repo, id, ['openid-u01', 'openid-u02', 'openid-u03', 'openid-u04']);
+
+    const first = await on(repo, 'drawEvent', { id, seedValue: 1 }, admin);
+    const second = await on(repo, 'drawEvent', { id, seedValue: 2 }, admin);
+    assert.equal(second.data.ok, true, second.data.message);
+    assert.equal(second.data.draw.drawCount, 2);
+    assert.deepEqual(
+      first.data.matches.map((m) => m._id).sort(),
+      second.data.matches.map((m) => m._id).sort()
+    );
+
+    const ledger = await on(repo, 'getMatchRecords', { eventId: id }, 'openid-u01');
+    assert.equal(ledger.data.length, 2, '重抽不该让比赛翻倍');
+  });
+
+  test('抽签 —— 已有比赛确认生效后禁止重抽', async () => {
+    const repo = createFixtureRepo();
+    const admin = 'openid-admin';
+    const { data: published } = await on(repo, 'publishEvent', { form: { ...draft, seedCount: 2 } }, admin);
+    const id = published.record._id;
+    await signUpAll(repo, id, ['openid-u01', 'openid-u02', 'openid-u03', 'openid-u04']);
+
+    const drawn = await on(repo, 'drawEvent', { id, seedValue: 1 }, admin);
+    const scheduled = drawn.data.matches[0];
+    // 二期还没有「给待确认比赛录比分」的入口（那是三期的活），
+    // 这里直接把一场比赛置成已生效，只为验证重抽闸门。
+    await repo.matches.update(scheduled._id, {
+      status: MATCH_STATUS.ACTIVE,
+      winner: 'A',
+      scoreA: [11],
+      scoreB: [9],
+    });
+
+    const again = await on(repo, 'drawEvent', { id, seedValue: 3 }, admin);
+    assert.equal(again.data.ok, false);
+    assert.match(again.data.message, /不能再重抽/);
+  });
+
+  test('抽签 —— 双打赛事、开赛后、普通会员三种拒绝各说清原因', async () => {
+    const admin = 'openid-admin';
+
+    const doublesRepo = createFixtureRepo();
+    const { data: doubles } = await on(
+      doublesRepo,
+      'publishEvent',
+      { form: { ...draft, matchType: MATCH_TYPE.DOUBLES } },
+      admin
+    );
+    const doublesRes = await on(doublesRepo, 'drawEvent', { id: doubles.record._id }, admin);
+    assert.equal(doublesRes.data.ok, false);
+    assert.match(doublesRes.data.message, /双打/);
+
+    const startedRepo = createFixtureRepo();
+    const { data: started } = await on(startedRepo, 'publishEvent', { form: draft }, admin);
+    await on(startedRepo, 'startEvent', { id: started.record._id }, admin);
+    const startedRes = await on(startedRepo, 'drawEvent', { id: started.record._id }, admin);
+    assert.equal(startedRes.data.ok, false);
+    assert.match(startedRes.data.message, /报名阶段/);
+
+    const memberRepo = createFixtureRepo();
+    const { data: member } = await on(memberRepo, 'publishEvent', { form: draft }, admin);
+    const memberRes = await on(memberRepo, 'drawEvent', { id: member.record._id }, 'openid-u01');
+    assert.equal(memberRes.data.ok, false);
+    assert.match(memberRes.data.message, /权限/);
+  });
+
+  test('抽签后报名被冻结 —— 新的报名与退赛都拒绝', async () => {
+    const repo = createFixtureRepo();
+    const admin = 'openid-admin';
+    const { data: published } = await on(repo, 'publishEvent', { form: { ...draft, seedCount: 2 } }, admin);
+    const id = published.record._id;
+    await signUpAll(repo, id, ['openid-u02', 'openid-u03']);
+
+    const drawn = await on(repo, 'drawEvent', { id, seedValue: 7 }, admin);
+    assert.equal(drawn.data.ok, true, drawn.data.message);
+
+    const late = await on(repo, 'signUpEvent', { id }, 'openid-u01');
+    assert.equal(late.data.ok, false);
+    assert.match(late.data.message, /锁定/);
+
+    const quit = await on(repo, 'cancelSignupEvent', { id }, 'openid-u02');
+    assert.equal(quit.data.ok, false);
+  });
+
+  /** 会员编号 → 该会员的 OpenID */
+  const openIdOf = {
+    u01: 'openid-u01',
+    u02: 'openid-u02',
+    u03: 'openid-u03',
+    u04: 'openid-u04',
+  };
+
+  /** 抽签、报名四位会员、并把首轮两场都打完（A 队胜） */
+  const playFirstRound = async (repo, admin, form) => {
+    const { data: published } = await on(repo, 'publishEvent', { form }, admin);
+    const id = published.record._id;
+    await signUpAll(repo, id, ['openid-u01', 'openid-u02', 'openid-u03', 'openid-u04']);
+
+    const drawn = await on(repo, 'drawEvent', { id, seedValue: 5 }, admin);
+    assert.equal(drawn.data.ok, true, drawn.data.message);
+
+    const first = drawn.data.matches;
+    for (const match of first) {
+      // A 队的人录分（记为录入方），B 队的人确认——正是「对手确认」口径
+      const scored = await on(
+        repo,
+        'submitMatch',
+        { id: match._id, scoreA: ['11', '11'], scoreB: ['3', '5'] },
+        openIdOf[match.teamA[0]]
+      );
+      assert.equal(scored.data.ok, true, scored.data.firstError);
+
+      const confirmed = await on(repo, 'confirmMatch', { id: match._id }, openIdOf[match.teamB[0]]);
+      assert.equal(confirmed.data.ok, true, confirmed.data.message);
+    }
+    return { id, first };
+  };
+
+  test('逐轮推进 —— 首轮打完自动排出决赛与季军赛', async () => {
+    const repo = createFixtureRepo();
+    const admin = 'openid-admin';
+    const { id, first } = await playFirstRound(repo, admin, {
+      ...draft,
+      seedCount: 2,
+      startTime: '2026-05-20T09:00:00',
+    });
+
+    const ledger = await on(repo, 'getMatchRecords', { eventId: id }, admin);
+    assert.equal(ledger.data.length, 4, '首轮两场 + 决赛 + 季军赛');
+
+    const final = ledger.data.find((m) => m.round === 2 && m.stage === BRACKET_STAGE.MAIN);
+    const bronze = ledger.data.find((m) => m.round === 2 && m.stage === BRACKET_STAGE.BRONZE);
+    assert.ok(final, '应排出决赛');
+    assert.ok(bronze, '打三四名模式下应排出季军赛');
+
+    // A 队是胜者、B 队是负者，两款对阵都要对上
+    assert.deepEqual([final.teamA[0], final.teamB[0]], [first[0].teamA[0], first[1].teamA[0]]);
+    assert.deepEqual([bronze.teamA[0], bronze.teamB[0]], [first[0].teamB[0], first[1].teamB[0]]);
+    // 新排出的比赛仍是待确认，要重新走录入 → 确认
+    assert.equal(final.status, MATCH_STATUS.PENDING);
+    assert.deepEqual(final.scoreA, []);
+  });
+
+  test('逐轮推进 —— 并列季军模式下不排季军赛', async () => {
+    const repo = createFixtureRepo();
+    const admin = 'openid-admin';
+    const { id } = await playFirstRound(repo, admin, {
+      ...draft,
+      seedCount: 2,
+      startTime: '2026-05-20T09:00:00',
+      bronzeMode: EVENT_BRONZE_MODE.TIED,
+    });
+
+    const ledger = await on(repo, 'getMatchRecords', { eventId: id }, admin);
+    assert.equal(ledger.data.length, 3, '首轮两场 + 决赛');
+    assert.equal(ledger.data.filter((m) => m.stage === BRACKET_STAGE.BRONZE).length, 0);
+  });
+
+  test('给抽签生成的比赛录分 —— 非参赛者被拒，参赛者可以补录', async () => {
+    const repo = createFixtureRepo();
+    const admin = 'openid-admin';
+    const { data: published } = await on(repo, 'publishEvent', {
+      form: { ...draft, seedCount: 2, startTime: '2026-05-20T09:00:00' },
+    }, admin);
+    const id = published.record._id;
+    await signUpAll(repo, id, ['openid-u01', 'openid-u02']);
+    const drawn = await on(repo, 'drawEvent', { id, seedValue: 5 }, admin);
+    const scheduled = drawn.data.matches[0];
+
+    // u03 没报名，摸不到这场
+    const outsider = await on(
+      repo,
+      'submitMatch',
+      { id: scheduled._id, scoreA: ['11'], scoreB: ['5'] },
+      'openid-u03'
+    );
+    assert.equal(outsider.data.ok, false);
+    assert.match(outsider.data.firstError, /参赛者/);
+
+    // 参赛者补录后仍是待确认，签位与赛事归属不变
+    const scored = await on(
+      repo,
+      'submitMatch',
+      { id: scheduled._id, scoreA: ['11', '11'], scoreB: ['3', '5'] },
+      openIdOf[scheduled.teamA[0]]
+    );
+    assert.equal(scored.data.ok, true, scored.data.firstError);
+    assert.equal(scored.data.match.status, MATCH_STATUS.PENDING);
+    assert.equal(scored.data.match.round, 1);
+    assert.equal(scored.data.match.eventId, id);
+  });
+
+  test('确认抽签比赛 —— 没录分前不许确认，回放不会被空胜方带崩', async () => {
+    const repo = createFixtureRepo();
+    const admin = 'openid-admin';
+    const { data: published } = await on(repo, 'publishEvent', {
+      form: { ...draft, seedCount: 2, startTime: '2026-05-20T09:00:00' },
+    }, admin);
+    const id = published.record._id;
+    await signUpAll(repo, id, ['openid-u01', 'openid-u02']);
+    const drawn = await on(repo, 'drawEvent', { id, seedValue: 5 }, admin);
+    const scheduled = drawn.data.matches[0];
+
+    // 参赛者想直接确认一场没比分的比赛：必须被拦下
+    const early = await on(repo, 'confirmMatch', { id: scheduled._id }, openIdOf[scheduled.teamB[0]]);
+    assert.equal(early.data.ok, false);
+    assert.match(early.data.message, /还没有比分/);
+
+    // 录分之后同一人才可以确认，且确认后赛季回放仍算得出来
+    await on(
+      repo,
+      'submitMatch',
+      { id: scheduled._id, scoreA: ['11', '11'], scoreB: ['3', '5'] },
+      openIdOf[scheduled.teamA[0]]
+    );
+    const confirmed = await on(repo, 'confirmMatch', { id: scheduled._id }, openIdOf[scheduled.teamB[0]]);
+    assert.equal(confirmed.data.ok, true, confirmed.data.message);
+
+    // 读一次赛季数据：若空胜方混进了回放，这里会直接抛错
+    const ledger = await on(repo, 'getMatchRecords', { eventId: id }, admin);
+    assert.equal(ledger.data[0].status, MATCH_STATUS.ACTIVE);
+    assert.equal(ledger.data[0].winner, 'A');
   });
 
   test('未登录调用发布赛事 —— 顶层 ok:false', async () => {
