@@ -571,6 +571,64 @@ test('我的页 —— 未登录时不给退出按钮', async () => {
   assert.strictEqual(page.data.loggedIn, false);
 });
 
+test('我的页 —— 登录后切回本页会自动补取数据，不停在登录前那份空视图', async () => {
+  resetSession();
+  const page = instantiate(profileConfig);
+  // 这个页面实例是在未登录时建出来的：view 停在 {found:false}
+  await page.onLoad({});
+  assert.strictEqual(page.data.loggedIn, false);
+
+  // 用户去登录页登录成功，再切回「我的」——tabBar 页只走 onShow，不重新 onLoad
+  loginAs();
+  await page.onShow();
+
+  assert.strictEqual(page.data.loggedIn, true);
+  assert.strictEqual(page.data.view.found, true, '登录后必须重新取数');
+  assert.strictEqual(page.data.view.user.userId, 'u06');
+});
+
+test('我的页 —— 切回本页时登录态没变就不重复取数', async () => {
+  resetSession();
+  loginAs();
+
+  // 切 tab 很频繁，每次都白跑一趟云端没有意义
+  let queried = 0;
+  const originalGetCurrentUser = mock.getCurrentUser;
+  mock.getCurrentUser = async (...args) => {
+    queried += 1;
+    return originalGetCurrentUser.apply(mock, args);
+  };
+
+  try {
+    const page = instantiate(profileConfig);
+    await page.onLoad({});
+    assert.strictEqual(queried, 1, 'onLoad 取一次');
+
+    await page.onShow();
+    assert.strictEqual(queried, 1, '登录态没变，onShow 不该再取');
+  } finally {
+    mock.getCurrentUser = originalGetCurrentUser;
+  }
+});
+
+test('我的页 —— 退出后重新登录会重新取数，不把上一个人那份空视图留住', async () => {
+  resetSession();
+  loginAs();
+
+  const page = instantiate(profileConfig);
+  await page.onLoad({});
+  assert.strictEqual(page.data.view.user.userId, 'u06');
+
+  // 退出再登进来也走同一条路径
+  page.onLogout();
+  assert.strictEqual(page.data.loggedIn, false);
+
+  loginAs();
+  await page.onShow();
+  assert.strictEqual(page.data.loggedIn, true);
+  assert.strictEqual(page.data.view.found, true, '重新登录后要补取数据');
+});
+
 test('我的页 —— 未登录时不查数据，只给登录引导', async () => {
   resetSession();
   const page = instantiate(profileConfig);

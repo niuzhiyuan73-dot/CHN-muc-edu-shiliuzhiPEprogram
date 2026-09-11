@@ -46,9 +46,27 @@ Page({
     return wait;
   },
 
-  /** 从登录页回来时登录态可能变了，权限要重算——否则退出登录后入口还挂着 */
+  /**
+   * 从登录页回来时登录态可能变了，入口要重算、数据要重取。
+   *
+   * 【为什么 onShow 里还得取一次数】tabBar 页切回来只走 onShow，不重新 onLoad。
+   * 于是这个页面实例可能是在「未登录」时建出来的，view 一直停在 {found:false}；
+   * 登录成功再切回来，loggedIn 变成 true，模板却拿着那份旧 view 渲染——屏幕上
+   * 就成了「没有找到这位会员」，明明账号好端端地在那儿。退出登录后重新登录、
+   * 或换一个账号登进来，都是这条路径。
+   *
+   * 只在「这次该给谁取数」和「上次取的是谁」不一样时才重取，免得每次切 tab
+   * 都白跑一趟云端。
+   *
+   * @returns {Promise<void>|undefined}
+   */
   onShow() {
     this.syncEntries();
+
+    const user = this.currentUser();
+    const userId = user ? user._id : null;
+    if (userId !== (this.loadedForUserId || null)) return this.refresh();
+    return undefined;
   },
 
   /** 读取全局登录态。app 可能还没初始化好，逐层兜底 */
@@ -78,11 +96,14 @@ Page({
    * @returns {Promise<void>}
    */
   async refresh() {
-    if (!this.currentUser()) {
+    const user = this.currentUser();
+    if (!user) {
       this.showGuest();
       return undefined;
     }
 
+    // 记下这次是给谁取的数，onShow 靠它判断要不要重取
+    this.loadedForUserId = user._id;
     await memberPage.refresh.call(this);
 
     // 加载报错时 view 还是空的，不能拿它当「查无此人」处理
@@ -95,6 +116,8 @@ Page({
 
   /** 原地切成未登录的样子，不跳页——退出的入口和这里都不该把人甩到别的页 */
   showGuest() {
+    // 没有登录态可展示，下次 onShow 只要还是未登录就不用重取
+    this.loadedForUserId = null;
     this.setData({
       loading: false,
       error: '',
