@@ -176,6 +176,14 @@ page {
   border: 2rpx solid var(--color-primary);
 }
 
+/* 危险操作（退出登录、删除等）：红字红框，一眼区别于主色按钮。
+   不做成实心红——整屏只有一个主行动按钮，退出一类的不该抢那个位置。 */
+.btn-danger {
+  background: transparent;
+  color: var(--color-danger);
+  border: 2rpx solid var(--color-danger);
+}
+
 .btn-block {
   width: 100%;
 }

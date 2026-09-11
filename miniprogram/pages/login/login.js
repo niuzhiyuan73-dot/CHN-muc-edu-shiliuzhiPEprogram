@@ -127,13 +127,17 @@ Page({
     }
   },
 
-  /** 已有账号时退出登录，回到未登录状态 */
+  /**
+   * 退出登录，回到未登录状态。
+   * 待审核那一步也能退出，所以必须把 step 一起退回入口——
+   * 否则登录态已经清了，界面却还停在「申请已提交」，看着像没退掉。
+   */
   onLogout() {
     const app = getApp();
     if (app && typeof app.clearUserInfo === 'function') app.clearUserInfo();
     else if (app && app.globalData) app.globalData.userInfo = null;
 
-    this.setData({ existing: this.describe(null), errorText: '' });
+    this.setData({ step: 'entry', existing: this.describe(null), errorText: '' });
   },
 
   /** 跳到注册表单 */

@@ -43,10 +43,6 @@
   padding: var(--space-md) 0 4rpx;
 }
 
-.login-link-danger {
-  color: var(--color-danger);
-}
-
 .login-error {
   margin-top: var(--space-md);
   text-align: center;

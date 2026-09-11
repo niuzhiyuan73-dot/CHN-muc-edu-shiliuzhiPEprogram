@@ -815,6 +815,22 @@ test('登录页 —— 填写完整后提交，申请落进数据源并停在待
   );
 });
 
+test('登录页 —— 待审核那一步也能退出登录，并退回入口', async () => {
+  resetSession();
+  const page = instantiate(loginConfig);
+  page.onLoad();
+  page.onGoRegister();
+  fillValidForm(page);
+  await page.onSubmit();
+  assert.strictEqual(page.data.step, 'pending');
+
+  // 待审核页上不给退出，人就被锁在这一屏了
+  page.onLogout();
+  assert.strictEqual(page.data.step, 'entry', '退出后应回到入口，不能停在待审核');
+  assert.strictEqual(page.data.existing.loggedIn, false);
+  assert.strictEqual(app.globalData.userInfo, null);
+});
+
 test('登录页 —— 输入或选择学院会把该项的旧错误清掉', async () => {
   resetSession();
   const page = instantiate(loginConfig);

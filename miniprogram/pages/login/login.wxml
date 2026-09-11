@@ -28,7 +28,7 @@
       <view wx:if="{{existing.notice}}" class="account-notice">{{existing.notice}}</view>
 
       <button class="btn btn-primary btn-block login-btn" bindtap="onGoHome">进入首页</button>
-      <view class="login-link login-link-danger" bindtap="onLogout">退出登录</view>
+      <button class="btn btn-danger btn-block login-btn" bindtap="onLogout">退出登录</button>
     </view>
 
     <!-- 未登录：登录 / 注册两个入口 -->
@@ -166,6 +166,7 @@
       </view>
 
       <button class="btn btn-primary btn-block login-btn" bindtap="onGoHome">先随便逛逛</button>
+      <button class="btn btn-danger btn-block login-btn" bindtap="onLogout">退出登录</button>
     </view>
   </block>
 
