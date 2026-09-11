@@ -143,7 +143,9 @@
   <block wx:elif="{{step === 'pending'}}">
     <view class="card pending-card">
       <view class="pending-icon">⏳</view>
-      <view class="card-title">申请已提交</view>
+      <!-- 标题按实际结果给：已经通过的会员再提交一次，服务端返回的还是原来
+           那个账号，这时说「申请已提交」是假话（见 login.js 的 showPending） -->
+      <view class="card-title">{{pending.title}}</view>
       <view class="card-subtitle">{{pending.notice}}</view>
 
       <view class="divider"></view>
@@ -162,10 +164,10 @@
       </view>
       <view class="pending-row">
         <text class="pending-key">状态</text>
-        <text class="tag tag-warning">{{pending.statusLabel}}</text>
+        <text class="tag {{pending.statusClass}}">{{pending.statusLabel}}</text>
       </view>
 
-      <button class="btn btn-primary btn-block login-btn" bindtap="onGoHome">先随便逛逛</button>
+      <button class="btn btn-primary btn-block login-btn" bindtap="onGoHome">{{pending.actionLabel}}</button>
       <button class="btn btn-danger btn-block login-btn" bindtap="onLogout">退出登录</button>
     </view>
   </block>

@@ -60,6 +60,35 @@ Page({
   },
 
   /**
+   * 装载整页数据。未登录时直接短路。
+   *
+   * 【为什么不能让它去问数据源】这一页只有一份数据可看：本地登录态里的
+   * 那个人。而 memberPage 的默认实现会在没传 userId 时调 getCurrentUser()，
+   * 云端那个接口认的是 OpenID（见 context.js），退出登录之后它照样答得出
+   * 是谁——于是刚清掉的账号原地又长回来，页面上还挂着「我」的战绩。
+   * 所以先看本地有没有人，没有就什么都不查。
+   *
+   * @returns {Promise<void>}
+   */
+  refresh() {
+    if (this.currentUser()) return memberPage.refresh.call(this);
+
+    this.setData({
+      loading: false,
+      error: '',
+      switching: false,
+      hasMore: false,
+      view: { found: false },
+    });
+    return Promise.resolve();
+  },
+
+  /** 未登录时的引导按钮 */
+  onGoLogin() {
+    wx.navigateTo({ url: '/pages/login/login' });
+  },
+
+  /**
    * 重算所有管理入口。判定一律复用各功能自己的规则（canReview / canPublish），
    * 不在这里另写一套，免得某天规则改了这两处还各说各话。
    */

@@ -230,6 +230,16 @@ function fakeMember(overrides = {}) {
   };
 }
 
+/**
+ * 摆好登录态。
+ * 「我的」页只在已登录时加载数据——它看的人就是本地会话里的那个，
+ * 没有会话就一行都不查（否则云端会按 OpenID 把刚退出的账号答回来）。
+ */
+function loginAs(overrides) {
+  app.globalData.userInfo = fakeMember(overrides);
+  return app.globalData.userInfo;
+}
+
 /* ============================================================
  * 首页
  * ============================================================ */
@@ -338,6 +348,7 @@ test('我的页 —— 启动后处于加载态，数据来源标注为模拟数
 });
 
 test('我的页 —— onLoad 之后渲染出当前会员的数据', async () => {
+  loginAs();
   const page = instantiate(profileConfig);
   await page.onLoad({});
 
@@ -349,6 +360,7 @@ test('我的页 —— onLoad 之后渲染出当前会员的数据', async () =>
 });
 
 test('我的页 —— 曲线画到了 canvas 上，并按设备像素比做了缩放', async () => {
+  loginAs();
   const page = instantiate(profileConfig);
   canvas.width = 0;
   canvas.height = 0;
@@ -361,6 +373,7 @@ test('我的页 —— 曲线画到了 canvas 上，并按设备像素比做了�
 });
 
 test('我的页 —— 默认展示单打，且单打标签排在最前', async () => {
+  loginAs();
   const page = instantiate(profileConfig);
   await page.onLoad({});
 
@@ -370,6 +383,7 @@ test('我的页 —— 默认展示单打，且单打标签排在最前', async 
 });
 
 test('我的页 —— 切换项目后整页数据跟着换', async () => {
+  loginAs();
   const page = instantiate(profileConfig);
   await page.onLoad({});
 
@@ -406,6 +420,7 @@ test('我的页 —— 加载更多会扩大取数范围', async () => {
 });
 
 test('我的页 —— 是否还有更多战绩，按实际总场次判断', async () => {
+  loginAs();
   const page = instantiate(profileConfig);
   // 只取一场，这个池肯定不止一场
   page.data.historyLimit = 1;
@@ -428,6 +443,7 @@ test('我的页 —— 点交锋记录里的人会跳到对方主页', async () 
 });
 
 test('我的页 —— 点到自己不会再跳一层', async () => {
+  loginAs();
   const page = instantiate(profileConfig);
   await page.onLoad({});
 
@@ -550,6 +566,21 @@ test('我的页 —— 未登录时不给退出按钮', async () => {
   await page.onLoad({});
 
   assert.strictEqual(page.data.loggedIn, false);
+});
+
+test('我的页 —— 未登录时不查数据，只给登录引导', async () => {
+  resetSession();
+  const page = instantiate(profileConfig);
+  await page.onLoad({});
+
+  assert.strictEqual(page.data.loading, false, '不能一直挂在加载态');
+  // 关键：数据源的 getCurrentUser 认的是 OpenID，退出登录后照样答得出是谁，
+  // 所以未登录时必须什么都不查，否则「我的」页会继续显示刚退出的那个账号
+  assert.strictEqual(page.data.view.found, false);
+
+  calls.navigations.length = 0;
+  page.onGoLogin();
+  assert.deepStrictEqual(calls.navigations, ['/pages/login/login']);
 });
 
 /* ============================================================
@@ -837,6 +868,41 @@ test('登录页 —— 填写完整后提交，申请落进数据源并停在待
     membersBefore,
     '还没通过审核的人不能被当成正式会员'
   );
+});
+
+test('登录页 —— 已经有账号的人再提交，结果页不说「申请已提交」', () => {
+  resetSession();
+  const page = instantiate(loginConfig);
+  page.onLoad();
+
+  // 同一个 OpenID 只有一条账号，重复注册时服务端把现有账号原样返回
+  page.showPending(fakeMember({ _id: 'u01' }), {
+    isPending: false,
+    isActive: true,
+    statusLabel: '正常',
+    notice: '',
+  });
+
+  assert.strictEqual(page.data.pending.title, '你已经是会员了');
+  assert.strictEqual(page.data.pending.actionLabel, '进入首页');
+  assert.strictEqual(page.data.pending.statusClass, 'tag-success', '已经是正常会员，不能再挂黄色的待审核标签');
+});
+
+test('登录页 —— 真的待审核时结果页仍是「申请已提交」', () => {
+  resetSession();
+  const page = instantiate(loginConfig);
+  page.onLoad();
+
+  page.showPending(fakeMember({ _id: 'local_1', status: 0 }), {
+    isPending: true,
+    isActive: false,
+    statusLabel: '待审核',
+    notice: '实名信息正在审核，通过后即可录入比赛成绩',
+  });
+
+  assert.strictEqual(page.data.pending.title, '申请已提交');
+  assert.strictEqual(page.data.pending.actionLabel, '先随便逛逛');
+  assert.strictEqual(page.data.pending.statusClass, 'tag-warning');
 });
 
 test('登录页 —— 待审核那一步也能退出登录，并退回入口', async () => {

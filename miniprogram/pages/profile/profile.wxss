@@ -33,6 +33,17 @@
   margin-top: var(--space-xl);
 }
 
+/* ==================== 未登录引导 ==================== */
+
+/* 没有战绩数据可渲染时，这一页只剩这张卡，给它一点上边距别贴着顶栏 */
+.guest-card {
+  margin-top: var(--space-md);
+}
+
+.guest-btn {
+  margin-top: var(--space-md);
+}
+
 /* 一个朴素的方向箭头，暗示这张卡可以点 */
 .entry-card-arrow {
   flex-shrink: 0;

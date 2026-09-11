@@ -24,6 +24,7 @@ const { COLLEGES, login, resolveAuthState } = require('../../services/auth.js');
 // 注册要走门面而不是直接调 auth.register：只有落到数据源里，
 // 审核页才看得到这条申请，通过了录入页也才选得到这个人
 const { isMock, registerMember } = require('../../services/index.js');
+const { uploadAvatar } = require('../../services/avatar.js');
 
 Page({
   data: {
@@ -152,10 +153,26 @@ Page({
 
   /* ---------- 表单步骤 ---------- */
 
-  /** 用户主动选择的头像 */
-  onChooseAvatar(event) {
-    const avatarUrl = (event.detail && event.detail.avatarUrl) || '';
-    this.setData({ 'form.avatarUrl': avatarUrl });
+  /**
+   * 用户主动选择的头像。
+   *
+   * 选完立刻传云存储，换回一个 fileID。微信给的是会话级的临时文件，
+   * 直接存进账号的话，重启小程序或者别人看你的主页就只能看到一张坏图
+   * （开发者工具里还会报跨源拦截）。先挂本地路径是为了预览不用等上传。
+   */
+  async onChooseAvatar(event) {
+    const tempPath = (event.detail && event.detail.avatarUrl) || '';
+    if (!tempPath) return undefined;
+
+    this.setData({ 'form.avatarUrl': tempPath });
+
+    const uploaded = await uploadAvatar(tempPath);
+    // 上传期间用户又选了一张，这次的结果就作废；上传失败（空串）也留着
+    // 临时图继续预览，提交时还会再试一次
+    if (uploaded && this.data.form.avatarUrl === tempPath) {
+      this.setData({ 'form.avatarUrl': uploaded });
+    }
+    return undefined;
   },
 
   /** 通用输入处理：按 data-field 写回对应字段，并顺手清掉该字段的旧错误 */
@@ -193,7 +210,15 @@ Page({
     if (this.data.submitting) return undefined;
 
     this.setData({ submitting: true, errorText: '' });
-    const result = await registerMember(this.data.form);
+
+    // 选头像和点提交之间可能只隔几秒，那次上传未必跑完。这里再确保一次，
+    // 免得把一个会话级的临时路径写进账号（已是 fileID 时它原样返回）
+    const avatarUrl = await uploadAvatar(this.data.form.avatarUrl);
+    // 存回表单，校验失败后再提交一次时就不会重复上传同一个文件
+    if (avatarUrl && avatarUrl !== this.data.form.avatarUrl) {
+      this.setData({ 'form.avatarUrl': avatarUrl });
+    }
+    const result = await registerMember({ ...this.data.form, avatarUrl });
 
     if (!result.ok) {
       this.setData({ submitting: false, errors: result.errors, errorText: result.firstError });
@@ -209,17 +234,33 @@ Page({
     return undefined;
   },
 
-  /** 展示待审核结果 */
+  /**
+   * 展示提交结果。
+   *
+   * 【标题为什么不能写死成「申请已提交」】
+   * 一个 OpenID 只对应一个账号，所以已经通过审核的会员再提交一次，服务端
+   * 会把现有账号原样返回（见 member-handlers 的 registerMember：重试不能
+   * 把审批结果冲掉）。这时还说「申请已提交」就是假话——人早就是会员了，
+   * 界面却让他在这一屏等着审核。所以标题按实际状态给，按钮文案也跟着变。
+   */
   showPending(user, state) {
+    const settled = !state.isPending;
+
     this.setData({
       step: 'pending',
       pending: {
+        title: settled ? (state.isActive ? '你已经是会员了' : '账号已被停用') : '申请已提交',
+        actionLabel: settled ? '进入首页' : '先随便逛逛',
+        statusClass: state.isActive ? 'tag-success' : 'tag-warning',
         nickName: user.nickName || '',
         realName: user.realName || '',
         studentId: user.studentId || '',
         college: user.college || '',
         statusLabel: state.statusLabel,
-        notice: state.notice,
+        notice:
+          settled && state.isActive
+            ? '这个微信号已经有账号了，不必重复注册，直接进首页就行。'
+            : state.notice,
       },
     });
   },
