@@ -25,6 +25,11 @@ const {
   MATCH_TYPE_LABEL,
   MATCH_STATUS,
   MATCH_TYPE_TO_POOL,
+  EVENT_STATUS,
+  EVENT_LEVEL,
+  EVENT_BRONZE_MODE,
+  SEED_MODE,
+  SIGNUP_STATUS,
 } = require('../utils/constants.js');
 const { DEFAULT_FORMAT, gamesToWin } = require('../utils/match-format.js');
 
@@ -671,6 +676,53 @@ function generateSeed(options = {}) {
     });
   });
 
+  // ---------- 4. 一场「报名中」的赛事（演示用） ----------
+  // 上面六场都已结束，赛事页的「报名中」一栏必然是空的：报名、取消、签到
+  // 这条链路在界面上根本走不到。这里补一场尚未开赛的赛事，并预置几位报名者，
+  // 让演示与人工验收有活数据可用。
+  //
+  // 【为什么排在所有取随机数的地方之后】
+  // 它不参与胜负模拟（没有 results、不生成比赛），只是为了给界面一份可操作
+  // 的赛事。若把取随机数的语句插到中间，后面每一次 random() 都会错位，
+  // 这场补数据就会把前面 642 场球全部改写——那不是「补一场」，是「换一套」。
+  const openWeek = weeks + 3;
+  const openStart = addDays(baseDate, openWeek * 7);
+  const openEvent = {
+    _id: 'e' + String(eventPlan.length + 1).padStart(2, '0'),
+    title: `${openStart.getMonth() + 1}月男子单打赛`,
+    description: '俱乐部常规赛事，单败淘汰制，取胜者晋级',
+    matchType: MATCH_TYPE.SINGLES,
+    pool: MATCH_TYPE_TO_POOL[MATCH_TYPE.SINGLES],
+    location: '学校体育馆 1 号场',
+    startTime: openStart,
+    endTime: addDays(openStart, 1),
+    // 名额按人数计，与已结束的赛事同一口径
+    quota: 8,
+    status: EVENT_STATUS.SIGNUP,
+    // 报名中的赛事还没有名次；results 留空，回放也就不会给它发积分
+    results: [],
+    level: EVENT_LEVEL.SECOND,
+    bronzeMode: EVENT_BRONZE_MODE.PLAYOFF,
+    // 按等级分排种子，抽签一步到位；手工指定请现场新发一场体验
+    seedMode: SEED_MODE.ELO,
+    seedCount: 4,
+  };
+  events.push(openEvent);
+
+  // 预置五位报名者：名单里有人，报名列表与「已报 N/8」才有东西可看。
+  // 剩下三个名额留给演示者自己报名。
+  const openSignups = shuffle(random, activeAt(openWeek, men))
+    .slice(0, 5)
+    .map((member, index) => ({
+      eventId: openEvent._id,
+      userId: member._id,
+      status: SIGNUP_STATUS.SIGNED,
+      // 报名时间排在开赛前一周，与真实的报名节奏一致
+      signTime: new Date(addDays(baseDate, openWeek * 7 - 7 + index).setHours(12, 0, 0, 0)),
+      checkInTime: null,
+      actorId: member._id,
+    }));
+
   // 全部对局按时间升序排列，回放引擎依赖这个顺序
   matches.sort((a, b) => new Date(a.matchTime) - new Date(b.matchTime));
 
@@ -678,6 +730,7 @@ function generateSeed(options = {}) {
     members,
     matches,
     events,
+    signups: openSignups,
     announcements: buildAnnouncements(baseDate),
     meta: {
       seed,

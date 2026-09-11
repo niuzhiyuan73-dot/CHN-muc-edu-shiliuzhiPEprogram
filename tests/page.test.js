@@ -1150,8 +1150,14 @@ test('赛事页 —— 赛事列表把报名中的排在已结束之前', async 
 
   const rows = page.data.view.events;
   assert.ok(rows.length > 0, '种子里有赛事，列表不该空着');
-  assert.strictEqual(rows[0].id, created._id, '刚发布的报名中赛事排最前');
+
+  // 种子里那场「报名中」的赛事（e07）与刚发布的都排在已结束的之前。
+  // 同为报名中时按开赛时间由近及远——e07 在 9 月，于是排在 6 月这场之前
+  const signingUp = rows.filter((row) => row.status === EVENT_STATUS.SIGNUP);
+  assert.ok(signingUp.some((row) => row.id === created._id), '刚发布的赛事在列表里');
+  assert.ok(signingUp.some((row) => row.id === 'e07'), '种子里的报名中赛事在列表里');
   assert.strictEqual(rows[0].statusLabel, '报名中');
+  assert.strictEqual(rows[signingUp.length - 1].status, EVENT_STATUS.SIGNUP);
 
   const statuses = rows.map((row) => row.status);
   assert.deepStrictEqual(statuses, [...statuses].sort((a, b) => a - b), '按状态分档');

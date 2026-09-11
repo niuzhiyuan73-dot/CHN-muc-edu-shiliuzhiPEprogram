@@ -1311,7 +1311,11 @@ describe('mock 数据源 —— 赛事闭环', () => {
 
       mock.resetCache();
       assert.ok(!(await mock.getEvents()).some((e) => e._id === 'le0001'));
-      assert.deepEqual(await mock.getEventSignups(), []);
+
+      // 本次会话的报名随赛事一起清掉；种子那场「报名中」赛事的预置报名仍在
+      const left = await mock.getEventSignups();
+      assert.ok(!left.some((s) => s.eventId === 'le0001'), '会话内报名应被清掉');
+      assert.ok(left.some((s) => s.eventId === 'e07'), '种子里预置的报名不该被清掉');
 
       // 复位后第一场又是 le0001
       const again = await mock.publishEvent(eventDraft(), me._id);

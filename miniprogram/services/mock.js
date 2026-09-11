@@ -176,6 +176,16 @@ function buildCache() {
       return patch ? { ...event, ...patch } : event;
     });
 
+  // 2.6 报名记录：种子里的那场「报名中」赛事预置了几位报名者，把它们放进
+  //     台账，报名列表才不是空的。台账里已有同一条就跳过——用户取消报名后
+  //     记录会以「已取消」留在台账里，不能被种子再翻回「已报名」；而写操作
+  //     会让缓存失效、下面这段每轮都会重跑，少了这个判断取消就白点了。
+  for (const record of seed.signups || []) {
+    if (!eventStore.findSignup(record.eventId, record.userId)) {
+      eventStore.saveSignup(record);
+    }
+  }
+
   // 3. 回放名单 = 种子会员 + 已通过审核的本地账号。
   //    注意 replaySeason 的参数名是 members（不是 users）：它返回的
   //    replayed.users 才是「回放后的会员」。

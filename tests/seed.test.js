@@ -22,6 +22,8 @@ const {
   MATCH_TYPE,
   MATCH_STATUS,
   RATING_POOL,
+  EVENT_STATUS,
+  SIGNUP_STATUS,
 } = require('../miniprogram/utils/constants.js');
 const {
   GAME_POINTS_OPTIONS,
@@ -33,6 +35,13 @@ const {
 
 /** 生成一份较小规模的数据，加快测试速度 */
 const smallSeed = (options = {}) => generateSeed({ weeks: 4, casualPerWeek: 6, ...options });
+
+/**
+ * 取已结束的赛事。
+ * 种子里会留一场「报名中」的赛事供演示用，它没有名次也没有对局，
+ * 因此凡是「赛事应当有完整结果」的断言都必须先把它排除在外。
+ */
+const finishedOf = (data) => data.events.filter((event) => event.status === EVENT_STATUS.FINISHED);
 
 describe('generateSeed —— 可复现性', () => {
   test('相同种子生成的数据完全一致', () => {
@@ -547,16 +556,16 @@ describe('simulateBracket —— 单败淘汰赛', () => {
 });
 
 describe('generateSeed —— 赛事数据', () => {
-  test('每场赛事的参赛人数与配额一致', () => {
+  test('已结束的赛事，参赛人数与配额一致', () => {
     const data = generateSeed();
-    for (const event of data.events) {
+    for (const event of finishedOf(data)) {
       assert.equal(event.results.length, event.quota);
     }
   });
 
   test('赛事名次覆盖全部参赛者且每人只有一个名次', () => {
     const data = generateSeed();
-    for (const event of data.events) {
+    for (const event of finishedOf(data)) {
       const ids = event.results.map((r) => r.userId);
       assert.equal(new Set(ids).size, ids.length, `${event.title} 有重复参赛者`);
       for (const r of event.results) {
@@ -565,10 +574,10 @@ describe('generateSeed —— 赛事数据', () => {
     }
   });
 
-  test('赛事已结束且带有结束时间', () => {
+  test('已结束的赛事带有结束时间', () => {
     const data = generateSeed();
-    for (const event of data.events) {
-      assert.equal(event.status, 2);
+    for (const event of finishedOf(data)) {
+      assert.equal(event.status, EVENT_STATUS.FINISHED);
       assert.ok(new Date(event.endTime) > new Date(event.startTime));
     }
   });
@@ -584,12 +593,57 @@ describe('generateSeed —— 赛事数据', () => {
     }
   });
 
-  test('赛事对局数量与参赛规模相符', () => {
+  test('已结束的赛事，对局数量与参赛规模相符', () => {
     const data = generateSeed();
-    for (const event of data.events) {
+    for (const event of finishedOf(data)) {
       const own = data.matches.filter((m) => m.eventId === event._id);
       // 8 个条目的单败淘汰赛共 7 场
       assert.equal(own.length, 7);
+    }
+  });
+
+  test('留有一场报名中的赛事，供报名与签到演示', () => {
+    const data = generateSeed();
+    const open = data.events.filter((event) => event.status === EVENT_STATUS.SIGNUP);
+    assert.equal(open.length, 1, '报名中的赛事应当恰好一场');
+
+    const [event] = open;
+    // 还没开打：没有名次，也没有安排任何对局
+    assert.deepEqual(event.results, []);
+    assert.equal(data.matches.filter((m) => m.eventId === event._id).length, 0);
+    // 封了报名参数，抽签入口才有东西可点
+    assert.ok(event.seedMode, '报名中的赛事应当写好种子口径');
+    assert.ok(event.seedCount > 0, '报名中的赛事应当写好种子数量');
+    // 开赛时间必须晚于所有已结束的赛事，否则会排在「近期赛事」的中间
+    for (const finished of finishedOf(data)) {
+      assert.ok(
+        new Date(event.startTime) > new Date(finished.startTime),
+        '报名中的赛事应当排在最后'
+      );
+    }
+  });
+
+  test('报名中赛事的预置报名：都报了名、还没签到、且不超名额', () => {
+    const data = generateSeed();
+    const open = data.events.find((event) => event.status === EVENT_STATUS.SIGNUP);
+
+    assert.ok(data.signups.length > 0, '应当预置几位报名者，否则列表是空的');
+    assert.ok(
+      data.signups.length <= open.quota,
+      '预置报名不能超过名额'
+    );
+    for (const signup of data.signups) {
+      assert.equal(signup.eventId, open._id);
+      assert.equal(signup.status, SIGNUP_STATUS.SIGNED);
+      assert.equal(signup.checkInTime, null);
+      assert.ok(new Date(signup.signTime) < new Date(open.startTime), '报名应当早于开赛');
+    }
+    // 报名的都是单打组的男会员——本场是男子单打
+    const men = new Set(data.members.filter((m) => m.gender === 'M').map((m) => m._id));
+    const ids = data.signups.map((signup) => signup.userId);
+    assert.equal(new Set(ids).size, ids.length, '同一人只报一次');
+    for (const id of ids) {
+      assert.ok(men.has(id), `${id} 不是男子组会员，不该出现在男子单打赛里`);
     }
   });
 
