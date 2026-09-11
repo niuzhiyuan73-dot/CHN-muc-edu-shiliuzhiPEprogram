@@ -528,6 +528,30 @@ test('我的页 —— 退出登录后 onShow 会把公告管理入口一并收�
   assert.strictEqual(page.data.adminEntry.visible, false, '权限没了，入口不能还挂着');
 });
 
+test('我的页 —— 已登录才给退出按钮，点了清登录态并回首页', async () => {
+  resetSession();
+  app.globalData.userInfo = fakeMember();
+
+  const page = instantiate(profileConfig);
+  await page.onLoad({});
+  assert.strictEqual(page.data.loggedIn, true, '登录了就该有退出按钮');
+
+  calls.tabSwitches.length = 0;
+  page.onLogout();
+
+  assert.strictEqual(app.globalData.userInfo, null, '退出登录要把全局登录态清掉');
+  assert.strictEqual(page.data.loggedIn, false);
+  assert.deepStrictEqual(calls.tabSwitches, ['/pages/index/index'], '退出后回首页');
+});
+
+test('我的页 —— 未登录时不给退出按钮', async () => {
+  resetSession();
+  const page = instantiate(profileConfig);
+  await page.onLoad({});
+
+  assert.strictEqual(page.data.loggedIn, false);
+});
+
 /* ============================================================
  * 他人主页
  * ============================================================ */

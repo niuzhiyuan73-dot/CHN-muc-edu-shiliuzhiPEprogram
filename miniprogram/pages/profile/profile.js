@@ -31,6 +31,8 @@ Page({
     ...memberPage.data,
     /** 开发期在页脚标注数据来源，以免把演示数据当成真实成绩 */
     isMock,
+    /** 是否已登录。退出登录按钮据此显隐——没登录时它没有意义 */
+    loggedIn: false,
     /** 会员审核入口。没有审核权时整张卡不出现，而不是给一个点不动的按钮 */
     reviewEntry: { visible: false, hint: '' },
     /** 公告管理入口。与审核入口同理，没权限就不渲染 */
@@ -67,6 +69,7 @@ Page({
     const canPublishNow = canPublish(user, { isMock });
 
     this.setData({
+      loggedIn: Boolean(user),
       reviewEntry: {
         visible: canReviewNow,
         hint: canReviewNow ? '有入会申请等待处理' : '',
@@ -76,6 +79,29 @@ Page({
         hint: canPublishNow ? '发布或下架俱乐部公告' : '',
       },
     });
+  },
+
+  /**
+   * 退出登录。
+   *
+   * 【为什么退出按钮放在这里】
+   * 登录页那张账号卡片上也有一个，但首页的「登录 / 注册」入口只在未登录时
+   * 才渲染（index.wxml 的 wx:if="{{!auth.loggedIn}}"），所以已登录的人根本
+   * 走不到登录页——那个按钮等于够不着。「我的」是 tabBar 常驻页，把退出放
+   * 在这里才随时找得到。
+   *
+   * 退出后回首页：只清本地缓存的话，服务端认 OpenID，getCurrentUser 照样
+   * 答得出是谁，这一页的战绩还会原样挂在那儿，看着像没退掉。
+   */
+  onLogout() {
+    const app = getApp();
+    if (app && typeof app.clearUserInfo === 'function') app.clearUserInfo();
+    else if (app && app.globalData) app.globalData.userInfo = null;
+
+    // 顺手把本页也切成未登录的样子：切页动画期间它还留在屏幕上，
+    // 继续挂着审核入口会闪一下
+    this.syncEntries();
+    wx.switchTab({ url: '/pages/index/index' });
   },
 
   /** 进审核页 */

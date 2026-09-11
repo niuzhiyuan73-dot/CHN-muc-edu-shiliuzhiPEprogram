@@ -32,6 +32,15 @@
     data="{{...view, loading: loading, error: error, hasMore: hasMore, switching: switching}}"
   />
 
+  <!--
+    退出登录。只在已登录时出现——没登录时它没有意义。
+    登录页也有一处，但首页的登录入口只对未登录的人显示，已登录的人到不了
+    那一页，所以这里是唯一稳定够得着的出口。
+  -->
+  <button wx:if="{{loggedIn}}" class="btn btn-danger btn-block logout-btn" bindtap="onLogout">
+    退出登录
+  </button>
+
   <view wx:if="{{isMock}}" class="mock-note">
     当前为本地模拟数据，用于开发预览，并非真实成绩
   </view>

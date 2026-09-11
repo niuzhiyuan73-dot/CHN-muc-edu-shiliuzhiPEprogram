@@ -26,6 +26,13 @@
   color: var(--color-text-secondary);
 }
 
+/* ==================== 退出登录 ==================== */
+
+/* 与页脚的模拟数据说明留出间距，免得两个都是灰字挤成一片 */
+.logout-btn {
+  margin-top: var(--space-xl);
+}
+
 /* 一个朴素的方向箭头，暗示这张卡可以点 */
 .entry-card-arrow {
   flex-shrink: 0;
