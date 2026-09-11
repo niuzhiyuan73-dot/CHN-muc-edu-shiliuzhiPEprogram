@@ -102,8 +102,16 @@ Page({
       return undefined;
     }
 
-    // 记下这次是给谁取的数，onShow 靠它判断要不要重取
+    // 屏幕上已经有这个人的数据时（切项目、加载更多、下拉刷新）就不动加载态，
+    // 整页替成「正在加载…」反而把刚看到的内容抹掉了。其余情况——刚登录换人、
+    // 或者压根还没有数据——必须先挂上加载态：不挂的话，模板会拿着登录前那份
+    // {found:false} 渲染成「没有找到这位会员」，一直挂到云端返回为止。冷启动的
+    // 云函数要等好几秒，看起来就像「必须手动刷新一次才出得来」。
+    const hadData =
+      this.loadedForUserId === user._id && this.data.view && this.data.view.found;
     this.loadedForUserId = user._id;
+    if (!hadData) this.setData({ loading: true, error: '' });
+
     await memberPage.refresh.call(this);
 
     // 加载报错时 view 还是空的，不能拿它当「查无此人」处理

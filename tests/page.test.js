@@ -587,6 +587,40 @@ test('我的页 —— 登录后切回本页会自动补取数据，不停在登
   assert.strictEqual(page.data.view.user.userId, 'u06');
 });
 
+test('我的页 —— 登录后补取数据期间显示加载态，而不是「没有找到这位会员」', async () => {
+  resetSession();
+  const page = instantiate(profileConfig);
+  await page.onLoad({});
+  assert.strictEqual(page.data.loading, false);
+
+  loginAs();
+  const pending = page.onShow();
+
+  // 云端还没回来。此时 loading 若还是 false，模板就会拿登录前那份
+  // {found:false} 去渲染「没有找到这位会员」——冷启动要等好几秒
+  assert.strictEqual(page.data.loading, true, '取数期间要挂加载态');
+
+  await pending;
+  assert.strictEqual(page.data.loading, false);
+  assert.strictEqual(page.data.view.found, true);
+});
+
+test('我的页 —— 切项目时不整页替成加载态，别把刚看到的内容抹掉', async () => {
+  resetSession();
+  loginAs();
+
+  const page = instantiate(profileConfig);
+  await page.onLoad({});
+  assert.strictEqual(page.data.view.hasProject, true);
+
+  const pending = page.onSwitchProject({ currentTarget: { dataset: { project: 'doubles' } } });
+  assert.strictEqual(page.data.loading, false, '换项目不该把整页数据换成加载中');
+  assert.strictEqual(page.data.switching, true, '但要给个切换中的反馈');
+
+  await pending;
+  assert.strictEqual(page.data.view.activeProject, 'doubles');
+});
+
 test('我的页 —— 切回本页时登录态没变就不重复取数', async () => {
   resetSession();
   loginAs();
