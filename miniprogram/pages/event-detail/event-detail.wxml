@@ -1,0 +1,149 @@
+<!--
+  赛事详情
+  数据形状见 services/events-view.js 的 loadEventDetailView。
+  名单行与名次行复用 templates/rank-board.wxss 的样式，与榜单同一副面孔。
+-->
+<view class="page-container">
+
+  <!-- 加载中。必须排在出错之前，否则首屏会一闪而过地报错 -->
+  <view wx:if="{{loading}}" class="loading">正在加载…</view>
+
+  <view wx:elif="{{error}}" class="empty-state">
+    <view class="empty-state-icon">⚠️</view>
+    <view class="empty-state-text">{{error}}</view>
+  </view>
+
+  <view wx:elif="{{!view.found}}" class="empty-state">
+    <view class="empty-state-icon">🔒</view>
+    <view class="empty-state-text">{{view.notFoundText}}</view>
+  </view>
+
+  <block wx:else>
+
+    <!-- ========== 赛事信息 ========== -->
+    <view class="card">
+      <view class="event-head">
+        <view class="event-title">{{view.event.title}}</view>
+        <text class="tag {{view.event.isSignup ? 'tag-success' : (view.event.isOngoing ? 'tag-warning' : 'tag-gray')}}">{{view.event.statusLabel}}</text>
+      </view>
+
+      <view class="event-info">
+        <view class="event-info-row">
+          <text class="event-info-label">时间</text>
+          <text class="event-info-value">{{view.event.timeText}}</text>
+        </view>
+        <view class="event-info-row">
+          <text class="event-info-label">场地</text>
+          <text class="event-info-value">{{view.event.location || '待定'}}</text>
+        </view>
+        <view class="event-info-row">
+          <text class="event-info-label">项目</text>
+          <text class="event-info-value">{{view.event.levelLabel}} · {{view.event.matchTypeLabel}} · {{view.event.bronzeLabel}}</text>
+        </view>
+        <view class="event-info-row">
+          <text class="event-info-label">名额</text>
+          <text class="event-info-value">{{view.event.quotaText}}</text>
+        </view>
+      </view>
+
+      <view wx:if="{{view.event.description}}" class="event-desc">{{view.event.description}}</view>
+    </view>
+
+    <!-- ========== 我的报名 ========== -->
+    <view wx:if="{{view.event.isSignup}}" class="card">
+      <view class="card-title">报名</view>
+      <view class="signup-line">我的状态：<text class="signup-state">{{view.event.mySignupLabel}}</text></view>
+
+      <view wx:if="{{view.event.canSignUp}}" class="btn btn-primary btn-block" bindtap="onSignUp">报名</view>
+      <view wx:elif="{{view.event.canCancelSignup}}" class="btn btn-outline btn-block" bindtap="onCancelSignup">取消报名</view>
+      <view wx:else class="signup-note">报名已截止，或你当前的状态不能报名</view>
+    </view>
+
+    <!-- ========== 管理动作 ========== -->
+    <!-- 没有管理权时整张卡不渲染，不给点了再被拒的机会 -->
+    <view wx:if="{{view.event.canStart || view.event.canFinish}}" class="card">
+      <view class="card-title">管理</view>
+      <view wx:if="{{view.event.canStart}}" class="btn btn-primary btn-block" bindtap="onStart">开始赛事</view>
+      <view wx:if="{{view.event.canFinish}}" class="btn btn-accent btn-block btn-gap" bindtap="onOpenPlacement">录入名次并结束</view>
+    </view>
+
+    <!-- ========== 报名名单（未结束） ========== -->
+    <view wx:if="{{!view.event.isFinished}}" class="card">
+      <view class="rank-head">
+        <view class="rank-head-title">报名名单</view>
+        <view class="rank-head-count">{{view.event.quotaText}}</view>
+      </view>
+
+      <view wx:if="{{!view.hasSignups}}" class="empty-note">{{view.signupsEmptyNote}}</view>
+
+      <view
+        wx:for="{{view.signupRows}}"
+        wx:key="userId"
+        class="rank-row {{item.isMe ? 'is-me' : ''}}"
+      >
+        <view class="rank-avatar">
+          <image wx:if="{{item.avatarUrl}}" class="rank-avatar-img" src="{{item.avatarUrl}}" mode="aspectFill" />
+          <text wx:else>{{item.avatarText}}</text>
+        </view>
+
+        <view class="rank-main">
+          <view class="rank-name">
+            <text>{{item.nickName}}</text>
+            <text wx:if="{{item.isMe}}" class="rank-me-tag">我</text>
+          </view>
+          <view class="rank-detail">{{item.statusLabel}}</view>
+        </view>
+
+        <!-- 代签：进行中且未签到时才出现 -->
+        <view
+          wx:if="{{item.canCheckIn}}"
+          class="signup-checkin"
+          data-user-id="{{item.userId}}"
+          catchtap="onCheckIn"
+        >代签</view>
+        <view wx:elif="{{item.checkedIn}}" class="signup-checked">✓</view>
+      </view>
+    </view>
+
+    <!-- ========== 最终名次（已结束） ========== -->
+    <view wx:if="{{view.event.isFinished}}" class="card">
+      <view class="rank-head">
+        <view class="rank-head-title">最终名次</view>
+      </view>
+
+      <view wx:if="{{!view.hasResults}}" class="empty-note">这场赛事还没有录入名次</view>
+
+      <view
+        wx:for="{{view.resultRows}}"
+        wx:key="userId"
+        class="rank-row {{item.isMe ? 'is-me' : ''}}"
+        data-user-id="{{item.userId}}"
+        bindtap="onOpenMember"
+      >
+        <view class="rank-no {{item.medal ? 'is-' + item.medal : ''}}">{{item.placement}}</view>
+
+        <view class="rank-avatar">
+          <image wx:if="{{item.avatarUrl}}" class="rank-avatar-img" src="{{item.avatarUrl}}" mode="aspectFill" />
+          <text wx:else>{{item.avatarText}}</text>
+        </view>
+
+        <view class="rank-main">
+          <view class="rank-name">
+            <text>{{item.nickName}}</text>
+            <text wx:if="{{item.isMe}}" class="rank-me-tag">我</text>
+          </view>
+        </view>
+
+        <view class="rank-value-box">
+          <view class="rank-note">{{item.placementText}}</view>
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{view.demoNotice}}" class="demo-notice">{{view.demoNotice}}</view>
+
+    <view wx:if="{{isMock}}" class="mock-note">
+      当前为本地模拟数据，报名与名次只写入内存，重启小程序即清空
+    </view>
+  </block>
+</view>

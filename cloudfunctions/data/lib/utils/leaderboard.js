@@ -14,7 +14,7 @@
  */
 
 const { getPoolRating } = require('./rating.js');
-const { RANK_PROJECT_CONFIG, RATING_POOL } = require('./constants.js');
+const { RANK_PROJECT_CONFIG, RATING_POOL, isRankable } = require('./constants.js');
 
 /** 长时间未参赛而被标记为「不活跃」的天数阈值 */
 const INACTIVE_DAYS = 90;
@@ -187,7 +187,9 @@ function buildPoolLeaderboard(users, pool, options = {}) {
     throw new Error('users 必须是数组');
   }
   return buildLeaderboard(
-    users.map((user) => extractPoolStats(user, pool)),
+    // 离校的人不上榜（决策 8）。挡在这里而不是挡在排序里：他的分数没有
+    // 问题，只是不该占着名次；排掉之后名次自动连续，不用另做补位。
+    users.filter((user) => isRankable(user)).map((user) => extractPoolStats(user, pool)),
     options
   );
 }
@@ -223,7 +225,10 @@ function selectProjectUsers(users, project) {
     throw new Error('users 必须是数组');
   }
   const { gender } = resolveProject(project);
-  return gender ? users.filter((user) => user.gender === gender) : users;
+  // 离校的人不上榜。这一条与性别过滤是两码事：性别不符的人只是不在这张
+  // 榜上，离校的人是不该在任何一张榜上——所以先按在册状态筛一道。
+  const eligible = users.filter((user) => isRankable(user));
+  return gender ? eligible.filter((user) => user.gender === gender) : eligible;
 }
 
 /**

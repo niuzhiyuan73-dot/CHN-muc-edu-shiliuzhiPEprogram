@@ -1,0 +1,112 @@
+/*
+ * 赛事详情样式
+ * 名单行、名次行与「我」的标记复用 templates/rank-board.wxss，与榜单同一副面孔。
+ * 这里只写本页独有的赛事信息与名单右侧的动作。
+ */
+@import "../../templates/rank-board.wxss";
+
+/* ==================== 赛事信息 ==================== */
+
+.event-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: var(--space-sm);
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.event-title {
+  font-size: var(--font-lg);
+  font-weight: 600;
+  margin-right: var(--space-sm);
+}
+
+.event-info {
+  padding-top: var(--space-sm);
+}
+
+.event-info-row {
+  display: flex;
+  align-items: flex-start;
+  padding: 6rpx 0;
+}
+
+.event-info-label {
+  width: 110rpx;
+  flex-shrink: 0;
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+
+.event-info-value {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-sm);
+  color: var(--color-text);
+}
+
+/* 说明文字是补充信息，压小压淡，不跟时间地点抢 */
+.event-desc {
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 2rpx solid var(--color-divider);
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.7;
+}
+
+/* ==================== 我的报名 ==================== */
+
+.signup-line {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-md);
+}
+
+.signup-state {
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.signup-note {
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+}
+
+/* ==================== 管理动作 ==================== */
+
+/* 两个管理按钮叠在一起时留一道缝，免得点错 */
+.btn-gap {
+  margin-top: var(--space-sm);
+}
+
+/* ==================== 名单右侧的动作 ==================== */
+
+.signup-checkin {
+  flex-shrink: 0;
+  margin-left: var(--space-sm);
+  padding: 8rpx 24rpx;
+  font-size: var(--font-sm);
+  color: var(--color-primary);
+  border: 2rpx solid var(--color-primary);
+  border-radius: var(--radius-sm);
+}
+
+.signup-checked {
+  flex-shrink: 0;
+  margin-left: var(--space-sm);
+  font-size: var(--font-md);
+  color: var(--color-success);
+}
+
+/* ==================== 演示口径提示 ==================== */
+
+.demo-notice {
+  font-size: var(--font-xs);
+  color: #b45309;
+  background: #fef3c7;
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm) var(--space-md);
+  margin-bottom: var(--space-md);
+  line-height: 1.5;
+}

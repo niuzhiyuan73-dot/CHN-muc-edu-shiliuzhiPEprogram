@@ -33,6 +33,7 @@ const {
   MATCH_TYPE_TO_POOL,
   MATCH_STATUS,
   EVENT_STATUS,
+  DEFAULT_EVENT_LEVEL,
   RATING_POOL,
 } = require('../utils/constants.js');
 const {
@@ -263,6 +264,20 @@ function runReplay({
   const resetMs = resetTime ? new Date(resetTime).getTime() : NaN;
   const resetApplies = Number.isFinite(resetMs);
 
+  /**
+   * 赛事等级表：eventId → level，供逐场回放时取赛事的固定 K（决策 13）。
+   *
+   * 历史赛事没有 level 字段，一律按三级补齐。三级 K 恰好等于常规 K（24），
+   * 所以老数据的行为与加这条规则之前一致，不会出现「改个算法全站分数漂移」。
+   */
+  const eventLevelOf = new Map();
+  for (const event of events || []) {
+    const level = event.level === undefined || event.level === null
+      ? DEFAULT_EVENT_LEVEL
+      : event.level;
+    eventLevelOf.set(event._id, level);
+  }
+
   /** 定级观察：会员 → 池 → 定级期逐场记录 */
   const observations = new Map();
 
@@ -429,6 +444,8 @@ function runReplay({
       teamB: snapB,
       winner: match.winner,
       config: elo,
+      // 赛事比赛按等级取固定 K；日常比赛没有 eventId，走原来的分段规则
+      eventLevel: match.eventId ? eventLevelOf.get(match.eventId) : undefined,
     });
 
     const players = [];

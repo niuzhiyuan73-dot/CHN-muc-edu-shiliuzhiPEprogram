@@ -20,7 +20,15 @@ const facade = require('../miniprogram/services/index.js');
 // 直接拿实现模块，是为了在个别用例里临时把某个接口换掉。
 // 门面是「调用时才解析实现」，所以改这里的导出真的会作用到上面那层
 const mock = require('../miniprogram/services/mock.js');
-const { MATCH_STATUS, MATCH_TYPE, USER_STATUS } = require('../miniprogram/utils/constants.js');
+const {
+  MATCH_STATUS,
+  MATCH_TYPE,
+  USER_STATUS,
+  EVENT_STATUS,
+  EVENT_LEVEL,
+  EVENT_BRONZE_MODE,
+  SIGNUP_STATUS,
+} = require('../miniprogram/utils/constants.js');
 
 /* ============================================================
  * 最小小程序运行环境
@@ -143,6 +151,9 @@ require('../miniprogram/pages/profile-edit/profile-edit.js');
 require('../miniprogram/pages/profile-detail/profile-detail.js');
 require('../miniprogram/pages/season-manage/season-manage.js');
 require('../miniprogram/pages/events/events.js');
+require('../miniprogram/pages/event-detail/event-detail.js');
+require('../miniprogram/pages/event-edit/event-edit.js');
+require('../miniprogram/pages/event-placement/event-placement.js');
 
 /**
  * 深拷贝页面初值。
@@ -217,6 +228,9 @@ const profileEditConfig = registered[11];
 const profileDetailConfig = registered[12];
 const seasonManageConfig = registered[13];
 const eventsConfig = registered[14];
+const eventDetailConfig = registered[15];
+const eventEditConfig = registered[16];
+const eventPlacementConfig = registered[17];
 
 // 写接口（确认 / 撤销 / 录入）只改内存，跑完一条用例就得把内存退回种子状态，
 // 否则上一条确认过的比赛会让下一条拿到的榜单与台账都不一样
@@ -1097,6 +1111,246 @@ test('赛事页 —— 加载失败时给出提示而不是白屏', async () => 
   } finally {
     mock.getEvents = original;
   }
+});
+
+/* ============================================================
+ * 赛事闭环（列表 → 详情 → 发布 → 名次录入）
+ * ============================================================ */
+
+/** 造一场「报名中」的赛事，返回落库后的记录 */
+async function publishTestEvent(overrides = {}) {
+  const user = loginAs();
+  const result = await facade.publishEvent(
+    {
+      title: '测试单打赛',
+      description: '淘汰赛制',
+      matchType: MATCH_TYPE.SINGLES,
+      level: EVENT_LEVEL.SECOND,
+      bronzeMode: EVENT_BRONZE_MODE.TIED,
+      location: '体育馆 1 号场',
+      startTime: '2026-06-10T09:00:00',
+      quota: 8,
+      ...overrides,
+    },
+    user._id
+  );
+  assert.strictEqual(result.ok, true, `发布赛事失败：${result.firstError}`);
+  return result.record;
+}
+
+test('赛事页 —— 赛事列表把报名中的排在已结束之前', async () => {
+  loginAs();
+  const created = await publishTestEvent();
+
+  const page = instantiate(eventsConfig);
+  await page.onLoad();
+
+  const rows = page.data.view.events;
+  assert.ok(rows.length > 0, '种子里有赛事，列表不该空着');
+  assert.strictEqual(rows[0].id, created._id, '刚发布的报名中赛事排最前');
+  assert.strictEqual(rows[0].statusLabel, '报名中');
+
+  const statuses = rows.map((row) => row.status);
+  assert.deepStrictEqual(statuses, [...statuses].sort((a, b) => a - b), '按状态分档');
+});
+
+test('赛事页 —— 点一场赛事跳到详情', async () => {
+  loginAs();
+  const created = await publishTestEvent();
+
+  const page = instantiate(eventsConfig);
+  await page.onLoad();
+
+  calls.navigations.length = 0;
+  page.onOpenEvent({ currentTarget: { dataset: { eventId: created._id } } });
+  assert.deepStrictEqual(calls.navigations, [
+    `/pages/event-detail/event-detail?eventId=${created._id}`,
+  ]);
+});
+
+test('赛事页 —— 点空白行不会乱跳', async () => {
+  loginAs();
+  const page = instantiate(eventsConfig);
+  await page.onLoad();
+
+  calls.navigations.length = 0;
+  page.onOpenEvent({ currentTarget: { dataset: {} } });
+  assert.deepStrictEqual(calls.navigations, []);
+});
+
+test('赛事页 —— 有管理权才渲染发布入口', async () => {
+  loginAs();
+  const allowed = instantiate(eventsConfig);
+  await allowed.onLoad();
+  assert.strictEqual(allowed.data.view.canPublish, true, '演示数据源下登录会员即可发布');
+
+  calls.navigations.length = 0;
+  allowed.onOpenPublish();
+  assert.deepStrictEqual(calls.navigations, ['/pages/event-edit/event-edit']);
+
+  resetSession();
+  const blocked = instantiate(eventsConfig);
+  await blocked.onLoad();
+  assert.strictEqual(blocked.data.view.canPublish, false, '没登录不给发布入口');
+});
+
+test('赛事详情 —— 未登录也能看，但没有报名按钮', async () => {
+  loginAs();
+  const created = await publishTestEvent();
+  resetSession();
+
+  const page = instantiate(eventDetailConfig);
+  await page.onLoad({ eventId: created._id });
+
+  assert.strictEqual(page.data.view.found, true);
+  assert.strictEqual(page.data.view.event.isSignup, true);
+  assert.strictEqual(page.data.view.event.canSignUp, false, '没登录不能报名');
+  assert.strictEqual(page.data.view.event.mySignupLabel, '未报名');
+});
+
+test('赛事详情 —— 报名成功后状态变为已报名、人数加一', async () => {
+  loginAs();
+  const created = await publishTestEvent();
+
+  const page = instantiate(eventDetailConfig);
+  await page.onLoad({ eventId: created._id });
+  assert.strictEqual(page.data.view.event.quotaText, '0/8 人');
+
+  await page.onSignUp();
+
+  assert.strictEqual(page.data.view.event.mySignupLabel, '已报名');
+  assert.strictEqual(page.data.view.event.quotaText, '1/8 人');
+  assert.strictEqual(page.data.view.hasSignups, true);
+  assert.strictEqual(page.data.view.signupRows[0].isMe, true);
+});
+
+test('赛事详情 —— 找不到的赛事给出提示而不是白屏', async () => {
+  loginAs();
+  const page = instantiate(eventDetailConfig);
+  await page.onLoad({ eventId: 'no-such-event' });
+
+  assert.strictEqual(page.data.loading, false);
+  assert.strictEqual(page.data.error, '');
+  assert.strictEqual(page.data.view.found, false);
+  assert.ok(page.data.view.notFoundText.length > 0);
+});
+
+test('赛事详情 —— 开始赛事之后可以给报名者代签', async () => {
+  loginAs();
+  const created = await publishTestEvent();
+  await facade.signUpEvent(created._id, 'u06');
+
+  const page = instantiate(eventDetailConfig);
+  await page.onLoad({ eventId: created._id });
+  assert.strictEqual(page.data.view.event.canStart, true);
+
+  await page.onStart();
+  assert.strictEqual(page.data.view.event.isOngoing, true);
+
+  assert.strictEqual(page.data.view.signupRows[0].canCheckIn, true);
+  await page.onCheckIn({ currentTarget: { dataset: { userId: 'u06' } } });
+
+  assert.strictEqual(page.data.view.signupRows[0].checkedIn, true);
+  assert.strictEqual(page.data.view.signupRows[0].canCheckIn, false);
+});
+
+test('发布赛事 —— 未登录时不给表单', () => {
+  resetSession();
+  const page = instantiate(eventEditConfig);
+  page.onLoad();
+
+  assert.ok(page.data.blockReason.length > 0);
+});
+
+test('发布赛事 —— 等级与三四名赛没选就提交，逐字段报错', async () => {
+  loginAs();
+  const page = instantiate(eventEditConfig);
+  page.onLoad();
+
+  page.onInputTitle({ detail: { value: '秋季单打赛' } });
+  page.onPickDate({ detail: { value: '2026-06-10' } });
+  page.onPickTime({ detail: { value: '09:00' } });
+
+  const before = calls.backCount;
+  await page.onSubmit();
+
+  assert.ok(page.data.errors.level, '等级必须显式选择');
+  assert.ok(page.data.errors.bronzeMode, '三四名赛方式必须显式选择');
+  assert.ok(page.data.errorText.length > 0);
+  assert.strictEqual(calls.backCount, before, '没通过校验不该退回');
+});
+
+test('发布赛事 —— 填全后提交落库，并退回上一页', async () => {
+  loginAs();
+  const page = instantiate(eventEditConfig);
+  page.onLoad();
+
+  page.onInputTitle({ detail: { value: '秋季单打赛' } });
+  page.onPickLevel({ detail: { value: '1' } }); // 下拉第 2 项 = 二级赛事
+  page.onPickBronzeMode({ detail: { value: '1' } }); // 下拉第 2 项 = 打三四名
+  page.onPickDate({ detail: { value: '2026-06-10' } });
+  page.onPickTime({ detail: { value: '09:00' } });
+  page.onInputQuota({ detail: { value: '8' } });
+
+  const before = calls.backCount;
+  await page.onSubmit();
+  assert.strictEqual(calls.backCount, before + 1);
+
+  const events = await facade.getEvents();
+  const created = events.find((item) => item.title === '秋季单打赛');
+  assert.ok(created, '发布后赛事应在台账里');
+  assert.strictEqual(created.level, EVENT_LEVEL.SECOND);
+  assert.strictEqual(created.bronzeMode, EVENT_BRONZE_MODE.PLAYOFF);
+  assert.strictEqual(created.status, EVENT_STATUS.SIGNUP);
+});
+
+test('录入名次 —— 未登录时整页挡住，不给名单', async () => {
+  loginAs();
+  const created = await publishTestEvent();
+  resetSession();
+
+  const page = instantiate(eventPlacementConfig);
+  await page.onLoad({ eventId: created._id });
+
+  assert.strictEqual(page.data.view.allowed, false);
+  assert.ok(page.data.view.blockedText.length > 0);
+  assert.deepStrictEqual(page.data.view.rows, []);
+});
+
+test('录入名次 —— 一个名次都没填就提交，给出提示', async () => {
+  loginAs();
+  const created = await publishTestEvent();
+  await facade.signUpEvent(created._id, 'u06');
+  await facade.startEvent(created._id, 'u06');
+
+  const page = instantiate(eventPlacementConfig);
+  await page.onLoad({ eventId: created._id });
+  assert.strictEqual(page.data.view.canEdit, true);
+
+  await page.onSubmit();
+  assert.ok(page.data.errorText.length > 0);
+});
+
+test('录入名次 —— 提交后赛事结束、名次落定', async () => {
+  loginAs();
+  const created = await publishTestEvent();
+  await facade.signUpEvent(created._id, 'u06');
+  await facade.startEvent(created._id, 'u06');
+
+  const page = instantiate(eventPlacementConfig);
+  await page.onLoad({ eventId: created._id });
+  assert.strictEqual(page.data.view.rows.length, 1);
+
+  page.onInputPlacement({ currentTarget: { dataset: { index: 0 } }, detail: { value: '1' } });
+
+  const before = calls.backCount;
+  await page.onSubmit();
+  assert.strictEqual(calls.backCount, before + 1);
+
+  const events = await facade.getEvents();
+  const finished = events.find((item) => item._id === created._id);
+  assert.strictEqual(finished.status, EVENT_STATUS.FINISHED);
+  assert.deepStrictEqual(finished.results, [{ userId: 'u06', placement: 1 }]);
 });
 
 /* ============================================================

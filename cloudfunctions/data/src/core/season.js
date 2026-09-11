@@ -24,7 +24,7 @@ const SEASON_ID = 'current';
  * 算法版本。改动 ELO 参数、K 值分段、积分规则、定级规则时都要 +1，
  * 否则容器里缓存的旧结果会被继续沿用，改了算法却不生效。
  */
-const ALGO_VERSION = 2;
+const ALGO_VERSION = 3;
 
 /**
  * 赛季文档的缺省形状。数据库里还没有 seasons 文档时用它顶上，

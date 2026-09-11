@@ -27,6 +27,7 @@ const {
   MATCH_STATUS,
   USER_STATUS,
   ANNOUNCEMENT_STATUS,
+  isMemberStatus,
 } = require('../../lib/utils/constants.js');
 const { loadSeason } = require('./season.js');
 
@@ -58,8 +59,11 @@ async function buildDataset(repo, season) {
     repo.announcements.list(),
   ]);
 
-  const members = allUsers.filter((user) => user.status === USER_STATUS.ACTIVE);
-  const applications = allUsers.filter((user) => user.status !== USER_STATUS.ACTIVE);
+  // 「在册」= 正常 + 已离校。离校的人不能再上榜、不能报名，但历史比赛
+  // 还在流水里，回放名单少了他会直接抛错——所以名单按 isMemberStatus 取，
+  // 上榜与报名另有闸门（见 leaderboard.isRankable 与 event.canSignUp）。
+  const members = allUsers.filter((user) => isMemberStatus(user.status));
+  const applications = allUsers.filter((user) => !isMemberStatus(user.status));
 
   // 复制一份再动：就地改数据库读回来的对象，会让调用方看到意外变化
   const staged = allMatches.map((match) => ({ ...match }));

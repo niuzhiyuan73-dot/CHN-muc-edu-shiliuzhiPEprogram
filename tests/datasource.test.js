@@ -20,6 +20,10 @@ const {
   MATCH_STATUS,
   USER_STATUS,
   ANNOUNCEMENT_STATUS,
+  EVENT_STATUS,
+  SIGNUP_STATUS,
+  EVENT_LEVEL,
+  EVENT_BRONZE_MODE,
 } = require('../miniprogram/utils/constants.js');
 
 describe('数据源门面 —— 实现可互换', () => {
@@ -993,6 +997,182 @@ describe('mock 数据源 —— 个人资料', () => {
 
       mock.resetCache();
       assert.equal((await mock.getCurrentUser()).nickName, me.nickName);
+    })
+  );
+});
+
+describe('mock 数据源 —— 赛事闭环', () => {
+  /** 写操作会往赛事台账里塞东西，所以每条用例前后都复位（同上） */
+  function withCleanStore(fn) {
+    return async () => {
+      mock.resetCache();
+      try {
+        await fn();
+      } finally {
+        mock.resetCache();
+      }
+    };
+  }
+
+  /** 一份合法的赛事表单（等级二级、打三四名） */
+  function eventDraft(overrides = {}) {
+    return {
+      title: '秋季单打赛',
+      description: '面向全体会员的单打赛事',
+      matchType: MATCH_TYPE.SINGLES,
+      level: EVENT_LEVEL.SECOND,
+      bronzeMode: EVENT_BRONZE_MODE.PLAYOFF,
+      startTime: '2026-05-20T09:00:00',
+      location: '学校体育馆',
+      quota: 8,
+      ...overrides,
+    };
+  }
+
+  test(
+    '发布赛事 —— 落库即报名中，编号从 le0001 起',
+    withCleanStore(async () => {
+      const me = await mock.getCurrentUser();
+      const before = (await mock.getEvents()).length;
+
+      const result = await mock.publishEvent(eventDraft(), me._id);
+      assert.equal(result.ok, true, result.firstError);
+      assert.equal(result.record._id, 'le0001');
+      assert.equal(result.record.status, EVENT_STATUS.SIGNUP);
+      assert.equal(result.record.publisherId, me._id);
+      assert.ok(result.record.startTime instanceof Date);
+
+      const events = await mock.getEvents();
+      assert.equal(events.length, before + 1);
+      assert.ok(events.some((e) => e._id === 'le0001'));
+    })
+  );
+
+  test(
+    '发布赛事 —— 等级缺失被拒，不落台账',
+    withCleanStore(async () => {
+      const me = await mock.getCurrentUser();
+      const before = (await mock.getEvents()).length;
+
+      const result = await mock.publishEvent(eventDraft({ level: undefined }), me._id);
+      assert.equal(result.ok, false);
+      assert.ok(result.errors.level);
+      assert.equal(result.record, null);
+      assert.equal((await mock.getEvents()).length, before);
+    })
+  );
+
+  test(
+    '报名 → 签到 → 录入名次：走通并发出积分',
+    withCleanStore(async () => {
+      const me = await mock.getCurrentUser();
+      const pointsBefore = me.points;
+
+      const { record } = await mock.publishEvent(eventDraft(), me._id);
+      const id = record._id;
+
+      const signed = await mock.signUpEvent(id, me._id);
+      assert.equal(signed.ok, true, signed.message);
+      assert.equal(signed.record.status, SIGNUP_STATUS.SIGNED);
+      assert.equal((await mock.getEventSignups(id)).length, 1);
+
+      const started = await mock.startEvent(id, me._id);
+      assert.equal(started.ok, true, started.message);
+      assert.equal(started.record.status, EVENT_STATUS.ONGOING);
+
+      const checked = await mock.checkInEvent(id, me._id, me._id);
+      assert.equal(checked.ok, true, checked.message);
+      assert.equal(checked.record.status, SIGNUP_STATUS.CHECKED_IN);
+
+      const finished = await mock.finishEvent(id, [{ userId: me._id, placement: 1 }], me._id);
+      assert.equal(finished.ok, true, finished.firstError);
+      assert.equal(finished.record.status, EVENT_STATUS.FINISHED);
+      assert.deepEqual(finished.record.results, [{ userId: me._id, placement: 1 }]);
+
+      // 名次落定 → 回放重算 → 冠军拿到积分（二级赛事封顶倍数）
+      const after = await mock.getCurrentUser();
+      assert.ok(after.points > pointsBefore, '冠军应当拿到赛事积分');
+    })
+  );
+
+  test(
+    '录入名次 —— 没报名的人拿不到名次',
+    withCleanStore(async () => {
+      const me = await mock.getCurrentUser();
+      const { record } = await mock.publishEvent(eventDraft(), me._id);
+      await mock.startEvent(record._id, me._id);
+
+      const result = await mock.finishEvent(record._id, [{ userId: 'u01', placement: 1 }], me._id);
+      assert.equal(result.ok, false);
+      assert.match(result.firstError, /没有报名/);
+      assert.equal((await mock.getEvents()).find((e) => e._id === record._id).status, EVENT_STATUS.ONGOING);
+    })
+  );
+
+  test(
+    '取消报名 —— 只置状态不删记录，重新报名落回同一条',
+    withCleanStore(async () => {
+      const me = await mock.getCurrentUser();
+      const { record } = await mock.publishEvent(eventDraft(), me._id);
+      const id = record._id;
+
+      await mock.signUpEvent(id, me._id);
+      const canceled = await mock.cancelSignupEvent(id, me._id);
+      assert.equal(canceled.ok, true, canceled.message);
+      assert.equal(canceled.record.status, SIGNUP_STATUS.CANCELED);
+
+      const afterCancel = await mock.getEventSignups(id);
+      assert.equal(afterCancel.length, 1, '取消不删记录');
+      assert.equal(afterCancel[0].status, SIGNUP_STATUS.CANCELED);
+
+      const again = await mock.signUpEvent(id, me._id);
+      assert.equal(again.ok, true, again.message);
+      const afterSignUp = await mock.getEventSignups(id);
+      assert.equal(afterSignUp.length, 1, '重新报名不新增记录');
+      assert.equal(afterSignUp[0].status, SIGNUP_STATUS.SIGNED);
+    })
+  );
+
+  test(
+    '报名 —— 赛事开始后就截止了',
+    withCleanStore(async () => {
+      const me = await mock.getCurrentUser();
+      const { record } = await mock.publishEvent(eventDraft(), me._id);
+      await mock.startEvent(record._id, me._id);
+
+      const result = await mock.signUpEvent(record._id, me._id);
+      assert.equal(result.ok, false);
+      assert.match(result.message, /截止/);
+    })
+  );
+
+  test(
+    '未报名的人不能报名同一场两次',
+    withCleanStore(async () => {
+      const me = await mock.getCurrentUser();
+      const { record } = await mock.publishEvent(eventDraft(), me._id);
+
+      await mock.signUpEvent(record._id, me._id);
+      const again = await mock.signUpEvent(record._id, me._id);
+      assert.equal(again.ok, false);
+      assert.match(again.message, /已经报过名/);
+    })
+  );
+
+  test(
+    'resetCache 清掉赛事与报名，编号也复位',
+    withCleanStore(async () => {
+      const me = await mock.getCurrentUser();
+      const { record } = await mock.publishEvent(eventDraft(), me._id);
+      await mock.signUpEvent(record._id, me._id);
+
+      mock.resetCache();
+      assert.ok(!(await mock.getEvents()).some((e) => e._id === 'le0001'));
+      assert.deepEqual(await mock.getEventSignups(), []);
+
+      // 复位后第一场又是 le0001
+      const again = await mock.publishEvent(eventDraft(), me._id);
+      assert.equal(again.record._id, 'le0001');
     })
   );
 });

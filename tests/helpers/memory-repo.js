@@ -33,6 +33,7 @@ function emptyStore() {
     users: new Map(),
     matches: new Map(),
     events: new Map(),
+    eventSignups: new Map(),
     announcements: new Map(),
     seasons: new Map(),
     auditLogs: [],
@@ -105,6 +106,34 @@ function createMemoryRepo(seed = {}) {
 
       events: {
         list: () => list('events'),
+        getById: (id) => read('events', id),
+        insert: async (doc) => {
+          target.events.set(doc._id, clone(doc));
+        },
+        update: async (id, patch) => {
+          const current = target.events.get(id);
+          if (!current) throw new Error(`更新失败：找不到赛事 ${id}`);
+          target.events.set(id, { ...current, ...patch });
+        },
+      },
+
+      eventSignups: {
+        list: () => list('eventSignups'),
+        listByEvent: (eventId) => {
+          if (inTx) throw new Error('事务内不允许条件读取（eventSignups），请改用 getById');
+          return [...target.eventSignups.values()]
+            .filter((doc) => doc.eventId === eventId)
+            .map(clone);
+        },
+        getById: (id) => read('eventSignups', id),
+        insert: async (doc) => {
+          target.eventSignups.set(doc._id, clone(doc));
+        },
+        update: async (id, patch) => {
+          const current = target.eventSignups.get(id);
+          if (!current) throw new Error(`更新失败：找不到报名记录 ${id}`);
+          target.eventSignups.set(id, { ...current, ...patch });
+        },
       },
 
       announcements: {

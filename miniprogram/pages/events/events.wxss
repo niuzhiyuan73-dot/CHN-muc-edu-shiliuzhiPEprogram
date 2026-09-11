@@ -25,3 +25,68 @@
   color: var(--color-text-secondary);
   margin-top: 4rpx;
 }
+
+/* ==================== 赛事列表 ==================== */
+
+/* 发布入口做成描边小按钮，不跟整页的主色抢位置 */
+.event-publish {
+  padding: 6rpx 20rpx;
+  font-size: var(--font-sm);
+  color: var(--color-primary);
+  border: 2rpx solid var(--color-primary);
+  border-radius: var(--radius-sm);
+}
+
+.event-row {
+  display: flex;
+  align-items: center;
+  padding: var(--space-md) 0;
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.event-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.event-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.event-title {
+  display: flex;
+  align-items: center;
+}
+
+.event-name {
+  font-size: var(--font-md);
+  font-weight: 600;
+  margin-right: var(--space-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 报名中 / 进行中 / 已结束三档状态复用全局的 tag-success / tag-warning / tag-gray */
+
+.event-meta {
+  margin-top: 6rpx;
+  font-size: var(--font-xs);
+  color: var(--color-text-secondary);
+}
+
+.event-side {
+  flex-shrink: 0;
+  margin-left: var(--space-sm);
+}
+
+.event-my-signup {
+  font-size: var(--font-xs);
+  color: var(--color-primary);
+}
+
+.event-arrow {
+  font-size: var(--font-lg);
+  color: var(--color-text-tertiary);
+}

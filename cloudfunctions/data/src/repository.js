@@ -15,6 +15,14 @@
  *   repo.matches.insert(doc)            → Promise<Object>  doc 必须自带 _id
  *   repo.matches.update(id, patch)      → Promise<void>    只改给定字段
  *   repo.events.list()                  → Promise<Array<Object>>
+ *   repo.events.getById(id)             → Promise<Object|null>
+ *   repo.events.insert(doc)             → Promise<Object>  doc 必须自带 _id
+ *   repo.events.update(id, patch)       → Promise<void>    只改给定字段
+ *   repo.eventSignups.list()            → Promise<Array<Object>>
+ *   repo.eventSignups.listByEvent(eid)  → Promise<Array<Object>>
+ *   repo.eventSignups.getById(id)       → Promise<Object|null>
+ *   repo.eventSignups.insert(doc)       → Promise<Object>
+ *   repo.eventSignups.update(id, patch) → Promise<void>
  *   repo.announcements.list()           → Promise<Array<Object>>
  *   repo.announcements.getById(id)      → Promise<Object|null>
  *   repo.announcements.insert(doc)      → Promise<Object>
@@ -38,6 +46,7 @@ const COLLECTIONS = {
   users: COLLECTION.USERS,
   matches: COLLECTION.MATCHES,
   events: COLLECTION.EVENTS,
+  eventSignups: COLLECTION.EVENT_SIGNUPS,
   announcements: COLLECTION.ANNOUNCEMENTS,
   seasons: COLLECTION.SEASONS,
   auditLogs: COLLECTION.AUDIT_LOGS,

@@ -77,6 +77,24 @@ const DEFAULT_CONFIG = {
   /** ELO 公式中的分母系数，标准值为 400 */
   divisor: 400,
   /**
+   * 赛事比赛的固定 K 值，按赛事等级取（决策 13）。
+   *   一级 48 / 二级 36 / 三级 24（三级恰好等于常规 K）。
+   *
+   * 【为什么赛事要另给一套 K】
+   * 赛事名次带来的实力变化比日常约球更可信，分数也该动得更果断。
+   *
+   * 【为什么是「固定」而不是沿用定级期/高分段分段】
+   * 同一场赛事里，新人按 32、高分者按 16，一场球下来两人的分数变动
+   * 会差一倍，名次对应的分数也就没法横向比较。赛事一律按等级取同一个
+   * 数字，所有人一视同仁——这也是「名次分 × 等级倍数」那套算法在
+   * 等级分这边的对称做法。
+   */
+  eventK: {
+    1: 48,
+    2: 36,
+    3: 24,
+  },
+  /**
    * 是否为「零和」模式（默认开启）。
    * 开启后，A 队赢多少分，B 队就输多少分，俱乐部总分守恒。
    * 这对社团内部排名很重要：避免因四舍五入导致分数「凭空产生」。
@@ -157,6 +175,25 @@ function resolveKFactor(player, config) {
     return config.kHigh;
   }
   return config.kStandard;
+}
+
+/**
+ * 赛事比赛的 K 值：按赛事等级查表，不看选手状态。
+ *
+ * 【为什么等级未知时退回常规 K 而不是抛错】
+ * 历史赛事没有等级字段（种子数据即如此），调用方一律按三级补齐后再传进来；
+ * 万一漏了，退回常规 K 让这场比赛按老规矩算，总好过整条回放中断。
+ * 三级赛事的 K 本来就是 24，与常规 K 相等，所以这条兜底通常也不会
+ * 改变结果。
+ *
+ * @param {number} level 赛事等级，取值见 constants.EVENT_LEVEL
+ * @param {Object} [config] 算法配置
+ * @returns {number} K 值
+ */
+function resolveEventKFactor(level, config = DEFAULT_CONFIG) {
+  const table = config.eventK || {};
+  const k = table[level];
+  return Number.isFinite(k) ? k : config.kStandard;
 }
 
 /**
@@ -245,6 +282,8 @@ function assertValidTeam(team, label) {
  * @param {Array<{rating:number, matchCount:number, id?:string}>} params.teamB B 队选手
  * @param {'A'|'B'|'DRAW'} params.winner 获胜方，DRAW 表示平局
  * @param {Object} [params.config] 可选的算法配置覆盖
+ * @param {number} [params.eventLevel] 赛事等级。传了就走赛事的固定 K
+ *        （见 resolveEventKFactor），不传则按选手状态分段取 K。
  * @returns {{
  *   teamA: Array<{before:number, delta:number, after:number, k:number}>,
  *   teamB: Array<{before:number, delta:number, after:number, k:number}>,
@@ -263,7 +302,7 @@ function assertValidTeam(team, label) {
  * // result.teamA[0].delta ≈ +19   （以弱胜强，收益高）
  * // result.teamB[0].delta ≈ -19
  */
-function calculateMatchRatings({ teamA, teamB, winner, config: userConfig }) {
+function calculateMatchRatings({ teamA, teamB, winner, config: userConfig, eventLevel }) {
   const config = { ...DEFAULT_CONFIG, ...(userConfig || {}) };
 
   assertValidTeam(teamA, 'A 队');
@@ -286,8 +325,11 @@ function calculateMatchRatings({ teamA, teamB, winner, config: userConfig }) {
   const actualB = 1 - actualA;
 
   // 第 4 步：K 值与变动量。
-  const kA = teamKFactor(teamA, config);
-  const kB = teamKFactor(teamB, config);
+  // 赛事比赛按等级取固定 K，双方同一数字；非赛事才走定级期/高分段的分段规则。
+  const isEvent = eventLevel !== null && eventLevel !== undefined;
+  const eventK = isEvent ? resolveEventKFactor(eventLevel, config) : null;
+  const kA = isEvent ? eventK : teamKFactor(teamA, config);
+  const kB = isEvent ? eventK : teamKFactor(teamB, config);
 
   let deltaA = normalizeZero(Math.round(kA * (actualA - expectedA)));
   let deltaB = normalizeZero(Math.round(kB * (actualB - expectedB)));
@@ -429,6 +471,7 @@ module.exports = {
   initialRatingFor,
   expectedScore,
   resolveKFactor,
+  resolveEventKFactor,
   teamAverageRating,
   teamKFactor,
   normalizeZero,

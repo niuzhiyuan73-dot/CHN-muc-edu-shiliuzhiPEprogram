@@ -1,0 +1,92 @@
+/*
+ * 发布赛事样式
+ * 卡片（.card）、按钮（.btn）都在 app.wxss 里，与其它页共用。
+ * 表单行的写法与录入成绩页、发布公告页保持一致，三处填单体验才不会有割裂感。
+ */
+
+/* ==================== 表单行 ==================== */
+
+.field-row {
+  display: flex;
+  align-items: center;
+  min-height: 88rpx;
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.field-label {
+  width: 160rpx;
+  flex-shrink: 0;
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+
+.field-value {
+  font-size: var(--font-md);
+}
+
+/* 还没选的下拉项用灰字提示，与已选值区分开 */
+.field-value.is-placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.field-input {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-md);
+}
+
+/* ==================== 说明输入 ==================== */
+
+.content-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 240rpx;
+  margin-top: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-bg);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+  line-height: 1.7;
+}
+
+/* ==================== 说明、错误与提交 ==================== */
+
+.field-hint {
+  margin-top: var(--space-sm);
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  line-height: 1.5;
+}
+
+.field-error {
+  margin-top: var(--space-xs);
+  font-size: var(--font-xs);
+  color: var(--color-danger);
+  line-height: 1.5;
+}
+
+.submit-error {
+  font-size: var(--font-sm);
+  color: var(--color-danger);
+  text-align: center;
+  padding: var(--space-sm) 0;
+}
+
+.submit-bar {
+  display: flex;
+  margin-bottom: var(--space-md);
+}
+
+.submit-btn {
+  flex: 1;
+}
+
+.submit-btn + .submit-btn {
+  margin-left: var(--space-sm);
+}
+
+/* 不能发布时给一个返回出口，别把人困在空页面上 */
+.block-back {
+  margin-top: var(--space-lg);
+  padding: 0 var(--space-xl);
+}

@@ -80,6 +80,24 @@ function withoutId(doc) {
 }
 
 /**
+ * 带等值条件读取，自动翻页。
+ * @param {Object} scope db
+ * @param {string} name 集合名
+ * @param {Object} where 等值条件
+ * @returns {Promise<Array<Object>>}
+ */
+async function readWhere(scope, name, where) {
+  const out = [];
+  for (let offset = 0; ; offset += PAGE_SIZE) {
+    const res = await scope.collection(name).where(where).skip(offset).limit(PAGE_SIZE).get();
+    const batch = (res && res.data) || [];
+    for (const doc of batch) out.push(doc);
+    if (batch.length < PAGE_SIZE) break;
+  }
+  return out;
+}
+
+/**
  * 按同一个接口形状组装集合操作。
  *
  * @param {Object} scope db 或事务对象，两者都有 .collection()
@@ -117,6 +135,22 @@ function buildCollections(scope, inTx) {
 
     events: {
       list: () => list('events'),
+      getById: (id) => readDoc(scope, COLLECTIONS.events, id),
+      insert: (doc) => col('events').doc(doc._id).set({ data: withoutId(doc) }),
+      update: (id, patch) => col('events').doc(id).update({ data: patch }),
+    },
+
+    eventSignups: {
+      list: () => list('eventSignups'),
+      // 按赛事取报名名单：一场赛事的人数远在单页之内，但仍按同一套翻页
+      // 办法实现，免得将来「一场比赛报了两百人」时静默少读一段。
+      listByEvent: (eventId) => {
+        if (inTx) throw new Error('事务内不允许条件读取（eventSignups），请改用 getById');
+        return readWhere(scope, COLLECTIONS.eventSignups, { eventId });
+      },
+      getById: (id) => readDoc(scope, COLLECTIONS.eventSignups, id),
+      insert: (doc) => col('eventSignups').doc(doc._id).set({ data: withoutId(doc) }),
+      update: (id, patch) => col('eventSignups').doc(id).update({ data: patch }),
     },
 
     announcements: {

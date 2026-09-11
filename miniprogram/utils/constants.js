@@ -30,13 +30,46 @@ const USER_STATUS = {
   PENDING: 0, // 待审核：刚注册，尚未通过实名审核
   ACTIVE: 1, // 正常：可正常使用全部功能
   DISABLED: 2, // 已禁用：违规被封禁
+  LEFT: 3, // 已离校：不再上榜、不可报名，但历史记录与个人页保留
 };
 
 const USER_STATUS_LABEL = {
   [USER_STATUS.PENDING]: '待审核',
   [USER_STATUS.ACTIVE]: '正常',
   [USER_STATUS.DISABLED]: '已禁用',
+  [USER_STATUS.LEFT]: '已离校',
 };
+
+/**
+ * 这个账号还算不算「在册会员」。
+ *
+ * 【为什么离校也算】
+ * 离校的人历史比赛还留在流水里。回放引擎按名单重放，名单里少一个人，
+ * 遇到他参加过的比赛就会直接抛错——整条回放全废，不只是他一个人的分数没了。
+ * 所以「能不能进回放名单」和「能不能上榜」是两件事：
+ *   - 本函数判前者，正常与离校都算在册；
+ *   - 上榜、报名另用 isRankable / USER_STATUS.ACTIVE 把关。
+ *
+ * @param {number} [status]
+ * @returns {boolean}
+ */
+function isMemberStatus(status) {
+  return status === USER_STATUS.ACTIVE || status === USER_STATUS.LEFT;
+}
+
+/**
+ * 这个账号该不该出现在榜上。
+ *
+ * 离校的人不再是「当前会员」，榜首挂着一个已经毕业的账号会让榜失去意义。
+ * 但记录仍在、个人页仍能打开——藏起来的是名次，不是痕迹。
+ * status 缺失（老数据、单元测试造的假会员）一律当作可上榜。
+ *
+ * @param {Object} [user]
+ * @returns {boolean}
+ */
+function isRankable(user) {
+  return !user || user.status !== USER_STATUS.LEFT;
+}
 
 /**
  * 比赛项目类型
@@ -152,17 +185,72 @@ const MATCH_STATUS_LABEL = {
 };
 
 /**
- * 赛事状态。
+ * 赛事状态机。
+ *
+ *   报名中 ──开始赛事──▶ 进行中 ──录入名次──▶ 已结束
+ *     │                     │
+ *     └──── 可报名/取消 ─────┘  可签到
+ *
  * 【重要】「已结束」必须保持取值 2：种子赛事写死字面量 2，改动它会让
  * 全部历史赛事变成「未结束」，赛季积分瞬间归零。
- * 完整状态机（报名中 / 进行中）在赛事闭环里按编号追加，不要复用这里的 2。
+ * 新增状态一律往下追加编号，不要复用 2。
  */
 const EVENT_STATUS = {
+  SIGNUP: 0, // 报名中：可报名、可取消，尚未开始
+  ONGOING: 1, // 进行中：报名截止，可签到、可录入名次
   FINISHED: 2, // 已结束：名次已定，可计入赛季积分
 };
 
 const EVENT_STATUS_LABEL = {
+  [EVENT_STATUS.SIGNUP]: '报名中',
+  [EVENT_STATUS.ONGOING]: '进行中',
   [EVENT_STATUS.FINISHED]: '已结束',
+};
+
+/** 新发布的赛事先落在「报名中」 */
+const DEFAULT_EVENT_STATUS = EVENT_STATUS.SIGNUP;
+
+/**
+ * 三四名赛的两种办赛方式（决策 2.3）。
+ *
+ *   tied    —— 并列季军：两个半决赛负者都记第 3 名，不再加赛
+ *   playoff —— 打三四名：半决赛负者再打一场，分出第 3、第 4 名
+ *
+ * 【为什么是一个字段而不是两套流程】
+ * 两种方式只差「第 4 名有没有人」：名次分表里 3 与 4 各有基准分，
+ * 并列时两人都取 3，加赛时一人 3 一人 4。名次录入与积分结算因此
+ * 可以共用一条通路，只在保存时校验一次名次是否成对。
+ */
+const EVENT_BRONZE_MODE = {
+  TIED: 'tied', // 并列季军
+  PLAYOFF: 'playoff', // 打三四名
+};
+
+const EVENT_BRONZE_MODE_LABEL = {
+  [EVENT_BRONZE_MODE.TIED]: '并列季军',
+  [EVENT_BRONZE_MODE.PLAYOFF]: '打三四名',
+};
+
+/** 历史赛事没有这个字段，按「并列季军」处理——种子数据正是并列口径 */
+const DEFAULT_BRONZE_MODE = EVENT_BRONZE_MODE.TIED;
+
+/**
+ * 报名状态。
+ *
+ * 记录一旦产生就不再删除：取消了也留着（status 置为 CANCELED），
+ * 这样「报了多少人、退了多少人」有据可查，重复报名也能靠同一条
+ * 记录翻回来——同一人同一赛事永远只有一条。
+ */
+const SIGNUP_STATUS = {
+  CANCELED: 0, // 已取消报名
+  SIGNED: 1, // 已报名
+  CHECKED_IN: 2, // 已签到
+};
+
+const SIGNUP_STATUS_LABEL = {
+  [SIGNUP_STATUS.CANCELED]: '已取消',
+  [SIGNUP_STATUS.SIGNED]: '已报名',
+  [SIGNUP_STATUS.CHECKED_IN]: '已签到',
 };
 
 /**
@@ -280,6 +368,8 @@ module.exports = {
   ROLE_LABEL,
   USER_STATUS,
   USER_STATUS_LABEL,
+  isMemberStatus,
+  isRankable,
   MATCH_TYPE,
   MATCH_TYPE_LABEL,
   RATING_POOL,
@@ -294,6 +384,12 @@ module.exports = {
   MATCH_STATUS_LABEL,
   EVENT_STATUS,
   EVENT_STATUS_LABEL,
+  DEFAULT_EVENT_STATUS,
+  EVENT_BRONZE_MODE,
+  EVENT_BRONZE_MODE_LABEL,
+  DEFAULT_BRONZE_MODE,
+  SIGNUP_STATUS,
+  SIGNUP_STATUS_LABEL,
   EVENT_LEVEL,
   EVENT_LEVEL_LABEL,
   EVENT_LEVEL_MULTIPLIER,

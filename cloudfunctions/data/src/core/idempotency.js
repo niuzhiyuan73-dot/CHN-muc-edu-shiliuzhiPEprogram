@@ -70,4 +70,42 @@ function memberKey(openId) {
   return `u_${digest([openId])}`;
 }
 
-module.exports = { digest, matchNaturalKey, announcementNaturalKey, memberKey };
+/**
+ * 赛事的自然键：同一位发布者在同一时刻发的同名赛事只该有一条。
+ * 弱网重试最容易在这里出问题——线上市集里出现两条一模一样的赛事，
+ * 报名的会员会不知道该点哪一个。
+ *
+ * @param {Object} record buildEventRecord 产出的记录
+ * @returns {string} 可直接用作 _id
+ */
+function eventNaturalKey(record) {
+  return `e_${digest([
+    record.publisherId || '',
+    record.title,
+    new Date(record.startTime).toISOString(),
+  ])}`;
+}
+
+/**
+ * 报名记录的自然键：「这位会员报了这场赛事」压成一个 _id。
+ *
+ * 同一人同一赛事只该有一条报名记录。取消不删记录、只改状态，于是重新报名
+ * 会落回同一条文档（见 event.buildSignupRecord）——这样「报了多少人、退了
+ * 多少人」有据可查，也不会因为连点两下报名而长出两条。
+ *
+ * @param {string} eventId
+ * @param {string} userId
+ * @returns {string} 可直接用作 _id
+ */
+function signupNaturalKey(eventId, userId) {
+  return `s_${digest([eventId, userId])}`;
+}
+
+module.exports = {
+  digest,
+  matchNaturalKey,
+  announcementNaturalKey,
+  eventNaturalKey,
+  memberKey,
+  signupNaturalKey,
+};

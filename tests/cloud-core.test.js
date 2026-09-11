@@ -10,13 +10,20 @@
  * ============================================================
  */
 
-const test = require('node:test');
+const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 
 const cloud = require('../miniprogram/services/cloud.js');
 const { ALL_ACTIONS } = require('../cloudfunctions/data/src/actions.js');
 const { HANDLERS, dispatch } = require('../cloudfunctions/data/src/core/dispatch.js');
 const { createFixtureRepo, contextFor } = require('./helpers/cloud-fixture.js');
+const {
+  EVENT_STATUS,
+  SIGNUP_STATUS,
+  EVENT_LEVEL,
+  EVENT_BRONZE_MODE,
+  MATCH_TYPE,
+} = require('../miniprogram/utils/constants.js');
 
 /** 用一份全新的夹具调一次接口 */
 async function call(action, payload = {}, openId = 'openid-u01') {
@@ -221,4 +228,148 @@ test('未登录调用写接口 —— 顶层 ok:false，且提示先登录', asy
 
   assert.equal(res.ok, false);
   assert.equal(res.message, '请先登录后再操作');
+});
+
+/* ---------- 赛事闭环 ---------- */
+
+describe('云函数 —— 赛事闭环', () => {
+  /** 一份合法的赛事表单 */
+  const draft = {
+    title: '秋季单打赛',
+    description: '面向全体会员的单打赛事',
+    matchType: MATCH_TYPE.SINGLES,
+    level: EVENT_LEVEL.SECOND,
+    bronzeMode: EVENT_BRONZE_MODE.PLAYOFF,
+    startTime: '2026-06-10T09:00:00',
+    location: '学校体育馆',
+    quota: 8,
+  };
+
+  /** 在同一份仓储上换个身份再调一次（不必为每一步重建夹具） */
+  const on = async (repo, action, payload, openId) =>
+    dispatch(action, payload, await contextFor(repo, openId));
+
+  test('发布赛事 —— 落库即报名中，自然键当 _id 保证重试不重复', async () => {
+    const repo = createFixtureRepo();
+
+    const first = await on(repo, 'publishEvent', { form: draft }, 'openid-admin');
+    assert.equal(first.ok, true);
+    assert.equal(first.data.ok, true, first.data.firstError);
+    assert.equal(first.data.record.status, EVENT_STATUS.SIGNUP);
+    assert.equal(first.data.record.level, EVENT_LEVEL.SECOND);
+    assert.deepEqual(first.data.record.results, []);
+
+    // 同一份表单再发一次：自然键相同，不产生第二场
+    const again = await on(repo, 'publishEvent', { form: draft }, 'openid-admin');
+    assert.equal(again.data.record._id, first.data.record._id);
+
+    const list = await on(repo, 'getEvents', {}, 'openid-u01');
+    assert.equal(list.data.filter((e) => e._id === first.data.record._id).length, 1);
+  });
+
+  test('发布赛事 —— 等级缺失被拒（留空取默等于悄悄改分）', async () => {
+    const repo = createFixtureRepo();
+    const res = await on(repo, 'publishEvent', { form: { ...draft, level: undefined } }, 'openid-admin');
+
+    assert.equal(res.data.ok, false);
+    assert.ok(res.data.errors.level);
+  });
+
+  test('发布赛事 —— 普通会员没有权限', async () => {
+    const repo = createFixtureRepo();
+    const res = await on(repo, 'publishEvent', { form: draft }, 'openid-u01');
+
+    assert.equal(res.data.ok, false);
+    assert.match(res.data.firstError, /权限/);
+  });
+
+  test('报名 → 签到 → 录入名次：一条链路走通', async () => {
+    const repo = createFixtureRepo();
+    const admin = 'openid-admin';
+
+    const { data: published } = await on(repo, 'publishEvent', { form: draft }, admin);
+    const id = published.record._id;
+
+    // 报名：报名人由 OpenID 决定，不接受前端传的 userId
+    const signed = await on(repo, 'signUpEvent', { id }, 'openid-u01');
+    assert.equal(signed.data.ok, true, signed.data.message);
+    assert.equal(signed.data.record.status, SIGNUP_STATUS.SIGNED);
+
+    const mine = await on(repo, 'getEventSignups', { eventId: id }, 'openid-u01');
+    assert.equal(mine.data.length, 1);
+
+    const started = await on(repo, 'startEvent', { id }, admin);
+    assert.equal(started.data.record.status, EVENT_STATUS.ONGOING);
+
+    // 签到：干事代签
+    const checked = await on(repo, 'checkInEvent', { id, userId: 'u01' }, admin);
+    assert.equal(checked.data.ok, true, checked.data.message);
+    assert.equal(checked.data.record.status, SIGNUP_STATUS.CHECKED_IN);
+
+    const finished = await on(
+      repo,
+      'finishEvent',
+      { id, results: [{ userId: 'u01', placement: 1 }] },
+      admin
+    );
+    assert.equal(finished.data.ok, true, finished.data.firstError);
+    assert.equal(finished.data.record.status, EVENT_STATUS.FINISHED);
+    assert.deepEqual(finished.data.record.results, [{ userId: 'u01', placement: 1 }]);
+  });
+
+  test('录入名次 —— 没报名的人拿不到名次', async () => {
+    const repo = createFixtureRepo();
+    const admin = 'openid-admin';
+    const { data: published } = await on(repo, 'publishEvent', { form: draft }, admin);
+    const id = published.record._id;
+    await on(repo, 'startEvent', { id }, admin);
+
+    const res = await on(repo, 'finishEvent', { id, results: [{ userId: 'u02', placement: 1 }] }, admin);
+    assert.equal(res.data.ok, false);
+    assert.match(res.data.firstError, /没有报名/);
+  });
+
+  test('取消报名 —— 只置状态不删记录，重新报名落回同一条', async () => {
+    const repo = createFixtureRepo();
+    const admin = 'openid-admin';
+    const { data: published } = await on(repo, 'publishEvent', { form: draft }, admin);
+    const id = published.record._id;
+
+    await on(repo, 'signUpEvent', { id }, 'openid-u01');
+    const canceled = await on(repo, 'cancelSignupEvent', { id }, 'openid-u01');
+    assert.equal(canceled.data.ok, true, canceled.data.message);
+    assert.equal(canceled.data.record.status, SIGNUP_STATUS.CANCELED);
+
+    // 记录还在，只是状态变了
+    const afterCancel = await on(repo, 'getEventSignups', { eventId: id }, 'openid-u01');
+    assert.equal(afterCancel.data.length, 1);
+    assert.equal(afterCancel.data[0].status, SIGNUP_STATUS.CANCELED);
+
+    // 重新报名翻回同一条，不新增
+    const again = await on(repo, 'signUpEvent', { id }, 'openid-u01');
+    assert.equal(again.data.ok, true, again.data.message);
+    const afterSignUp = await on(repo, 'getEventSignups', { eventId: id }, 'openid-u01');
+    assert.equal(afterSignUp.data.length, 1);
+    assert.equal(afterSignUp.data[0].status, SIGNUP_STATUS.SIGNED);
+  });
+
+  test('签到 —— 赛事还没开始时不能签到', async () => {
+    const repo = createFixtureRepo();
+    const admin = 'openid-admin';
+    const { data: published } = await on(repo, 'publishEvent', { form: draft }, admin);
+    const id = published.record._id;
+    await on(repo, 'signUpEvent', { id }, 'openid-u01');
+
+    const res = await on(repo, 'checkInEvent', { id, userId: 'u01' }, admin);
+    assert.equal(res.data.ok, false);
+    assert.match(res.data.message, /不能为会员签到/);
+  });
+
+  test('未登录调用发布赛事 —— 顶层 ok:false', async () => {
+    const repo = createFixtureRepo();
+    const res = await on(repo, 'publishEvent', { form: draft }, null);
+
+    assert.equal(res.ok, false);
+    assert.equal(res.message, '请先登录后再操作');
+  });
 });

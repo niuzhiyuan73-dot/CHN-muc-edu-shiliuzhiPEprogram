@@ -1,0 +1,524 @@
+/**
+ * 赛事纯服务 —— 权限、表单校验、报名与名次 单元测试
+ */
+const { test, describe } = require('node:test');
+const assert = require('node:assert/strict');
+
+const {
+  canManageEvent,
+  canStartEvent,
+  canCheckIn,
+  canFinishEvent,
+  canSignUp,
+  canCancelSignup,
+  signupCountOf,
+  signupOf,
+  buildSignupRecord,
+  buildCheckInPatch,
+  normalizeDraft,
+  validateEvent,
+  buildEventRecord,
+  validatePlacements,
+  levelLabelOf,
+  bronzeLabelOf,
+  statusLabelOf,
+  signupStateOf,
+  buildEventRow,
+  buildSignupRow,
+} = require('../miniprogram/services/event.js');
+
+const {
+  ROLE,
+  USER_STATUS,
+  MATCH_TYPE,
+  EVENT_STATUS,
+  EVENT_LEVEL,
+  EVENT_BRONZE_MODE,
+  SIGNUP_STATUS,
+} = require('../miniprogram/utils/constants.js');
+
+/** 一位正常在册的普通会员 */
+const member = (id, extra = {}) => ({
+  _id: id,
+  nickName: `会员${id}`,
+  role: ROLE.MEMBER,
+  status: USER_STATUS.ACTIVE,
+  ...extra,
+});
+
+/** 一位干事 */
+const staff = (id = 's1', extra = {}) => ({
+  _id: id,
+  nickName: `干事${id}`,
+  role: ROLE.STAFF,
+  status: USER_STATUS.ACTIVE,
+  ...extra,
+});
+
+/** 一场处于「报名中」的赛事 */
+const openEvent = (extra = {}) => ({
+  _id: 'e01',
+  title: '五月男单赛',
+  matchType: MATCH_TYPE.SINGLES,
+  level: EVENT_LEVEL.THIRD,
+  bronzeMode: EVENT_BRONZE_MODE.TIED,
+  status: EVENT_STATUS.SIGNUP,
+  quota: 8,
+  results: [],
+  ...extra,
+});
+
+const signupRecord = (userId, status = SIGNUP_STATUS.SIGNED, extra = {}) => ({
+  eventId: 'e01',
+  userId,
+  status,
+  signTime: new Date('2026-05-01T09:00:00'),
+  checkInTime: null,
+  ...extra,
+});
+
+const validForm = (extra = {}) => ({
+  title: '五月男单赛',
+  description: '常规赛事，单败淘汰制',
+  matchType: MATCH_TYPE.SINGLES,
+  level: EVENT_LEVEL.SECOND,
+  bronzeMode: EVENT_BRONZE_MODE.PLAYOFF,
+  location: '学校体育馆 1 号场',
+  startTime: new Date('2026-05-01T10:00:00'),
+  quota: 8,
+  ...extra,
+});
+
+describe('canManageEvent —— 发布 / 管理权', () => {
+  test('干事与管理员可以管理', () => {
+    assert.equal(canManageEvent(staff()), true);
+    assert.equal(canManageEvent(staff('a1', { role: ROLE.ADMIN })), true);
+  });
+
+  test('普通会员没有管理权', () => {
+    assert.equal(canManageEvent(member('m1')), false);
+  });
+
+  test('mock 下放宽为「在册会员即可」，界面须明示', () => {
+    assert.equal(canManageEvent(member('m1'), { isMock: true }), true);
+  });
+
+  test('待审核 / 离校 / 已禁用 / 未登录一律不行', () => {
+    assert.equal(canManageEvent(member('m1', { status: USER_STATUS.PENDING })), false);
+    assert.equal(canManageEvent(member('m1', { status: USER_STATUS.DISABLED })), false);
+    assert.equal(canManageEvent(member('m1', { status: USER_STATUS.LEFT })), false);
+    assert.equal(canManageEvent(null), false);
+  });
+});
+
+describe('赛事状态机 —— 开始 / 签到 / 结束', () => {
+  test('只有报名中的赛事能开始', () => {
+    assert.equal(canStartEvent(openEvent(), staff()), true);
+    assert.equal(canStartEvent(openEvent({ status: EVENT_STATUS.ONGOING }), staff()), false);
+    assert.equal(canStartEvent(openEvent({ status: EVENT_STATUS.FINISHED }), staff()), false);
+  });
+
+  test('只有进行中的赛事能签到与结束', () => {
+    const ongoing = openEvent({ status: EVENT_STATUS.ONGOING });
+    assert.equal(canCheckIn(ongoing, staff()), true);
+    assert.equal(canFinishEvent(ongoing, staff()), true);
+
+    assert.equal(canCheckIn(openEvent(), staff()), false);
+    assert.equal(canFinishEvent(openEvent(), staff()), false);
+    assert.equal(canCheckIn(openEvent({ status: EVENT_STATUS.FINISHED }), staff()), false);
+  });
+
+  test('普通会员不能开始 / 签到 / 结束', () => {
+    assert.equal(canStartEvent(openEvent(), member('m1')), false);
+    assert.equal(canCheckIn(openEvent({ status: EVENT_STATUS.ONGOING }), member('m1')), false);
+    assert.equal(canFinishEvent(openEvent({ status: EVENT_STATUS.ONGOING }), member('m1')), false);
+  });
+});
+
+describe('canSignUp —— 报名判定', () => {
+  test('报名中的赛事，在册会员可以报名', () => {
+    assert.equal(canSignUp(openEvent(), member('m1')), true);
+  });
+
+  test('未开始以外（进行中 / 已结束）不能报名', () => {
+    assert.equal(canSignUp(openEvent({ status: EVENT_STATUS.ONGOING }), member('m1')), false);
+    assert.equal(canSignUp(openEvent({ status: EVENT_STATUS.FINISHED }), member('m1')), false);
+  });
+
+  test('已离校的人不能报名（决策 11）', () => {
+    assert.equal(canSignUp(openEvent(), member('m1', { status: USER_STATUS.LEFT })), false);
+  });
+
+  test('待审核的账号不能报名', () => {
+    assert.equal(canSignUp(openEvent(), member('m1', { status: USER_STATUS.PENDING })), false);
+  });
+
+  test('已经报过名的不能重复报名', () => {
+    const actor = member('m1');
+    assert.equal(canSignUp(openEvent(), actor, { signup: signupRecord('m1') }), false);
+  });
+
+  test('签到过的同样不能再次报名', () => {
+    const actor = member('m1');
+    assert.equal(
+      canSignUp(openEvent(), actor, { signup: signupRecord('m1', SIGNUP_STATUS.CHECKED_IN) }),
+      false
+    );
+  });
+
+  test('取消过报名的可以重新报名', () => {
+    const actor = member('m1');
+    assert.equal(
+      canSignUp(openEvent(), actor, { signup: signupRecord('m1', SIGNUP_STATUS.CANCELED) }),
+      true
+    );
+  });
+
+  test('名额满了就不再放人进来', () => {
+    const full = [signupRecord('a'), signupRecord('b')];
+    assert.equal(canSignUp(openEvent({ quota: 2 }), member('m1'), { signups: full }), false);
+    assert.equal(canSignUp(openEvent({ quota: 3 }), member('m1'), { signups: full }), true);
+  });
+
+  test('名额为 0 视为不限', () => {
+    assert.equal(canSignUp(openEvent({ quota: 0 }), member('m1')), true);
+  });
+
+  test('取消报名的不占名额', () => {
+    const list = [signupRecord('a'), signupRecord('b', SIGNUP_STATUS.CANCELED)];
+    assert.equal(signupCountOf(openEvent(), list), 1);
+    assert.equal(canSignUp(openEvent({ quota: 2 }), member('m1'), { signups: list }), true);
+  });
+});
+
+describe('canCancelSignup —— 退赛判定', () => {
+  const actor = member('m1');
+
+  test('报名中且已报名，可以取消', () => {
+    assert.equal(canCancelSignup(openEvent(), actor, { signup: signupRecord('m1') }), true);
+  });
+
+  test('没报名 / 别人名下的记录都不能取消', () => {
+    assert.equal(canCancelSignup(openEvent(), actor, { signup: null }), false);
+    assert.equal(canCancelSignup(openEvent(), actor, { signup: signupRecord('m2') }), false);
+  });
+
+  test('已签到的 / 已取消的不能再取消', () => {
+    assert.equal(
+      canCancelSignup(openEvent(), actor, { signup: signupRecord('m1', SIGNUP_STATUS.CHECKED_IN) }),
+      false
+    );
+    assert.equal(
+      canCancelSignup(openEvent(), actor, { signup: signupRecord('m1', SIGNUP_STATUS.CANCELED) }),
+      false
+    );
+  });
+
+  test('报名截止后不能取消', () => {
+    assert.equal(
+      canCancelSignup(openEvent({ status: EVENT_STATUS.ONGOING }), actor, {
+        signup: signupRecord('m1'),
+      }),
+      false
+    );
+  });
+});
+
+describe('signupOf / signupCountOf', () => {
+  test('signupOf 找得到本人的记录，找不到返回 null', () => {
+    const list = [signupRecord('a'), signupRecord('b')];
+    assert.equal(signupOf(list, 'b').userId, 'b');
+    assert.equal(signupOf(list, 'c'), null);
+    assert.equal(signupOf(list, null), null);
+  });
+
+  test('signupCountOf 兼容直接挂在赛事上的报名列表', () => {
+    const event = openEvent({ signups: [signupRecord('a'), signupRecord('b')] });
+    assert.equal(signupCountOf(event), 2);
+  });
+});
+
+describe('buildSignupRecord —— 组装报名记录', () => {
+  test('正常报名：状态为已报名，签到时间为空', () => {
+    const actor = member('m1');
+    const result = buildSignupRecord(openEvent(), actor, { now: new Date('2026-05-01T09:00:00') });
+    assert.equal(result.ok, true);
+    assert.equal(result.record.eventId, 'e01');
+    assert.equal(result.record.userId, 'm1');
+    assert.equal(result.record.status, SIGNUP_STATUS.SIGNED);
+    assert.equal(result.record.checkInTime, null);
+  });
+
+  test('离校的人报名被拒，且给出说得清的文案', () => {
+    const result = buildSignupRecord(openEvent(), member('m1', { status: USER_STATUS.LEFT }));
+    assert.equal(result.ok, false);
+    assert.equal(result.record, null);
+    assert.match(result.message, /离校/);
+  });
+
+  test('报名截止后报名被拒', () => {
+    const result = buildSignupRecord(openEvent({ status: EVENT_STATUS.ONGOING }), member('m1'));
+    assert.equal(result.ok, false);
+  });
+
+  test('赛事或会员缺失时不抛错，只返回失败', () => {
+    assert.equal(buildSignupRecord(null, member('m1')).ok, false);
+    assert.equal(buildSignupRecord(openEvent(), null).ok, false);
+  });
+});
+
+describe('buildCheckInPatch —— 代签', () => {
+  test('已报名的可以签到，签到时间与代签人一并记下', () => {
+    const result = buildCheckInPatch(signupRecord('m1'), staff('s1'), {
+      now: new Date('2026-05-01T10:00:00'),
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.patch.status, SIGNUP_STATUS.CHECKED_IN);
+    assert.equal(result.patch.actorId, 's1');
+    assert.ok(result.patch.checkInTime instanceof Date);
+  });
+
+  test('没报名 / 已取消的不能签到', () => {
+    assert.equal(buildCheckInPatch(null, staff()).ok, false);
+    assert.equal(
+      buildCheckInPatch(signupRecord('m1', SIGNUP_STATUS.CANCELED), staff()).ok,
+      false
+    );
+  });
+
+  test('重复签到被挡下', () => {
+    assert.equal(
+      buildCheckInPatch(signupRecord('m1', SIGNUP_STATUS.CHECKED_IN), staff()).ok,
+      false
+    );
+  });
+});
+
+describe('validateEvent —— 发布校验', () => {
+  test('完整表单通过，并把数字与日期收敛好', () => {
+    const result = validateEvent(validForm());
+    assert.equal(result.ok, true);
+    assert.equal(result.draft.level, EVENT_LEVEL.SECOND);
+    assert.ok(result.draft.startTime instanceof Date);
+  });
+
+  test('必须显式选择等级（决策 13）', () => {
+    const result = validateEvent(validForm({ level: '' }));
+    assert.equal(result.ok, false);
+    assert.match(result.errors.level, /等级/);
+  });
+
+  test('必须显式选择三四名赛方式（决策 8）', () => {
+    const result = validateEvent(validForm({ bronzeMode: '' }));
+    assert.equal(result.ok, false);
+    assert.match(result.errors.bronzeMode, /三四名/);
+  });
+
+  test('必须选择单打或双打', () => {
+    assert.equal(validateEvent(validForm({ matchType: '' })).ok, false);
+    assert.equal(validateEvent(validForm({ matchType: 99 })).ok, false);
+  });
+
+  test('赛事名称太短 / 太长都被拒', () => {
+    assert.equal(validateEvent(validForm({ title: '赛' })).ok, false);
+    assert.equal(validateEvent(validForm({ title: '赛'.repeat(31) })).ok, false);
+  });
+
+  test('缺少或非法的时间被拒', () => {
+    assert.equal(validateEvent(validForm({ startTime: '' })).ok, false);
+    assert.equal(validateEvent(validForm({ startTime: 'not-a-date' })).ok, false);
+  });
+
+  test('firstError 按表单顺序取第一条', () => {
+    const result = validateEvent(validForm({ title: '', level: '' }));
+    assert.match(result.firstError, /赛事名称/);
+  });
+
+  test('名额为负数被拒，0 表示不限', () => {
+    assert.equal(validateEvent(validForm({ quota: -1 })).ok, false);
+    assert.equal(validateEvent(validForm({ quota: 0 })).ok, true);
+  });
+});
+
+describe('buildEventRecord —— 组装赛事记录', () => {
+  test('落库即「报名中」，池随项目写死', () => {
+    const result = buildEventRecord(validForm({ matchType: MATCH_TYPE.DOUBLES }), {
+      actor: staff('s1'),
+      now: new Date('2026-04-01T00:00:00'),
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.record.status, EVENT_STATUS.SIGNUP);
+    assert.equal(result.record.pool, 'doubles');
+    assert.equal(result.record.level, EVENT_LEVEL.SECOND);
+    assert.equal(result.record.bronzeMode, EVENT_BRONZE_MODE.PLAYOFF);
+    assert.deepEqual(result.record.results, []);
+  });
+
+  test('记下发布人，昵称缺失时逐层兜底', () => {
+    const result = buildEventRecord(validForm(), {
+      actor: { _id: 's9', nickName: '', realName: '张干事' },
+    });
+    assert.equal(result.record.publisherId, 's9');
+    assert.equal(result.record.publisherName, '张干事');
+  });
+
+  test('校验不过时不产出记录', () => {
+    const result = buildEventRecord(validForm({ level: '' }));
+    assert.equal(result.ok, false);
+    assert.equal(result.record, null);
+    assert.match(result.firstError, /等级/);
+  });
+});
+
+describe('validatePlacements —— 名次成对校验', () => {
+  /** 8 人赛：冠军、亚军、两个半决赛负者、四个八强 */
+  const tiedBoard = [
+    { userId: 'u1', placement: 1 },
+    { userId: 'u2', placement: 2 },
+    { userId: 'u3', placement: 3 },
+    { userId: 'u4', placement: 3 },
+    { userId: 'u5', placement: 5 },
+    { userId: 'u6', placement: 5 },
+    { userId: 'u7', placement: 5 },
+    { userId: 'u8', placement: 5 },
+  ];
+
+  test('并列季军：两位第 3 名，没有第 4 名', () => {
+    const result = validatePlacements(tiedBoard, { bronzeMode: EVENT_BRONZE_MODE.TIED });
+    assert.equal(result.ok, true);
+    assert.equal(result.results.length, 8);
+  });
+
+  test('并列模式下出现第 4 名被拒', () => {
+    const bad = tiedBoard.map((row) => (row.userId === 'u4' ? { ...row, placement: 4 } : row));
+    const result = validatePlacements(bad, { bronzeMode: EVENT_BRONZE_MODE.TIED });
+    assert.equal(result.ok, false);
+    assert.match(result.firstError, /第 4 名/);
+  });
+
+  test('打三四名：第 3、第 4 名成对出现', () => {
+    const playoff = tiedBoard.map((row) => (row.userId === 'u4' ? { ...row, placement: 4 } : row));
+    const result = validatePlacements(playoff, { bronzeMode: EVENT_BRONZE_MODE.PLAYOFF });
+    assert.equal(result.ok, true);
+  });
+
+  test('打三四名时只有第 3 名、没有第 4 名，被拒', () => {
+    const result = validatePlacements(tiedBoard, { bronzeMode: EVENT_BRONZE_MODE.PLAYOFF });
+    assert.equal(result.ok, false);
+    assert.match(result.firstError, /成对/);
+  });
+
+  test('冠军必须恰好一位', () => {
+    const noChampion = tiedBoard.map((row) => (row.userId === 'u1' ? { ...row, placement: 2 } : row));
+    assert.equal(validatePlacements(noChampion).ok, false);
+  });
+
+  test('同一个人不能出现两次', () => {
+    const dup = [...tiedBoard, { userId: 'u1', placement: 5 }];
+    assert.equal(validatePlacements(dup).ok, false);
+  });
+
+  test('名次必须是正整数', () => {
+    assert.equal(validatePlacements([{ userId: 'u1', placement: 0 }]).ok, false);
+    assert.equal(validatePlacements([{ userId: 'u1', placement: 1.5 }]).ok, false);
+    assert.equal(validatePlacements([{ userId: 'u1' }]).ok, false);
+  });
+
+  test('空名单被拒', () => {
+    assert.equal(validatePlacements([]).ok, false);
+    assert.equal(validatePlacements(null).ok, false);
+  });
+
+  test('缺省方式按并列处理（历史赛事口径）', () => {
+    assert.equal(validatePlacements(tiedBoard).ok, true);
+  });
+});
+
+describe('文案兜底 —— 历史赛事没有新字段也不显示 undefined', () => {
+  test('等级缺省三级、方式缺省并列、状态缺省已结束', () => {
+    const legacy = { _id: 'e01', status: EVENT_STATUS.FINISHED };
+    assert.equal(levelLabelOf(legacy), '三级赛事');
+    assert.equal(bronzeLabelOf(legacy), '并列季军');
+    assert.equal(statusLabelOf(legacy), '已结束');
+  });
+});
+
+describe('signupStateOf —— 报名状态文案', () => {
+  test('没有记录显示未报名', () => {
+    const state = signupStateOf(null);
+    assert.equal(state.label, '未报名');
+    assert.equal(state.signed, false);
+  });
+
+  test('已报名 / 已签到各自可辨', () => {
+    assert.equal(signupStateOf(signupRecord('m1')).label, '已报名');
+    const checked = signupStateOf(signupRecord('m1', SIGNUP_STATUS.CHECKED_IN));
+    assert.equal(checked.checkedIn, true);
+    assert.equal(checked.signed, true);
+  });
+});
+
+describe('buildEventRow —— 把权限算进数据里', () => {
+  test('会员看到的是报名口径，管理按钮一律关闭', () => {
+    const row = buildEventRow(openEvent(), { actor: member('m1') });
+    assert.equal(row.canSignUp, true);
+    assert.equal(row.canCancelSignup, false);
+    assert.equal(row.canStart, false);
+    assert.equal(row.canFinish, false);
+  });
+
+  test('已报名后按钮翻转', () => {
+    const row = buildEventRow(openEvent(), {
+      actor: member('m1'),
+      signups: [signupRecord('m1')],
+    });
+    assert.equal(row.canSignUp, false);
+    assert.equal(row.canCancelSignup, true);
+    assert.equal(row.signedUp, true);
+    assert.equal(row.mySignupLabel, '已报名');
+  });
+
+  test('干事看到管理按钮（mock 下会员也能看到，界面须明示）', () => {
+    const row = buildEventRow(openEvent({ status: EVENT_STATUS.ONGOING }), { actor: staff('s1') });
+    assert.equal(row.canCheckIn, true);
+    assert.equal(row.canFinish, true);
+    assert.equal(row.canStart, false);
+  });
+
+  test('名额与时间文案成形，缺字段也不显示 undefined', () => {
+    const row = buildEventRow(openEvent({ title: '', location: '', startTime: null }), {
+      actor: member('m1'),
+      signups: [signupRecord('a')],
+    });
+    assert.equal(row.title, '（未命名赛事）');
+    assert.equal(row.quotaText, '1/8 人');
+    assert.equal(row.statusLabel, '报名中');
+    assert.equal(row.isDoubles, false);
+    assert.ok(!row.timeText.includes('undefined'));
+  });
+
+  test('不限名额时只显示已报名人数', () => {
+    const row = buildEventRow(openEvent({ quota: 0 }), { actor: member('m1') });
+    assert.equal(row.quotaText, '0 人');
+  });
+});
+
+describe('buildSignupRow —— 报名名单一行', () => {
+  test('取到昵称头像，并标出是不是我', () => {
+    const row = buildSignupRow(
+      signupRecord('m1'),
+      { nickName: '小王', avatarUrl: 'http://x/a.png' },
+      { actor: member('m1') }
+    );
+    assert.equal(row.nickName, '小王');
+    assert.equal(row.avatarUrl, 'http://x/a.png');
+    assert.equal(row.isMe, true);
+    assert.equal(row.statusLabel, '已报名');
+  });
+
+  test('找不到档案时用编号兜底，不显示 undefined', () => {
+    const row = buildSignupRow(signupRecord('m1'), null);
+    assert.equal(row.nickName, 'm1');
+    assert.equal(row.avatarUrl, '');
+  });
+});

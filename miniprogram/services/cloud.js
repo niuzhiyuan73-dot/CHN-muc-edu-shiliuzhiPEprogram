@@ -120,6 +120,22 @@ const updateProfile = (patch, actor) => request('updateProfile', { patch, actor 
  */
 const resetSeason = (actor) => request('resetSeason', { actor });
 
+/*
+ * 赛事闭环：发布 / 开始 / 报名 / 退赛 / 签到 / 录入名次。
+ *
+ * 与审核、公告同一纪律：actor 只是「谁点的按钮」的线索，发布权、签到权
+ * 由云函数按 OpenID 在服务端判定。报名人更是只认 OpenID——不接受
+ * userId 参数，否则谁都能替别人报名。报名记录按「赛事 + 会员」自然键
+ * 去重，连点两下不会多出一条。
+ */
+const getEventSignups = (eventId) => request('getEventSignups', { eventId });
+const publishEvent = (form, actor) => request('publishEvent', { form, actor });
+const startEvent = (id, actor) => request('startEvent', { id, actor });
+const signUpEvent = (id, actor) => request('signUpEvent', { id, actor });
+const cancelSignupEvent = (id, actor) => request('cancelSignupEvent', { id, actor });
+const checkInEvent = (id, userId, actor) => request('checkInEvent', { id, userId, actor });
+const finishEvent = (id, results, actor) => request('finishEvent', { id, results, actor });
+
 module.exports = {
   CLOUD_FUNCTION,
   request,
@@ -155,4 +171,11 @@ module.exports = {
   archiveAnnouncement,
   updateProfile,
   resetSeason,
+  getEventSignups,
+  publishEvent,
+  startEvent,
+  signUpEvent,
+  cancelSignupEvent,
+  checkInEvent,
+  finishEvent,
 };

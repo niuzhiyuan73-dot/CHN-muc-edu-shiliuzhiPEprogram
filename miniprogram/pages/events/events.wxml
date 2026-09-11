@@ -22,6 +22,42 @@
       <view class="season-bar-note">积分只来自赛事，赛季开始后重新计算</view>
     </view>
 
+    <!-- ========== 赛事列表（赛事闭环入口） ========== -->
+    <!-- 点一行进详情：报名 / 退赛 / 签到 / 录入名次都在那边 -->
+    <view class="card">
+      <view class="rank-head">
+        <view class="rank-head-title">赛事</view>
+        <!-- 没有发布权时这个按钮根本不渲染，不给点进去再被拒的机会 -->
+        <view wx:if="{{view.canPublish}}" class="event-publish" bindtap="onOpenPublish">＋ 发布</view>
+      </view>
+
+      <view wx:if="{{!view.hasEvents}}" class="empty-note">{{view.eventsEmptyNote}}</view>
+
+      <view
+        wx:for="{{view.events}}"
+        wx:key="id"
+        class="event-row"
+        data-event-id="{{item.id}}"
+        bindtap="onOpenEvent"
+      >
+        <view class="event-main">
+          <view class="event-title">
+            <text class="event-name">{{item.title}}</text>
+            <text class="tag {{item.isSignup ? 'tag-success' : (item.isOngoing ? 'tag-warning' : 'tag-gray')}}">{{item.statusLabel}}</text>
+          </view>
+          <view class="event-meta">
+            {{item.timeText}}<text wx:if="{{item.location}}"> · {{item.location}}</text>
+          </view>
+          <view class="event-meta">{{item.levelLabel}} · {{item.matchTypeLabel}} · {{item.quotaText}}</view>
+        </view>
+
+        <view class="event-side">
+          <view wx:if="{{item.signedUp}}" class="event-my-signup">{{item.mySignupLabel}}</view>
+          <view wx:else class="event-arrow">›</view>
+        </view>
+      </view>
+    </view>
+
     <!-- ========== 我在积分榜上的位置 ========== -->
     <view wx:if="{{view.me}}" class="card my-rank">
       <view class="my-rank-value">

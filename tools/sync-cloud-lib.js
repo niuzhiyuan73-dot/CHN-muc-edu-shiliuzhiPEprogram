@@ -51,6 +51,7 @@ const MANIFEST = [
   'services/match-record.js',
   'services/member-review.js',
   'services/announcement.js',
+  'services/event.js',
   'services/profile.js',
   'services/permission.js',
   'services/season.js',

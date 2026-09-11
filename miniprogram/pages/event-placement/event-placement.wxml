@@ -1,0 +1,95 @@
+<!--
+  录入名次
+  数据形状见 services/events-view.js 的 loadEventPlacementView。
+  这里不做任何权限推导：allowed 是视图模型算好的，不够就整页挡住。
+-->
+<view class="page-container">
+
+  <!-- 加载中。必须排在出错之前，否则首屏会一闪而过地报错 -->
+  <view wx:if="{{loading}}" class="loading">正在加载…</view>
+
+  <view wx:elif="{{error}}" class="empty-state">
+    <view class="empty-state-icon">⚠️</view>
+    <view class="empty-state-text">{{error}}</view>
+  </view>
+
+  <!-- 没有管理权时不给任何名单 -->
+  <view wx:elif="{{!view.allowed}}" class="empty-state">
+    <view class="empty-state-icon">🔒</view>
+    <view class="empty-state-text">{{view.blockedText}}</view>
+  </view>
+
+  <view wx:elif="{{!view.found}}" class="empty-state">
+    <view class="empty-state-icon">🔒</view>
+    <view class="empty-state-text">这场赛事不存在或已被删除</view>
+  </view>
+
+  <block wx:else>
+
+    <!-- ========== 这场赛事 ========== -->
+    <view class="card">
+      <view class="event-title">{{view.event.title}}</view>
+      <view class="event-meta">{{view.event.timeText}} · {{view.event.levelLabel}} · {{view.event.matchTypeLabel}}</view>
+      <view class="bronze-hint">{{view.bronzeHint}}</view>
+    </view>
+
+    <!-- ========== 不可录入时的说明 ========== -->
+    <view wx:if="{{!view.canEdit}}" class="empty-state">
+      <view class="empty-state-icon">⏳</view>
+      <view class="empty-state-text">{{view.statusNote}}</view>
+    </view>
+
+    <block wx:else>
+      <!-- ========== 名次名单 ========== -->
+      <view class="card">
+        <view class="rank-head">
+          <view class="rank-head-title">录入名次</view>
+          <view class="rank-head-count">{{view.event.quotaText}}</view>
+        </view>
+        <view class="card-subtitle">没到场的人空着不填；提交后赛事即结束，名次不可再改</view>
+
+        <view wx:if="{{!view.hasRows}}" class="empty-note">{{view.emptyNote}}</view>
+
+        <view wx:for="{{view.rows}}" wx:key="userId" class="place-row {{item.isMe ? 'is-me' : ''}}">
+          <view class="place-avatar">
+            <image wx:if="{{item.avatarUrl}}" class="place-avatar-img" src="{{item.avatarUrl}}" mode="aspectFill" />
+            <text wx:else>{{item.avatarText}}</text>
+          </view>
+
+          <view class="place-main">
+            <view class="place-name">
+              <text>{{item.nickName}}</text>
+              <text wx:if="{{item.isMe}}" class="rank-me-tag">我</text>
+            </view>
+            <view class="place-status">{{item.statusLabel}}</view>
+          </view>
+
+          <input
+            class="place-input"
+            type="number"
+            value="{{item.placementText}}"
+            placeholder="名次"
+            data-index="{{index}}"
+            bindinput="onInputPlacement"
+          />
+        </view>
+      </view>
+
+      <view wx:if="{{errorText}}" class="submit-error">{{errorText}}</view>
+
+      <view class="submit-bar">
+        <view class="btn btn-outline submit-btn" bindtap="onCancel">取消</view>
+        <view
+          class="btn btn-primary submit-btn {{submitting ? 'btn-disabled' : ''}}"
+          bindtap="onSubmit"
+        >{{submitting ? '正在提交…' : '提交并结束赛事'}}</view>
+      </view>
+    </block>
+
+    <view wx:if="{{view.demoNotice}}" class="demo-notice">{{view.demoNotice}}</view>
+
+    <view wx:if="{{isMock}}" class="mock-note">
+      当前为本地模拟数据，名次与积分只写入内存，重启小程序即清空
+    </view>
+  </block>
+</view>

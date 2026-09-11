@@ -22,6 +22,7 @@ const { replaySeason } = require('./replay.js');
 const matchStore = require('./match-store.js');
 const userStore = require('./user-store.js');
 const announcementStore = require('./announcement-store.js');
+const eventStore = require('./event-store.js');
 const profileStore = require('./profile-store.js');
 const seasonStore = require('./season-store.js');
 const { register: registerAccount } = require('./auth.js');
@@ -29,6 +30,19 @@ const { DEFAULT_RESET_POLICY, canResetSeason } = require('./season.js');
 const { REVIEW_ACTION, validateReview } = require('./member-review.js');
 const { canConfirm, canRevoke, buildMatchRecord } = require('./match-record.js');
 const { canPublish, buildAnnouncementRecord } = require('./announcement.js');
+const {
+  canManageEvent,
+  canStartEvent,
+  canCheckIn,
+  canFinishEvent,
+  canSignUp,
+  canCancelSignup,
+  // 与 utils/stats.js 的「个人赛事战绩」buildEventRecord 同名，这里改个名字
+  buildEventRecord: buildEventDraft,
+  buildSignupRecord,
+  buildCheckInPatch,
+  validatePlacements,
+} = require('./event.js');
 const { buildProfilePatch } = require('./profile.js');
 const { getPoolRating } = require('../utils/rating.js');
 const {
@@ -38,7 +52,10 @@ const {
   MATCH_STATUS,
   USER_STATUS,
   ANNOUNCEMENT_STATUS,
+  EVENT_STATUS,
+  SIGNUP_STATUS,
   ROLE,
+  isMemberStatus,
 } = require('../utils/constants.js');
 const {
   buildProjectLeaderboard,
@@ -115,8 +132,11 @@ function buildCache() {
 
   // 1. 本地账号：演示申请 + 本次会话注册的，逐条叠加审核改判
   const local = userStore.listAccounts();
-  const applications = local.filter((account) => account.status !== USER_STATUS.ACTIVE);
-  const approved = local.filter((account) => account.status === USER_STATUS.ACTIVE);
+  // 「在册」= 正常 + 已离校（见 constants.isMemberStatus）：离校的人历史比赛
+  // 还在流水里，回放名单里少了他会直接抛错，所以仍要进回放；不上榜由
+  // leaderboard.isRankable 把关，不在这里分家。
+  const applications = local.filter((account) => !isMemberStatus(account.status));
+  const approved = local.filter((account) => isMemberStatus(account.status));
 
   // 2. 比赛：种子流水接上本次会话新录的，再盖上改判（确认 / 驳回 / 撤销）
   const afterStore = seed.matches
@@ -127,6 +147,17 @@ function buildCache() {
     });
 
   const activeOnly = afterStore.filter((match) => match.status === MATCH_STATUS.ACTIVE);
+
+  // 2.5 赛事：种子接上本次会话新发的，再盖上改判（开始 / 结束与名次）。
+  //     与比赛同一套路数——把 override 作用于拼接后的整条数组，于是种子里的
+  //     编号（e01……）同样能被改判。赛事是回放的输入：已结束的那些才会发积分
+  //     （见 replay.applyEventPoints），所以必须先拼好再交给回放。
+  const eventLedger = seed.events
+    .concat(eventStore.listSubmitted())
+    .map((event) => {
+      const patch = eventStore.overrideOf(event._id);
+      return patch ? { ...event, ...patch } : event;
+    });
 
   // 3. 回放名单 = 种子会员 + 已通过审核的本地账号。
   //    注意 replaySeason 的参数名是 members（不是 users）：它返回的
@@ -139,6 +170,8 @@ function buildCache() {
     ...seed,
     members: seed.members.concat(approved),
     matches: activeOnly,
+    // 赛事进回放：等级表决定赛事比赛用哪个 K，积分只发给已结束的那些
+    events: eventLedger,
     options: {
       resetTime: reset ? reset.resetTime : null,
       resetPolicy: reset ? reset.policy : null,
@@ -214,6 +247,9 @@ function resetCache() {
   userStore.reset();
   // 本地公告同理：新发的与下架的改判都属于临时写入
   announcementStore.reset();
+  // 本地赛事同理：新发的、开始/结束的改判、报名记录都属于临时写入。
+  // 编号也要一起复位，否则测试里「第一场新赛事是 le0001」会随用例顺序飘移
+  eventStore.reset();
   // 资料补丁同理：改过的昵称头像也是临时写入
   profileStore.reset();
   // 赛季重置同理：分界点必须一起清，否则下一轮生成的分数还是被压过的
@@ -306,6 +342,21 @@ async function getMatches(options = {}) {
 
 async function getEvents() {
   return load().events;
+}
+
+/**
+ * 报名记录。给出 eventId 就只取那一场的，否则取全部。
+ *
+ * 【为什么不进 buildCache】
+ * 报名不参与回放——它既不算等级分也不算积分，只被赛事页直接读来显示
+ * 「报了多少人、我报没报」。放进缓存反而多一处要与写入同步失效的地方，
+ * 所以直接从 eventStore 取，与云端 getEventSignups 直接读库一致。
+ *
+ * @param {string} [eventId]
+ * @returns {Promise<Array<Object>>}
+ */
+async function getEventSignups(eventId) {
+  return eventStore.listSignups(eventId);
 }
 
 /**
@@ -874,6 +925,215 @@ async function updateProfile(patch, actor) {
   return { ok: true, account: accountOf(account._id), errors: {}, firstError: '' };
 }
 
+/* ---------- 赛事闭环 ---------- */
+/* 发布 → 报名 → 签到 → 录入名次。与云端 event-handlers.js 同一套规则，
+   校验一律复用 services/event.js 的纯函数，这里只管判权、落库与失效缓存。 */
+
+/** 在赛事台账里找一场（含种子赛事与本地新发的） */
+function findEvent(id) {
+  return load().events.find((event) => event._id === id) || null;
+}
+
+/**
+ * 报名被拒时，给一句说得清的文案（与云端同款）。
+ * @param {Object} event
+ * @param {Object|null} signup
+ * @returns {string}
+ */
+function signUpRefusal(event, signup) {
+  if (event.status !== EVENT_STATUS.SIGNUP) return '报名已经截止了';
+  if (signup && signup.status === SIGNUP_STATUS.CHECKED_IN) return '你已经签过到了';
+  if (signup && signup.status === SIGNUP_STATUS.SIGNED) return '你已经报过名了';
+  return '当前状态不能报名这场赛事';
+}
+
+/**
+ * 发布一场赛事。落库即「报名中」。
+ *
+ * 等级与三四名赛方式必须是用户确认过的值（见 event.validateEvent）——
+ * 这两项直接决定积分怎么算，留空取默等于悄悄改分。
+ *
+ * @param {Object} form 赛事表单
+ * @param {string} actor 发布者编号
+ * @returns {Promise<{ok:boolean, record:Object|null, errors:Object, firstError:string}>}
+ */
+async function publishEvent(form, actor) {
+  const account = accountOf(actor);
+  // 本数据源就是模拟数据源：发布权按 mock 口径放宽为「是会员即可」
+  if (!canManageEvent(account, { isMock: true })) {
+    return { ok: false, record: null, errors: {}, firstError: '当前账号没有发布赛事的权限' };
+  }
+
+  const built = buildEventDraft(form, { actor: account });
+  if (!built.ok) {
+    return { ok: false, record: null, errors: built.errors, firstError: built.firstError };
+  }
+
+  const record = eventStore.addEvent(built.record);
+  cache = null;
+  return { ok: true, record, errors: {}, firstError: '' };
+}
+
+/**
+ * 开始一场赛事（报名中 → 进行中）。之后才能签到与录入名次。
+ *
+ * @param {string} id
+ * @param {string} actor
+ * @returns {Promise<{ok:boolean, record:Object|null, message:string}>}
+ */
+async function startEvent(id, actor) {
+  const account = accountOf(actor);
+  const target = findEvent(id);
+  if (!target) return { ok: false, record: null, message: '找不到这场赛事' };
+
+  if (!canStartEvent(target, account, { isMock: true })) {
+    // 状态先判：已经开始了还说「没有权限」会让人以为是自己账号的问题
+    if (target.status !== EVENT_STATUS.SIGNUP) {
+      return { ok: false, record: null, message: '这场赛事已经开始了' };
+    }
+    return { ok: false, record: null, message: '当前账号没有管理赛事的权限' };
+  }
+
+  eventStore.setStatus(id, { status: EVENT_STATUS.ONGOING, actor, actedAt: new Date() });
+  cache = null;
+  return { ok: true, record: findEvent(id), message: '' };
+}
+
+/**
+ * 报名一场赛事。报名人就是调用者本人——不接受别的编号，
+ * 否则谁都能替别人报名。
+ *
+ * @param {string} id
+ * @param {string} actor
+ * @returns {Promise<{ok:boolean, record:Object|null, message:string}>}
+ */
+async function signUpEvent(id, actor) {
+  const account = accountOf(actor);
+  const target = findEvent(id);
+  if (!target) return { ok: false, record: null, message: '找不到这场赛事' };
+
+  const signups = eventStore.listSignups(id);
+  const signup = signups.find((item) => item.userId === actor) || null;
+
+  if (!canSignUp(target, account, { signup, signups })) {
+    return { ok: false, record: null, message: signUpRefusal(target, signup) };
+  }
+
+  const built = buildSignupRecord(target, account, { now: new Date() });
+  if (!built.ok) return { ok: false, record: null, message: built.message };
+
+  // 报名不进回放，无需让缓存失效（与云端一致）
+  const record = eventStore.saveSignup(built.record);
+  return { ok: true, record, message: '' };
+}
+
+/**
+ * 取消报名。只置状态，不删记录——报了多少人、退了多少人都留痕，
+ * 重新报名也落回同一条。
+ *
+ * @param {string} id
+ * @param {string} actor
+ * @returns {Promise<{ok:boolean, record:Object|null, message:string}>}
+ */
+async function cancelSignupEvent(id, actor) {
+  const account = accountOf(actor);
+  const target = findEvent(id);
+  if (!target) return { ok: false, record: null, message: '找不到这场赛事' };
+
+  const signup = eventStore.findSignup(id, actor);
+  if (!signup) return { ok: false, record: null, message: '你还没有报名这场赛事' };
+
+  if (!canCancelSignup(target, account, { signup })) {
+    return { ok: false, record: null, message: '现在不能取消报名' };
+  }
+
+  const record = eventStore.saveSignup({
+    ...signup,
+    status: SIGNUP_STATUS.CANCELED,
+    actorId: actor,
+    actedAt: new Date(),
+  });
+  return { ok: true, record, message: '' };
+}
+
+/**
+ * 代某位会员签到。只有干事以上能签（决策 4：不做自助签到）。
+ *
+ * @param {string} id
+ * @param {string} userId 要签到的会员
+ * @param {string} actor 代签的干事
+ * @returns {Promise<{ok:boolean, record:Object|null, message:string}>}
+ */
+async function checkInEvent(id, userId, actor) {
+  const account = accountOf(actor);
+  const target = findEvent(id);
+  if (!target) return { ok: false, record: null, message: '找不到这场赛事' };
+
+  if (!canCheckIn(target, account, { isMock: true })) {
+    return { ok: false, record: null, message: '当前账号不能为会员签到' };
+  }
+  if (!userId) return { ok: false, record: null, message: '请指定要签到的会员' };
+
+  const signup = eventStore.findSignup(id, userId);
+  const built = buildCheckInPatch(signup, account, { now: new Date() });
+  if (!built.ok) return { ok: false, record: null, message: built.message };
+
+  const record = eventStore.saveSignup({ ...signup, ...built.patch });
+  return { ok: true, record, message: '' };
+}
+
+/**
+ * 录入名次并结束赛事。这是全赛事闭环里唯一会改动积分的动作。
+ *
+ * 【为什么要校验「名次对应的人都报过名」】
+ * 名次直接换成积分，一个错字的 userId 就会凭空多出一位参赛者，还带着
+ * 名次分。所以只接受这场比赛里有效报名的人。
+ *
+ * @param {string} id
+ * @param {Array<Object>} results [{ userId, placement }]
+ * @param {string} actor
+ * @returns {Promise<{ok:boolean, record:Object|null, errors:Object, firstError:string}>}
+ */
+async function finishEvent(id, results, actor) {
+  const account = accountOf(actor);
+  const target = findEvent(id);
+  if (!target) {
+    return { ok: false, record: null, errors: {}, firstError: '找不到这场赛事' };
+  }
+
+  if (!canFinishEvent(target, account, { isMock: true })) {
+    const firstError =
+      target.status !== EVENT_STATUS.ONGOING ? '只有进行中的赛事可以录入名次' : '当前账号没有管理赛事的权限';
+    return { ok: false, record: null, errors: {}, firstError };
+  }
+
+  const signups = eventStore.listSignups(id);
+  const validUsers = new Set(
+    signups.filter((item) => item.status !== SIGNUP_STATUS.CANCELED).map((item) => item.userId)
+  );
+
+  const checked = validatePlacements(results, { bronzeMode: target.bronzeMode });
+  if (!checked.ok) {
+    return { ok: false, record: null, errors: checked.errors, firstError: checked.firstError };
+  }
+
+  const stranger = checked.results.find((row) => !validUsers.has(row.userId));
+  if (stranger) {
+    const firstError = '名次里出现了没有报名这场赛事的会员';
+    return { ok: false, record: null, errors: { results: firstError }, firstError };
+  }
+
+  eventStore.setStatus(id, {
+    status: EVENT_STATUS.FINISHED,
+    results: checked.results,
+    actor,
+    finishedAt: new Date(),
+  });
+  // 名次落定就要重算积分，缓存必须失效
+  cache = null;
+  return { ok: true, record: findEvent(id), errors: {}, firstError: '' };
+}
+
 module.exports = {
   DEFAULT_CURRENT_USER_ID,
   SEED_OPTIONS,
@@ -892,12 +1152,19 @@ module.exports = {
   archiveAnnouncement,
   updateProfile,
   resetSeason,
+  publishEvent,
+  startEvent,
+  signUpEvent,
+  cancelSignupEvent,
+  checkInEvent,
+  finishEvent,
   getCurrentUser,
   getMembers,
   getMember,
   getMemberApplications,
   getMatches,
   getEvents,
+  getEventSignups,
   getAnnouncements,
   getAnnouncementRecords,
   getLeaderboard,
