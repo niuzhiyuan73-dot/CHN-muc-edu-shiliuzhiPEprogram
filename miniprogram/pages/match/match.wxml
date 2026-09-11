@@ -48,6 +48,13 @@
     <view class="card">
       <view wx:if="{{view.records.length === 0}}" class="empty-note">{{view.emptyText}}</view>
 
+      <!-- 访客没有「自己的比赛」可言，空态里补一个登录入口 -->
+      <view
+        wx:if="{{view.needLogin}}"
+        class="btn btn-primary btn-block guest-btn"
+        bindtap="onGoLogin"
+      >登录 / 注册</view>
+
       <!-- 不做翻页，超出的部分如实交代，不假装已经翻到底 -->
       <view wx:if="{{view.hasMore}}" class="more-note">
         只显示最近 {{view.records.length}} 场，共 {{view.total}} 场

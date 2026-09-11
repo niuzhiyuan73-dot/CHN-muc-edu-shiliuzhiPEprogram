@@ -1,4 +1,4 @@
-<!-- 首页：我的分数卡片 + 最近比赛 + 俱乐部公告 -->
+<!-- 首页：俱乐部公告 + 近期赛事 -->
 <view class="page-container">
 
   <!-- 顶部品牌区 -->
@@ -12,86 +12,6 @@
   <view wx:elif="{{error}}" class="load-error">{{error}}</view>
 
   <block wx:else>
-
-    <!-- ==================== 我的分数卡片 ==================== -->
-    <view class="card">
-      <view class="card-head">
-        <view class="card-title">我的分数</view>
-        <view
-          wx:if="{{auth.loggedIn}}"
-          class="tag {{auth.isActive ? 'tag-success' : 'tag-warning'}}"
-        >{{auth.statusLabel}}</view>
-      </view>
-
-      <!-- 未登录：引导登录 -->
-      <block wx:if="{{!auth.loggedIn}}">
-        <view class="card-subtitle">{{auth.notice}}</view>
-        <button class="btn btn-primary btn-block home-btn" bindtap="onGoLogin">登录 / 注册</button>
-      </block>
-
-      <!-- 已登录但还没有战绩（新注册、尚未参赛） -->
-      <block wx:elif="{{!view.scoreCard.hasProjects}}">
-        <view class="empty-note">{{auth.notice || '暂时还没有比赛记录'}}</view>
-      </block>
-
-      <!-- 已登录且有战绩 -->
-      <block wx:else>
-        <view class="score-user">
-          <image
-            wx:if="{{view.scoreCard.user.avatarUrl}}"
-            class="score-avatar"
-            src="{{view.scoreCard.user.avatarUrl}}"
-            mode="aspectFill"
-          />
-          <view wx:else class="score-avatar score-avatar-text">{{view.scoreCard.user.avatarText}}</view>
-          <view class="score-name">{{view.scoreCard.user.nickName}}</view>
-          <view class="form-dots">
-            <view
-              wx:for="{{view.scoreCard.form.dots}}"
-              wx:key="index"
-              class="form-dot {{item === 'W' ? 'is-win' : 'is-loss'}}"
-            >{{item}}</view>
-          </view>
-          <view class="score-streak">{{view.scoreCard.form.streakText}}</view>
-        </view>
-
-        <view class="divider"></view>
-
-        <view class="score-row" wx:for="{{view.scoreCard.projects}}" wx:key="project">
-          <view class="score-label">{{item.label}}</view>
-          <view class="score-value">
-            <text class="score-elo">{{item.elo}}</text>
-            <text class="score-delta {{item.deltaUp ? 'is-up' : 'is-down'}}">{{item.deltaText}}</text>
-          </view>
-          <view class="score-meta">{{item.rankText}} · {{item.matchCount}} 场 · {{item.recordText}}</view>
-          <view class="score-meta">{{item.beatText}}</view>
-        </view>
-      </block>
-    </view>
-
-    <!-- ==================== 最近比赛 ==================== -->
-    <view class="card">
-      <view class="card-head">
-        <view class="card-title">最近比赛</view>
-        <view class="card-more" bindtap="onGoRank">看排行榜 ›</view>
-      </view>
-
-      <view class="match-item" wx:for="{{view.recentMatches}}" wx:key="matchId">
-        <view class="match-top">
-          <text class="tag tag-gray">{{item.poolLabel}}</text>
-          <text wx:if="{{item.isEvent}}" class="tag tag-primary">赛事</text>
-          <text class="match-date">{{item.dateText}}</text>
-        </view>
-        <view class="match-teams">
-          <text class="team {{item.teamAWon ? 'is-winner' : ''}}">{{item.teamAName}}</text>
-          <text class="match-vs">VS</text>
-          <text class="team {{item.teamAWon ? '' : 'is-winner'}}">{{item.teamBName}}</text>
-        </view>
-        <view class="match-score">{{item.scoreText}}</view>
-      </view>
-
-      <view wx:if="{{view.recentMatches.length === 0}}" class="empty-note">还没有比赛记录</view>
-    </view>
 
     <!-- ==================== 俱乐部公告 ==================== -->
     <!-- 整张卡片可点：首屏只放得下三条，想看全的进列表页 -->
@@ -118,6 +38,35 @@
       <view wx:elif="{{view.announcements.hasMore}}" class="notice-more">
         …还有 {{view.announcements.total - view.announcements.rows.length}} 条，点这里看全部 ›
       </view>
+    </view>
+
+    <!-- ==================== 近期赛事 ==================== -->
+    <!-- 报名中 / 进行中的赛事，最近要打的在前。没有也照常出卡，只换空态文案 -->
+    <view class="card">
+      <view class="card-head">
+        <view class="card-title">近期赛事</view>
+        <view class="card-more" bindtap="onGoEvents">看全部赛事 ›</view>
+      </view>
+
+      <view
+        class="event-item"
+        wx:for="{{view.upcomingEvents}}"
+        wx:key="id"
+        data-event-id="{{item.id}}"
+        bindtap="onOpenEvent"
+      >
+        <view class="event-head">
+          <text class="tag {{item.isOngoing ? 'tag-success' : 'tag-primary'}}">{{item.statusLabel}}</text>
+          <text class="event-title">{{item.title}}</text>
+        </view>
+        <view class="event-meta">{{item.timeText}}</view>
+        <view class="event-meta">
+          <text wx:if="{{item.location}}">{{item.location}} · </text>{{item.quotaText}}
+          <text wx:if="{{item.signedUp}}" class="event-mine"> · 已报名</text>
+        </view>
+      </view>
+
+      <view wx:if="{{view.upcomingEvents.length === 0}}" class="empty-note">近期没有比赛</view>
     </view>
 
     <!-- 俱乐部整体概况 -->

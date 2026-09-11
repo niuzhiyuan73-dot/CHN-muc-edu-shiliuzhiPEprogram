@@ -1,17 +1,16 @@
 /**
  * 首页
  * ============================================================
- * 三块内容，自上而下：
- *   1. 我的分数卡片——当前登录会员的各项目等级分与排名
- *   2. 最近比赛——最近打完的几场，胜方、比分、项目一目了然
- *   3. 俱乐部公告——置顶在前，其余按时间倒序
+ * 两块内容，自上而下：
+ *   1. 俱乐部公告——置顶在前，其余按时间倒序
+ *   2. 近期赛事——报名中 / 进行中的赛事，最近要打的在前
  *
  * 【为什么取数全在 home-view.js】
- * 页面只做渲染与跳转。取数、把会员编号换成昵称、算文案，都在
- * services/home-view.js 里，那边不碰 wx API，能在 Node 里测试。
+ * 页面只做渲染与跳转。取数、算文案都在 services/home-view.js 里，
+ * 那边不碰 wx API，能在 Node 里测试。
  *
  * 【登录态变化后为什么要刷新】
- * 用户去登录页转一圈回来，分数卡片就该从「请登录」变成真实数据。
+ * 用户去登录页转一圈回来，赛事卡上的「已报名」标记就该更新。
  * 所以 onShow 里再刷一次——但首屏 onLoad 之后紧跟着的 onShow 要跳过，
  * 否则同一份数据会白算两遍。
  * ============================================================
@@ -110,14 +109,21 @@ Page({
     wx.navigateTo({ url: '/pages/login/login' });
   },
 
-  /** 去排行榜 */
-  onGoRank() {
-    wx.switchTab({ url: '/pages/rank/rank' });
+  /** 去赛事 tab 看全部赛事 */
+  onGoEvents() {
+    wx.switchTab({ url: '/pages/events/events' });
   },
 
   /** 看全部公告。首页只放得下三条，其余的去列表页看 */
   onGoAnnouncements() {
     wx.navigateTo({ url: '/pages/announcements/announcements' });
+  },
+
+  /** 点近期赛事的一条，进详情 */
+  onOpenEvent(event) {
+    const eventId = event.currentTarget.dataset.eventId;
+    if (!eventId) return;
+    wx.navigateTo({ url: `/pages/event-detail/event-detail?eventId=${eventId}` });
   },
 
   /** 去看某个会员的主页 */

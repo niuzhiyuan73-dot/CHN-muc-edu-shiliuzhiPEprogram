@@ -53,6 +53,11 @@
   padding-bottom: var(--space-sm);
 }
 
+/* 访客空态里的登录入口 */
+.guest-btn {
+  margin-top: var(--space-md);
+}
+
 /* ==================== 一场比赛 ==================== */
 
 .match-row {

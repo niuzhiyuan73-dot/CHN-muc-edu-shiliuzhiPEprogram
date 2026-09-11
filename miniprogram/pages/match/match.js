@@ -180,6 +180,11 @@ Page({
     wx.navigateTo({ url: '/pages/match-entry/match-entry' });
   },
 
+  /** 访客的空态里给一个登录入口——没有身份就没有「自己的比赛」 */
+  onGoLogin() {
+    wx.navigateTo({ url: '/pages/login/login' });
+  },
+
   /** 点队名去看这位会员的主页 */
   onOpenMember(event) {
     const userId = event.currentTarget.dataset.userId;

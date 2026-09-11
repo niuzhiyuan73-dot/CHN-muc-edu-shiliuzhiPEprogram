@@ -1,7 +1,8 @@
 <!--
   排行榜
   数据形状见 services/rank-view.js 的 loadRankView。
-  两个切换维度（项目 / 榜单类型）是正交的，各自独立。
+  只剩「等级分榜」，不再有榜单类型切换；项目仍可切换。
+  列表只列前 10 名，「我的排名」卡不受截断影响；搜索框覆盖全量会员。
 -->
 <view class="page-container">
 
@@ -40,17 +41,6 @@
 
     <!-- 我不在这个榜上时也要交代一句，空着会让人以为页面坏了 -->
     <view wx:else class="my-rank-hint">{{view.meHint}}</view>
-
-    <!-- ========== 榜单类型切换 ========== -->
-    <view class="board-tabs {{switching ? 'is-switching' : ''}}">
-      <view
-        wx:for="{{view.boardTabs}}"
-        wx:key="board"
-        class="board-tab {{item.active ? 'is-active' : ''}}"
-        data-board="{{item.board}}"
-        bindtap="onSwitchBoard"
-      >{{item.label}}</view>
-    </view>
 
     <!-- ========== 按名字找会员 ========== -->
     <!-- 只是把上面的榜过一遍，不重新排名；搜索词在切项目/榜单时会保留 -->

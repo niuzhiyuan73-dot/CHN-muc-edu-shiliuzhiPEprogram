@@ -30,25 +30,32 @@ const { createNameResolver } = require('../utils/stats.js');
 const { canConfirm, canRevoke, needsScore, sideOf } = require('./match-record.js');
 const { getCurrentUser, getMember, getMembers, getMatchRecords, isMock } = require('./index.js');
 
-/** 页面上的三个标签页 */
+/**
+ * 页面上的两个标签页。
+ *
+ * 【为什么没有「全部比赛」】
+ * 台账里有六百多场，绝大多数与看的人无关。全量列表既刷不动，也答不了
+ * 「接下来要做什么」。只留「我的比赛」与「待确认」，让每个人看到的都是
+ * 与自己有关的那些场次。
+ */
 const TAB = {
-  ALL: 'all', // 全部比赛
-  MINE: 'mine', // 我参与过的
+  MINE: 'mine', // 我的比赛
   PENDING: 'pending', // 待我确认的
 };
 
 const TAB_LABEL = {
-  [TAB.ALL]: '全部比赛',
-  [TAB.MINE]: '我参与的',
+  [TAB.MINE]: '我的比赛',
   [TAB.PENDING]: '待确认',
 };
 
 /** 空态文案按标签页区分。「没有比赛」和「没有待确认的比赛」是两回事 */
 const TAB_EMPTY = {
-  [TAB.ALL]: '还没有任何比赛记录',
   [TAB.MINE]: '你还没有参加过比赛',
   [TAB.PENDING]: '没有待确认的比赛',
 };
+
+/** 访客的空态：没有「自己的比赛」可言，先登录 */
+const VISITOR_EMPTY = '登录后可以看到自己的比赛';
 
 /**
  * 默认取多少场。
@@ -192,7 +199,7 @@ function filterRecords(records, tab, userId) {
  * 明确传入——传 null 就是「访客」，语义清清楚楚。
  *
  * @param {Object} [options]
- * @param {string} [options.tab] 当前标签页，非法值退回「全部」
+ * @param {string} [options.tab] 当前标签页，非法值退回「我的比赛」
  * @param {number} [options.limit] 最多多少行
  * @param {Object|null} [options.user] 当前登录会员，传 null 表示访客。
  *        省略该字段时才回退到 userId / 数据源的当前用户
@@ -200,7 +207,7 @@ function filterRecords(records, tab, userId) {
  * @returns {Promise<Object>} userId 查无此人时返回 { found: false }
  */
 async function loadMatchView(options = {}) {
-  const { tab = TAB.ALL, limit = DEFAULT_LIMIT, userId } = options;
+  const { tab = TAB.MINE, limit = DEFAULT_LIMIT, userId } = options;
   // 必须用 hasOwnProperty：传 null（明确表示访客）与不传是两件事
   const explicitUser = Object.prototype.hasOwnProperty.call(options, 'user');
 
@@ -215,14 +222,14 @@ async function loadMatchView(options = {}) {
   }
 
   const viewerId = user ? user._id : null;
-  const activeTab = TAB_LABEL[tab] ? tab : TAB.ALL;
+  const activeTab = TAB_LABEL[tab] ? tab : TAB.MINE;
 
   const [members, ledger] = await Promise.all([getMembers(), getMatchRecords()]);
   const nameOf = createNameResolver(members);
 
-  // 访客只看已生效的成绩。待确认与已撤销是流转中的临时状态，
-  // 不该进入对外的公示口径（与 getMatches 只给 ACTIVE 是同一条原则）
-  const all = viewerId ? ledger : ledger.filter((match) => match.status === MATCH_STATUS.ACTIVE);
+  // 访客没有「自己的比赛」可言，两个标签都不下发任何台账，
+  // 只给一句登录引导——否则别人未确认、已撤销的成绩会一并漏出去
+  const all = viewerId ? ledger : [];
 
   const filtered = filterRecords(all, activeTab, viewerId);
   const size = typeof limit === 'number' && limit >= 0 ? limit : DEFAULT_LIMIT;
@@ -248,7 +255,9 @@ async function loadMatchView(options = {}) {
     records,
     total: filtered.length,
     hasMore: filtered.length > records.length,
-    emptyText: TAB_EMPTY[activeTab],
+    // 访客给登录引导，而不是「你还没有参加过比赛」——后者会让人以为登录了也一样
+    emptyText: viewerId ? TAB_EMPTY[activeTab] : VISITOR_EMPTY,
+    needLogin: !viewerId,
     // 待确认的数量放在标签上，不用点进去才知道有没有事要做
     pendingCount: filterRecords(all, TAB.PENDING, viewerId).length,
     demoNotice: records.some((row) => row.confirmRelaxed)
@@ -261,6 +270,7 @@ module.exports = {
   TAB,
   TAB_LABEL,
   TAB_EMPTY,
+  VISITOR_EMPTY,
   DEFAULT_LIMIT,
   statusTagOf,
   buildRecordRow,

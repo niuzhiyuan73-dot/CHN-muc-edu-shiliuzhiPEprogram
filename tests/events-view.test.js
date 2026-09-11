@@ -9,6 +9,7 @@ const assert = require('node:assert');
 
 const {
   MEDALS,
+  TOP_LIMIT,
   medalOf,
   avatarOf,
   countEvents,
@@ -22,6 +23,8 @@ const {
   byeTextOf,
   buildBracketRows,
 } = require('../miniprogram/services/events-view.js');
+// 积分榜的搜索与排行榜页是同一套逻辑，页面复用它的纯函数
+const { describeSearch } = require('../miniprogram/services/rank-view.js');
 const {
   MATCH_TYPE,
   MATCH_STATUS,
@@ -338,18 +341,43 @@ test('赛事页 —— 积分榜的分数来自赛事名次，与默认等级一
   }
 });
 
-test('赛事页 —— 榜上人数与文案一致', async () => {
+test('赛事页 —— 积分榜最多只列前 10 名，计数如实交代总数', async () => {
   const view = await loadEventsView();
-  assert.strictEqual(view.playerCountText, `${view.rows.length} 人上榜`);
+
+  assert.strictEqual(view.rows.length, Math.min(TOP_LIMIT, view.total));
+  assert.strictEqual(view.allRows.length, view.total, 'allRows 必须是完整榜');
+  if (view.total > TOP_LIMIT) {
+    assert.strictEqual(view.hasMore, true);
+    assert.strictEqual(view.playerCountText, `前 ${TOP_LIMIT} 名 · 共 ${view.total} 人`);
+  } else {
+    assert.strictEqual(view.hasMore, false);
+    assert.strictEqual(view.playerCountText, `${view.total} 人上榜`);
+  }
 });
 
-test('赛事页 —— 当前会员在榜时给出与行内一致的名次，不在榜时给一句提示', async () => {
+test('赛事页 —— 搜索能查到前十之外的会员，名次仍是榜上的绝对名次', async () => {
   const view = await loadEventsView();
-  const myRow = view.rows.find((row) => row.isMe);
+
+  if (view.total <= TOP_LIMIT) return;
+
+  const outside = view.allRows[TOP_LIMIT];
+  assert.ok(!view.rows.some((row) => row.userId === outside.userId), '前十之外不该默认展示');
+
+  const search = describeSearch(view.allRows, outside.nickName);
+  const hit = search.rows.find((row) => row.userId === outside.userId);
+  assert.ok(hit, '前十之外的人必须能被搜到');
+  assert.strictEqual(hit.rank, outside.rank);
+  assert.ok(hit.rank > TOP_LIMIT);
+});
+
+test('赛事页 —— 当前会员在榜时给出与完整榜一致的名次，不在榜时给一句提示', async () => {
+  const view = await loadEventsView();
+  const myRow = view.allRows.find((row) => row.isMe);
 
   if (myRow) {
     assert.strictEqual(view.me.rank, myRow.rank);
-    assert.strictEqual(view.me.total, view.rows.length);
+    // 分母是完整榜人数，不是截断后的 10 行——否则会写出「第 15 / 10」
+    assert.strictEqual(view.me.total, view.total);
     assert.strictEqual(view.meHint, '');
   } else {
     assert.strictEqual(view.me, null);

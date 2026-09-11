@@ -2,7 +2,8 @@
  * 榜单行的共用样式
  * ============================================================
  * 「排行榜」与「赛事」两个 tab 都要展示同一形状的榜单：
- *   顶部「我的排名」卡 → 卡片里一行一个人（名次牌 / 头像 / 昵称 / 右侧数字）
+ *   顶部「我的排名」卡 → 搜索框 → 卡片里一行一个人
+ *   （名次牌 / 头像 / 昵称 / 右侧数字）
  * 由两个页面 @import 引入，样式只写一份。
  *
  * 【为什么放在模板里而不是 app.wxss】
@@ -10,7 +11,7 @@
  * 样式。榜单行只跟榜单有关，跟着用它的页面走更合适。
  *
  * 【什么不在这里】
- * 项目/榜单切换标签、搜索框这些只有排行榜页才有的部件，留在 rank.wxss。
+ * 项目切换标签（.pool-tabs）只有排行榜页才用，留在 rank.wxss 与 app.wxss。
  * ============================================================
  */
 
@@ -57,6 +58,38 @@
   border-radius: var(--radius-md);
   padding: var(--space-lg) var(--space-md);
   margin-bottom: var(--space-md);
+}
+
+/* ==================== 按名字找会员 ==================== */
+
+/* 两个榜的搜索框长得一样：只是把榜过一遍，不重新排名 */
+.search-bar {
+  display: flex;
+  align-items: center;
+  height: 76rpx;
+  padding: 0 var(--space-md);
+  background: var(--color-card);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-md);
+}
+
+.search-input {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-sm);
+}
+
+/* 清空按钮。只在有输入时出现，空着占一个叉反而让人以为能点 */
+.search-clear {
+  flex-shrink: 0;
+  width: 44rpx;
+  height: 44rpx;
+  line-height: 44rpx;
+  text-align: center;
+  border-radius: 50%;
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  background: var(--color-bg);
 }
 
 /* ==================== 榜单 ==================== */

@@ -1,7 +1,8 @@
 <!--
   赛事
   数据形状见 services/events-view.js 的 loadEventsView。
-  榜单行的样式来自 templates/rank-board.wxss，与「排行榜」页共用。
+  榜单行与搜索框的样式来自 templates/rank-board.wxss，与「排行榜」页共用。
+  积分榜只列前 10 名，「我的排名」卡不受截断影响，其余名次靠搜索框定位。
 -->
 <view class="page-container">
 
@@ -70,18 +71,33 @@
     <!-- 我不在榜上时也要交代一句，空着会让人以为页面坏了 -->
     <view wx:else class="my-rank-hint">{{view.meHint}}</view>
 
+    <!-- ========== 按名字找会员 ========== -->
+    <!-- 只是把下面的积分榜过一遍，不重新排名；搜索范围是全量，
+         前十之外的人也能被搜到 -->
+    <view class="search-bar">
+      <input
+        class="search-input"
+        type="text"
+        value="{{keyword}}"
+        confirm-type="search"
+        placeholder="输入名字找会员"
+        bindinput="onInputKeyword"
+      />
+      <view wx:if="{{keyword}}" class="search-clear" catchtap="onClearKeyword">✕</view>
+    </view>
+
     <!-- ========== 赛季积分榜 ========== -->
     <view class="card">
       <view class="rank-head">
         <view class="rank-head-title">赛季积分榜</view>
-        <view class="rank-head-count">{{view.playerCountText}}</view>
+        <view class="rank-head-count">{{playerCountText}}</view>
       </view>
 
-      <view wx:if="{{view.empty}}" class="empty-note">{{view.emptyNote}}</view>
+      <view wx:if="{{empty}}" class="empty-note">{{emptyNote}}</view>
 
       <!-- 点一行就去看这个人的完整战绩 -->
       <view
-        wx:for="{{view.rows}}"
+        wx:for="{{rows}}"
         wx:key="userId"
         class="rank-row {{item.isMe ? 'is-me' : ''}}"
         data-user-id="{{item.userId}}"

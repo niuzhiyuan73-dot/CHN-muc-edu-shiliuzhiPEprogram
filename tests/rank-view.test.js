@@ -2,13 +2,12 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const {
-  BOARD,
-  PROGRESS_MIN_MATCHES,
+  BOARD_LABEL,
+  TOP_LIMIT,
   medalOf,
   badgeOf,
   rankProjectBoard,
   buildEloRows,
-  buildProgressRows,
   normalizeKeyword,
   filterRows,
   describeSearch,
@@ -19,7 +18,7 @@ const {
   RANK_PROJECT_LABEL,
   ALL_RANK_PROJECTS,
 } = require('../miniprogram/utils/constants.js');
-const { getMembers, getProgressLeaderboard } = require('../miniprogram/services/index.js');
+const { getMembers } = require('../miniprogram/services/index.js');
 
 /* ============================================================
  * 一、纯函数部分
@@ -98,26 +97,6 @@ test('buildEloRows —— 主数字是等级分，副行是战绩', () => {
 test('buildEloRows —— 不是我那一行不会高亮', () => {
   const rows = buildEloRows([{ _id: 'u01', rank: 1, nickName: '巴特尔' }], 'u06');
   assert.strictEqual(rows[0].isMe, false);
-});
-
-test('buildProgressRows —— 主数字是涨幅，带上正负号', () => {
-  const rows = buildProgressRows(
-    [
-      { _id: 'u02', rank: 1, nickName: '张宇轩', startElo: 1000, currentElo: 1180, delta: 180, matchCount: 30 },
-      { _id: 'u03', rank: 2, nickName: '李思远', startElo: 1400, currentElo: 1350, delta: -50, matchCount: 30 },
-    ],
-    null
-  );
-
-  assert.strictEqual(rows[0].valueText, '+180');
-  assert.strictEqual(rows[0].valueClass, 'is-up');
-  // 起点和终点都写出来，光看 +180 没有画面感
-  assert.strictEqual(rows[0].detailText, '1000 → 1180');
-  assert.strictEqual(rows[0].noteText, '30 场');
-
-  assert.strictEqual(rows[1].valueText, '-50');
-  assert.strictEqual(rows[1].valueClass, 'is-down');
-  assert.strictEqual(rows[1].medal, 'silver');
 });
 
 test('normalizeKeyword —— 去空白、转小写，空值当作不筛选', () => {
@@ -218,9 +197,42 @@ test('排行榜 —— 默认展示第一个项目的等级分榜', async () => 
 
   assert.strictEqual(view.activeProject, ALL_RANK_PROJECTS[0]);
   assert.strictEqual(view.activeProjectLabel, RANK_PROJECT_LABEL[ALL_RANK_PROJECTS[0]]);
-  assert.strictEqual(view.activeBoard, BOARD.ELO);
+  assert.strictEqual(view.activeBoardLabel, BOARD_LABEL);
   assert.ok(view.rows.length > 0);
   assert.strictEqual(view.empty, false);
+});
+
+test('排行榜 —— 榜单最多只列前 10 名', async () => {
+  for (const project of ALL_RANK_PROJECTS) {
+    const view = await loadRankView({ project });
+    assert.ok(
+      view.rows.length <= TOP_LIMIT,
+      `${project} 榜列了 ${view.rows.length} 行，超过前 ${TOP_LIMIT} 名`
+    );
+    assert.strictEqual(view.rows.length, Math.min(TOP_LIMIT, view.total));
+  }
+});
+
+test('排行榜 —— 前十之外还有人时，计数如实交代总数', async () => {
+  const view = await loadRankView({ project: RANK_PROJECT.MEN_SINGLES });
+
+  if (view.total > TOP_LIMIT) {
+    assert.strictEqual(view.hasMore, true);
+    assert.strictEqual(view.playerCountText, `前 ${TOP_LIMIT} 名 · 共 ${view.total} 人`);
+  } else {
+    assert.strictEqual(view.hasMore, false);
+    assert.strictEqual(view.playerCountText, `${view.total} 人上榜`);
+  }
+});
+
+test('排行榜 —— 名次在完整榜单上算，不因只显示前 10 而被截断', async () => {
+  const view = await loadRankView({ project: RANK_PROJECT.MEN_SINGLES });
+
+  // 榜上每行的名次必须与它在完整榜单里的位置一致：前 10 行就是 1..10
+  view.rows.forEach((row, index) => {
+    assert.strictEqual(row.rank, index + 1);
+  });
+  assert.ok(view.total >= view.rows.length, '完整榜单人数不能少于显示出来的行数');
 });
 
 test('排行榜 —— 三个项目的标签始终都在，且只有一个选中', async () => {
@@ -234,25 +246,9 @@ test('排行榜 —— 三个项目的标签始终都在，且只有一个选中
   assert.strictEqual(view.projectTabs.find((tab) => tab.active).project, RANK_PROJECT.DOUBLES);
 });
 
-test('排行榜 —— 两种榜单的标签都在，且只有一个选中', async () => {
-  const view = await loadRankView({ board: BOARD.PROGRESS });
-
-  assert.strictEqual(view.boardTabs.length, 2);
-  assert.strictEqual(
-    view.boardTabs.filter((tab) => tab.active).length,
-    1
-  );
-  assert.strictEqual(view.boardTabs.find((tab) => tab.active).board, BOARD.PROGRESS);
-});
-
 test('排行榜 —— 项目名非法时回退到第一个项目，不白屏', async () => {
   const view = await loadRankView({ project: '不存在的项目' });
   assert.strictEqual(view.activeProject, ALL_RANK_PROJECTS[0]);
-});
-
-test('排行榜 —— 榜单类型非法时回退到等级分榜', async () => {
-  const view = await loadRankView({ board: '不存在的榜' });
-  assert.strictEqual(view.activeBoard, BOARD.ELO);
 });
 
 test('排行榜 —— 名次连续，且只列该项目真正出过场的人', async () => {
@@ -302,16 +298,38 @@ test('排行榜 —— 双打榜不区分男女，两边都能上', async () => 
   assert.ok(genders.has('F'), '双打榜应当有女会员');
 });
 
-test('排行榜 —— 当前会员在榜上时，给出与行内一致的名次', async () => {
+test('排行榜 —— 当前会员在榜上时，给出与完整榜单一致的名次', async () => {
   const view = await loadRankView({ project: RANK_PROJECT.MEN_SINGLES });
 
   assert.ok(view.me, '默认会员（赵明宇）打过男单，应该榜上有名');
-  const myRow = view.rows.find((row) => row.isMe);
-  assert.ok(myRow, '榜上要有一行标记为「我」');
-  assert.strictEqual(view.me.rank, myRow.rank);
-  // 分母必须是上榜人数，否则「第 6 / 24」和下面只列了 20 行的榜对不上
-  assert.strictEqual(view.me.total, view.rows.length);
+  // 我可能排在前十之外（列表里看不到），但「我的排名」必须照样给名次
+  if (view.me.rank <= TOP_LIMIT) {
+    const myRow = view.rows.find((row) => row.isMe);
+    assert.ok(myRow, '排在前十就该在列表里出现');
+    assert.strictEqual(view.me.rank, myRow.rank);
+  }
+  // 分母是完整榜单人数，不是截断后的 10 行——否则会写出「第 20 / 10」
+  assert.strictEqual(view.me.total, view.total);
   assert.strictEqual(view.meHint, '');
+});
+
+test('排行榜 —— 前十之外的人也能拿到自己的名次', async () => {
+  // 挑一个行数超过前十的项目，验证「我的排名」走的是完整榜单
+  const view = await loadRankView({ project: RANK_PROJECT.DOUBLES });
+
+  if (view.me && view.me.rank > TOP_LIMIT) {
+    assert.ok(
+      !view.rows.some((row) => row.isMe),
+      '前十之外的我不该出现在列表里'
+    );
+    assert.ok(view.me.rank > view.rows.length, '名次必须来自完整榜单');
+    assert.strictEqual(view.me.total, view.total);
+  } else {
+    // 女单榜里赵明宇必然没有出场，换一条分支验证提示
+    const women = await loadRankView({ project: RANK_PROJECT.WOMEN_SINGLES });
+    assert.strictEqual(women.me, null);
+    assert.strictEqual(women.meHint, '你还没有参加过这个项目');
+  }
 });
 
 test('排行榜 —— 我不在这个项目时，不给空白而是在榜下留一句话', async () => {
@@ -323,47 +341,16 @@ test('排行榜 —— 我不在这个项目时，不给空白而是在榜下留
   assert.ok(view.rows.length > 0, '我不在榜上不代表榜是空的');
 });
 
-test('排行榜 —— 进步榜只收满门槛场次的人', async () => {
-  const view = await loadRankView({ project: RANK_PROJECT.MEN_SINGLES, board: BOARD.PROGRESS });
-
-  assert.ok(view.rows.length > 0);
-  for (const row of view.rows) {
-    const matchCount = Number(row.noteText.replace(' 场', ''));
-    assert.ok(
-      matchCount >= PROGRESS_MIN_MATCHES,
-      `${row.nickName} 只有 ${matchCount} 场，不该出现在进步榜`
-    );
-  }
-});
-
-test('排行榜 —— 进步榜按涨幅从高到低，且与原始数据一致', async () => {
-  const project = RANK_PROJECT.MEN_SINGLES;
-  const view = await loadRankView({ project, board: BOARD.PROGRESS });
-  const raw = await getProgressLeaderboard(project, { minMatches: PROGRESS_MIN_MATCHES });
-
-  assert.strictEqual(view.rows.length, raw.length);
-
-  view.rows.forEach((row, index) => {
-    assert.strictEqual(row.userId, raw[index]._id);
-    // 展示的涨幅必须等于「当前分 - 起点分」，不能是另算的一个数
-    assert.strictEqual(Number(row.valueText), raw[index].delta);
-    assert.strictEqual(row.valueClass, raw[index].delta >= 0 ? 'is-up' : 'is-down');
-  });
-
-  const deltas = raw.map((entry) => entry.delta);
-  assert.deepStrictEqual(deltas, [...deltas].sort((a, b) => b - a));
-});
-
-test('排行榜 —— 进步榜里我可能不在榜上，此时提示差几场', async () => {
-  // 赵明宇的双打场次未必够门槛，这里直接验证提示逻辑的另一种分支
-  const view = await loadRankView({ project: RANK_PROJECT.WOMEN_SINGLES, board: BOARD.PROGRESS });
-  assert.strictEqual(view.me, null);
-  assert.strictEqual(view.meHint, `出场满 ${PROGRESS_MIN_MATCHES} 场就能上进步榜`);
-});
-
-test('排行榜 —— 榜上人数与文案一致', async () => {
+test('排行榜 —— 计数文案与完整榜单人数一致', async () => {
   const view = await loadRankView({ project: RANK_PROJECT.DOUBLES });
-  assert.strictEqual(view.playerCountText, `${view.rows.length} 人上榜`);
+
+  if (view.total > TOP_LIMIT) {
+    assert.strictEqual(view.playerCountText, `前 ${TOP_LIMIT} 名 · 共 ${view.total} 人`);
+  } else {
+    assert.strictEqual(view.playerCountText, `${view.total} 人上榜`);
+  }
+  // rows 是截断后的显示行，total 才是完整人数
+  assert.strictEqual(view.rows.length, Math.min(TOP_LIMIT, view.total));
 });
 
 test('排行榜 —— 每一行都带得动「点进主页」所需的 userId', async () => {
@@ -377,9 +364,9 @@ test('排行榜 —— 每一行都带得动「点进主页」所需的 userId',
 
 test('排行榜 —— 在真实榜单上按名字筛选，命中的人名次不变', async () => {
   const view = await loadRankView({ project: RANK_PROJECT.DOUBLES });
-  const someone = view.rows[0];
+  const someone = view.allRows[0];
 
-  const search = describeSearch(view.rows, someone.nickName);
+  const search = describeSearch(view.allRows, someone.nickName);
 
   assert.ok(search.rows.length >= 1, '至少要搜到榜首本人');
   assert.ok(
@@ -392,4 +379,32 @@ test('排行榜 —— 在真实榜单上按名字筛选，命中的人名次不
     search.countText,
     `找到 ${search.rows.length} 人`
   );
+});
+
+test('排行榜 —— 完整榜单供搜索用，人数与 total 对得上', async () => {
+  const view = await loadRankView({ project: RANK_PROJECT.DOUBLES });
+
+  assert.strictEqual(view.allRows.length, view.total, 'allRows 必须是完整榜单');
+  // 每一行的名次与它在完整榜单里的位置一致，前十之外也不断档
+  view.allRows.forEach((row, index) => {
+    assert.strictEqual(row.rank, index + 1);
+  });
+});
+
+test('排行榜 —— 搜索能查到前十之外的会员，名次仍是榜单上的绝对名次', async () => {
+  const view = await loadRankView({ project: RANK_PROJECT.DOUBLES });
+
+  // 这份榜单不足 11 人就验证不了「前十之外」，跳过（种子数据下不该发生）
+  if (view.total <= TOP_LIMIT) return;
+
+  const outside = view.allRows[TOP_LIMIT];
+
+  // 默认展示的 rows 里没有他……
+  assert.ok(!view.rows.some((row) => row.userId === outside.userId));
+  // ……但在完整榜单里搜得到，且名次保持榜单上的绝对名次
+  const search = describeSearch(view.allRows, outside.nickName);
+  const hit = search.rows.find((row) => row.userId === outside.userId);
+  assert.ok(hit, '前十之外的人必须能被搜到');
+  assert.strictEqual(hit.rank, outside.rank);
+  assert.ok(hit.rank > TOP_LIMIT);
 });

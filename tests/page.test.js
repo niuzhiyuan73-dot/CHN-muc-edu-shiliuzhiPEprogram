@@ -278,7 +278,7 @@ const ADMIN = { role: 2, _id: 'u01', nickName: '巴特尔' };
  * 首页
  * ============================================================ */
 
-test('首页 —— 未登录时显示登录引导，而不是冒用别人的分数', async () => {
+test('首页 —— 首屏给出公告与近期赛事，不再有「我的分数」卡', async () => {
   resetSession();
   const page = instantiate(indexConfig);
   await page.onLoad();
@@ -287,9 +287,11 @@ test('首页 —— 未登录时显示登录引导，而不是冒用别人的分
   assert.strictEqual(page.data.error, '');
   assert.strictEqual(page.data.dataSourceLabel, '本地模拟数据');
   assert.strictEqual(page.data.auth.loggedIn, false);
-  assert.strictEqual(page.data.view.scoreCard.hasUser, false);
-  // 没登录却把演示会员的项目列出来，用户会以为那是自己的成绩
-  assert.strictEqual(page.data.view.scoreCard.projects, undefined);
+  // 个人分数已经收进排行榜与「我的」页，首页不再摆一份
+  assert.strictEqual(page.data.view.scoreCard, undefined);
+  // 访客也能看到公告与近期赛事——这两块与登录无关
+  assert.ok(page.data.view.announcements.rows.length > 0);
+  assert.ok(Array.isArray(page.data.view.upcomingEvents));
 });
 
 test('首页 —— 点登录引导跳到登录注册页', async () => {
@@ -302,23 +304,72 @@ test('首页 —— 点登录引导跳到登录注册页', async () => {
   assert.deepStrictEqual(calls.navigations, ['/pages/login/login']);
 });
 
-test('首页 —— 登录后渲染当前会员的分数卡片', async () => {
+test('首页 —— 近期赛事只列报名中/进行中，按开赛时间升序且不超过三条', async () => {
   resetSession();
-  app.globalData.userInfo = fakeMember();
+  const page = instantiate(indexConfig);
+  await page.onLoad();
+
+  const rows = page.data.view.upcomingEvents;
+  assert.ok(rows.length > 0, '种子里有报名中的赛事');
+  assert.ok(rows.length <= 3, '首屏只放得下三条');
+
+  // 已结束的赛事不进「近期」，否则历史赛事会把还能报名的挤下去
+  for (const row of rows) {
+    assert.ok(
+      row.status === EVENT_STATUS.SIGNUP || row.status === EVENT_STATUS.ONGOING,
+      `不该出现状态为 ${row.status} 的赛事`
+    );
+  }
+
+  // 开赛时间升序：最近要打的排在最前面
+  const times = rows.map((row) => new Date(row.timeText.replace(/-/g, '/')).getTime());
+  assert.deepStrictEqual(times, [...times].sort((a, b) => a - b), '按开赛时间升序');
+});
+
+test('首页 —— 一场近期赛事都没有时照常出卡，由模板写空态', async () => {
+  resetSession();
+  const original = mock.getEvents;
+  // 把赛事全换成已结束的：近期赛事应当筛成空数组，但字段仍在
+  mock.getEvents = async () => [
+    {
+      _id: 'e_x',
+      title: '往届赛事',
+      matchType: MATCH_TYPE.SINGLES,
+      status: EVENT_STATUS.FINISHED,
+      startTime: '2026-01-01T09:00:00',
+      quota: 8,
+    },
+  ];
+
+  try {
+    const page = instantiate(indexConfig);
+    await page.onLoad();
+    assert.deepStrictEqual(page.data.view.upcomingEvents, [], '已结束的赛事不算近期');
+  } finally {
+    mock.getEvents = original;
+  }
+});
+
+test('首页 —— 登录后近期赛事标出自己报没报', async () => {
+  resetSession();
+  const events = await facade.getEvents();
+  const upcoming = events.find((item) => item.status === EVENT_STATUS.SIGNUP);
+  assert.ok(upcoming, '种子里有报名中的赛事');
+
+  // 报名者是从种子里随机挑的，这里按实际名单挑一个来登录
+  const signups = await facade.getEventSignups(upcoming._id);
+  assert.ok(signups.length > 0);
+  app.globalData.userInfo = fakeMember({ _id: signups[0].userId, nickName: '报名者' });
 
   const page = instantiate(indexConfig);
   await page.onLoad();
 
-  assert.strictEqual(page.data.auth.loggedIn, true);
-  assert.strictEqual(page.data.auth.statusLabel, '正常');
-  assert.strictEqual(page.data.view.scoreCard.hasUser, true);
-  assert.strictEqual(page.data.view.scoreCard.user.nickName, '赵明宇');
-  assert.ok(page.data.view.scoreCard.projects.length > 0);
-  // 与「我的」页保持同一套口径：单打排在双打前面
-  assert.strictEqual(page.data.view.scoreCard.projects[0].label, '男单');
+  const mine = page.data.view.upcomingEvents.find((row) => row.id === upcoming._id);
+  assert.ok(mine, '报名中的赛事在近期列表里');
+  assert.strictEqual(mine.signedUp, true);
 });
 
-test('首页 —— 待审核的账号能登录，但分数卡片给出提示', async () => {
+test('首页 —— 待审核的账号能登录，首页照常可看', async () => {
   resetSession();
   app.globalData.userInfo = fakeMember({ _id: 'local_1', nickName: '新会员', status: 0 });
 
@@ -327,26 +378,37 @@ test('首页 —— 待审核的账号能登录，但分数卡片给出提示', 
 
   assert.strictEqual(page.data.auth.isPending, true);
   assert.strictEqual(page.data.auth.canRecord, false);
-  // 本地注册的账号不在模拟名单里，自然也没有战绩
-  assert.strictEqual(page.data.view.scoreCard.hasProjects, false);
-  assert.ok(page.data.view.scoreCard.hasUser);
+  // 首页两块内容与登录状态无关，待审核账号也看得到
+  assert.ok(page.data.view.announcements.rows.length > 0);
+  assert.ok(Array.isArray(page.data.view.upcomingEvents));
 });
 
-test('首页 —— 最近比赛与公告都有内容，数据里没有 undefined 或 NaN', async () => {
+test('首页 —— 点近期赛事的一条会进详情', async () => {
+  resetSession();
+  const page = instantiate(indexConfig);
+  await page.onLoad();
+
+  const target = page.data.view.upcomingEvents[0].id;
+  calls.navigations.length = 0;
+  page.onOpenEvent({ currentTarget: { dataset: { eventId: target } } });
+  assert.deepStrictEqual(calls.navigations, [
+    `/pages/event-detail/event-detail?eventId=${target}`,
+  ]);
+
+  // 没有编号的空白行不该乱跳
+  calls.navigations.length = 0;
+  page.onOpenEvent({ currentTarget: { dataset: {} } });
+  assert.deepStrictEqual(calls.navigations, []);
+});
+
+test('首页 —— 公告与概况都有内容，数据里没有 undefined 或 NaN', async () => {
   resetSession();
   const page = instantiate(indexConfig);
   await page.onLoad();
 
   assert.strictEqual(page.data.view.summary.memberCount, 24);
   assert.ok(page.data.view.summary.matchCount > 0);
-  assert.strictEqual(page.data.view.recentMatches.length, 5);
   assert.ok(page.data.view.announcements.rows.length > 0);
-
-  // 队名要解析成昵称，不能是 u03 这样的编号
-  for (const row of page.data.view.recentMatches) {
-    assert.ok(row.teamAName && !/^u\d\d$/.test(row.teamAName), '队名没解析成昵称');
-    assert.ok(row.scoreText && row.scoreText !== '—', '比分不该是占位符');
-  }
 
   // 置顶公告排在最前面
   const rows = page.data.view.announcements.rows;
@@ -428,6 +490,41 @@ test('我的页 —— 默认展示单打，且单打标签排在最前', async 
   // 双打场次比单打多，默认落到双打是「按出场次数排序」造成的，不是想要的
   assert.strictEqual(page.data.view.activeProjectLabel, '男单');
   assert.strictEqual(page.data.view.projectTabs[0].active, true);
+});
+
+test('我的页 —— 点双打分卡整页换成双打口径', async () => {
+  loginAs();
+  const page = instantiate(profileConfig);
+  await page.onLoad({});
+
+  const singlesRank = page.data.view.summary.rankText;
+
+  await page.onSwitchProject({ currentTarget: { dataset: { project: 'doubles' } } });
+
+  assert.strictEqual(page.data.view.activeProject, 'doubles');
+  assert.strictEqual(page.data.view.activeProjectLabel, '双打');
+  assert.strictEqual(page.data.view.projectTabs.find((tab) => tab.active).project, 'doubles');
+  assert.strictEqual(page.data.switching, false, '切完要把淡出状态收回');
+  // 排名与百分位要跟着换成双打的，不能还挂着单打那份
+  assert.ok(page.data.view.summary.rankText);
+  assert.ok(page.data.view.summary.beatText);
+  assert.strictEqual(
+    page.data.view.summary.matchCount,
+    page.data.view.summary.wins + page.data.view.summary.losses
+  );
+  assert.ok(singlesRank, '单打那份排名也要是有的，否则上面的切换没意义');
+});
+
+test('我的页 —— 切到双打后还能切回单打', async () => {
+  loginAs();
+  const page = instantiate(profileConfig);
+  await page.onLoad({});
+
+  await page.onSwitchProject({ currentTarget: { dataset: { project: 'doubles' } } });
+  await page.onSwitchProject({ currentTarget: { dataset: { project: 'men_singles' } } });
+
+  assert.strictEqual(page.data.view.activeProject, 'men_singles');
+  assert.strictEqual(page.data.view.activeProjectLabel, '男单');
 });
 
 test('我的页 —— 下拉刷新会收起刷新动画', async () => {
@@ -919,14 +1016,15 @@ test('他人主页 —— 头卡是共用的，但点头像不会跳走', async 
  * 排行榜
  * ============================================================ */
 
-test('排行榜 —— 首屏加载后展示默认项目的等级分榜', async () => {
+test('排行榜 —— 首屏加载后展示默认项目的等级分榜，且最多 10 行', async () => {
   const page = instantiate(rankConfig);
   await page.onLoad();
 
   assert.strictEqual(page.data.loading, false);
   assert.strictEqual(page.data.error, '');
-  assert.strictEqual(page.data.view.activeBoard, 'elo');
+  assert.strictEqual(page.data.view.activeBoardLabel, '等级分榜');
   assert.ok(page.data.view.rows.length > 0);
+  assert.ok(page.data.view.rows.length <= 10, '等级榜只显示前 10 名');
 });
 
 test('排行榜 —— 切项目会换成对应的榜，且名次重新从 1 排起', async () => {
@@ -951,37 +1049,13 @@ test('排行榜 —— 切到同一个项目不重复加载', async () => {
   assert.strictEqual(page.data.view, before);
 });
 
-test('排行榜 —— 切榜单类型会换成进步榜', async () => {
+test('排行榜 —— 已经没有榜单类型切换了', async () => {
   const page = instantiate(rankConfig);
   await page.onLoad();
 
-  await page.onSwitchBoard({ currentTarget: { dataset: { board: 'progress' } } });
-
-  assert.strictEqual(page.data.view.activeBoard, 'progress');
-  assert.strictEqual(page.data.view.activeBoardLabel, '进步榜');
-  assert.ok(page.data.view.rows.length > 0);
-});
-
-test('排行榜 —— 切到同一榜单类型不重复加载', async () => {
-  const page = instantiate(rankConfig);
-  await page.onLoad();
-
-  const before = page.data.view;
-  await page.onSwitchBoard({ currentTarget: { dataset: { board: 'elo' } } });
-
-  assert.strictEqual(page.data.view, before);
-});
-
-test('排行榜 —— 项目和榜单两个维度互不影响', async () => {
-  const page = instantiate(rankConfig);
-  await page.onLoad();
-
-  await page.onSwitchProject({ currentTarget: { dataset: { project: 'doubles' } } });
-  await page.onSwitchBoard({ currentTarget: { dataset: { board: 'progress' } } });
-
-  // 切榜单不该把项目切回去——两个状态各记各的
-  assert.strictEqual(page.data.view.activeProject, 'doubles');
-  assert.strictEqual(page.data.view.activeBoard, 'progress');
+  // 进步榜被移除，页面不该再留着切榜单的入口
+  assert.strictEqual(typeof page.onSwitchBoard, 'undefined');
+  assert.strictEqual(page.data.view.boardTabs, undefined);
 });
 
 test('排行榜 —— 点榜上的人会跳到他的主页', async () => {
@@ -1002,14 +1076,16 @@ test('排行榜 —— 下拉刷新会收起刷新动画', async () => {
   assert.strictEqual(calls.pullDownStopped, 1);
 });
 
-test('排行榜 —— 搜索框空着时就是完整榜单，计数为「N 人上榜」', async () => {
+test('排行榜 —— 搜索框空着时就是榜单本身，计数与视图模型一致', async () => {
   const page = instantiate(rankConfig);
   await page.onLoad();
 
   assert.strictEqual(page.data.keyword, '');
   assert.strictEqual(page.data.searching, false);
   assert.strictEqual(page.data.rows.length, page.data.view.rows.length);
-  assert.strictEqual(page.data.playerCountText, `${page.data.rows.length} 人上榜`);
+  // 计数必须用完整榜单人数，不能只报榜上这（最多 10）行
+  assert.strictEqual(page.data.playerCountText, page.data.view.playerCountText);
+  assert.ok(page.data.playerCountText.includes(String(page.data.view.total)));
   assert.strictEqual(page.data.empty, false);
 });
 
@@ -1066,6 +1142,25 @@ test('排行榜 —— 切换项目后搜索词保留，不悄悄回到全部', 
   assert.strictEqual(page.data.searching, true);
 });
 
+test('排行榜 —— 搜索范围是全量榜单，前十之外的人也能搜到', async () => {
+  const page = instantiate(rankConfig);
+  await page.onLoad();
+
+  const outside = page.data.view.allRows[10];
+  assert.ok(outside, '要有前十之外的会员才能验证全量搜索');
+  assert.ok(
+    !page.data.rows.some((row) => row.userId === outside.userId),
+    '默认榜单不该显示他'
+  );
+
+  page.onInputKeyword({ detail: { value: outside.nickName } });
+
+  const hit = page.data.rows.find((row) => row.userId === outside.userId);
+  assert.ok(hit, '前十之外的人必须能被搜到');
+  assert.strictEqual(hit.rank, outside.rank, '搜索只是定位，不改名次');
+  assert.ok(hit.rank > 10);
+});
+
 /* ============================================================
  * 赛事（赛季积分榜）
  * ============================================================ */
@@ -1091,6 +1186,67 @@ test('赛事页 —— 榜上的人名次连续、积分从高到低', async () 
   });
   const points = rows.map((row) => Number(row.valueText));
   assert.deepStrictEqual(points, [...points].sort((a, b) => b - a));
+});
+
+test('赛事页 —— 积分榜只列前 10 名，计数交代总人数', async () => {
+  const page = instantiate(eventsConfig);
+  await page.onLoad();
+
+  assert.strictEqual(page.data.searching, false);
+  assert.strictEqual(page.data.rows.length, Math.min(10, page.data.view.total));
+  assert.ok(page.data.rows.length <= 10, '积分榜只显示前 10 名');
+  assert.strictEqual(page.data.playerCountText, page.data.view.playerCountText);
+  assert.ok(page.data.playerCountText.includes(String(page.data.view.total)));
+});
+
+test('赛事页 —— 输入名字后只剩命中的人，名次保持不变', async () => {
+  const page = instantiate(eventsConfig);
+  await page.onLoad();
+
+  const target = page.data.view.allRows[0];
+  page.onInputKeyword({ detail: { value: target.nickName } });
+
+  assert.strictEqual(page.data.searching, true);
+  assert.ok(page.data.rows.length >= 1, '至少要搜到榜首本人');
+  assert.strictEqual(page.data.playerCountText, `找到 ${page.data.rows.length} 人`);
+  const sameRow = page.data.rows.find((row) => row.userId === target.userId);
+  assert.strictEqual(sameRow.rank, target.rank, '搜索只是定位，不改名次');
+});
+
+test('赛事页 —— 搜索范围是全量榜单，前十之外的人也能搜到', async () => {
+  const page = instantiate(eventsConfig);
+  await page.onLoad();
+
+  const outside = page.data.view.allRows[10];
+  assert.ok(outside, '要有前十之外的会员才能验证全量搜索');
+  assert.ok(
+    !page.data.rows.some((row) => row.userId === outside.userId),
+    '默认榜单不该显示他'
+  );
+
+  page.onInputKeyword({ detail: { value: outside.nickName } });
+
+  const hit = page.data.rows.find((row) => row.userId === outside.userId);
+  assert.ok(hit, '前十之外的人必须能被搜到');
+  assert.strictEqual(hit.rank, outside.rank);
+});
+
+test('赛事页 —— 搜不到时提示里带上搜索词，清空后回到默认榜', async () => {
+  const page = instantiate(eventsConfig);
+  await page.onLoad();
+
+  const total = page.data.rows.length;
+  page.onInputKeyword({ detail: { value: '查无此人' } });
+
+  assert.strictEqual(page.data.empty, true);
+  assert.strictEqual(page.data.rows.length, 0);
+  assert.ok(page.data.emptyNote.includes('查无此人'), '要告诉用户是哪个词没搜到');
+  assert.strictEqual(page.data.playerCountText, '找到 0 人');
+
+  page.onClearKeyword();
+  assert.strictEqual(page.data.keyword, '');
+  assert.strictEqual(page.data.searching, false);
+  assert.strictEqual(page.data.rows.length, total);
 });
 
 test('赛事页 —— 点榜上的人会跳到他的主页', async () => {
@@ -1704,7 +1860,7 @@ function pendingParams() {
 const ME = 'u06';
 const RIVAL = 'u02';
 
-test('比赛页 —— 访客只看得到已生效的成绩，录入入口给出登录提示', async () => {
+test('比赛页 —— 访客看不到台账，录入入口与空态都给登录引导', async () => {
   resetSession();
   const page = instantiate(matchConfig);
   await page.onLoad();
@@ -1715,9 +1871,20 @@ test('比赛页 —— 访客只看得到已生效的成绩，录入入口给出
   assert.strictEqual(page.data.view.viewer.loggedIn, false);
   assert.strictEqual(page.data.auth.canRecord, false);
   assert.match(page.data.entryHint, /登录/);
-  assert.ok(page.data.view.records.length > 0, '成绩公示对访客仍然可见');
-  // 待确认与已撤销是流转中的临时状态，不该进入对外口径
-  assert.ok(page.data.view.records.every((row) => row.status === MATCH_STATUS.ACTIVE));
+  // 访客没有「自己的比赛」可言：台账不下发，空态引导去登录
+  assert.deepStrictEqual(page.data.view.records, []);
+  assert.strictEqual(page.data.view.needLogin, true);
+  assert.match(page.data.view.emptyText, /登录/);
+});
+
+test('比赛页 —— 访客点登录按钮跳到登录页', async () => {
+  resetSession();
+  const page = instantiate(matchConfig);
+  await page.onLoad();
+
+  calls.navigations.length = 0;
+  page.onGoLogin();
+  assert.deepStrictEqual(calls.navigations, ['/pages/login/login']);
 });
 
 test('比赛页 —— 登录后看到台账与自己的录入权限', async () => {
@@ -1734,17 +1901,19 @@ test('比赛页 —— 登录后看到台账与自己的录入权限', async () 
   assert.strictEqual(page.data.view.tabs.filter((item) => item.active).length, 1);
 });
 
-test('比赛页 —— 切到「我参与的」，整页换成我的比赛', async () => {
+test('比赛页 —— 默认落在「我的比赛」，页面上只列自己参加过的', async () => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
   const page = instantiate(matchConfig);
   await page.onLoad();
 
-  await page.onSwitchTab({ currentTarget: { dataset: { tab: 'mine' } } });
-
   assert.strictEqual(page.data.view.activeTab, 'mine');
-  assert.strictEqual(page.data.switching, false, '切完要把淡出状态收回');
+  assert.deepStrictEqual(
+    page.data.view.tabs.map((item) => item.tab),
+    ['mine', 'pending'],
+    '只剩「我的比赛」与「待确认」两个标签，没有「全部比赛」'
+  );
   assert.ok(page.data.view.records.length > 0);
   assert.ok(page.data.view.records.every((row) => row.isMine));
 });

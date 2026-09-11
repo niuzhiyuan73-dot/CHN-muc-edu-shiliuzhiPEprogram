@@ -116,13 +116,17 @@
 </template>
 
 <!-- ========== 分数卡（精简版）。「我的」页用，只留各项当前分数与排名、百分位 ========== -->
+<!-- 两个格子本身就是切换入口：点「双打」整页换成双打口径，选中的格子用主色标出。
+     没有出过场的项目不会出现在 projectTabs 里，因此也就没有那个格子 -->
 <template name="memberScoreDuo">
   <view class="card score-duo-card">
-    <view class="score-duo">
+    <view class="score-duo {{switching ? 'is-switching' : ''}}">
       <view
         wx:for="{{projectTabs}}"
         wx:key="project"
         class="score-duo-cell {{item.active ? 'is-active' : ''}}"
+        data-project="{{item.project}}"
+        bindtap="onSwitchProject"
       >
         <view class="score-duo-label">{{item.label}}</view>
         <view class="score-duo-value">{{item.elo}}</view>
@@ -348,7 +352,7 @@
     </view>
 
     <block wx:else>
-      <template is="memberScoreDuo" data="{{projectTabs: projectTabs, summary: summary}}" />
+      <template is="memberScoreDuo" data="{{projectTabs: projectTabs, summary: summary, switching: switching}}" />
       <template is="memberEvents" data="{{events: events}}" />
     </block>
   </block>

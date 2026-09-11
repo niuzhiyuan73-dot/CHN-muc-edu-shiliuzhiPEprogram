@@ -1,66 +1,7 @@
 /*
  * 排行榜样式
  * 分池切换（.pool-tabs）的样式在 app.wxss 里，与「我的」页共用。
- * 「我的排名」卡与榜单行的样式在 templates/rank-board.wxss 里，与「赛事」页共用。
+ * 「我的排名」卡、搜索框与榜单行的样式都在 templates/rank-board.wxss 里，
+ * 与「赛事」页共用。
  */
 @import "../../templates/rank-board.wxss";
-
-/* ==================== 榜单类型切换 ==================== */
-
-/* 做成下划线式标签，和上面那块实心的项目切换区分开：
-   两排长得一样的按钮摞在一起，用户会分不清哪排管什么 */
-.board-tabs {
-  display: flex;
-  border-bottom: 2rpx solid var(--color-divider);
-  margin-bottom: var(--space-md);
-}
-
-.board-tabs.is-switching {
-  opacity: 0.5;
-}
-
-.board-tab {
-  flex: 1;
-  text-align: center;
-  padding: var(--space-sm) 0;
-  font-size: var(--font-sm);
-  color: var(--color-text-secondary);
-}
-
-.board-tab.is-active {
-  color: var(--color-primary);
-  font-weight: 600;
-  /* 用内阴影当选中下划线，压在容器边框上，看起来是「这个标签被选中」 */
-  box-shadow: inset 0 -4rpx 0 var(--color-primary);
-}
-
-/* ==================== 按名字找会员 ==================== */
-
-.search-bar {
-  display: flex;
-  align-items: center;
-  height: 76rpx;
-  padding: 0 var(--space-md);
-  background: var(--color-card);
-  border-radius: var(--radius-md);
-  margin-bottom: var(--space-md);
-}
-
-.search-input {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--font-sm);
-}
-
-/* 清空按钮。只在有输入时出现，空着占一个叉反而让人以为能点 */
-.search-clear {
-  flex-shrink: 0;
-  width: 44rpx;
-  height: 44rpx;
-  line-height: 44rpx;
-  text-align: center;
-  border-radius: 50%;
-  font-size: var(--font-xs);
-  color: var(--color-text-tertiary);
-  background: var(--color-bg);
-}

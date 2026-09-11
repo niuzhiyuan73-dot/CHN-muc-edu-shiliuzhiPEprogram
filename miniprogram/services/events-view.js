@@ -132,6 +132,15 @@ function describeSeason(season = {}) {
  * ============================================================ */
 
 /**
+ * 积分榜默认展示多少名。
+ *
+ * 与排行榜页的等级分榜写死同一个口径：前十足够回答「谁投入最多」。
+ * 但同样地，**「我在积分榜的排名」卡不能被截断**，搜索也要能查全量，
+ * 所以名次始终在完整榜上算，前 10 只是显示层的截断。
+ */
+const TOP_LIMIT = 10;
+
+/**
  * 把会员列表排成积分榜并整形成页面上的行。
  *
  * 【为什么在这里过滤掉没积分的会员】
@@ -462,8 +471,12 @@ async function loadEventsView(options = {}) {
   const actor = usesExplicitUser ? options.user : current;
   const myId = actor ? actor._id : null;
 
-  const rows = buildPointsRows(members, countEvents(events), myId);
-  const myRow = (myId && rows.find((row) => row.isMe)) || null;
+  // 名次先在完整榜上算好，再截断显示——顺序不能反，否则前十之外的人
+  // 拿不到自己的名次
+  const allRows = buildPointsRows(members, countEvents(events), myId);
+  const rows = allRows.slice(0, TOP_LIMIT);
+  const total = allRows.length;
+  const myRow = (myId && allRows.find((row) => row.isMe)) || null;
 
   const signupMap = await loadSignupMap(events);
   const eventRows = buildEventListRows(events, { actor, signupMap });
@@ -472,7 +485,12 @@ async function loadEventsView(options = {}) {
   return {
     seasonText: describeSeason(season),
     rows,
-    playerCountText: `${rows.length} 人上榜`,
+    // 完整榜不参与默认渲染，但页面的搜索框要在全量里找人
+    allRows,
+    total,
+    hasMore: total > rows.length,
+    // 前十之外还有人就如实交代总数，不能只报 10
+    playerCountText: total > TOP_LIMIT ? `前 ${TOP_LIMIT} 名 · 共 ${total} 人` : `${total} 人上榜`,
     empty: rows.length === 0,
     emptyNote: '本赛季还没有人拿到积分，参加一次赛事就能上榜',
     me:
@@ -480,8 +498,10 @@ async function loadEventsView(options = {}) {
         ? null
         : {
             rank: myRow.rank,
-            total: rows.length,
-            beatText: `超过 ${formatPercent((rows.length - myRow.rank) / rows.length)} 的会员`,
+            // 分母用完整榜人数：即使我排在第 15、列表里看不到我，
+            // 也该知道自己是第 15 / 20，而不是第 15 / 10
+            total,
+            beatText: `超过 ${formatPercent((total - myRow.rank) / total)} 的会员`,
           },
     meHint: myRow === null ? '本赛季还没有积分，参加一次赛事就能上榜' : '',
 
@@ -660,6 +680,7 @@ async function loadEventPlacementView(eventId, options = {}) {
 module.exports = {
   MEDALS,
   PLACEMENT_MEDALS,
+  TOP_LIMIT,
   medalOf,
   avatarOf,
   asArray,

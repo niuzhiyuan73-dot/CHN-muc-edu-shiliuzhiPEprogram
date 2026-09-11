@@ -1,13 +1,13 @@
 /**
  * 排行榜
  * ============================================================
- * 页面只做三件事：渲染、切项目/切榜、点人跳转。
+ * 页面只做三件事：渲染、切项目、点人跳转。
  * 取数与整形全在 services/rank-view.js 里，那边可以脱离 wx 测试。
  *
- * 【两个切换维度】
- *   项目：男单 / 女单 / 双打  —— 男单榜与女单榜取自同一个单打池，分数可比
- *   榜单：等级分榜 / 进步榜    —— 因为等级分是零和的，「进步」得另立一把尺子
- * 两者是正交的，可以自由组合，所以状态各自记一个，互不影响。
+ * 【只剩一个榜单类型】
+ * 界面精简后去掉了「进步榜」，只剩等级分榜。项目（男单 / 女单 / 双打）
+ * 仍可切换——男单榜与女单榜取自同一个单打池，分数可比。
+ * 榜单列表只显示前 10 名，「我的排名」卡由视图模型按完整榜单算。
  * ============================================================
  */
 
@@ -20,7 +20,7 @@ Page({
     loading: true,
     /** 加载失败时的提示 */
     error: '',
-    /** 切换项目/榜单时给个淡淡的反馈 */
+    /** 切换项目时给个淡淡的反馈 */
     switching: false,
     // 视图模型，形状见 services/rank-view.js。
     // 初值给空对象而不是 null，WXML 里的 {{view.xxx}} 才不会报错。
@@ -64,10 +64,7 @@ Page({
    */
   async refresh() {
     try {
-      const view = await loadRankView({
-        project: this.currentProject,
-        board: this.currentBoard,
-      });
+      const view = await loadRankView({ project: this.currentProject });
       // 完整榜单另存一份。它不参与渲染，只当筛选的数据源，
       // 所以不用塞进 data——省一次 setData 的开销。
       this.view = view;
@@ -91,14 +88,24 @@ Page({
    * @param {string} keyword
    */
   applyKeyword(keyword) {
-    const search = describeSearch((this.view && this.view.rows) || [], keyword);
+    const view = this.view || {};
+    // 搜索在完整榜单里找（allRows），默认展示的才是截断后的前 10（rows）。
+    // 只用 rows 当搜索源的话，前十之外的人永远搜不到。
+    const search = describeSearch(view.allRows || [], keyword);
+    const idle = !search.searching;
+
     this.setData({
       keyword: search.keyword,
-      rows: search.rows,
+      rows: idle ? view.rows || [] : search.rows,
       searching: search.searching,
-      playerCountText: search.countText,
-      empty: search.empty,
-      emptyNote: search.emptyNote,
+      // 搜索时才问「找到几人」；不搜索时用视图模型算好的计数——
+      // 它要交代「前 10 名 · 共 N 人」，光说榜上这 10 个人会少报总数
+      playerCountText: search.searching
+        ? search.countText
+        : view.playerCountText || '',
+      // 不搜索时回到「默认展示的前 10」的空态，而不是全量榜单的空态
+      empty: idle ? Boolean(view.empty) : search.empty,
+      emptyNote: idle ? view.emptyNote || '' : search.emptyNote,
     });
   },
 
@@ -120,16 +127,6 @@ Page({
     }
 
     this.currentProject = project;
-    this.setData({ switching: true });
-    return this.refresh();
-  },
-
-  /** 切换榜单类型 */
-  onSwitchBoard(event) {
-    const { board } = event.currentTarget.dataset;
-    if (!board || board === this.data.view.activeBoard || this.data.switching) return undefined;
-
-    this.currentBoard = board;
     this.setData({ switching: true });
     return this.refresh();
   },

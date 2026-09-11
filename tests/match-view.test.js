@@ -5,6 +5,7 @@ const {
   TAB,
   TAB_LABEL,
   TAB_EMPTY,
+  VISITOR_EMPTY,
   DEFAULT_LIMIT,
   statusTagOf,
   buildRecordRow,
@@ -247,16 +248,13 @@ test('buildRecordRow —— 撤销理由随行带出，界面才显示得出原�
   assert.strictEqual(row.statusReason, '比分记反了');
 });
 
-test('filterRecords —— 三个标签页各自的筛选口径', () => {
+test('filterRecords —— 两个标签页各自的筛选口径', () => {
   const mine = pendingRecord({ _id: 'm1' });
   const others = pendingRecord({ _id: 'm2', teamA: ['u01'], teamB: ['u02'], recorder: 'u01' });
   const done = pendingRecord({ _id: 'm3', status: MATCH_STATUS.ACTIVE });
   const list = [mine, others, done];
 
-  assert.deepStrictEqual(
-    filterRecords(list, TAB.ALL, ME).map((m) => m._id),
-    ['m1', 'm2', 'm3']
-  );
+  // 「我的比赛」看我参与的全部，不分状态
   assert.deepStrictEqual(
     filterRecords(list, TAB.MINE, ME).map((m) => m._id),
     ['m1', 'm3']
@@ -269,10 +267,8 @@ test('filterRecords —— 三个标签页各自的筛选口径', () => {
 });
 
 test('filterRecords —— 非法输入退回空数组，不抛错', () => {
-  assert.deepStrictEqual(filterRecords(null, TAB.ALL, ME), []);
+  assert.deepStrictEqual(filterRecords(null, TAB.MINE, ME), []);
   assert.deepStrictEqual(filterRecords(undefined, TAB.MINE, ME), []);
-  // 未知标签按「全部」处理
-  assert.deepStrictEqual(filterRecords([pendingRecord()], 'nope', ME).length, 1);
 });
 
 /* ============================================================
@@ -290,7 +286,7 @@ test('loadMatchView —— 不传 userId 时看的是当前登录会员', async 
   assert.strictEqual(view.viewer.loggedIn, true);
 });
 
-test('loadMatchView —— 访客不会被当成演示会员，权限一概没有', async () => {
+test('loadMatchView —— 访客不会被当成演示会员，看不到任何台账并收到登录引导', async () => {
   // 页面把全局登录态传进来；传 null 就是访客。若这里自己去问数据源
   // 「当前用户是谁」，mock 永远答 u06，访客会凭空获得确认与撤销权
   const view = await loadMatchView({ user: null });
@@ -298,22 +294,22 @@ test('loadMatchView —— 访客不会被当成演示会员，权限一概没�
   assert.strictEqual(view.found, true);
   assert.strictEqual(view.viewer.userId, null);
   assert.strictEqual(view.viewer.loggedIn, false);
-  assert.ok(view.records.length > 0, '访客仍可看成绩公示');
-  assert.ok(view.records.every((row) => row.canConfirm === false));
-  assert.ok(view.records.every((row) => row.canRevoke === false));
-  assert.ok(view.records.every((row) => row.isMine === false));
+  // 访客没有「自己的比赛」可言，两个标签都不下发行数据
+  assert.deepStrictEqual(view.records, []);
+  assert.strictEqual(view.total, 0);
+  assert.strictEqual(view.needLogin, true);
+  assert.strictEqual(view.emptyText, VISITOR_EMPTY);
+  assert.strictEqual(view.pendingCount, 0);
   assert.strictEqual(view.demoNotice, '');
 });
 
-test('loadMatchView —— 访客看不到待确认与已撤销的比赛', async () => {
-  // 流转中的成绩是临时的，不该进入对外公示口径
-  const view = await loadMatchView({ user: null, limit: 5000 });
-  assert.ok(view.records.every((row) => row.status === MATCH_STATUS.ACTIVE));
+test('loadMatchView —— 访客两个标签都是空的，不泄露流转中的成绩', async () => {
+  // 待确认、已撤销这类流转中的成绩是临时的，不该进入对外公示口径
   assert.deepStrictEqual((await loadMatchView({ user: null, tab: TAB.PENDING })).records, []);
   assert.deepStrictEqual((await loadMatchView({ user: null, tab: TAB.MINE })).records, []);
 });
 
-test('loadMatchView —— 三个标签里恰好有一个是选中的', async () => {
+test('loadMatchView —— 两个标签里恰好有一个是选中的', async () => {
   const view = await loadMatchView();
   assert.strictEqual(view.tabs.length, Object.keys(TAB).length);
 
@@ -322,28 +318,34 @@ test('loadMatchView —— 三个标签里恰好有一个是选中的', async ()
   assert.strictEqual(active[0].tab, view.activeTab);
 });
 
-test('loadMatchView —— 非法标签退回「全部」，不给空白页', async () => {
+test('loadMatchView —— 默认落在「我的比赛」', async () => {
+  const view = await loadMatchView();
+  assert.strictEqual(view.activeTab, TAB.MINE);
+  assert.strictEqual(view.emptyText, TAB_EMPTY[TAB.MINE]);
+});
+
+test('loadMatchView —— 非法标签退回「我的比赛」，不给空白页', async () => {
   const view = await loadMatchView({ tab: 'nope' });
-  assert.strictEqual(view.activeTab, TAB.ALL);
-  assert.strictEqual(view.emptyText, TAB_EMPTY[TAB.ALL]);
+  assert.strictEqual(view.activeTab, TAB.MINE);
+  assert.strictEqual(view.emptyText, TAB_EMPTY[TAB.MINE]);
 });
 
 test('loadMatchView —— 顺序与台账一致，且不超过默认上限', async () => {
   const raw = await facade.getMatchRecords();
-  const view = await loadMatchView();
+  const view = await loadMatchView({ limit: DEFAULT_LIMIT });
 
   assert.ok(raw.length > 0);
-  // 台账是时间倒序，页面这一份必须原样沿用，不能重排
-  assert.deepStrictEqual(
-    view.records.map((row) => row.matchId),
-    raw.slice(0, DEFAULT_LIMIT).map((match) => match._id)
-  );
+  // 默认标签是「我的比赛」，页面这一份是该标签下、台账原序（时间倒序）的一段
+  const expected = filterRecords(raw, TAB.MINE, ME)
+    .slice(0, DEFAULT_LIMIT)
+    .map((match) => match._id);
+  assert.deepStrictEqual(view.records.map((row) => row.matchId), expected);
   // total 报的是筛选后的总数，不是这一页的条数——页面据此提示「只显示最近 N 场」
-  assert.strictEqual(view.total, raw.length);
-  assert.strictEqual(view.hasMore, raw.length > DEFAULT_LIMIT);
+  assert.strictEqual(view.total, expected.length);
+  assert.strictEqual(view.hasMore, expected.length > view.records.length);
 });
 
-test('loadMatchView —— 「我参与的」里每一行都确实有我', async () => {
+test('loadMatchView —— 「我的比赛」里每一行都确实有我', async () => {
   const view = await loadMatchView({ tab: TAB.MINE });
   assert.ok(view.records.length > 0, '默认会员应当参加过比赛');
   assert.ok(view.records.every((row) => row.isMine));

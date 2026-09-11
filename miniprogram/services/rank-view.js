@@ -4,12 +4,17 @@
  * 和 profile-view.js 同样的思路：取数、整形、算文案都放在这里，
  * 页面只负责渲染和交互。本模块不碰任何 wx API，可以在 Node 里测。
  *
- * 【两种榜】
- *   等级分榜  按等级分排序，谁强谁在前——这是「实力」的尺子
- *   进步榜    按赛季内涨幅排序——这是「成长」的尺子
- * 必须分成两个榜，不能合成一个。原因见 utils/leaderboard.js 里
- * 「进步榜」那段注释：等级分是零和的，总分恒定，「人人都进步」
- * 在这个体系里不可能发生。想表扬进步，只能换一把尺子。
+ * 【为什么只剩等级分榜】
+ * 曾经并列过「进步榜」（按赛季内涨幅排序）。界面精简后只留一把尺子：
+ * 等级分榜。涨幅那套依赖「零和的等级分」这个前提（见 utils/leaderboard.js
+ * 里进步榜那段注释），对普通会员来说理解成本高于它带来的信息。
+ * getProgressLeaderboard 仍在数据层保留，只是排行榜页不再用它。
+ *
+ * 【为什么只展示前 10 名】
+ * 榜单是给人一个「谁最强」的印象，不是完整名册。六百多场堆出来的一长串
+ * 名字没人会翻到底，前十足够。但**「我的排名」卡不能被截断**——一个排第
+ * 20 的人如果既不在列表里、又拿不到自己的名次，这个页面就对他毫无用处。
+ * 所以名次始终在**完整榜单**上算，前 10 只是显示层的截断。
  *
  * 【为什么在这里过滤掉没出过场的人】
  * getLeaderboard 返回的是项目内全体会员，包括一场没打的人（他们的分数
@@ -24,33 +29,17 @@
  */
 
 const { RANK_PROJECT_LABEL, ALL_RANK_PROJECTS } = require('../utils/constants.js');
-const { formatElo, formatSigned, formatPercent } = require('../utils/format.js');
-const { getCurrentUser, getLeaderboard, getProgressLeaderboard } = require('./index.js');
+const { formatElo, formatPercent } = require('../utils/format.js');
+const { getCurrentUser, getLeaderboard } = require('./index.js');
+
+/** 榜单标题里的名字。只剩等级分这一把尺子，不再是可切换的维度 */
+const BOARD_LABEL = '等级分榜';
 
 /**
- * 榜单类型。
- * 命名成 BOARD 而不是 RANK_PERIOD，是为了和 constants.js 里的
- * 「总榜/周榜/月榜/赛季榜」区分开——那是时间范围，这是排序依据，
- * 两者将来可以叠加（比如「周榜 + 进步榜」）。
+ * 等级榜最多展示多少名。
+ * 写死而不是做成配置：这是「界面精简」定下的口径，不是一个可调参数。
  */
-const BOARD = {
-  ELO: 'elo', // 等级分榜
-  PROGRESS: 'progress', // 进步榜
-};
-
-const BOARD_LABEL = {
-  [BOARD.ELO]: '等级分榜',
-  [BOARD.PROGRESS]: '进步榜',
-};
-
-/** 榜单顺序，决定标签栏里哪个在前 */
-const ALL_BOARDS = [BOARD.ELO, BOARD.PROGRESS];
-
-/**
- * 进步榜的最低出场门槛，与 leaderboard.js 的默认值保持一致。
- * 这里重新声明一份是为了在「你还差几场」的提示里引用它。
- */
-const PROGRESS_MIN_MATCHES = 5;
+const TOP_LIMIT = 10;
 
 /** 前三名的奖牌样式，其余为空字符串（不额外装饰） */
 const MEDALS = ['gold', 'silver', 'bronze'];
@@ -70,9 +59,8 @@ function avatarOf(nickName) {
 }
 
 /**
- * 「定级中」「不活跃」这两个标记只在等级分榜上有意义：
+ * 「定级中」「不活跃」这两个标记在等级分榜上有意义：
  * 定级中说明分数还没收敛，不活跃说明分数是旧的。
- * 进步榜上没有这两种状态，因为上榜本身就要求打满场次。
  *
  * @param {string} status leaderboard.js 给出的状态
  * @returns {string} 徽章文案，无状态时返回空串
@@ -116,39 +104,10 @@ function buildEloRows(board, myId) {
     avatarUrl: row.avatarUrl || '',
     // 左侧副标题：战绩。胜率只在右侧小字里出现，避免一行塞三个数字
     detailText: `${row.wins} 胜 ${row.losses} 负`,
-    // 统一成字符串：进步榜那边的主数字来自 formatSigned，本来就是字符串。
-    // 两个榜的 valueText 类型一致，模板和调用方才不用分情况处理。
     valueText: String(formatElo(row.elo)),
     valueClass: '',
     noteText: `胜率 ${formatPercent(row.winRate)}`,
     badge: badgeOf(row.status),
-  }));
-}
-
-/**
- * 把进步榜的原始数据整形成页面上的一行。
- *
- * 主数字用涨幅而不是当前分数：既然是进步榜，比的就是涨了多少，
- * 当前分数放在副标题里当背景（1500 → 1680 比单看 +180 更有画面感）。
- *
- * @param {Array<Object>} board buildProgressLeaderboard 的结果（已排序编号）
- * @param {string|null} myId
- * @returns {Array<Object>}
- */
-function buildProgressRows(board, myId) {
-  return board.map((row) => ({
-    userId: row._id,
-    rank: row.rank,
-    medal: medalOf(row.rank),
-    isMe: row._id === myId,
-    nickName: row.nickName,
-    avatarText: avatarOf(row.nickName),
-    avatarUrl: row.avatarUrl || '',
-    detailText: `${formatElo(row.startElo)} → ${formatElo(row.currentElo)}`,
-    valueText: formatSigned(row.delta),
-    valueClass: row.delta >= 0 ? 'is-up' : 'is-down',
-    noteText: `${row.matchCount} 场`,
-    badge: '',
   }));
 }
 
@@ -173,7 +132,12 @@ function normalizeKeyword(keyword) {
  * 就变成第 1 名——那会让人误以为他的实力涨了。名次是榜单上的绝对坐标，
  * 搜索只决定「看不看得见」，不决定「排第几」。
  *
- * @param {Array<Object>} rows buildEloRows / buildProgressRows 的结果
+ * 【搜索范围是全量，展示默认只给前 10】
+ * 列表默认截断到前 10 是为了精简，但「想找某个人」是另一回事：排行榜
+ * 页面的搜索框就是为了定位到具体的人，只在前 10 里搜等于查不到大多数人。
+ * 所以页面搜索时喂进来的是 allRows（完整榜单），默认展示的才是 rows。
+ *
+ * @param {Array<Object>} rows 待筛选的榜单行（页面搜索时传完整榜单）
  * @param {string} keyword 搜索词
  * @returns {Array<Object>} 命中的行，原顺序、原名次
  */
@@ -190,7 +154,7 @@ function filterRows(rows, keyword) {
  * 页面上的搜索框每敲一个字都会调用它，所以它必须同步、且不碰数据源——
  * 绝不能每次输入都重新拉一遍榜单。
  *
- * @param {Array<Object>} allRows 未筛选的完整榜单行
+ * @param {Array<Object>} allRows 待筛选的榜单行（搜索时给完整榜单）
  * @param {string} keyword 搜索词
  * @returns {Object} { keyword, rows, searching, countText, empty, emptyNote }
  */
@@ -220,38 +184,31 @@ function describeSearch(allRows, keyword) {
  *
  * @param {Object} [options]
  * @param {string} [options.project] 榜单项目，非法或未传时退回第一个项目
- * @param {string} [options.board] 榜单类型，非法或未传时退回等级分榜
  * @returns {Promise<Object>}
  */
 async function loadRankView(options = {}) {
   const activeProject = ALL_RANK_PROJECTS.includes(options.project)
     ? options.project
     : ALL_RANK_PROJECTS[0];
-  const activeBoard = ALL_BOARDS.includes(options.board) ? options.board : BOARD.ELO;
 
   const me = await getCurrentUser();
   const myId = me ? me._id : null;
 
-  let rows;
-  if (activeBoard === BOARD.PROGRESS) {
-    // buildProgressLeaderboard 内部已经过滤门槛并编好名次，直接用
-    const board = await getProgressLeaderboard(activeProject, { minMatches: PROGRESS_MIN_MATCHES });
-    rows = buildProgressRows(board, myId);
-  } else {
-    rows = buildEloRows(rankProjectBoard(await getLeaderboard(activeProject)), myId);
-  }
+  // 名次先在完整榜单上算好，再截断显示——顺序不能反，
+  // 否则前十之外的人拿不到自己的名次
+  const fullBoard = buildEloRows(rankProjectBoard(await getLeaderboard(activeProject)), myId);
+  const rows = fullBoard.slice(0, TOP_LIMIT);
 
-  // 我的名次直接从展示的这份榜单里找，而不是另外调 getPercentile。
-  // 后者算的是全体会员（含没打过的人），分母和榜上人数对不上，
-  // 会出现「第 6 / 24」下面却只列了 20 个人的情况。
+  // 我的名次从完整榜单里找，不能只在截断后的前十行里找
   //
   // 末尾的 || null 不能省：find() 找不到时返回 undefined，
   // 而下面几处判断写的是 === null，漏掉 undefined 会直接抛错。
-  const myRow = (myId && rows.find((row) => row.isMe)) || null;
+  const myRow = (myId && fullBoard.find((row) => row.isMe)) || null;
 
-  // 空搜索词的筛选结果就是原榜。这里借它算出「N 人上榜」，是为了让
+  // 空搜索词的筛选结果就是原榜。这里借它算出空态，是为了让
   // 计数文案与页面搜索时的「找到 N 人」出自同一处，不会各写各的。
   const unsearched = describeSearch(rows, '');
+  const total = fullBoard.length;
 
   return {
     projectTabs: ALL_RANK_PROJECTS.map((project) => ({
@@ -259,50 +216,44 @@ async function loadRankView(options = {}) {
       label: RANK_PROJECT_LABEL[project],
       active: project === activeProject,
     })),
-    boardTabs: ALL_BOARDS.map((board) => ({
-      board,
-      label: BOARD_LABEL[board],
-      active: board === activeBoard,
-    })),
     activeProject,
     activeProjectLabel: RANK_PROJECT_LABEL[activeProject],
-    activeBoard,
-    // 标题栏要显示「男单 · 等级分榜」，得给文案不是 key
-    activeBoardLabel: BOARD_LABEL[activeBoard],
+    // 标题栏要显示「男单 · 等级分榜」，给文案而不是 key
+    activeBoardLabel: BOARD_LABEL,
     rows: unsearched.rows,
+    // 完整榜单。它不参与默认渲染（默认只给前 10），但页面的搜索框要在
+    // 全量里找人——只搜前 10 的话，绝大多数会员都查不到
+    allRows: fullBoard,
+    // 完整榜单的人数。列表只列前 10，但「我的排名」与计数都要用它做分母
+    total,
+    hasMore: total > rows.length,
     empty: unsearched.empty,
-    playerCountText: unsearched.countText,
+    // 前十之外还有人就如实交代，不能只报 10
+    playerCountText: total > TOP_LIMIT ? `前 ${TOP_LIMIT} 名 · 共 ${total} 人` : `${total} 人上榜`,
     emptyNote: unsearched.emptyNote,
     me:
       myRow === null
         ? null
         : {
             rank: myRow.rank,
-            // 分母用上榜人数而不是全体会员：和第 6 / 20 名对得上
-            total: rows.length,
+            // 分母用完整榜单人数：即使我排在第 20、列表里看不到我，
+            // 也该知道自己是第 20 / 24，而不是第 20 / 10
+            total,
             // 分母用总人数：第 1 名显示「超过 95%」比「超过 100%」更像人话
-            beatText: `超过 ${formatPercent((rows.length - myRow.rank) / rows.length)} 的会员`,
+            beatText: `超过 ${formatPercent((total - myRow.rank) / total)} 的会员`,
           },
     // 自己不在榜上时给一句解释。空着会让人以为页面坏了
-    meHint:
-      myRow !== null
-        ? ''
-        : activeBoard === BOARD.PROGRESS
-        ? `出场满 ${PROGRESS_MIN_MATCHES} 场就能上进步榜`
-        : '你还没有参加过这个项目',
+    meHint: myRow !== null ? '' : '你还没有参加过这个项目',
   };
 }
 
 module.exports = {
-  BOARD,
   BOARD_LABEL,
-  ALL_BOARDS,
-  PROGRESS_MIN_MATCHES,
+  TOP_LIMIT,
   medalOf,
   badgeOf,
   rankProjectBoard,
   buildEloRows,
-  buildProgressRows,
   normalizeKeyword,
   filterRows,
   describeSearch,

@@ -1,12 +1,13 @@
 /**
  * 赛事
  * ============================================================
- * 页面只做三件事：渲染、点人跳转、点赛事跳详情。取数与整形全在
- * services/events-view.js 里。
+ * 页面只做四件事：渲染、点人跳转、点赛事跳详情、按名字筛选积分榜。
+ * 取数与整形全在 services/events-view.js 里。
  *
  * 【这一页现在有什么】
  *   1. 赛事列表：近期有哪些赛事、我报了哪一场，是赛事闭环的入口；
- *   2. 赛季积分榜：按本赛季积分排序，谁投入谁在前（决策 14）。
+ *   2. 赛季积分榜：按本赛季积分排序，谁投入谁在前（决策 14），
+ *      只展示前 10 名，其余靠搜索框定位。
  * 积分榜是「积分」这把尺子的展示面；「等级分」那把尺子在「排行榜」tab。
  *
  * 【为什么单独占一个 tab】
@@ -21,6 +22,9 @@
  */
 
 const { loadEventsView } = require('../../services/events-view.js');
+// 积分榜的搜索框与排行榜页是同一套逻辑，直接复用它的纯函数，
+// 免得「怎么算命中、怎么拼文案」在两处各写一份、改一处漏一处。
+const { describeSearch } = require('../../services/rank-view.js');
 const { isMock } = require('../../services/index.js');
 
 Page({
@@ -34,6 +38,22 @@ Page({
     view: {},
     /** 开发期在页脚标注数据来源 */
     isMock,
+
+    // ---------- 积分榜按名字筛选 ----------
+    // 完整榜留在 this.view 里，页面上只渲染筛选后的结果。与排行榜页同一套：
+    // 每敲一个字都只过一遍本地数组，不重新拉数据。
+    /** 当前搜索词 */
+    keyword: '',
+    /** 正在显示的积分榜行（已筛选） */
+    rows: [],
+    /** 是否处于搜索状态，用来切换文案口径 */
+    searching: false,
+    /** 积分榜右上角的计数文案 */
+    playerCountText: '',
+    /** 筛选后一行都没有 */
+    empty: false,
+    /** 一行都没有时给的原因 */
+    emptyNote: '',
   },
 
   /**
@@ -71,12 +91,52 @@ Page({
     try {
       const view = await loadEventsView({ user: this.currentUser(), isMock });
       this.loaded = true;
+      // 整个视图模型另存一份。里面的完整榜 allRows 不参与渲染，
+      // 只当筛选的数据源，所以不用塞进 data——省一次 setData 的开销。
+      this.view = view;
       this.setData({ loading: false, error: '', view });
+      // 重新装载后保留搜索词，重新算一遍要显示的行
+      this.applyKeyword(this.data.keyword);
     } catch (err) {
       console.error('[events] 加载失败', err);
       this.loaded = true;
       this.setData({ loading: false, error: '赛事页加载失败，请下拉重试' });
     }
+  },
+
+  /**
+   * 按搜索词重算积分榜要显示的行与文案。
+   * 纯本地计算，不碰数据源，所以能跟着每一次输入即时调用。
+   *
+   * @param {string} keyword
+   */
+  applyKeyword(keyword) {
+    const view = this.view || {};
+    // 搜索在完整榜（allRows）里找，默认展示的才是截断后的前 10（rows）。
+    // 只用 rows 当搜索源的话，前十之外的人永远搜不到。
+    const search = describeSearch(view.allRows || [], keyword);
+    const idle = !search.searching;
+
+    this.setData({
+      keyword: search.keyword,
+      rows: idle ? view.rows || [] : search.rows,
+      searching: search.searching,
+      playerCountText: search.searching
+        ? search.countText
+        : view.playerCountText || '',
+      empty: idle ? Boolean(view.empty) : search.empty,
+      emptyNote: idle ? view.emptyNote || '' : search.emptyNote,
+    });
+  },
+
+  /** 搜索框输入 */
+  onInputKeyword(event) {
+    this.applyKeyword(event.detail.value);
+  },
+
+  /** 清空搜索。清空后回到默认展示的积分榜（前 10） */
+  onClearKeyword() {
+    this.applyKeyword('');
   },
 
   /** 点榜上的任何一行，去看这个人的完整战绩 */
