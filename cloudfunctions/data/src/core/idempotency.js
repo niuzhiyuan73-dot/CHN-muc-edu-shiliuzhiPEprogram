@@ -1,0 +1,73 @@
+/**
+ * 幂等键
+ * ============================================================
+ * 【要防的是什么】
+ * 弱网下用户连点两下「提交」，或者请求超时后客户端自动重试，都可能让同一
+ * 场比赛被录入两次。等级分是零和的，重复一场比赛会让比赛双方各多算一次
+ * 分，而且看不出哪里错了。发公告同理。
+ *
+ * 【为什么用哈希而不是查询去重】
+ * 微信云开发的事务里，集合查询受限，而按 _id 读写稳定可靠。于是把
+ * 「这位会员在这个时间用这个比分打了这场比赛」压成一个自然键，直接当成
+ * 文档 _id：第二次提交会撞上同一个 _id，事务里读到已存在就知道是重试。
+ * 不需要查询，不需要唯一索引，也不需要额外的去重表。
+ *
+ * 【键里为什么包含录入人】
+ * 不同的人确实可能在不同场次报出完全相同的四人组合与比分——那是两场
+ * 真实比赛。用录入人把这种巧合区分开，避免误判成重复。
+ * ============================================================
+ */
+
+const crypto = require('crypto');
+
+/**
+ * 把若干字段拼成定长十六进制摘要。
+ * @param {Array<*>} parts
+ * @returns {string} 32 位十六进制
+ */
+function digest(parts) {
+  return crypto
+    .createHash('md5')
+    .update(parts.map((part) => String(part === null || part === undefined ? '' : part)).join('|'))
+    .digest('hex');
+}
+
+/**
+ * 比赛的自然键。
+ * 队伍成员先排序，避免「A 队里两人顺序不同」被误判成两场不同的比赛。
+ *
+ * @param {Object} record buildMatchRecord 产出的记录
+ * @returns {string} 可直接用作 _id
+ */
+function matchNaturalKey(record) {
+  return `m_${digest([
+    record.pool,
+    [...record.teamA].sort().join(','),
+    [...record.teamB].sort().join(','),
+    record.scoreA.join(','),
+    record.scoreB.join(','),
+    new Date(record.matchTime).toISOString(),
+    record.recorder || '',
+  ])}`;
+}
+
+/**
+ * 公告的自然键。
+ * @param {Object} record buildAnnouncementRecord 产出的记录
+ * @returns {string} 可直接用作 _id
+ */
+function announcementNaturalKey(record) {
+  return `a_${digest([record.publisherId || '', record.title, record.content])}`;
+}
+
+/**
+ * 会员记录的主键：一个 OpenID 只对应一个账号。
+ * 用它当 _id，重复提交入会申请就会落到同一条文档上。
+ * @param {string} openId
+ * @returns {string}
+ */
+function memberKey(openId) {
+  return `u_${digest([openId])}`;
+}
+
+module.exports = { digest, matchNaturalKey, announcementNaturalKey, memberKey };

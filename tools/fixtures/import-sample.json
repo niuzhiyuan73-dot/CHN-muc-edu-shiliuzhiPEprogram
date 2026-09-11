@@ -1,0 +1,112 @@
+[
+  {
+    "_id": "m_6f383bd1f253e893e564dab453139f8b",
+    "matchType": 1,
+    "pool": "singles",
+    "teamA": [
+      "u01"
+    ],
+    "teamB": [
+      "u02"
+    ],
+    "scoreA": [
+      11,
+      11
+    ],
+    "scoreB": [
+      9,
+      7
+    ],
+    "gamePoints": 11,
+    "bestOf": 3,
+    "winner": "A",
+    "location": "学校体育馆 1 号场",
+    "matchTime": "2026-04-08T18:00:00",
+    "status": 1,
+    "eventId": null,
+    "recorder": "u01"
+  },
+  {
+    "_id": "m_b1f83363b9b9757b20cbfbfa97553c58",
+    "matchType": 1,
+    "pool": "singles",
+    "teamA": [
+      "u03"
+    ],
+    "teamB": [
+      "u04"
+    ],
+    "scoreA": [
+      11,
+      11
+    ],
+    "scoreB": [
+      9,
+      7
+    ],
+    "gamePoints": 11,
+    "bestOf": 3,
+    "winner": "A",
+    "location": "学校体育馆 2 号场",
+    "matchTime": "2026-04-09T19:30:00",
+    "status": 1,
+    "eventId": null,
+    "recorder": "u03"
+  },
+  {
+    "_id": "m_b0fe978644e7d442f44ccf7ddf4cff0d",
+    "matchType": 3,
+    "pool": "doubles",
+    "teamA": [
+      "u01",
+      "u02"
+    ],
+    "teamB": [
+      "u03",
+      "u04"
+    ],
+    "scoreA": [
+      11,
+      9,
+      11
+    ],
+    "scoreB": [
+      9,
+      11,
+      9
+    ],
+    "gamePoints": 11,
+    "bestOf": 3,
+    "winner": "A",
+    "location": "学校体育馆 1 号场",
+    "matchTime": "2026-04-10T18:00:00",
+    "status": 1,
+    "eventId": null,
+    "recorder": "u01"
+  },
+  {
+    "_id": "m_a916b16b7d6ffaa889961fbc02f723ed",
+    "matchType": 1,
+    "pool": "singles",
+    "teamA": [
+      "u02"
+    ],
+    "teamB": [
+      "u01"
+    ],
+    "scoreA": [
+      11
+    ],
+    "scoreB": [
+      9
+    ],
+    "gamePoints": 11,
+    "bestOf": 1,
+    "winner": "A",
+    "location": "学校体育馆 2 号场",
+    "matchTime": "2026-04-11T18:00:00",
+    "status": 1,
+    "eventId": "ev1",
+    "recorder": "u02"
+  }
+]

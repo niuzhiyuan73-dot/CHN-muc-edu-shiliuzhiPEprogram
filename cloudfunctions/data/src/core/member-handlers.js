@@ -1,0 +1,136 @@
+/**
+ * 会员写接口：提交入会申请 / 通过 / 驳回
+ * ============================================================
+ * 【自提权是怎么被挡住的】
+ * 前端只能提交实名信息，_id、openId、role、status、joinDate 全部由服务端
+ * 生成。否则请求体里塞一个 role:2 就能自封管理员。
+ *
+ * 【重复提交为什么不会把已通过的账号打回待审核】
+ * 主键由 OpenID 派生，同一个人的重复申请必然落到同一条文档上。事务里
+ * 读到「已存在且不是待审核」，就直接把现有记录原样返回——用户重试一下
+ * 不该让刚批下来的账号又变回待审。
+ *
+ * 【为什么入会审核也要动赛季版本号】
+ * 通过一条申请会让这个人进入回放名单，从而影响部分比赛的期望胜率。
+ * 版本号 +1 让缓存失效，下一次读就会带上他重算。
+ * ============================================================
+ */
+
+const { ok, fail } = require('../envelope.js');
+const { callerError } = require('./context.js');
+const { getDataset } = require('./derive.js');
+const { bumpSeason } = require('./season.js');
+const { memberKey } = require('./idempotency.js');
+const { register: registerAccount } = require('../../lib/services/auth.js');
+const {
+  REVIEW_ACTION,
+  validateReview,
+} = require('../../lib/services/member-review.js');
+const { ROLE, USER_STATUS } = require('../../lib/utils/constants.js');
+
+/**
+ * 提交入会申请。一律记为「待审核」。
+ *
+ * @param {Object} payload { profile }
+ * @param {Object} ctx
+ * @returns {Promise<Object>} {ok, account, errors, firstError}
+ */
+async function registerMember(payload = {}, ctx) {
+  // 校验复用 auth.register（纯函数），本函数只负责落库——
+  // 两处各写一套校验，迟早会分叉
+  const result = registerAccount(payload.profile, { openId: ctx.openId, now: ctx.now });
+  if (!result.ok) {
+    return ok({
+      ok: false,
+      account: null,
+      errors: result.errors,
+      firstError: result.firstError,
+    });
+  }
+
+  // 没有 OpenID（理论上不会发生）时退回账号自带的临时编号，至少保证幂等
+  const _id = memberKey(ctx.openId || result.account._id);
+
+  const account = await ctx.repo.transaction(async (tx) => {
+    const existing = await tx.users.getById(_id);
+    // 已通过或已驳回的账号，原样返回：重试不能冲掉既有的审核结果
+    if (existing && existing.status !== USER_STATUS.PENDING) return existing;
+
+    const record = {
+      ...result.account,
+      _id,
+      openId: ctx.openId,
+      // 下面三个字段一律服务端盖章，不接受前端传入
+      role: ROLE.MEMBER,
+      status: USER_STATUS.PENDING,
+      joinDate: ctx.now,
+    };
+    await tx.users.set(_id, record);
+    await bumpSeason(tx, { anchorTime: null, now: ctx.now });
+    return record;
+  });
+
+  return ok({ ok: true, account, errors: {}, firstError: '' });
+}
+
+/**
+ * 审核一条入会申请。通过 / 驳回共用这条通路，只是终态不同。
+ *
+ * @param {string} applicationId
+ * @param {string} action 取值见 REVIEW_ACTION
+ * @param {string} reason 驳回理由，驳回时必填
+ * @param {Object} ctx
+ * @returns {Promise<Object>} {ok, account, message}
+ */
+async function reviewMember(applicationId, action, reason, ctx) {
+  const guard = callerError(ctx);
+  if (guard) return fail(guard);
+
+  const { applications, members } = await getDataset(ctx);
+  const application =
+    applications.find((item) => item._id === applicationId) ||
+    members.find((item) => item._id === applicationId) ||
+    null;
+
+  // 严格口径：审核权限 role >= STAFF，且不能审自己的申请
+  const verdict = validateReview(ctx.actor, application, action, reason, { isMock: false });
+  if (!verdict.ok) return ok({ ok: false, account: null, message: verdict.message });
+
+  const status =
+    action === REVIEW_ACTION.APPROVE ? USER_STATUS.ACTIVE : USER_STATUS.DISABLED;
+
+  const patched = await ctx.repo.transaction(async (tx) => {
+    const current = await tx.users.getById(applicationId);
+    // 事务内复核：并发审核只有一次能落地
+    if (!current || current.status !== USER_STATUS.PENDING) return null;
+
+    const patch = {
+      status,
+      action,
+      reason: String(reason || '').trim(),
+      actor: ctx.actorId,
+      actedAt: ctx.now,
+    };
+    await tx.users.set(applicationId, { ...current, ...patch });
+    await bumpSeason(tx, { anchorTime: null, now: ctx.now });
+    return { ...current, ...patch };
+  });
+
+  if (!patched) return ok({ ok: false, account: null, message: '这条申请已经处理过了' });
+  return ok({ ok: true, account: patched, message: '' });
+}
+
+/** 通过一条入会申请，申请人随即成为正式会员并进入回放名单 */
+async function approveMember(payload = {}, ctx) {
+  return reviewMember(payload.applicationId, REVIEW_ACTION.APPROVE, '', ctx);
+}
+
+/** 驳回一条入会申请。驳回后账号处于「已禁用」，靠 action 区分文案。 */
+async function rejectMember(payload = {}, ctx) {
+  return reviewMember(payload.applicationId, REVIEW_ACTION.REJECT, payload.reason, ctx);
+}
+
+// reviewMember 是 approve / reject 共用的内部实现，不导出——dispatch 会把
+// 模块的所有导出都当成可调用的 action，导出它就等于多开一个没有参数约定
+// 的路由。
+module.exports = { registerMember, approveMember, rejectMember };

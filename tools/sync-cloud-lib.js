@@ -1,0 +1,118 @@
+/**
+ * 云函数共享库同步工具
+ * ============================================================
+ * 【为什么需要它】
+ * 微信云函数是「按目录打包」的：cloudfunctions/data/ 无法 require 目录以外
+ * 的文件。而等级分回放、比分校验这些纯逻辑住在 miniprogram/ 里，云端必须
+ * 用同一份实现——两份各自手抄的算法迟早会分叉，那时同一场比赛在两边的
+ * 分数就对不上了。
+ *
+ * 所以这里按清单把纯模块复制进 cloudfunctions/data/lib/，并保留 utils/ 与
+ * services/ 的目录层级，让模块内部的相对 require（如 '../utils/constants.js'）
+ * 在镜像里原样成立。
+ *
+ * 【为什么镜像要提交进仓库，而不是构建时生成】
+ * 开发者工具上传云函数时不会替你跑构建脚本；干净检出后也要能直接跑测试。
+ * 因此镜像入库，再由 tests/cloud-lib-sync.test.js 逐字节守住它：谁改了源
+ * 文件却忘了同步，测试立刻变红。
+ *
+ * 【清单的选取标准】
+ * 只收「纯模块」——不碰 wx API、不碰 Node API、不做 I/O，只有纯计算与校验。
+ * seed/random 是造模拟数据用的，store 系列是内存台账，都不该上云。
+ * 注意 auth.js 里的 login() 会延迟 require 门面 index.js，云函数不要调用
+ * 它（云端自行按 OpenID 取用户），其余函数（register/buildAccount 等）可以。
+ *
+ * 用法：
+ *   node tools/sync-cloud-lib.js           # 生成 / 更新镜像
+ *   node tools/sync-cloud-lib.js --check   # 只校验不写入，漂移时退出码为 1
+ * ============================================================
+ */
+
+const fs = require('fs');
+const path = require('path');
+
+const ROOT = path.join(__dirname, '..');
+const SRC_ROOT = path.join(ROOT, 'miniprogram');
+const DEST_ROOT = path.join(ROOT, 'cloudfunctions', 'data', 'lib');
+
+/** 需要同步到云函数的纯模块，路径相对 miniprogram/ */
+const MANIFEST = [
+  // 纯计算与常量
+  'utils/constants.js',
+  'utils/elo.js',
+  'utils/rating.js',
+  'utils/points.js',
+  'utils/match-format.js',
+  'utils/format.js',
+  'utils/leaderboard.js',
+  'utils/stats.js',
+  // 纯逻辑服务
+  'services/replay.js',
+  'services/match-record.js',
+  'services/member-review.js',
+  'services/announcement.js',
+  'services/permission.js',
+  'services/auth.js',
+];
+
+/**
+ * 按清单同步（或校验）镜像。
+ * @param {boolean} checkOnly 只校验不写入
+ * @returns {{missing: string[], drifted: string[]}} 校验模式下发现的差异
+ */
+function sync(checkOnly) {
+  const missing = [];
+  const drifted = [];
+
+  for (const rel of MANIFEST) {
+    const srcPath = path.join(SRC_ROOT, rel);
+    const destPath = path.join(DEST_ROOT, rel);
+
+    if (!fs.existsSync(srcPath)) {
+      throw new Error(`清单里的源文件不存在：${srcPath}`);
+    }
+
+    const srcBuf = fs.readFileSync(srcPath);
+
+    if (checkOnly) {
+      if (!fs.existsSync(destPath)) {
+        missing.push(rel);
+      } else if (!fs.readFileSync(destPath).equals(srcBuf)) {
+        drifted.push(rel);
+      }
+      continue;
+    }
+
+    fs.mkdirSync(path.dirname(destPath), { recursive: true });
+    fs.writeFileSync(destPath, srcBuf);
+  }
+
+  return { missing, drifted };
+}
+
+function main() {
+  const checkOnly = process.argv.includes('--check');
+
+  if (checkOnly) {
+    const { missing, drifted } = sync(true);
+    if (missing.length > 0 || drifted.length > 0) {
+      console.error('云函数共享库与源文件不一致：');
+      for (const rel of missing) console.error(`  缺少   ${rel}`);
+      for (const rel of drifted) console.error(`  已漂移 ${rel}`);
+      console.error('请运行：node tools/sync-cloud-lib.js');
+      process.exit(1);
+    }
+    console.log(`云函数共享库已同步，共 ${MANIFEST.length} 个文件。`);
+    return;
+  }
+
+  sync(false);
+  console.log(`已同步 ${MANIFEST.length} 个文件到 cloudfunctions/data/lib/：`);
+  for (const rel of MANIFEST) console.log(`  ${rel}`);
+}
+
+if (require.main === module) {
+  main();
+}
+
+module.exports = { MANIFEST, SRC_ROOT, DEST_ROOT, sync };
