@@ -1,0 +1,320 @@
+/**
+ * 全局样式与设计变量
+ * ============================================================
+ * 全项目统一的视觉规范集中在此处定义。
+ * 页面样式一律引用变量，不写死颜色值，方便后期统一换肤。
+ * ============================================================
+ */
+
+page {
+  /* ---------- 主色：取自匹克球场地常用的场地绿 ---------- */
+  --color-primary: #1e7a55;
+  --color-primary-dark: #166041;
+  --color-primary-light: #e8f4ef;
+
+  /* ---------- 强调色：球体橙色，用于关键行动按钮与高亮 ---------- */
+  --color-accent: #ff7a45;
+  --color-accent-light: #fff1eb;
+
+  /* ---------- 中性色 ---------- */
+  --color-bg: #f5f6f8;
+  --color-card: #ffffff;
+  --color-text: #1f2329;
+  --color-text-secondary: #6b7280;
+  --color-text-tertiary: #9ca3af;
+  --color-border: #e5e7eb;
+  --color-divider: #f0f1f3;
+
+  /* ---------- 语义色 ---------- */
+  --color-success: #16a34a;
+  --color-danger: #e5484d;
+  --color-warning: #f59e0b;
+
+  /* ---------- 排行榜奖牌色 ---------- */
+  --color-gold: #d4af37;
+  --color-silver: #a8a9ad;
+  --color-bronze: #cd7f32;
+
+  /* ---------- 间距（以 8rpx 为基础单位，保证视觉节奏统一） ---------- */
+  --space-xs: 8rpx;
+  --space-sm: 16rpx;
+  --space-md: 24rpx;
+  --space-lg: 32rpx;
+  --space-xl: 48rpx;
+
+  /* ---------- 圆角 ---------- */
+  --radius-sm: 8rpx;
+  --radius-md: 16rpx;
+  --radius-lg: 24rpx;
+
+  /* ---------- 字号 ---------- */
+  --font-xs: 22rpx;
+  --font-sm: 26rpx;
+  --font-md: 30rpx;
+  --font-lg: 36rpx;
+  --font-xl: 44rpx;
+
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-size: var(--font-md);
+  font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  line-height: 1.6;
+}
+
+/* ==================== 通用布局 ==================== */
+
+.page-container {
+  min-height: 100vh;
+  padding: var(--space-md);
+  box-sizing: border-box;
+}
+
+.card {
+  background: var(--color-card);
+  border-radius: var(--radius-md);
+  padding: var(--space-lg);
+  margin-bottom: var(--space-md);
+  box-shadow: 0 2rpx 12rpx rgba(0, 0, 0, 0.04);
+}
+
+.card-title {
+  font-size: var(--font-lg);
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: var(--space-sm);
+}
+
+.card-subtitle {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+
+/* ==================== 文字工具类 ==================== */
+
+.text-secondary {
+  color: var(--color-text-secondary);
+}
+
+.text-tertiary {
+  color: var(--color-text-tertiary);
+}
+
+.text-sm {
+  font-size: var(--font-sm);
+}
+
+.text-xs {
+  font-size: var(--font-xs);
+}
+
+.text-center {
+  text-align: center;
+}
+
+.text-bold {
+  font-weight: 600;
+}
+
+.text-primary {
+  color: var(--color-primary);
+}
+
+.text-success {
+  color: var(--color-success);
+}
+
+.text-danger {
+  color: var(--color-danger);
+}
+
+/* 等级分上升时显示绿色，下降时显示红色 */
+.text-up {
+  color: var(--color-success);
+}
+
+.text-down {
+  color: var(--color-danger);
+}
+
+/* ==================== 按钮 ==================== */
+
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 88rpx;
+  border-radius: var(--radius-md);
+  font-size: var(--font-md);
+  font-weight: 500;
+  border: none;
+  line-height: 1;
+}
+
+.btn::after {
+  border: none;
+}
+
+.btn-primary {
+  background: var(--color-primary);
+  color: #ffffff;
+}
+
+.btn-primary.btn-disabled {
+  background: #c8d6d0;
+  color: #ffffff;
+}
+
+.btn-accent {
+  background: var(--color-accent);
+  color: #ffffff;
+}
+
+.btn-outline {
+  background: transparent;
+  color: var(--color-primary);
+  border: 2rpx solid var(--color-primary);
+}
+
+.btn-block {
+  width: 100%;
+}
+
+/* ==================== 分池切换 ==================== */
+/* 「我的」页与排行榜页都要切项目（男单 / 女单 / 双打），
+   样式放全局，两个页面共用一份，不各写一遍。 */
+
+.pool-tabs {
+  display: flex;
+  background: var(--color-card);
+  border-radius: var(--radius-md);
+  padding: var(--space-xs);
+  margin-bottom: var(--space-md);
+  box-shadow: 0 2rpx 12rpx rgba(0, 0, 0, 0.04);
+}
+
+.pool-tab {
+  flex: 1;
+  text-align: center;
+  padding: var(--space-xs) 0;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+}
+
+/* 选中的池要一眼看得出来，否则用户不知道下面的数据属于哪个项目 */
+.pool-tab.is-active {
+  background: var(--color-primary);
+  color: #ffffff;
+}
+
+/* 切换时整条标签栏淡下去。数据都在内存里，通常快到看不见，
+   但万一卡一下，用户至少知道自己点到了，而不是以为没反应 */
+.pool-tabs.is-switching {
+  opacity: 0.5;
+}
+
+.pool-tab-label {
+  font-size: var(--font-sm);
+}
+
+/* 个人主页在每个池标签下多显示一个当前分数 */
+.pool-tab-elo {
+  font-size: var(--font-lg);
+  font-weight: 600;
+  margin-top: 2rpx;
+}
+
+/* ==================== 标签 ==================== */
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--space-sm);
+  height: 40rpx;
+  border-radius: 20rpx;
+  font-size: var(--font-xs);
+  line-height: 1;
+}
+
+.tag-primary {
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+}
+
+.tag-warning {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.tag-success {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.tag-danger {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.tag-gray {
+  background: var(--color-divider);
+  color: var(--color-text-secondary);
+}
+
+/* ==================== 空状态 ==================== */
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 120rpx var(--space-lg);
+  color: var(--color-text-tertiary);
+}
+
+.empty-state-icon {
+  font-size: 96rpx;
+  margin-bottom: var(--space-md);
+  opacity: 0.4;
+}
+
+.empty-state-text {
+  font-size: var(--font-sm);
+}
+
+/* 区块内的空状态：比整页的 .empty-state 轻，只占一行。
+   个人主页的「暂无交锋记录」、排行榜的「这个项目还没有人打过」都用它。 */
+.empty-note {
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+  text-align: center;
+  padding: var(--space-lg) 0;
+}
+
+/* ==================== 分割线 ==================== */
+
+.divider {
+  height: 2rpx;
+  background: var(--color-divider);
+  margin: var(--space-md) 0;
+}
+
+/* ==================== 加载状态 ==================== */
+
+/* 开发期提示条：告诉用户现在看到的是模拟数据，别当成真实成绩。
+   页脚一条淡淡的小字即可，不能抢眼到干扰阅读。 */
+.mock-note {
+  text-align: center;
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  padding: var(--space-lg) 0 var(--space-xl);
+}
+
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-xl);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-sm);
+}

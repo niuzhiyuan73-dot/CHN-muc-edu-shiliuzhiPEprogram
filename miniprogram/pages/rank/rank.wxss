@@ -1,0 +1,277 @@
+/*
+ * 排行榜样式
+ * 分池切换（.pool-tabs）的样式在 app.wxss 里，与「我的」页共用。
+ */
+
+/* ==================== 我在这个项目的排名 ==================== */
+
+.my-rank {
+  text-align: center;
+  padding: var(--space-md) var(--space-lg);
+}
+
+.my-rank-value {
+  font-size: 72rpx;
+  font-weight: 600;
+  line-height: 1.1;
+  color: var(--color-primary);
+}
+
+/* 「/20」是陪衬，字号压小、颜色压淡，不跟主数字抢 */
+.my-rank-total {
+  font-size: var(--font-lg);
+  font-weight: 400;
+  color: var(--color-text-tertiary);
+  margin-left: 4rpx;
+}
+
+.my-rank-line1 {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  margin-top: var(--space-xs);
+}
+
+.my-rank-line2 {
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  margin-top: 4rpx;
+}
+
+/* 不在榜上时用一句提示占住这个位置，避免上半页突然空掉 */
+.my-rank-hint {
+  text-align: center;
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+  background: var(--color-card);
+  border-radius: var(--radius-md);
+  padding: var(--space-lg) var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+/* ==================== 榜单类型切换 ==================== */
+
+/* 做成下划线式标签，和上面那块实心的项目切换区分开：
+   两排长得一样的按钮摞在一起，用户会分不清哪排管什么 */
+.board-tabs {
+  display: flex;
+  border-bottom: 2rpx solid var(--color-divider);
+  margin-bottom: var(--space-md);
+}
+
+.board-tabs.is-switching {
+  opacity: 0.5;
+}
+
+.board-tab {
+  flex: 1;
+  text-align: center;
+  padding: var(--space-sm) 0;
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+
+.board-tab.is-active {
+  color: var(--color-primary);
+  font-weight: 600;
+  /* 用内阴影当选中下划线，压在容器边框上，看起来是「这个标签被选中」 */
+  box-shadow: inset 0 -4rpx 0 var(--color-primary);
+}
+
+/* ==================== 按名字找会员 ==================== */
+
+.search-bar {
+  display: flex;
+  align-items: center;
+  height: 76rpx;
+  padding: 0 var(--space-md);
+  background: var(--color-card);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-md);
+}
+
+.search-input {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-sm);
+}
+
+/* 清空按钮。只在有输入时出现，空着占一个叉反而让人以为能点 */
+.search-clear {
+  flex-shrink: 0;
+  width: 44rpx;
+  height: 44rpx;
+  line-height: 44rpx;
+  text-align: center;
+  border-radius: 50%;
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  background: var(--color-bg);
+}
+
+/* ==================== 榜单 ==================== */
+
+.rank-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: var(--space-sm);
+}
+
+.rank-head-title {
+  font-size: var(--font-lg);
+  font-weight: 600;
+}
+
+.rank-head-count {
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+}
+
+.rank-row {
+  display: flex;
+  align-items: center;
+  padding: var(--space-sm) 0;
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.rank-row:last-child {
+  border-bottom: none;
+}
+
+/* 我自己那一行淡绿底，一屏里一眼就能找到 */
+.rank-row.is-me {
+  background: var(--color-primary-light);
+  border-radius: var(--radius-sm);
+  padding-left: var(--space-xs);
+  padding-right: var(--space-xs);
+  border-bottom-color: transparent;
+}
+
+/* ---------- 名次 ---------- */
+
+.rank-no {
+  width: 56rpx;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: var(--font-md);
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+}
+
+/* 前三名换成金银铜，做成小圆牌 */
+.rank-no.is-gold,
+.rank-no.is-silver,
+.rank-no.is-bronze {
+  width: 48rpx;
+  height: 48rpx;
+  line-height: 48rpx;
+  border-radius: 50%;
+  color: #ffffff;
+  margin-right: 8rpx;
+}
+
+.rank-no.is-gold {
+  background: var(--color-gold);
+}
+
+.rank-no.is-silver {
+  background: var(--color-silver);
+}
+
+.rank-no.is-bronze {
+  background: var(--color-bronze);
+}
+
+/* ---------- 头像 ---------- */
+
+.rank-avatar {
+  width: 72rpx;
+  height: 72rpx;
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: #ffffff;
+  font-size: var(--font-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-right: var(--space-sm);
+  overflow: hidden;
+}
+
+.rank-avatar-img {
+  width: 100%;
+  height: 100%;
+}
+
+/* ---------- 昵称与副行 ---------- */
+
+.rank-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.rank-name {
+  display: flex;
+  align-items: center;
+  font-size: var(--font-md);
+}
+
+/* 「我」的标记。有它在，即使没注意到底色也能认出来 */
+.rank-me-tag {
+  margin-left: var(--space-xs);
+  padding: 0 10rpx;
+  height: 32rpx;
+  line-height: 32rpx;
+  border-radius: 16rpx;
+  font-size: var(--font-xs);
+  background: var(--color-primary);
+  color: #ffffff;
+}
+
+/* 「定级中」「不活跃」：说明这一行的分数该打点折扣看 */
+.rank-badge {
+  margin-left: var(--space-xs);
+  padding: 0 10rpx;
+  height: 32rpx;
+  line-height: 32rpx;
+  border-radius: 16rpx;
+  font-size: var(--font-xs);
+  background: var(--color-divider);
+  color: var(--color-text-secondary);
+}
+
+.rank-detail {
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  margin-top: 2rpx;
+}
+
+/* ---------- 右侧主数字 ---------- */
+
+.rank-value-box {
+  text-align: right;
+  flex-shrink: 0;
+  margin-left: var(--space-sm);
+}
+
+.rank-value {
+  font-size: var(--font-lg);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+/* 进步榜的涨幅：涨绿跌红 */
+.rank-value.is-up {
+  color: var(--color-success);
+}
+
+.rank-value.is-down {
+  color: var(--color-danger);
+}
+
+.rank-note {
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  margin-top: 2rpx;
+}

@@ -1,0 +1,330 @@
+/*
+ * 录入比赛成绩样式
+ * 卡片（.card）、按钮（.btn）、标签栏（.pool-tabs）都在 app.wxss 里。
+ */
+
+/* 卡片内的标签栏不需要外边距，也没必要再做一层白底 */
+.local-tabs {
+  margin-bottom: 0;
+  box-shadow: none;
+  background: var(--color-bg);
+}
+
+/* ==================== 参赛双方 ==================== */
+
+.team-block {
+  margin-top: var(--space-sm);
+}
+
+.team-label {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-xs);
+}
+
+.player-slot {
+  display: flex;
+  align-items: center;
+  height: 88rpx;
+  padding: 0 var(--space-md);
+  border: 2rpx solid var(--color-border);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-xs);
+}
+
+/* 锁定格换个底色，暗示「这格不能改」 */
+.player-slot.is-locked {
+  background: var(--color-primary-light);
+  border-color: transparent;
+}
+
+.player-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-md);
+}
+
+.player-placeholder {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-md);
+  color: var(--color-text-tertiary);
+}
+
+.player-lock {
+  flex-shrink: 0;
+  padding: 0 12rpx;
+  height: 36rpx;
+  line-height: 36rpx;
+  border-radius: 18rpx;
+  font-size: var(--font-xs);
+  background: var(--color-primary);
+  color: #ffffff;
+}
+
+.player-arrow {
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+}
+
+/* ==================== 表单行 ==================== */
+
+.field-row {
+  display: flex;
+  align-items: center;
+  min-height: 88rpx;
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.field-row:last-child {
+  border-bottom: none;
+}
+
+.field-label {
+  width: 140rpx;
+  flex-shrink: 0;
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+
+.field-value {
+  font-size: var(--font-md);
+}
+
+.field-input {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-md);
+}
+
+/* ==================== 赛制预览 ==================== */
+
+/* 把「这单子按什么规则算」实时亮出来，填错分制时一眼能发现 */
+.format-preview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-primary-light);
+  border-radius: var(--radius-sm);
+}
+
+.format-text {
+  font-size: var(--font-sm);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.format-winner {
+  font-size: var(--font-sm);
+  color: var(--color-text);
+}
+
+/* ==================== 比分 ==================== */
+
+.score-head {
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--space-xs);
+}
+
+.score-head-no {
+  width: 72rpx;
+  flex-shrink: 0;
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+}
+
+.score-head-team {
+  flex: 1;
+  text-align: center;
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+}
+
+.score-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--space-xs);
+}
+
+.score-no {
+  width: 72rpx;
+  flex-shrink: 0;
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+
+.score-input {
+  flex: 1;
+  height: 88rpx;
+  margin-right: var(--space-sm);
+  text-align: center;
+  font-size: var(--font-lg);
+  font-weight: 600;
+  background: var(--color-bg);
+  border-radius: var(--radius-sm);
+}
+
+.score-input:last-child {
+  margin-right: 0;
+}
+
+/* ==================== 错误与提交 ==================== */
+
+.field-error {
+  margin-top: var(--space-xs);
+  font-size: var(--font-xs);
+  color: var(--color-danger);
+  line-height: 1.5;
+}
+
+.submit-error {
+  font-size: var(--font-sm);
+  color: var(--color-danger);
+  text-align: center;
+  padding: var(--space-sm) 0;
+}
+
+.submit-bar {
+  display: flex;
+  margin-bottom: var(--space-md);
+}
+
+.submit-btn {
+  flex: 1;
+}
+
+.submit-btn + .submit-btn {
+  margin-left: var(--space-sm);
+}
+
+/* 不能录入时给一个返回出口，别把人困在空页面上 */
+.block-back {
+  margin-top: var(--space-lg);
+  padding: 0 var(--space-xl);
+}
+
+/* ==================== 找人面板 ==================== */
+
+/* 半透明遮罩铺满全屏，点空白处收起面板 */
+.picker-mask {
+  position: fixed;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: flex-end;
+}
+
+/* 面板从底部升起。用 max-height 而不是固定高度：人少时不留一大块空白 */
+.picker-panel {
+  width: 100%;
+  max-height: 76vh;
+  background: var(--color-card);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding: var(--space-md);
+  box-sizing: border-box;
+}
+
+.picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.picker-title {
+  font-size: var(--font-lg);
+  font-weight: 600;
+}
+
+.picker-close {
+  padding: 0 var(--space-xs);
+  font-size: var(--font-md);
+  color: var(--color-text-tertiary);
+}
+
+.picker-search {
+  display: flex;
+  align-items: center;
+  height: 76rpx;
+  padding: 0 var(--space-md);
+  margin-top: var(--space-sm);
+  background: var(--color-bg);
+  border-radius: var(--radius-md);
+}
+
+.picker-search-input {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-sm);
+}
+
+.picker-search-clear {
+  flex-shrink: 0;
+  width: 44rpx;
+  height: 44rpx;
+  line-height: 44rpx;
+  text-align: center;
+  border-radius: 50%;
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  background: var(--color-divider);
+}
+
+.picker-list {
+  max-height: 52vh;
+  margin-top: var(--space-sm);
+}
+
+.picker-item {
+  display: flex;
+  align-items: center;
+  height: 96rpx;
+  padding: 0 var(--space-sm);
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+/* 当前这一格已经选的人，给个淡绿底和勾，一眼能认出 */
+.picker-item.is-selected {
+  background: var(--color-primary-light);
+  border-radius: var(--radius-sm);
+  border-bottom-color: transparent;
+}
+
+.picker-avatar {
+  width: 64rpx;
+  height: 64rpx;
+  flex-shrink: 0;
+  margin-right: var(--space-sm);
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: #ffffff;
+  font-size: var(--font-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.picker-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-md);
+}
+
+.picker-check {
+  flex-shrink: 0;
+  font-size: var(--font-md);
+  color: var(--color-primary);
+}
+
+.picker-empty {
+  text-align: center;
+  padding: var(--space-xl) 0;
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+}

@@ -1,0 +1,68 @@
+<!--
+  公告管理
+  数据形状见 services/announcement-view.js 的 loadAnnouncementManageView。
+  canArchive 是视图模型算好的，这里不做任何权限推导。
+-->
+<view class="page-container">
+
+  <!-- 加载中。必须排在出错之前，否则首屏会一闪而过地报错 -->
+  <view wx:if="{{loading}}" class="loading">正在加载…</view>
+
+  <view wx:elif="{{error}}" class="empty-state">
+    <view class="empty-state-icon">⚠️</view>
+    <view class="empty-state-text">{{error}}</view>
+  </view>
+
+  <!-- 没有管理权时不给台账，一行都不给 -->
+  <view wx:elif="{{!view.allowed}}" class="empty-state">
+    <view class="empty-state-icon">🔒</view>
+    <view class="empty-state-text">{{view.blockedText}}</view>
+  </view>
+
+  <block wx:else>
+
+    <!-- ========== 发布入口 ========== -->
+    <view class="card entry-bar">
+      <view class="entry-hint">发布后立即对全体会员可见；下架只是不再显示，不会删除记录</view>
+      <view class="btn btn-accent btn-block" bindtap="onGoPublish">发布新公告</view>
+    </view>
+
+    <!-- 发布权来自演示口径时必须在页面上说清楚，别被当成真实规则 -->
+    <view wx:if="{{view.demoNotice}}" class="demo-notice">{{view.demoNotice}}</view>
+
+    <!-- ========== 台账 ========== -->
+    <view class="card">
+      <view class="manage-summary">
+        共 {{view.total}} 条 · 已发布 {{view.publishedCount}} · 已下架 {{view.archivedCount}}
+      </view>
+
+      <view wx:if="{{view.rows.length === 0}}" class="empty-note">还没有任何公告</view>
+
+      <view wx:for="{{view.rows}}" wx:key="id" class="notice-row {{item.archived ? 'is-archived' : ''}}">
+        <view class="notice-head">
+          <text class="tag notice-category">{{item.category}}</text>
+          <text wx:if="{{item.pinned}}" class="tag notice-pin">置顶</text>
+          <text class="tag {{item.archived ? 'is-revoked' : 'is-active'}} notice-status">{{item.statusLabel}}</text>
+          <text class="notice-date">{{item.publishText}}</text>
+        </view>
+
+        <view class="notice-title">{{item.title}}</view>
+        <view class="notice-content">{{item.content}}</view>
+
+        <view wx:if="{{item.publisherName}}" class="notice-meta">发布人：{{item.publisherName}}</view>
+
+        <view wx:if="{{item.canArchive}}" class="notice-actions">
+          <view
+            class="mini-btn is-danger {{acting ? 'is-disabled' : ''}}"
+            data-id="{{item.id}}"
+            bindtap="onArchive"
+          >下架</view>
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{isMock}}" class="mock-note">
+      当前为本地模拟数据，发布与下架只写入内存，重启小程序即清空
+    </view>
+  </block>
+</view>

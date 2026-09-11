@@ -1,0 +1,141 @@
+/*
+ * 公告管理样式
+ * 卡片（.card）、按钮（.btn）、标签（.tag）都在 app.wxss 里，与其它页共用。
+ */
+
+/* ==================== 发布入口 ==================== */
+
+.entry-bar {
+  padding: var(--space-md) var(--space-lg);
+}
+
+.entry-hint {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-sm);
+  text-align: center;
+  line-height: 1.5;
+}
+
+/* ==================== 演示口径提示 ==================== */
+
+/* 这条不能做成淡淡的小字——它说明的是权限规则被放宽了，
+   看漏了就会把演示口径当成正式规则 */
+.demo-notice {
+  font-size: var(--font-xs);
+  color: #b45309;
+  background: #fef3c7;
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm) var(--space-md);
+  margin-bottom: var(--space-md);
+  line-height: 1.5;
+}
+
+/* ==================== 台账 ==================== */
+
+.manage-summary {
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  padding-bottom: var(--space-sm);
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.notice-row {
+  padding: var(--space-md) 0;
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.notice-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+/* 已下架的整块压暗，一眼看出它已经不在公开列表里 */
+.notice-row.is-archived {
+  opacity: 0.6;
+}
+
+.notice-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.notice-category {
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+}
+
+/* 置顶与状态都用暖/冷色分开，别让四种标记糊成一团 */
+.notice-pin {
+  margin-left: var(--space-xs);
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.notice-status {
+  margin-left: var(--space-xs);
+}
+
+.tag.is-active {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.tag.is-revoked {
+  background: var(--color-divider);
+  color: var(--color-text-tertiary);
+}
+
+.notice-date {
+  margin-left: auto;
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+}
+
+.notice-title {
+  margin-top: var(--space-xs);
+  font-size: var(--font-md);
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.notice-content {
+  margin-top: var(--space-xs);
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.7;
+}
+
+.notice-meta {
+  margin-top: var(--space-xs);
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+}
+
+/* ---------- 行内操作 ---------- */
+
+.notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: var(--space-sm);
+}
+
+.mini-btn {
+  height: 60rpx;
+  line-height: 60rpx;
+  padding: 0 var(--space-md);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+  border: 2rpx solid var(--color-border);
+  color: var(--color-text-secondary);
+}
+
+.mini-btn.is-danger {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.mini-btn.is-disabled {
+  opacity: 0.5;
+}

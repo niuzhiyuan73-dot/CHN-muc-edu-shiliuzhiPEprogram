@@ -1,0 +1,2 @@
+/* 会员主页样式。主体样式在 templates/member-view.wxss 里，与「我的」页共用。 */
+@import "../../templates/member-view.wxss";

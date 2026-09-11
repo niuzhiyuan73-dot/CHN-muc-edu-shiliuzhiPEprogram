@@ -1,0 +1,12 @@
+<!--
+  会员主页（看别人）
+  与「我的」页共用 templates/member-view.wxml，这里只装配数据。
+-->
+<import src="../../templates/member-view.wxml" />
+
+<view class="page-container">
+  <template
+    is="memberView"
+    data="{{...view, loading: loading, error: error, hasMore: hasMore, switching: switching}}"
+  />
+</view>

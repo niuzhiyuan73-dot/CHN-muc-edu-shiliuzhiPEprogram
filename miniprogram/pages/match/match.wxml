@@ -1,0 +1,151 @@
+<!--
+  比赛页
+  数据形状见 services/match-view.js 的 loadMatchView。
+  canConfirm / canRevoke 是视图模型算好的，这里不做任何权限推导。
+-->
+<view class="page-container">
+
+  <!-- 加载中。必须排在出错之前，否则首屏会一闪而过地报错 -->
+  <view wx:if="{{loading}}" class="loading">正在加载…</view>
+
+  <view wx:elif="{{error}}" class="empty-state">
+    <view class="empty-state-icon">⚠️</view>
+    <view class="empty-state-text">{{error}}</view>
+  </view>
+
+  <block wx:else>
+
+    <!-- ========== 录入入口 ========== -->
+    <!-- 不能录入时把原因写在按钮上方，免得用户点了没反应还不知道为什么 -->
+    <view class="card entry-bar">
+      <view class="entry-hint">{{entryHint}}</view>
+      <view
+        class="btn btn-block {{auth.canRecord ? 'btn-accent' : 'btn-disabled'}}"
+        bindtap="onGoEntry"
+      >录入比赛成绩</view>
+    </view>
+
+    <!-- ========== 标签 ========== -->
+    <view class="pool-tabs {{switching ? 'is-switching' : ''}}">
+      <view
+        wx:for="{{view.tabs}}"
+        wx:key="tab"
+        class="pool-tab {{item.active ? 'is-active' : ''}}"
+        data-tab="{{item.tab}}"
+        bindtap="onSwitchTab"
+      >
+        <view class="pool-tab-label">
+          {{item.label}}
+          <text wx:if="{{item.tab === 'pending' && view.pendingCount > 0}}" class="tab-count">{{view.pendingCount}}</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 确认权来自演示口径时必须在页面上说清楚，别被当成真实规则 -->
+    <view wx:if="{{view.demoNotice}}" class="demo-notice">{{view.demoNotice}}</view>
+
+    <!-- ========== 台账 ========== -->
+    <view class="card">
+      <view wx:if="{{view.records.length === 0}}" class="empty-note">{{view.emptyText}}</view>
+
+      <!-- 不做翻页，超出的部分如实交代，不假装已经翻到底 -->
+      <view wx:if="{{view.hasMore}}" class="more-note">
+        只显示最近 {{view.records.length}} 场，共 {{view.total}} 场
+      </view>
+
+      <view wx:for="{{view.records}}" wx:key="matchId" class="match-row">
+        <view class="match-line1">
+          <text class="match-type">{{item.typeLabel}}</text>
+          <text wx:if="{{item.formatText}}" class="match-format">{{item.formatText}}</text>
+          <text wx:if="{{item.resultText}}" class="match-result {{item.isWin ? 'is-win' : 'is-loss'}}">{{item.resultText}}</text>
+          <text class="tag {{item.statusClass}} match-status">{{item.statusLabel}}</text>
+        </view>
+
+        <view class="match-teams">
+          <view class="team {{item.winnerSide === 'A' ? 'is-winner' : ''}}">
+            <text
+              wx:for="{{item.teamAList}}"
+              wx:for-item="player"
+              wx:key="userId"
+              class="team-name"
+              data-user-id="{{player.userId}}"
+              bindtap="onOpenMember"
+            >{{player.nickName}}</text>
+          </view>
+          <text class="match-vs">vs</text>
+          <view class="team {{item.winnerSide === 'B' ? 'is-winner' : ''}}">
+            <text
+              wx:for="{{item.teamBList}}"
+              wx:for-item="player"
+              wx:key="userId"
+              class="team-name"
+              data-user-id="{{player.userId}}"
+              bindtap="onOpenMember"
+            >{{player.nickName}}</text>
+          </view>
+        </view>
+
+        <view class="match-score">{{item.scoreText}}</view>
+
+        <view class="match-meta">
+          {{item.dateText}}
+          <text wx:if="{{item.locationText}}"> · {{item.locationText}}</text>
+        </view>
+
+        <!-- 作废的比赛把理由亮出来，否则看到「已撤销」会一头雾水 -->
+        <view wx:if="{{item.statusReason}}" class="match-reason">理由：{{item.statusReason}}</view>
+
+        <view wx:if="{{item.canConfirm || item.canRevoke}}" class="match-actions">
+          <view
+            wx:if="{{item.canConfirm}}"
+            class="mini-btn is-primary"
+            data-match-id="{{item.matchId}}"
+            bindtap="onConfirm"
+          >确认比分</view>
+          <view
+            wx:if="{{item.canConfirm}}"
+            class="mini-btn"
+            data-match-id="{{item.matchId}}"
+            data-kind="reject"
+            bindtap="onOpenAction"
+          >驳回</view>
+          <view
+            wx:if="{{item.canRevoke}}"
+            class="mini-btn is-danger"
+            data-match-id="{{item.matchId}}"
+            data-kind="revoke"
+            bindtap="onOpenAction"
+          >撤销</view>
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{isMock}}" class="mock-note">
+      当前为本地模拟数据，用于开发预览，并非真实成绩
+    </view>
+  </block>
+
+  <!-- ========== 撤销 / 驳回面板 ========== -->
+  <!-- 用页内面板而不是 wx.showModal：理由需要校验，且撤销与驳回的文案不同 -->
+  <view wx:if="{{action.open}}" class="sheet-mask" bindtap="onCancelAction">
+    <view class="sheet" catchtap="noop">
+      <view class="sheet-title">{{action.title}}</view>
+      <view class="sheet-hint">{{action.hint}}</view>
+      <textarea
+        class="sheet-input"
+        value="{{reason}}"
+        placeholder="{{action.placeholder}}"
+        maxlength="60"
+        bindinput="onInputReason"
+      />
+      <view wx:if="{{actionError}}" class="sheet-error">{{actionError}}</view>
+      <view class="sheet-actions">
+        <view class="btn btn-outline sheet-btn" bindtap="onCancelAction">取消</view>
+        <view
+          class="btn btn-primary sheet-btn {{acting ? 'btn-disabled' : ''}}"
+          bindtap="onSubmitAction"
+        >确定</view>
+      </view>
+    </view>
+  </view>
+</view>

@@ -1,0 +1,213 @@
+/*
+ * 会员审核页样式
+ * 标签栏（.pool-tabs）与按钮（.btn）的样式在 app.wxss 里，与其它页共用；
+ * 下面这些（数量气泡、行内小按钮、驳回面板）与比赛页同款，页面样式表是
+ * 按页隔离的，所以在这里照样写一份。
+ */
+
+/* ==================== 标签上的待办数量 ==================== */
+
+/* 做成小圆点挂在文字后面，扫一眼就知道有没有事要做 */
+.tab-count {
+  display: inline-block;
+  min-width: 32rpx;
+  height: 32rpx;
+  line-height: 32rpx;
+  padding: 0 8rpx;
+  margin-left: 6rpx;
+  border-radius: 16rpx;
+  font-size: var(--font-xs);
+  text-align: center;
+  background: var(--color-accent);
+  color: #ffffff;
+}
+
+/* ==================== 演示口径提示 ==================== */
+
+/* 这条不能做成淡淡的小字——它说明的是权限规则被放宽了，
+   看漏了就会把演示口径当成正式规则 */
+.demo-notice {
+  font-size: var(--font-xs);
+  color: #b45309;
+  background: #fef3c7;
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm) var(--space-md);
+  margin-bottom: var(--space-md);
+  line-height: 1.5;
+}
+
+/* ==================== 一条申请 ==================== */
+
+.application-row {
+  padding: var(--space-md) 0;
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.application-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.application-line1 {
+  display: flex;
+  align-items: center;
+}
+
+.application-name {
+  font-size: var(--font-md);
+  font-weight: 600;
+}
+
+/* 状态标签推到最右边，四种状态各一个颜色 */
+.application-status {
+  margin-left: auto;
+}
+
+.tag.is-pending {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.tag.is-active {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+/* 驳回借「已禁用」的壳，但文案与颜色都按「资料没通过」来 */
+.tag.is-rejected {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.tag.is-disabled {
+  background: var(--color-divider);
+  color: var(--color-text-tertiary);
+}
+
+.tag.is-unknown {
+  background: var(--color-divider);
+  color: var(--color-text-secondary);
+}
+
+/* 学号、学院、手机号都换行排，窄屏也不至于挤成一团 */
+.application-meta {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: var(--space-xs);
+  font-size: var(--font-xs);
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+}
+
+.application-meta-item {
+  margin-right: var(--space-md);
+}
+
+.application-reason {
+  margin-top: var(--space-xs);
+  font-size: var(--font-xs);
+  color: var(--color-text-secondary);
+  background: var(--color-bg);
+  border-radius: var(--radius-sm);
+  padding: var(--space-xs) var(--space-sm);
+  line-height: 1.5;
+}
+
+.application-self {
+  margin-top: var(--space-xs);
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+}
+
+/* ---------- 行内操作 ---------- */
+
+.application-actions {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: var(--space-sm);
+}
+
+.mini-btn {
+  height: 60rpx;
+  line-height: 60rpx;
+  padding: 0 var(--space-md);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+  margin-right: var(--space-sm);
+  border: 2rpx solid var(--color-border);
+  color: var(--color-text-secondary);
+}
+
+.mini-btn.is-primary {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.mini-btn.is-danger {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+/* ==================== 驳回面板 ==================== */
+
+.sheet-mask {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: flex-end;
+  z-index: 100;
+}
+
+.sheet {
+  width: 100%;
+  background: var(--color-card);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding: var(--space-lg);
+  padding-bottom: calc(var(--space-lg) + env(safe-area-inset-bottom));
+}
+
+.sheet-title {
+  font-size: var(--font-lg);
+  font-weight: 600;
+}
+
+.sheet-hint {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  margin-top: var(--space-xs);
+  line-height: 1.5;
+}
+
+.sheet-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 160rpx;
+  margin-top: var(--space-md);
+  padding: var(--space-sm);
+  background: var(--color-bg);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+}
+
+.sheet-error {
+  margin-top: var(--space-xs);
+  font-size: var(--font-xs);
+  color: var(--color-danger);
+}
+
+.sheet-actions {
+  display: flex;
+  margin-top: var(--space-md);
+}
+
+.sheet-btn {
+  flex: 1;
+}
+
+.sheet-btn + .sheet-btn {
+  margin-left: var(--space-sm);
+}

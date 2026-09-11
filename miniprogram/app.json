@@ -1,0 +1,49 @@
+{
+  "pages": [
+    "pages/index/index",
+    "pages/rank/rank",
+    "pages/match/match",
+    "pages/profile/profile",
+    "pages/member/member",
+    "pages/login/login",
+    "pages/match-entry/match-entry",
+    "pages/member-review/member-review",
+    "pages/announcements/announcements",
+    "pages/announcement-manage/announcement-manage",
+    "pages/announcement-edit/announcement-edit"
+  ],
+  "window": {
+    "backgroundTextStyle": "dark",
+    "navigationBarBackgroundColor": "#1E7A55",
+    "navigationBarTitleText": "民大匹克球",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#F5F6F8"
+  },
+  "tabBar": {
+    "color": "#8A8F99",
+    "selectedColor": "#1E7A55",
+    "backgroundColor": "#FFFFFF",
+    "borderStyle": "black",
+    "list": [
+      {
+        "pagePath": "pages/index/index",
+        "text": "首页"
+      },
+      {
+        "pagePath": "pages/rank/rank",
+        "text": "排行榜"
+      },
+      {
+        "pagePath": "pages/match/match",
+        "text": "比赛"
+      },
+      {
+        "pagePath": "pages/profile/profile",
+        "text": "我的"
+      }
+    ]
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json",
+  "lazyCodeLoading": "requiredComponents"
+}

@@ -1,0 +1,39 @@
+# 依赖
+node_modules/
+
+# 微信开发者工具的本地私有配置（含个人设置，不应提交）
+project.private.config.json
+miniprogram/.wxssc/
+miniprogram/miniprogram_npm/
+
+# 云函数依赖
+cloudfunctions/**/node_modules/
+cloudfunctions/**/package-lock.json
+
+# 构建产物与日志
+dist/
+*.log
+npm-debug.log*
+
+# Python 字节码（tools/ 下的脚本与测试会生成）
+__pycache__/
+*.pyc
+
+# 编辑器
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 敏感文件：数据库导出、密钥等
+*.env
+.env.local
+backup/
+
+# 可重新生成的产物（跑一次命令就能重来，不入库）
+/tools/test-report.xml
+/tools/singles-experiment-*.json
+/tools/_exp_stdout.txt
+
+# 上一轮文档更新的副本，属可丢弃（正本在根目录）
+/文档备份_更新前/

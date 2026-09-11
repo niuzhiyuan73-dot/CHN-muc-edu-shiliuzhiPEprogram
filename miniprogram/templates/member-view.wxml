@@ -1,0 +1,262 @@
+<!--
+  个人主页主体
+  ============================================================
+  「我的」页与「他人主页」在内容上完全相同，差别只在于加载谁的数据。
+  为了让两处不至于各写一份、改一处漏一处，界面全部放在这个模板里，
+  两个页面各自 import 后传数据即可。
+
+  模板内的事件绑定（bindtap）会由所在页面处理，所以切池、加载更多
+  这些交互两个页面都要实现同名方法。
+  ============================================================
+-->
+<template name="memberView">
+
+  <!-- 加载中。必须排在「查无此人」前面，否则首屏会一闪而过地报错 -->
+  <view wx:if="{{loading}}" class="loading">正在加载…</view>
+
+  <view wx:elif="{{error}}" class="empty-state">
+    <view class="empty-state-icon">⚠️</view>
+    <view class="empty-state-text">{{error}}</view>
+  </view>
+
+  <!-- 查无此人 -->
+  <view wx:elif="{{!found}}" class="empty-state">
+    <view class="empty-state-icon">🔍</view>
+    <view class="empty-state-text">没有找到这位会员</view>
+  </view>
+
+  <block wx:else>
+
+    <!-- ========== 会员头卡 ========== -->
+    <view class="member-hero">
+      <view class="member-avatar">
+        <image wx:if="{{user.avatarUrl}}" class="member-avatar-img" src="{{user.avatarUrl}}" mode="aspectFill" />
+        <text wx:else>{{user.avatarText}}</text>
+      </view>
+      <view class="member-info">
+        <view class="member-name">
+          <text>{{user.nickName}}</text>
+          <text wx:if="{{user.roleLabel && user.roleLabel !== '会员'}}" class="member-badge">{{user.roleLabel}}</text>
+        </view>
+        <view class="member-meta">{{user.college}} · 加入于 {{user.joinDateText}}</view>
+        <view class="member-tags">
+          <text class="tag tag-primary">累计积分 {{user.points}}</text>
+          <text wx:if="{{user.statusLabel && user.statusLabel !== '正常'}}" class="tag tag-warning">{{user.statusLabel}}</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 一场都没打过：给一句明确的说明，而不是一串 0 让人以为系统坏了 -->
+    <view wx:if="{{!hasProject}}" class="card">
+      <view class="empty-state">
+        <view class="empty-state-icon">🏓</view>
+        <view class="empty-state-text">还没有比赛记录，打一场就有了</view>
+      </view>
+    </view>
+
+    <block wx:else>
+
+      <!-- ========== 分项目切换 ========== -->
+      <view class="pool-tabs {{switching ? 'is-switching' : ''}}">
+        <view
+          wx:for="{{projectTabs}}"
+          wx:key="project"
+          class="pool-tab {{item.active ? 'is-active' : ''}}"
+          data-project="{{item.project}}"
+          bindtap="onSwitchProject"
+        >
+          <view class="pool-tab-label">{{item.label}}</view>
+          <view class="pool-tab-elo">{{item.elo}}</view>
+        </view>
+      </view>
+
+      <!-- ========== 分数卡 ========== -->
+      <view class="card score-card">
+        <view class="score-main">
+          <view class="score-value">{{summary.elo}}</view>
+          <view class="score-delta {{summary.deltaUp ? 'is-up' : 'is-down'}}">
+            {{summary.deltaText}}
+          </view>
+        </view>
+        <view class="score-caption">{{activeProjectLabel}}等级分 · 入池 {{summary.startElo}} 分</view>
+
+        <view class="divider"></view>
+
+        <view class="score-grid">
+          <view class="score-cell">
+            <view class="score-cell-value">{{summary.rank}}</view>
+            <view class="score-cell-label">当前排名</view>
+          </view>
+          <view class="score-cell">
+            <view class="score-cell-value">{{summary.matchCount}}</view>
+            <view class="score-cell-label">出场次数</view>
+          </view>
+          <view class="score-cell">
+            <view class="score-cell-value">{{summary.winRateText}}</view>
+            <view class="score-cell-label">{{summary.recordText}}</view>
+          </view>
+        </view>
+
+        <view class="score-foot">
+          <text>{{summary.rankText}}</text>
+          <text class="score-foot-sep">·</text>
+          <text>{{summary.beatText}}</text>
+        </view>
+
+        <view class="divider"></view>
+
+        <!-- 近期状态：最近 5 场的胜负，最近的在最左边 -->
+        <view class="form-row">
+          <view class="form-label">近期状态</view>
+          <view class="form-dots">
+            <view
+              wx:for="{{form.dots}}"
+              wx:key="index"
+              class="form-dot {{item === 'W' ? 'is-win' : 'is-loss'}}"
+            >{{item === 'W' ? '胜' : '负'}}</view>
+          </view>
+          <view class="form-streak">{{form.streakText}}</view>
+        </view>
+      </view>
+
+      <!-- ========== 分数曲线 ========== -->
+      <view class="card">
+        <view class="card-title">分数走势</view>
+        <view class="card-subtitle">虚线是入池起点，曲线是每一场之后的分数</view>
+
+        <view wx:if="{{chart.empty}}" class="empty-note">还没有足够的数据画出走势</view>
+
+        <block wx:else>
+          <view class="chart-wrap">
+            <canvas type="2d" id="eloChart" class="chart-canvas"></canvas>
+          </view>
+
+          <view class="chart-legend">
+            <view class="legend-cell">
+              <view class="legend-label">起点</view>
+              <view class="legend-value">{{chart.startElo}}</view>
+            </view>
+            <view class="legend-cell">
+              <view class="legend-label">当前</view>
+              <view class="legend-value is-primary">{{chart.currentElo}}</view>
+            </view>
+            <view class="legend-cell">
+              <view class="legend-label">最高</view>
+              <view class="legend-value">{{chart.maxElo}}</view>
+            </view>
+            <view class="legend-cell">
+              <view class="legend-label">最低</view>
+              <view class="legend-value">{{chart.minElo}}</view>
+            </view>
+          </view>
+
+          <!-- 涨跌正负号已由 formatSigned 带上，这里不要再补一个加号 -->
+          <view class="chart-extremes" wx:if="{{chart.best}}">
+            <view class="extreme is-up">单场最大涨幅 {{chart.best.deltaText}}（{{chart.best.dateText}}）</view>
+            <view class="extreme is-down">单场最大跌幅 {{chart.worst.deltaText}}（{{chart.worst.dateText}}）</view>
+          </view>
+        </block>
+      </view>
+
+      <!-- ========== 赛事名次 ========== -->
+      <view class="card">
+        <view class="card-title">赛事名次</view>
+
+        <view wx:if="{{events.records.length === 0}}" class="empty-note">还没有参加过赛事</view>
+
+        <block wx:else>
+          <view class="event-summary">
+            <view class="score-cell">
+              <view class="score-cell-value">{{events.summary.eventCount}}</view>
+              <view class="score-cell-label">参赛</view>
+            </view>
+            <view class="score-cell">
+              <view class="score-cell-value">{{events.summary.championCount}}</view>
+              <view class="score-cell-label">冠军</view>
+            </view>
+            <view class="score-cell">
+              <view class="score-cell-value">{{events.summary.topThreeCount}}</view>
+              <view class="score-cell-label">进前三</view>
+            </view>
+            <view class="score-cell">
+              <view class="score-cell-value">{{events.summary.bestPlacementText}}</view>
+              <view class="score-cell-label">最好成绩</view>
+            </view>
+          </view>
+
+          <view class="divider"></view>
+
+          <view class="event-row" wx:for="{{events.records}}" wx:key="eventId">
+            <view class="event-main">
+              <view class="event-title">{{item.title}}</view>
+              <view class="event-meta">{{item.dateText}} · {{item.participantCount}} 人参赛</view>
+            </view>
+            <view class="event-place {{item.isTop ? 'is-top' : ''}}">{{item.placementText}}</view>
+          </view>
+        </block>
+      </view>
+
+      <!-- ========== 逐场战绩 ========== -->
+      <view class="card">
+        <view class="card-title">逐场战绩</view>
+        <view class="card-subtitle">最近的在最上面，右侧是本场分数与积分的变化</view>
+
+        <view wx:if="{{history.length === 0}}" class="empty-note">这个项目还没有比赛记录</view>
+
+        <view class="match-row" wx:for="{{history}}" wx:key="matchId">
+          <view class="match-flag {{item.isWin ? 'is-win' : 'is-loss'}}">{{item.resultText}}</view>
+          <view class="match-body">
+            <view class="match-line1">
+              对阵 {{item.rivalText}}
+              <text wx:if="{{item.isEvent}}" class="match-tag">赛事</text>
+            </view>
+            <view class="match-line2">{{item.dateText}} · {{item.partnerText}}<text wx:if="{{item.formatText}}"> · {{item.formatText}}</text></view>
+            <view class="match-line2">{{item.scoreText}}</view>
+          </view>
+          <view class="match-delta">
+            <view class="match-elo {{item.eloDeltaUp ? 'is-up' : 'is-down'}}">{{item.eloDeltaText}}</view>
+            <view class="match-point">积分 {{item.pointDeltaText}}</view>
+          </view>
+        </view>
+
+        <view wx:if="{{hasMore}}" class="load-more" bindtap="onLoadMore">加载更多</view>
+      </view>
+
+      <!-- ========== 交锋记录 ========== -->
+      <view class="card">
+        <view class="card-title">交锋记录</view>
+        <view class="card-subtitle">和谁打得最多、赢多还是输多。右侧是这些交手里的总分得失</view>
+
+        <view wx:if="{{headToHead.length === 0}}" class="empty-note">还没有交手记录</view>
+
+        <!-- 点一行就能跳去看对方的记录，这是开球网那种「互相查战绩」的用法 -->
+        <view class="stat-row" wx:for="{{headToHead}}" wx:key="opponentId"
+              data-user-id="{{item.opponentId}}" bindtap="onOpenMember">
+          <view class="stat-main">
+            <view class="stat-name">{{item.nickName}}</view>
+            <view class="stat-detail">{{item.matchCount}} 场 · {{item.recordText}}</view>
+          </view>
+          <view class="stat-rate">{{item.winRateText}}</view>
+          <view class="stat-delta {{item.deltaUp ? 'is-up' : 'is-down'}}">{{item.deltaText}}</view>
+        </view>
+      </view>
+
+      <!-- ========== 搭档记录 ========== -->
+      <view class="card" wx:if="{{partners.length > 0}}">
+        <view class="card-title">搭档记录</view>
+        <view class="card-subtitle">跟谁搭档胜率最高</view>
+
+        <view class="stat-row" wx:for="{{partners}}" wx:key="partnerId"
+              data-user-id="{{item.partnerId}}" bindtap="onOpenMember">
+          <view class="stat-main">
+            <view class="stat-name">{{item.nickName}}</view>
+            <view class="stat-detail">{{item.matchCount}} 次搭档 · {{item.recordText}}</view>
+          </view>
+          <view class="stat-rate">{{item.winRateText}}</view>
+        </view>
+      </view>
+
+    </block>
+  </block>
+
+</template>

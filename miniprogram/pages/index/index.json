@@ -1,0 +1,6 @@
+{
+  "usingComponents": {},
+  "navigationBarTitleText": "民大匹克球",
+  "enablePullDownRefresh": true,
+  "backgroundTextStyle": "dark"
+}

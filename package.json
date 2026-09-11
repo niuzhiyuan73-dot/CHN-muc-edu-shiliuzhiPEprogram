@@ -1,0 +1,16 @@
+{
+  "name": "minzu-pickleball-miniprogram",
+  "version": "1.0.0",
+  "private": true,
+  "description": "中央民族大学匹克球俱乐部微信小程序",
+  "scripts": {
+    "test": "node --test \"tests/**/*.test.js\"",
+    "test:watch": "node --test --watch \"tests/**/*.test.js\"",
+    "test:py": "python -m unittest tools.test_import_matches",
+    "sync:cloud": "node tools/sync-cloud-lib.js",
+    "check:cloud-sync": "node tools/sync-cloud-lib.js --check"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,120 @@
+<!--
+  会员审核页
+  数据形状见 services/member-review-view.js 的 loadMemberReviewView。
+  canApprove / canReject 是视图模型算好的，这里不做任何权限推导。
+-->
+<view class="page-container">
+
+  <!-- 加载中。必须排在出错之前，否则首屏会一闪而过地报错 -->
+  <view wx:if="{{loading}}" class="loading">正在加载…</view>
+
+  <view wx:elif="{{error}}" class="empty-state">
+    <view class="empty-state-icon">⚠️</view>
+    <view class="empty-state-text">{{error}}</view>
+  </view>
+
+  <!--
+    没有审核权时整页挡住。
+    视图模型此时下发的 rows 是空数组，申请人的姓名、学号、手机号一行都没到页面上，
+    这里的提示只是给用户一个说法。
+  -->
+  <view wx:elif="{{!view.allowed}}" class="empty-state">
+    <view class="empty-state-icon">🔒</view>
+    <view class="empty-state-text">{{view.blockedText}}</view>
+  </view>
+
+  <block wx:else>
+
+    <!-- ========== 标签 ========== -->
+    <view class="pool-tabs {{switching ? 'is-switching' : ''}}">
+      <view
+        wx:for="{{view.tabs}}"
+        wx:key="tab"
+        class="pool-tab {{item.active ? 'is-active' : ''}}"
+        data-tab="{{item.tab}}"
+        bindtap="onSwitchTab"
+      >
+        <view class="pool-tab-label">
+          {{item.label}}
+          <text wx:if="{{item.count > 0}}" class="tab-count">{{item.count}}</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 审核权只来自演示口径时必须在页面上说清楚，别被当成真实规则 -->
+    <view wx:if="{{view.demoNotice}}" class="demo-notice">{{view.demoNotice}}</view>
+
+    <!-- ========== 申请列表 ========== -->
+    <view class="card">
+      <view wx:if="{{view.rows.length === 0}}" class="empty-note">{{view.emptyText}}</view>
+
+      <view
+        wx:for="{{view.rows}}"
+        wx:key="applicationId"
+        class="application-row"
+      >
+        <view class="application-line1">
+          <text class="application-name">{{item.nickName}}</text>
+          <text class="tag {{item.statusClass}} application-status">{{item.statusLabel}}</text>
+        </view>
+
+        <view class="application-meta">
+          <text wx:if="{{item.realName}}">实名 {{item.realName}}</text>
+          <text wx:if="{{item.studentId}}" class="application-meta-item">学号 {{item.studentId}}</text>
+          <text wx:if="{{item.college}}" class="application-meta-item">学院 {{item.college}}</text>
+          <text wx:if="{{item.phone}}" class="application-meta-item">手机 {{item.phone}}</text>
+          <text class="application-meta-item">申请于 {{item.appliedAtText}}</text>
+        </view>
+
+        <!-- 驳回过的申请把理由亮出来，否则只看到「已驳回」会一头雾水 -->
+        <view wx:if="{{item.reason}}" class="application-reason">驳回理由：{{item.reason}}</view>
+
+        <!-- 自己的申请一律不给按钮，把原因写出来，免得以为是页面坏了 -->
+        <view wx:if="{{item.isSelf}}" class="application-self">这是你自己的入会申请，不能由本人审核</view>
+
+        <view wx:if="{{item.canApprove || item.canReject}}" class="application-actions">
+          <view
+            wx:if="{{item.canApprove}}"
+            class="mini-btn is-primary"
+            data-application-id="{{item.applicationId}}"
+            bindtap="onApprove"
+          >通过</view>
+          <view
+            wx:if="{{item.canReject}}"
+            class="mini-btn is-danger"
+            data-application-id="{{item.applicationId}}"
+            bindtap="onOpenReject"
+          >驳回</view>
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{isMock}}" class="mock-note">
+      当前为本地模拟数据，入会申请只存在本机，并非真实名单
+    </view>
+  </block>
+
+  <!-- ========== 驳回面板 ========== -->
+  <!-- 用页内面板而不是 wx.showModal：理由需要校验（不填不给提交） -->
+  <view wx:if="{{action.open}}" class="sheet-mask" bindtap="onCancelAction">
+    <view class="sheet" catchtap="noop">
+      <view class="sheet-title">{{action.title}}</view>
+      <view class="sheet-hint">{{action.hint}}</view>
+      <textarea
+        class="sheet-input"
+        value="{{reason}}"
+        placeholder="{{action.placeholder}}"
+        maxlength="60"
+        bindinput="onInputReason"
+      />
+      <view wx:if="{{actionError}}" class="sheet-error">{{actionError}}</view>
+      <view class="sheet-actions">
+        <view class="btn btn-outline sheet-btn" bindtap="onCancelAction">取消</view>
+        <view
+          class="btn btn-primary sheet-btn {{acting ? 'btn-disabled' : ''}}"
+          bindtap="onSubmitAction"
+        >确定</view>
+      </view>
+    </view>
+  </view>
+</view>

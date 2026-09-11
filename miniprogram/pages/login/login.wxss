@@ -1,0 +1,244 @@
+/* 登录注册页样式 */
+
+/* ---------- 品牌区 ---------- */
+
+.login-hero {
+  text-align: center;
+  padding: var(--space-xl) var(--space-lg) var(--space-lg);
+}
+
+.login-logo {
+  width: 128rpx;
+  height: 128rpx;
+  line-height: 128rpx;
+  margin: 0 auto var(--space-md);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
+  color: #ffffff;
+  font-size: 64rpx;
+  font-weight: 600;
+}
+
+.login-title {
+  font-size: var(--font-lg);
+  font-weight: 600;
+}
+
+.login-subtitle {
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+  margin-top: var(--space-xs);
+}
+
+/* ---------- 按钮与链接 ---------- */
+
+.login-btn {
+  margin-top: var(--space-md);
+}
+
+.login-link {
+  text-align: center;
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  padding: var(--space-md) 0 4rpx;
+}
+
+.login-link-danger {
+  color: var(--color-danger);
+}
+
+.login-error {
+  margin-top: var(--space-md);
+  text-align: center;
+}
+
+/* ---------- 已登录账号卡片 ---------- */
+
+.account-row {
+  display: flex;
+  align-items: center;
+}
+
+.account-avatar {
+  width: 112rpx;
+  height: 112rpx;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-right: var(--space-md);
+  background: var(--color-primary-light);
+}
+
+/* 没有头像时用昵称首字兜底，整串名字塞进圆里会溢出 */
+.account-avatar-text {
+  line-height: 112rpx;
+  text-align: center;
+  color: var(--color-primary);
+  font-size: var(--font-xl);
+  font-weight: 600;
+}
+
+.account-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.account-name {
+  font-size: var(--font-lg);
+  font-weight: 600;
+}
+
+.account-tags {
+  display: flex;
+  margin-top: var(--space-xs);
+}
+
+.account-tags .tag {
+  margin-right: var(--space-xs);
+}
+
+.account-notice {
+  margin-top: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  background: #fef3c7;
+  color: #b45309;
+  font-size: var(--font-sm);
+  line-height: 1.5;
+}
+
+/* ---------- 表单 ---------- */
+
+.form-item {
+  margin-top: var(--space-md);
+}
+
+.form-label {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-xs);
+}
+
+.form-required {
+  color: var(--color-danger);
+}
+
+.form-input {
+  height: 88rpx;
+  line-height: 88rpx;
+  padding: 0 var(--space-md);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  border: 2rpx solid var(--color-border);
+  font-size: var(--font-md);
+  box-sizing: border-box;
+}
+
+/* 校验失败时把输入框也标红，光有文字提示不够醒目 */
+.form-input.is-error {
+  border-color: var(--color-danger);
+  background: #fff6f6;
+}
+
+.form-picker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.form-picker::after {
+  content: '›';
+  color: var(--color-text-tertiary);
+  font-size: var(--font-lg);
+}
+
+/* 没选学院时用灰色占位文案，和已选状态区分开 */
+.form-picker.is-placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.form-error {
+  font-size: var(--font-xs);
+  color: var(--color-danger);
+  margin-top: 6rpx;
+}
+
+/* ---------- 头像选择 ---------- */
+
+.form-item-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.form-item-avatar .form-label {
+  margin-bottom: 0;
+}
+
+.avatar-btn {
+  padding: 0;
+  margin: 0;
+  width: 128rpx;
+  height: 128rpx;
+  border-radius: 50%;
+  background: var(--color-bg);
+  border: 2rpx dashed var(--color-border);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.2;
+}
+
+.avatar-btn::after {
+  border: none;
+}
+
+.avatar-img {
+  width: 128rpx;
+  height: 128rpx;
+}
+
+.avatar-placeholder {
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  padding: 0 var(--space-xs);
+  text-align: center;
+}
+
+/* ---------- 待审核 ---------- */
+
+.pending-card {
+  text-align: center;
+}
+
+.pending-icon {
+  font-size: 96rpx;
+  line-height: 1;
+  margin-bottom: var(--space-md);
+}
+
+.pending-card .card-subtitle {
+  line-height: 1.6;
+}
+
+.pending-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) 0;
+  border-bottom: 2rpx solid var(--color-divider);
+  text-align: left;
+}
+
+.pending-row:last-of-type {
+  border-bottom: none;
+}
+
+.pending-key {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+
+.pending-value {
+  font-size: var(--font-md);
+}

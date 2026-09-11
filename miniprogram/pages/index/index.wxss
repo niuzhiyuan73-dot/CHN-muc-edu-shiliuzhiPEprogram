@@ -1,0 +1,293 @@
+/* 首页样式 */
+
+/* ---------- 顶部品牌区 ---------- */
+
+.hero {
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
+  border-radius: var(--radius-lg);
+  padding: var(--space-xl) var(--space-lg);
+  margin-bottom: var(--space-md);
+  color: #ffffff;
+  position: relative;
+  overflow: hidden;
+}
+
+.hero-title {
+  font-size: var(--font-lg);
+  font-weight: 600;
+  margin-bottom: var(--space-xs);
+}
+
+.hero-subtitle {
+  font-size: var(--font-sm);
+  opacity: 0.85;
+}
+
+.hero-badge {
+  display: inline-block;
+  margin-top: var(--space-md);
+  padding: 0 var(--space-sm);
+  height: 40rpx;
+  line-height: 40rpx;
+  border-radius: 20rpx;
+  font-size: var(--font-xs);
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* ---------- 加载与错误 ---------- */
+
+.load-error {
+  font-size: var(--font-sm);
+  color: var(--color-danger);
+  padding: var(--space-xl) var(--space-md);
+  text-align: center;
+  line-height: 1.6;
+}
+
+/* ---------- 卡片标题行 ---------- */
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-sm);
+}
+
+/* card-title 自带下边距，放进标题行后交给 card-head 统一控制 */
+.card-head .card-title {
+  margin-bottom: 0;
+}
+
+.card-more {
+  font-size: var(--font-sm);
+  color: var(--color-primary);
+}
+
+.home-btn {
+  margin-top: var(--space-md);
+}
+
+/* ---------- 我的分数卡片 ---------- */
+
+.score-user {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.score-avatar {
+  width: 72rpx;
+  height: 72rpx;
+  border-radius: 50%;
+  margin-right: var(--space-sm);
+  background: var(--color-primary-light);
+  flex-shrink: 0;
+}
+
+/* 没有头像时用昵称首字兜底 */
+.score-avatar-text {
+  line-height: 72rpx;
+  text-align: center;
+  color: var(--color-primary);
+  font-size: var(--font-lg);
+  font-weight: 600;
+}
+
+.score-name {
+  font-size: var(--font-md);
+  font-weight: 500;
+  margin-right: var(--space-sm);
+}
+
+.score-streak {
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  width: 100%;
+  margin-top: var(--space-xs);
+}
+
+/* 近期状态小圆点 */
+.form-dots {
+  display: flex;
+}
+
+.form-dot {
+  width: 36rpx;
+  height: 36rpx;
+  line-height: 36rpx;
+  border-radius: 50%;
+  text-align: center;
+  font-size: var(--font-xs);
+  color: #ffffff;
+  margin-right: 8rpx;
+}
+
+.form-dot.is-win {
+  background: var(--color-success);
+}
+
+.form-dot.is-loss {
+  background: var(--color-border);
+}
+
+.score-row {
+  padding: var(--space-sm) 0;
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.score-row:last-child {
+  border-bottom: none;
+}
+
+.score-label {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+
+.score-value {
+  display: flex;
+  align-items: baseline;
+  margin-top: 4rpx;
+}
+
+.score-elo {
+  font-size: 44rpx;
+  font-weight: 600;
+  color: var(--color-primary);
+}
+
+.score-delta {
+  font-size: var(--font-sm);
+  margin-left: var(--space-xs);
+}
+
+.score-delta.is-up {
+  color: var(--color-success);
+}
+
+.score-delta.is-down {
+  color: var(--color-danger);
+}
+
+.score-meta {
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  margin-top: 4rpx;
+}
+
+/* ---------- 最近比赛 ---------- */
+
+.match-item {
+  padding: var(--space-md) 0;
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.match-item:last-child {
+  border-bottom: none;
+}
+
+.match-top {
+  display: flex;
+  align-items: center;
+}
+
+.match-top .tag {
+  margin-right: var(--space-xs);
+}
+
+.match-date {
+  margin-left: auto;
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+}
+
+.match-teams {
+  display: flex;
+  align-items: center;
+  margin-top: var(--space-sm);
+  font-size: var(--font-md);
+}
+
+.team {
+  flex: 1;
+  color: var(--color-text-secondary);
+  /* 双打两人名字较长，允许换行但不要把 VS 挤走 */
+  word-break: break-all;
+}
+
+/* 胜方加粗并用主色标出，一眼能看出谁赢了 */
+.team.is-winner {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.match-vs {
+  flex-shrink: 0;
+  margin: 0 var(--space-sm);
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+}
+
+.match-score {
+  margin-top: var(--space-xs);
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  letter-spacing: 1rpx;
+}
+
+/* ---------- 公告 ---------- */
+
+.notice-item {
+  padding: var(--space-md) 0;
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.notice-item:last-child {
+  border-bottom: none;
+}
+
+.notice-head {
+  display: flex;
+  align-items: center;
+}
+
+.notice-head .tag {
+  flex-shrink: 0;
+  margin-right: var(--space-xs);
+}
+
+.notice-title {
+  font-size: var(--font-md);
+  font-weight: 500;
+  flex: 1;
+  min-width: 0;
+}
+
+.notice-content {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+  margin-top: var(--space-xs);
+}
+
+.notice-date {
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  margin-top: var(--space-xs);
+}
+
+.notice-more {
+  text-align: center;
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  padding-top: var(--space-sm);
+}
+
+/* ---------- 页脚概况 ---------- */
+
+.home-stats {
+  text-align: center;
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  padding: var(--space-md) 0 0;
+}

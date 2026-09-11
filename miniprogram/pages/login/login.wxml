@@ -1,0 +1,174 @@
+<!-- 登录注册：入口 → 完善实名信息 → 待审核，三步在同一页内切换 -->
+<view class="page-container login-page">
+
+  <!-- 顶部品牌区 -->
+  <view class="login-hero">
+    <view class="login-logo">匹</view>
+    <view class="login-title">中央民族大学匹克球俱乐部</view>
+    <view class="login-subtitle">会员注册 · 成绩记录 · 等级分排名</view>
+  </view>
+
+  <!-- ===================== 第一步：入口 ===================== -->
+  <block wx:if="{{step === 'entry'}}">
+
+    <!-- 已经登录：给一张账号卡片，说明现在是谁、什么状态 -->
+    <view wx:if="{{existing.loggedIn}}" class="card">
+      <view class="account-row">
+        <image wx:if="{{existing.avatarUrl}}" class="account-avatar" src="{{existing.avatarUrl}}" mode="aspectFill" />
+        <view wx:else class="account-avatar account-avatar-text">{{existing.avatarText}}</view>
+        <view class="account-body">
+          <view class="account-name">{{existing.nickName}}</view>
+          <view class="account-tags">
+            <text class="tag tag-primary">{{existing.roleLabel}}</text>
+            <text class="tag {{existing.isActive ? 'tag-success' : 'tag-warning'}}">{{existing.statusLabel}}</text>
+          </view>
+        </view>
+      </view>
+
+      <view wx:if="{{existing.notice}}" class="account-notice">{{existing.notice}}</view>
+
+      <button class="btn btn-primary btn-block login-btn" bindtap="onGoHome">进入首页</button>
+      <view class="login-link login-link-danger" bindtap="onLogout">退出登录</view>
+    </view>
+
+    <!-- 未登录：登录 / 注册两个入口 -->
+    <view wx:else class="card">
+      <view class="card-title">欢迎加入</view>
+      <view class="card-subtitle">
+        使用微信一键登录；首次登录需填写实名信息，经管理员审核后开通。
+      </view>
+
+      <button
+        class="btn btn-primary btn-block login-btn"
+        disabled="{{submitting}}"
+        bindtap="onLogin"
+      >{{submitting ? '登录中…' : '微信一键登录'}}</button>
+
+      <button class="btn btn-outline btn-block login-btn" bindtap="onGoRegister">新会员注册</button>
+
+      <view wx:if="{{errorText}}" class="form-error login-error">{{errorText}}</view>
+    </view>
+  </block>
+
+  <!-- ===================== 第二步：实名信息 ===================== -->
+  <block wx:elif="{{step === 'profile'}}">
+    <view class="card">
+      <view class="card-title">完善实名信息</view>
+      <view class="card-subtitle">用于核对会员身份，敏感信息仅管理员可见。</view>
+
+      <view class="divider"></view>
+
+      <!-- 头像与昵称：使用微信官方的头像昵称填写能力 -->
+      <view class="form-item form-item-avatar">
+        <view class="form-label">头像</view>
+        <button class="avatar-btn" open-type="chooseAvatar" bindchooseavatar="onChooseAvatar">
+          <image wx:if="{{form.avatarUrl}}" class="avatar-img" src="{{form.avatarUrl}}" mode="aspectFill" />
+          <view wx:else class="avatar-placeholder">选择微信头像</view>
+        </button>
+      </view>
+
+      <view class="form-item">
+        <view class="form-label">昵称</view>
+        <input
+          class="form-input"
+          type="nickname"
+          placeholder="点击可填入微信昵称"
+          value="{{form.nickName}}"
+          data-field="nickName"
+          bindinput="onInput"
+        />
+      </view>
+
+      <view class="form-item">
+        <view class="form-label">姓名 <text class="form-required">*</text></view>
+        <input
+          class="form-input {{errors.realName ? 'is-error' : ''}}"
+          placeholder="请填写真实姓名"
+          value="{{form.realName}}"
+          data-field="realName"
+          bindinput="onInput"
+        />
+        <view wx:if="{{errors.realName}}" class="form-error">{{errors.realName}}</view>
+      </view>
+
+      <view class="form-item">
+        <view class="form-label">学号 <text class="form-required">*</text></view>
+        <input
+          class="form-input {{errors.studentId ? 'is-error' : ''}}"
+          type="number"
+          placeholder="请填写学号"
+          value="{{form.studentId}}"
+          data-field="studentId"
+          bindinput="onInput"
+        />
+        <view wx:if="{{errors.studentId}}" class="form-error">{{errors.studentId}}</view>
+      </view>
+
+      <view class="form-item">
+        <view class="form-label">学院 <text class="form-required">*</text></view>
+        <picker mode="selector" range="{{colleges}}" value="{{collegeIndex}}" bindchange="onPickCollege">
+          <view class="form-input form-picker {{errors.college ? 'is-error' : ''}} {{form.college ? '' : 'is-placeholder'}}">
+            {{form.college || '请选择所属学院'}}
+          </view>
+        </picker>
+        <view wx:if="{{errors.college}}" class="form-error">{{errors.college}}</view>
+      </view>
+
+      <view class="form-item">
+        <view class="form-label">联系方式 <text class="form-required">*</text></view>
+        <input
+          class="form-input {{errors.phone ? 'is-error' : ''}}"
+          type="number"
+          placeholder="请填写手机号"
+          value="{{form.phone}}"
+          data-field="phone"
+          bindinput="onInput"
+        />
+        <view wx:if="{{errors.phone}}" class="form-error">{{errors.phone}}</view>
+      </view>
+
+      <view wx:if="{{errorText}}" class="form-error login-error">{{errorText}}</view>
+
+      <button
+        class="btn btn-primary btn-block login-btn"
+        disabled="{{submitting}}"
+        bindtap="onSubmit"
+      >{{submitting ? '提交中…' : '提交审核'}}</button>
+
+      <view class="login-link" bindtap="onBackToEntry">返回</view>
+    </view>
+  </block>
+
+  <!-- ===================== 第三步：待审核 ===================== -->
+  <block wx:elif="{{step === 'pending'}}">
+    <view class="card pending-card">
+      <view class="pending-icon">⏳</view>
+      <view class="card-title">申请已提交</view>
+      <view class="card-subtitle">{{pending.notice}}</view>
+
+      <view class="divider"></view>
+
+      <view class="pending-row">
+        <text class="pending-key">姓名</text>
+        <text class="pending-value">{{pending.realName}}</text>
+      </view>
+      <view class="pending-row">
+        <text class="pending-key">学号</text>
+        <text class="pending-value">{{pending.studentId}}</text>
+      </view>
+      <view class="pending-row">
+        <text class="pending-key">学院</text>
+        <text class="pending-value">{{pending.college}}</text>
+      </view>
+      <view class="pending-row">
+        <text class="pending-key">状态</text>
+        <text class="tag tag-warning">{{pending.statusLabel}}</text>
+      </view>
+
+      <button class="btn btn-primary btn-block login-btn" bindtap="onGoHome">先随便逛逛</button>
+    </view>
+  </block>
+
+  <view wx:if="{{isMock}}" class="mock-note">当前为本地模拟数据，注册与审核为演示流程</view>
+
+</view>

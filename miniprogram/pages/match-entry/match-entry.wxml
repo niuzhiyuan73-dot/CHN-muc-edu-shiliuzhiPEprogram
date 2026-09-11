@@ -1,0 +1,233 @@
+<!--
+  录入比赛成绩
+  表单的纯逻辑在 services/match-entry-view.js，校验在 services/match-record.js。
+  这里只渲染，并把用户的操作交回去。
+-->
+<view class="page-container">
+
+  <view wx:if="{{loading}}" class="loading">正在加载…</view>
+
+  <view wx:elif="{{error}}" class="empty-state">
+    <view class="empty-state-icon">⚠️</view>
+    <view class="empty-state-text">{{error}}</view>
+  </view>
+
+  <!-- 不能录入时不给表单：填完再被拒，比一开始就说清楚糟得多 -->
+  <view wx:elif="{{blockReason}}" class="empty-state">
+    <view class="empty-state-icon">🔒</view>
+    <view class="empty-state-text">{{blockReason}}</view>
+    <view class="btn btn-outline block-back" bindtap="onCancel">返回</view>
+  </view>
+
+  <block wx:else>
+
+    <!-- ========== 项目 ========== -->
+    <view class="card">
+      <view class="card-title">比赛项目</view>
+      <view class="pool-tabs local-tabs">
+        <view
+          wx:for="{{matchTypeOptions}}"
+          wx:key="value"
+          class="pool-tab {{item.value === form.matchType ? 'is-active' : ''}}"
+          data-value="{{item.value}}"
+          bindtap="onPickMatchType"
+        >
+          <view class="pool-tab-label">{{item.label}}</view>
+        </view>
+      </view>
+    </view>
+
+    <!-- ========== 参赛双方 ========== -->
+    <view class="card">
+      <view class="card-title">参赛双方</view>
+      <view class="card-subtitle">A 队第一格是你自己，另一格选搭档；B 队是对手。点格子按名字搜索</view>
+
+      <view class="team-block">
+        <view class="team-label">A 队</view>
+        <block wx:for="{{teamARows}}" wx:key="slot">
+          <view wx:if="{{item.locked}}" class="player-slot is-locked">
+            <text class="player-name">{{item.name}}</text>
+            <text class="player-lock">我</text>
+          </view>
+          <view
+            wx:else
+            class="player-slot"
+            data-side="A"
+            data-slot="{{item.slot}}"
+            bindtap="onOpenPicker"
+          >
+            <text wx:if="{{item.name}}" class="player-name">{{item.name}}</text>
+            <text wx:else class="player-placeholder">选择搭档</text>
+            <text class="player-arrow">›</text>
+          </view>
+        </block>
+      </view>
+
+      <view class="team-block">
+        <view class="team-label">B 队</view>
+        <block wx:for="{{teamBRows}}" wx:key="slot">
+          <view
+            class="player-slot"
+            data-side="B"
+            data-slot="{{item.slot}}"
+            bindtap="onOpenPicker"
+          >
+            <text wx:if="{{item.name}}" class="player-name">{{item.name}}</text>
+            <text wx:else class="player-placeholder">选择对手</text>
+            <text class="player-arrow">›</text>
+          </view>
+        </block>
+      </view>
+
+      <view wx:if="{{errors.teamA}}" class="field-error">{{errors.teamA}}</view>
+      <view wx:if="{{errors.teamB}}" class="field-error">{{errors.teamB}}</view>
+    </view>
+
+    <!-- ========== 赛制 ========== -->
+    <view class="card">
+      <view class="card-title">赛制</view>
+      <view class="card-subtitle">比分怎么算，由这里决定；历史战绩里显示的就是这行字</view>
+
+      <view class="field-row">
+        <view class="field-label">分制</view>
+        <picker mode="selector" range="{{gamePointsLabels}}" value="{{gamePointsIndex}}" bindchange="onPickGamePoints">
+          <view class="field-value">{{gamePointsLabels[gamePointsIndex]}} ›</view>
+        </picker>
+      </view>
+
+      <view class="field-row">
+        <view class="field-label">局制</view>
+        <picker mode="selector" range="{{bestOfLabels}}" value="{{bestOfIndex}}" bindchange="onPickBestOf">
+          <view class="field-value">{{bestOfLabels[bestOfIndex]}} ›</view>
+        </picker>
+      </view>
+
+      <view class="format-preview">
+        <text class="format-text">{{formatText}}</text>
+        <text wx:if="{{winnerText}}" class="format-winner">{{winnerText}}</text>
+      </view>
+    </view>
+
+    <!-- ========== 比分 ========== -->
+    <view class="card">
+      <view class="card-title">逐局比分</view>
+      <view class="card-subtitle">按 A 队 / B 队的顺序填。没打到的局留空即可</view>
+
+      <view class="score-head">
+        <view class="score-head-no">局</view>
+        <view class="score-head-team">A 队</view>
+        <view class="score-head-team">B 队</view>
+      </view>
+
+      <view wx:for="{{scoreRows}}" wx:key="index" class="score-row">
+        <view class="score-no">{{item.index + 1}}</view>
+        <input
+          class="score-input"
+          type="number"
+          value="{{item.a}}"
+          data-side="A"
+          data-slot="{{item.index}}"
+          bindinput="onInputScore"
+        />
+        <input
+          class="score-input"
+          type="number"
+          value="{{item.b}}"
+          data-side="B"
+          data-slot="{{item.index}}"
+          bindinput="onInputScore"
+        />
+      </view>
+
+      <view wx:for="{{scoreErrors}}" wx:for-item="msg" wx:key="*this" class="field-error">{{msg}}</view>
+      <view wx:if="{{errors.matchTime}}" class="field-error">{{errors.matchTime}}</view>
+    </view>
+
+    <!-- ========== 时间与场地 ========== -->
+    <view class="card">
+      <view class="card-title">时间与场地</view>
+
+      <view class="field-row">
+        <view class="field-label">日期</view>
+        <picker mode="date" value="{{form.date}}" start="{{seasonStart}}" bindchange="onPickDate">
+          <view class="field-value">{{form.date}} ›</view>
+        </picker>
+      </view>
+
+      <view class="field-row">
+        <view class="field-label">时间</view>
+        <picker mode="time" value="{{form.time}}" bindchange="onPickTime">
+          <view class="field-value">{{form.time}} ›</view>
+        </picker>
+      </view>
+
+      <view class="field-row">
+        <view class="field-label">场地</view>
+        <input
+          class="field-input"
+          value="{{form.location}}"
+          placeholder="例如：学校体育馆 1 号场"
+          bindinput="onInputLocation"
+        />
+      </view>
+    </view>
+
+    <view wx:if="{{errorText}}" class="submit-error">{{errorText}}</view>
+
+    <view class="submit-bar">
+      <view class="btn btn-outline submit-btn" bindtap="onCancel">取消</view>
+      <view
+        class="btn btn-primary submit-btn {{submitting ? 'btn-disabled' : ''}}"
+        bindtap="onSubmit"
+      >提交，等待确认</view>
+    </view>
+
+    <view wx:if="{{isMock}}" class="mock-note">
+      当前为本地模拟数据，提交后只写入内存，重启小程序即清空
+    </view>
+
+    <!--
+      找人面板。原生 picker 只吃一个静态数组，几十个名字里没法按名字搜，
+      所以自己搭一个：上面搜索框，下面滚动名单。
+      外层遮罩点了就关，内层 catchtap 吞掉冒泡，免得点名单时把面板一起关掉。
+    -->
+    <view wx:if="{{pickerVisible}}" class="picker-mask" bindtap="onClosePicker">
+      <view class="picker-panel" catchtap="noop">
+        <view class="picker-head">
+          <view class="picker-title">{{pickerSide === 'A' ? '选择搭档' : '选择对手'}}</view>
+          <view class="picker-close" bindtap="onClosePicker">✕</view>
+        </view>
+
+        <view class="picker-search">
+          <input
+            class="picker-search-input"
+            type="text"
+            value="{{pickerKeyword}}"
+            focus="{{pickerVisible}}"
+            confirm-type="search"
+            placeholder="输入名字搜索"
+            bindinput="onInputPickerKeyword"
+          />
+          <view wx:if="{{pickerKeyword}}" class="picker-search-clear" catchtap="onClearPickerKeyword">✕</view>
+        </view>
+
+        <scroll-view class="picker-list" scroll-y>
+          <view wx:if="{{pickerRows.length === 0}}" class="picker-empty">{{pickerEmptyText}}</view>
+          <view
+            wx:for="{{pickerRows}}"
+            wx:key="id"
+            class="picker-item {{item.selected ? 'is-selected' : ''}}"
+            data-side="{{pickerSide}}"
+            data-slot="{{pickerSlot}}"
+            data-id="{{item.id}}"
+            bindtap="onPickMember"
+          >
+            <view class="picker-avatar">{{item.avatarText}}</view>
+            <view class="picker-name">{{item.name}}</view>
+            <view wx:if="{{item.selected}}" class="picker-check">✓</view>
+          </view>
+        </scroll-view>
+      </view>
+    </view>
+  </block>
+</view>

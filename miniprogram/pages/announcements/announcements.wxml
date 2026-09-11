@@ -1,0 +1,53 @@
+<!--
+  公告列表
+  数据形状见 services/announcement-view.js 的 loadAnnouncementListView。
+  这一页不判权限：视图模型给每行的 canArchive 恒为假，不会冒出管理按钮。
+-->
+<view class="page-container">
+
+  <!-- 加载中。必须排在出错之前，否则首屏会一闪而过地报错 -->
+  <view wx:if="{{loading}}" class="loading">正在加载…</view>
+
+  <view wx:elif="{{error}}" class="empty-state">
+    <view class="empty-state-icon">⚠️</view>
+    <view class="empty-state-text">{{error}}</view>
+  </view>
+
+  <block wx:else>
+
+    <!-- ========== 分类标签 ========== -->
+    <view class="pool-tabs {{switching ? 'is-switching' : ''}}">
+      <view
+        wx:for="{{view.tabs}}"
+        wx:key="tab"
+        class="pool-tab {{item.active ? 'is-active' : ''}}"
+        data-tab="{{item.tab}}"
+        bindtap="onSwitchTab"
+      >
+        <view class="pool-tab-label">
+          {{item.label}}
+          <text wx:if="{{item.count > 0}}" class="tab-count">{{item.count}}</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- ========== 公告列表 ========== -->
+    <view class="card">
+      <view wx:if="{{view.rows.length === 0}}" class="empty-note">{{view.emptyText}}</view>
+
+      <view wx:for="{{view.rows}}" wx:key="id" class="notice-row">
+        <view class="notice-head">
+          <text class="tag notice-category">{{item.category}}</text>
+          <text wx:if="{{item.pinned}}" class="tag notice-pin">置顶</text>
+          <text class="notice-date">{{item.publishText}}</text>
+        </view>
+        <view class="notice-title">{{item.title}}</view>
+        <view class="notice-content">{{item.content}}</view>
+      </view>
+    </view>
+
+    <view wx:if="{{isMock}}" class="mock-note">
+      当前为本地模拟数据，用于开发预览
+    </view>
+  </block>
+</view>

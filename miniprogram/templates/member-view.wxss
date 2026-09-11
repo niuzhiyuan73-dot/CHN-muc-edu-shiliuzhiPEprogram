@@ -1,0 +1,420 @@
+/**
+ * 个人主页样式（「我的」与「他人主页」共用）
+ * 由两个页面 @import 引入，样式只写一份。
+ */
+
+/* ---------- 会员头卡 ---------- */
+
+.member-hero {
+  display: flex;
+  align-items: center;
+  padding: var(--space-md) 0;
+}
+
+.member-avatar {
+  width: 120rpx;
+  height: 120rpx;
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: #ffffff;
+  font-size: var(--font-lg);
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-right: var(--space-md);
+  overflow: hidden;
+}
+
+/* 没有头像时用昵称首字代替，比放一个灰色占位图友好 */
+.member-avatar text {
+  font-size: 40rpx;
+}
+
+.member-avatar-img {
+  width: 100%;
+  height: 100%;
+}
+
+.member-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.member-name {
+  display: flex;
+  align-items: center;
+  font-size: var(--font-xl);
+  font-weight: 600;
+}
+
+.member-badge {
+  margin-left: var(--space-xs);
+  padding: 0 var(--space-sm);
+  height: 36rpx;
+  line-height: 36rpx;
+  border-radius: 18rpx;
+  font-size: var(--font-xs);
+  font-weight: 400;
+  background: var(--color-accent-light);
+  color: var(--color-accent);
+}
+
+.member-meta {
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  margin-top: 6rpx;
+}
+
+.member-tags {
+  margin-top: var(--space-xs);
+  display: flex;
+  gap: var(--space-xs);
+}
+
+/* 分池切换（.pool-tabs 等）的样式在 app.wxss 里，排行榜页也要用同一套 */
+
+/* ---------- 分数卡 ---------- */
+
+.score-card {
+  text-align: center;
+}
+
+.score-main {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+}
+
+.score-value {
+  font-size: 88rpx;
+  font-weight: 600;
+  line-height: 1.1;
+  color: var(--color-primary);
+}
+
+.score-delta {
+  font-size: var(--font-lg);
+  font-weight: 500;
+  margin-left: var(--space-sm);
+}
+
+.score-delta.is-up,
+.stat-delta.is-up,
+.extreme.is-up,
+.match-elo.is-up {
+  color: var(--color-success);
+}
+
+.score-delta.is-down,
+.stat-delta.is-down,
+.extreme.is-down,
+.match-elo.is-down {
+  color: var(--color-danger);
+}
+
+.score-caption {
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  margin-top: var(--space-xs);
+}
+
+.score-grid,
+.event-summary {
+  display: flex;
+}
+
+.score-cell {
+  flex: 1;
+  text-align: center;
+}
+
+.score-cell-value {
+  font-size: var(--font-lg);
+  font-weight: 600;
+}
+
+.score-cell-label {
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  margin-top: 4rpx;
+}
+
+.score-foot {
+  text-align: center;
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+
+.score-foot-sep {
+  margin: 0 var(--space-xs);
+  color: var(--color-border);
+}
+
+/* ---------- 近期状态 ---------- */
+
+.form-row {
+  display: flex;
+  align-items: center;
+}
+
+.form-label {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  margin-right: var(--space-sm);
+}
+
+.form-dots {
+  display: flex;
+  flex: 1;
+}
+
+.form-dot {
+  width: 52rpx;
+  height: 52rpx;
+  line-height: 52rpx;
+  border-radius: 50%;
+  text-align: center;
+  font-size: var(--font-xs);
+  color: #ffffff;
+  margin-right: 12rpx;
+}
+
+.form-dot.is-win {
+  background: var(--color-success);
+}
+
+/* 输球用灰色而非红色：一周打十几场，满屏红色会让人很沮丧，
+   而灰色表示「这场没赢」这个中性的事实 */
+.form-dot.is-loss {
+  background: var(--color-border);
+}
+
+.form-streak {
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+}
+
+/* ---------- 分数曲线 ---------- */
+
+.chart-wrap {
+  margin-top: var(--space-sm);
+}
+
+.chart-canvas {
+  width: 100%;
+  height: 320rpx;
+}
+
+.chart-legend {
+  display: flex;
+  margin-top: var(--space-sm);
+}
+
+.legend-cell {
+  flex: 1;
+  text-align: center;
+}
+
+.legend-label {
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+}
+
+.legend-value {
+  font-size: var(--font-md);
+  font-weight: 500;
+  margin-top: 2rpx;
+}
+
+.legend-value.is-primary {
+  color: var(--color-primary);
+}
+
+.chart-extremes {
+  display: flex;
+  margin-top: var(--space-sm);
+  font-size: var(--font-xs);
+}
+
+.extreme {
+  flex: 1;
+}
+
+.extreme.is-down {
+  text-align: right;
+}
+
+/* ---------- 赛事名次 ---------- */
+
+.event-summary {
+  margin-bottom: var(--space-xs);
+}
+
+.event-row {
+  display: flex;
+  align-items: center;
+  padding: var(--space-sm) 0;
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.event-row:last-child {
+  border-bottom: none;
+}
+
+.event-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.event-title {
+  font-size: var(--font-md);
+}
+
+.event-meta {
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  margin-top: 4rpx;
+}
+
+.event-place {
+  flex-shrink: 0;
+  padding: 0 var(--space-sm);
+  height: 48rpx;
+  line-height: 48rpx;
+  border-radius: 24rpx;
+  font-size: var(--font-sm);
+  background: var(--color-divider);
+  color: var(--color-text-secondary);
+}
+
+.event-place.is-top {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+/* ---------- 逐场战绩 ---------- */
+
+.match-row {
+  display: flex;
+  align-items: center;
+  padding: var(--space-sm) 0;
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.match-row:last-child {
+  border-bottom: none;
+}
+
+.match-flag {
+  width: 56rpx;
+  height: 56rpx;
+  line-height: 56rpx;
+  border-radius: 50%;
+  text-align: center;
+  font-size: var(--font-sm);
+  color: #ffffff;
+  flex-shrink: 0;
+  margin-right: var(--space-sm);
+}
+
+.match-flag.is-win {
+  background: var(--color-success);
+}
+
+.match-flag.is-loss {
+  background: var(--color-border);
+}
+
+.match-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.match-line1 {
+  font-size: var(--font-md);
+}
+
+.match-tag {
+  margin-left: var(--space-xs);
+  padding: 0 10rpx;
+  font-size: var(--font-xs);
+  color: var(--color-primary);
+  border: 2rpx solid var(--color-primary);
+  border-radius: 6rpx;
+}
+
+.match-line2 {
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  margin-top: 2rpx;
+}
+
+.match-delta {
+  text-align: right;
+  flex-shrink: 0;
+  margin-left: var(--space-sm);
+}
+
+.match-elo {
+  font-size: var(--font-md);
+  font-weight: 500;
+}
+
+.match-point {
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  margin-top: 4rpx;
+}
+
+.load-more {
+  text-align: center;
+  font-size: var(--font-sm);
+  color: var(--color-primary);
+  padding: var(--space-md) 0 0;
+}
+
+/* ---------- 交锋 / 搭档 ---------- */
+
+.stat-row {
+  display: flex;
+  align-items: center;
+  padding: var(--space-sm) 0;
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.stat-row:last-child {
+  border-bottom: none;
+}
+
+.stat-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.stat-name {
+  font-size: var(--font-md);
+}
+
+.stat-detail {
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  margin-top: 2rpx;
+}
+
+.stat-rate {
+  width: 120rpx;
+  text-align: center;
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+
+.stat-delta {
+  width: 110rpx;
+  text-align: right;
+  font-size: var(--font-md);
+  color: var(--color-text-secondary);
+}
+
+/* .empty-note 在 app.wxss 里，排行榜页也要用同一条 */
