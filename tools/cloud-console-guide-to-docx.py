@@ -186,6 +186,7 @@ def build():
             ["云环境 ID", ENV_ID],
             ["云函数", "data（本环境唯一云函数，承载全部读写接口）"],
             ["核心原则", "小程序端不直接读写数据库；一切写操作都经云函数 data 完成，控制台只用于初始化、审核、提权、赛季重置与救急"],
+            ["集合规模", "个人赛 7 个 + 学院赛 4 个（college_events / college_entries / ties / lineups）；学院赛与个人赛互不共用集合"],
         ],
         widths=[3.0, 13.2],
     )
@@ -217,14 +218,15 @@ def build():
 
     # ---------------- 二、集合总览 ----------------
     heading(doc, "二、数据库集合总览", 1)
-    para(doc, "环境里一共有 7 个业务集合。名称必须与下表完全一致（区分大小写与下划线）。")
+    para(doc, "环境里一共有 11 个业务集合：个人赛 7 个、学院赛 4 个。名称必须与下表完全一致（区分大小写与下划线）。")
+    para(doc, "个人赛集合：", bold=True)
     table(
         doc,
         ["集合名", "存什么", "必建", "关键字段"],
         [
-            ["users", "会员档案与入会申请（同一集合，用 status 区分）", "是", "openId、nickName、realName、gender('M'/'F')、role(0/1/2)、status(0/1/2/3)、initialElo、joinDate"],
-            ["matches", "比赛流水，等级分的唯一来源", "是", "_id、matchType、pool、teamA、teamB、scoreA、scoreB、winner、status(0/1/2)、matchTime、eventId"],
-            ["events", "赛事", "是", "_id、title、matchType、format、level、groupCount、advancePerGroup、status(0/1/2)、results、draw"],
+            ["users", "会员档案与入会申请（同一集合，用 status 区分）", "是", "openId、nickName、realName、gender('M'/'F')、role(0/1/2)、status(0/1/2/3)、initialElo、joinDate、college"],
+            ["matches", "比赛流水，等级分的唯一来源（含学院赛小场）", "是", "_id、matchType、pool、teamA、teamB、scoreA、scoreB、winner、status(0/1/2)、matchTime、eventId、competition、collegeEventId、tieId、outcome、forfeitBy"],
+            ["events", "个人赛事", "是", "_id、title、matchType、format、level、groupCount、advancePerGroup、status(0/1/2)、results、draw"],
             ["event_signups", "赛事报名与签到", "是", "_id、eventId、userId、status(0已取消/1已报名/2已签到)、signTime、checkInTime"],
             ["announcements", "公告", "是", "_id、title、content、category、pinned、status('published'/'archived')、publishTime"],
             ["seasons", "赛季锚点，只需要一条 _id='current' 的记录", "是", "_id、anchorTime、resetTime、resetPolicy、seasonNumber、version、algoVersion"],
@@ -232,16 +234,30 @@ def build():
         ],
         widths=[2.6, 5.0, 1.6, 7.0],
     )
+    para(doc, "学院赛集合（独立成体系，不与个人赛共用）：", bold=True)
+    table(
+        doc,
+        ["集合名", "存什么", "必建", "关键字段"],
+        [
+            ["college_events", "学院团体赛，与 events 平行", "是", "_id、title、legPlan（小项序列）、allowMultiEntry、rosterMin/Max、tieAlgo、tieNetMode、status(0报名中/1待开赛/2进行中/3已结束)、draw、results"],
+            ["college_entries", "各学院参赛名单，键为「赛事 + 学院」", "是", "_id、eventId、college、members（队员编号数组）、status(0待审核/1已通过/2已退回)、submittedBy、reviewedBy、reason"],
+            ["ties", "大场：两院之间的一轮对抗", "是", "_id、eventId、round、stage、slot、collegeA、collegeB、legs（小项结果数组）、winner、status(0待排阵/1待开赛/2进行中/3已结束)、lineupA/lineupB"],
+            ["lineups", "大场排阵，键为「大场 + 学院」", "是", "_id、eventId、tieId、college、entries（[{legNo, discipline, players}]）、submittedBy、submitTime、carriedFrom"],
+        ],
+        widths=[2.6, 5.0, 1.6, 7.0],
+    )
     callout(doc, "event_signups 必须建。cloudfunctions/README.md 里曾写「报名集合不必建」，那是旧版本的说法；现在的报名与签到都会写这个集合，缺了它报名会直接报错。", "关键")
+    callout(doc, "学院赛的 4 个集合同样必须建。college_events 与 college_entries 缺一不可，ties 与 lineups 在「开始赛事」后就会写入；少建任何一个，学院赛都会在对应步骤直接报错。", "关键")
     para(doc, "另外还有一个 rankings 集合在代码里预留了常量，但没有映射、没有任何读写，无需创建。")
-    para(doc, "等级分与赛季积分不落库。每次读取时，云函数从 users + matches + events 现场重放算出结果，所以数据库里看不到「分数」字段，也不需要维护它。")
+    para(doc, "等级分与赛季积分不落库。每次读取时，云函数从 users + matches + events 现场重放算出结果，所以数据库里看不到「分数」字段，也不需要维护它。学院赛名次也不参与个人分重放——它只写在 college_events.results 里。")
 
     # ---------------- 三、首次部署 ----------------
     heading(doc, "三、首次部署：集合、索引、安全规则、第一个管理员", 1)
 
     heading(doc, "3.1 新建集合", 2)
     numbered(doc, "数据库 → 集合管理 → 「＋ 新建集合」。")
-    numbered(doc, "按第 2 节的表格逐个建：users、matches、events、event_signups、announcements、seasons。可选建 audit_logs。")
+    numbered(doc, "按第 2 节的表格逐个建个人赛集合：users、matches、events、event_signups、announcements、seasons。可选建 audit_logs。")
+    numbered(doc, "再逐个建学院赛集合：college_events、college_entries、ties、lineups。")
     numbered(doc, "集合名一个字都不能差，建错名字等于没建。")
     numbered(doc, "seasons 建好后，手工新增一条 _id 为 current 的文档（字段见第 6 节）；不建也能跑，系统会按默认第一赛季处理。")
 
@@ -257,6 +273,9 @@ def build():
             ["event_signups", "eventId + userId", "否", "查某场赛事某人是否报名"],
             ["announcements", "status", "否", "只取已发布公告"],
             ["events", "status", "否", "按状态筛选赛事"],
+            ["college_entries", "eventId", "否", "按学院赛查名单"],
+            ["ties", "eventId + round", "否", "按赛事与轮次查大场"],
+            ["lineups", "eventId + tieId", "否", "按赛事或大场查排阵"],
         ],
         widths=[2.8, 4.2, 1.8, 7.4],
     )
@@ -317,21 +336,23 @@ def build():
 
     # ---------------- 五、角色调整 ----------------
     heading(doc, "五、日常操作二：调整角色（提权 / 降权）", 1)
-    para(doc, "角色只由 users 集合的 role 字段决定，权限判定同时要求账号是在册状态。")
+    para(doc, "角色只由 users 集合的 role 字段决定，权限判定同时要求账号是在册状态。干事在学院赛里是「学院负责人」，权限以 college 字段为界——只能管自己那一所学院的名单与排阵。")
     table(
         doc,
         ["目标", "role 值", "另外必须满足"],
         [
-            ["管理员（发布、抽签、开赛、结束赛事）", "2", "status = 1"],
-            ["干事（额外：代签到、录分任意场次）", "1", "status = 1"],
+            ["管理员（发布、抽签、开赛、结束赛事；可替任何学院兜底）", "2", "status = 1"],
+            ["干事（额外：代签到、录分任意场次；本学院的名单与排阵）", "1", "status = 1，且 college 为本学院"],
             ["普通会员", "0", "status = 1"],
         ],
         widths=[7.4, 2.4, 6.4],
     )
     numbered(doc, "数据库 → users，按昵称或 realName 搜索到目标会员。")
     numbered(doc, "把 role 改成 1 或 2（降权改回 0），确认 status 是 1，保存。")
+    numbered(doc, "要当学院负责人（干事）的，务必把 college 填成 26 所学院之一的全名，否则他在学院赛里提交不了任何名单或排阵。")
     numbered(doc, "让对方重开小程序，权限立即生效，无需重新登录或换绑。")
     callout(doc, "role 改高了但 status 不是 1（比如还是待审核），权限照样不通过——这是最常见的「我明明设成管理员了怎么还不能发布」的原因。", "注意")
+    callout(doc, "学院负责人也可以在小程序里「会员审核」页由管理员任免（对应云函数 setCollegeLeader），控制台改 role + college 是等效的兜底手段。", "提示")
 
     # ---------------- 六、赛季更新 ----------------
     heading(doc, "六、日常操作三：赛季更新（只能在控制台做）", 1)
@@ -403,8 +424,29 @@ def build():
 
     heading(doc, "7.4 清理测试数据", 2)
     bullet(doc, "删除赛事时，记得一并清理 event_signups 里该 eventId 的报名记录，以及 matches 里该 eventId 的比赛；只删赛事会留下孤儿数据。")
+    bullet(doc, "删除学院赛时，要连带清理 college_entries、ties、lineups 里该 eventId 的全部记录，以及 matches 里 collegeEventId 为该赛事的学院赛小场；漏掉任何一处都会留下孤儿数据。")
     bullet(doc, "删除会员有风险：历史比赛会指向一个不存在的 userId，榜单会缺人。测试账号可以在上线前统一清，正式数据不要删。")
     callout(doc, "任何批量删除前，先在该集合点「导出」，把整份数据下载下来留底。", "注意")
+
+    heading(doc, "7.5 学院赛数据救急", 2)
+    para(doc, "学院赛的结构比个人赛多几层，改库前先弄清各集合的对应关系：")
+    table(
+        doc,
+        ["想改的东西", "去哪个集合", "改哪个字段"],
+        [
+            ["赛事信息 / 小项序列", "college_events", "title、legPlan、tieAlgo 等；改小项序列会让已有大场的小项对不上，慎改"],
+            ["学院名单", "college_entries", "members（队员编号数组）、status（0待审核/1已通过/2已退回）"],
+            ["名单锁定（放开重交）", "college_events", "把 status 从 1（待开赛）改回 0（报名中）可重新开放名单，但需自行处理已生成的抽签结果"],
+            ["大场对阵与结果", "ties", "collegeA/collegeB、legs[]、winner、status"],
+            ["大场排阵", "lineups", "entries（[{legNo, discipline, players}]）"],
+            ["学院名次", "college_events", "results（[{college, placement}]）"],
+        ],
+        widths=[3.6, 3.4, 9.2],
+    )
+    bullet(doc, "ties._id 是大场的确定性键（赛事 + 轮次 + 阶段 + 签位），不要手工新增或改 _id。")
+    bullet(doc, "学院赛小场写在 matches 集合，用 competition='college' 与个人赛区分；改小场比分会触发大场汇总重算。")
+    bullet(doc, "学院名次不计个人分，因此改 college_events.results 不需要动 seasons.version；但若改了学院赛小场的比分，需要把 version 加 1 让 ELO 重算。")
+    bullet(doc, "弃权的小场（outcome='forfeit'）与双打小场都不计 ELO，改这些场次不会影响任何人的等级分。")
 
     # ---------------- 八、导入历史成绩 ----------------
     heading(doc, "八、日常操作五：导入历史成绩", 1)
@@ -437,6 +479,10 @@ def build():
             ["排行榜少了某个人", "users 缺 gender 字段", "补上 'M' 或 'F'（或 '男'/'女'）"],
             ["改了数据库但分数没变", "云函数结果被缓存", "seasons/current.version 加 1，或等容器回收"],
             ["报名 / 签到直接报错", "event_signups 集合没建", "按第 3.1 节新建该集合"],
+            ["学院赛某一步直接报错", "college_events / college_entries / ties / lineups 有集合没建", "按第 3.1 节补齐 4 个学院赛集合"],
+            ["干事交不了本院名单 / 排阵", "该账号的 college 为空或不是学院全名", "在 users 里把 college 改成 26 所学院之一的全名"],
+            ["学院赛找不到某个学院", "该学院名单不是「已通过」状态", "在 college_entries 里把 status 改成 1（已通过），或让管理员在小程序里通过"],
+            ["大场点「开始」不生效", "双方排阵未齐", "确认 ties 里 lineupA/lineupB 都为 true；缺的一方补交排阵"],
             ["重置赛季被拒绝", "调试身份的 OpenID 不是管理员", "改用 role=2 且 status=1 的账号登录开发者工具再调用"],
             ["赛季显示不对", "seasons/current 的 seasonNumber 或 version 异常", "直接编辑该文档，并把 version 加 1"],
         ],
@@ -449,13 +495,19 @@ def build():
         doc,
         ["对象", "字段", "取值"],
         [
-            ["账号角色", "role", "0=会员，1=干事，2=管理员"],
-            ["账号状态", "status", "0=待审核，1=在册，2=禁用，3=离校"],
-            ["赛事", "events.status", "0=报名中，1=进行中，2=已结束"],
+            ["账号角色", "users.role", "0=会员，1=干事，2=管理员"],
+            ["账号状态", "users.status", "0=待审核，1=在册，2=禁用，3=离校"],
+            ["个人赛事", "events.status", "0=报名中，1=进行中，2=已结束"],
             ["比赛", "matches.status", "0=待确认，1=已生效，2=已撤销"],
+            ["比赛归属", "matches.competition", "personal=个人赛，college=学院赛小场"],
+            ["比赛结果性质", "matches.outcome", "normal=正常，forfeit=弃权（不计 ELO）"],
             ["报名", "event_signups.status", "0=已取消，1=已报名，2=已签到"],
             ["公告", "announcements.status", "published=已发布，archived=已下架"],
             ["比赛项目", "matches.matchType", "1=单打，3=双打（双打不计分）"],
+            ["学院赛", "college_events.status", "0=报名中，1=待开赛，2=进行中，3=已结束"],
+            ["学院名单", "college_entries.status", "0=待审核，1=已通过，2=已退回"],
+            ["大场", "ties.status", "0=待排阵，1=待开赛，2=进行中，3=已结束"],
+            ["小项结果", "ties.legs[].outcome", "normal=正常，forfeit=弃权（对手获胜、不计 ELO）"],
         ],
         widths=[3.2, 4.0, 9.0],
     )
@@ -472,12 +524,24 @@ def build():
             ["startEvent", "开始赛事（单打需先抽签）", "管理员"],
             ["signUpEvent / cancelSignupEvent", "报名 / 取消报名", "本人"],
             ["checkInEvent", "代会员签到", "干事及以上"],
-            ["submitMatch", "录入比赛成绩", "登录；给抽签场次补分需参赛者或干事及以上"],
+            ["submitMatch", "录入比赛成绩（个人赛与学院赛小场共用）", "登录；给抽签场次补分需参赛者或干事及以上"],
             ["confirmMatch / rejectMatch", "确认 / 驳回比分", "对手方或管理员"],
             ["revokeMatch", "撤销已生效比赛", "管理员任意场；其余仅限本人录入"],
+            ["forfeitMatch", "个人赛本人弃权（对手晋级，不计 ELO）", "本场参赛者本人；管理员可替任意一方"],
             ["finishEvent", "录入名次并结束赛事（唯一结算入口）", "管理员"],
             ["publishAnnouncement / archiveAnnouncement", "发布 / 下架公告", "干事及以上"],
             ["resetSeason", "赛季软重置", "管理员"],
+            ["getCollegeEvents / getCollegeEvent", "读取学院赛列表 / 详情", "登录"],
+            ["getCollegeEntries / getCollegeTies / getCollegeLineups", "读取学院名单 / 大场 / 排阵", "登录"],
+            ["publishCollegeEvent", "发布学院赛", "管理员"],
+            ["submitCollegeEntry", "提交本学院名单", "干事（限本学院）或管理员"],
+            ["reviewCollegeEntry", "审核学院名单（通过 / 退回）", "管理员"],
+            ["drawCollegeEvent", "学院赛抽签 / 重抽", "管理员"],
+            ["startCollegeEvent", "开始学院赛，生成首轮大场", "管理员"],
+            ["submitLineup", "提交大场排阵", "干事（限本学院）或管理员"],
+            ["startTie", "开始大场，生成小场（双方排阵须齐）", "管理员"],
+            ["recordForfeit", "记录学院赛小场弃权", "管理员"],
+            ["finishCollegeEvent", "录入学院名次并结束学院赛", "管理员"],
         ],
         widths=[4.6, 7.2, 4.4],
     )
@@ -497,6 +561,12 @@ def build():
             ["让分数立即重算", "seasons", "version +1"],
             ["作废一场比赛", "matches", "status → 2"],
             ["改赛事名次", "events", "results"],
+            ["通过学院名单", "college_entries", "status：0 → 1"],
+            ["退回学院名单", "college_entries", "status：0 → 2，加 reason"],
+            ["改学院名单队员", "college_entries", "members"],
+            ["改大场对阵 / 结果", "ties", "collegeA/collegeB、legs[]、winner、status"],
+            ["改大场排阵", "lineups", "entries"],
+            ["改学院名次", "college_events", "results"],
         ],
         widths=[4.6, 3.6, 8.0],
     )
