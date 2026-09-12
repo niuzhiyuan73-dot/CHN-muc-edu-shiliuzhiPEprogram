@@ -38,7 +38,7 @@
         </view>
         <view class="event-info-row">
           <text class="event-info-label">项目</text>
-          <text class="event-info-value">{{view.event.levelLabel}} · {{view.event.matchTypeLabel}} · {{view.event.bronzeLabel}}</text>
+          <text class="event-info-value">{{view.event.levelLabel}} · {{view.event.matchTypeLabel}} · {{view.event.formatLabel}}</text>
         </view>
         <view class="event-info-row">
           <text class="event-info-label">名额</text>
@@ -89,6 +89,43 @@
       >{{view.event.drawn ? '重新抽签' : '开始抽签'}}</view>
     </view>
 
+    <!-- ========== 积分表（循环赛 / 小组赛） ========== -->
+    <view wx:if="{{view.hasStandings}}" class="card">
+      <view class="rank-head">
+        <view class="rank-head-title">积分表</view>
+      </view>
+
+      <view wx:for="{{view.standings}}" wx:for-item="group" wx:key="group" class="standings-group">
+        <view class="standings-group-title">{{group.groupLabel}}</view>
+
+        <view class="standings-row standings-head">
+          <text class="standings-rank">名次</text>
+          <text class="standings-name">姓名</text>
+          <text class="standings-cell">胜</text>
+          <text class="standings-cell">负</text>
+          <text class="standings-cell">净胜局</text>
+          <text class="standings-cell">净胜分</text>
+        </view>
+
+        <view
+          wx:for="{{group.rows}}"
+          wx:key="userId"
+          class="standings-row {{item.isMe ? 'is-me' : ''}}"
+        >
+          <text class="standings-rank">{{item.rank}}</text>
+          <view class="standings-name">
+            <image wx:if="{{item.avatarUrl}}" class="standings-avatar" src="{{item.avatarUrl}}" mode="aspectFill" />
+            <text wx:else class="standings-avatar-text">{{item.avatarText}}</text>
+            <text class="standings-nick">{{item.nickName}}</text>
+          </view>
+          <text class="standings-cell">{{item.wins}}</text>
+          <text class="standings-cell">{{item.losses}}</text>
+          <text class="standings-cell">{{item.gameDiffText}}</text>
+          <text class="standings-cell">{{item.pointDiffText}}</text>
+        </view>
+      </view>
+    </view>
+
     <!-- ========== 签表 ========== -->
     <view wx:if="{{view.hasBracket}}" class="card">
       <view class="rank-head">
@@ -96,7 +133,7 @@
       </view>
 
       <view wx:for="{{view.bracketRows}}" wx:key="matchId" class="bracket-row">
-        <view class="bracket-round">{{item.roundText}}</view>
+        <view class="bracket-round">{{item.groupText ? item.groupText + ' · ' : ''}}{{item.roundText}}</view>
 
         <view class="bracket-main">
           <view class="bracket-teams">

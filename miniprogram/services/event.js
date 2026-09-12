@@ -42,6 +42,17 @@ const {
   SEED_COUNTS,
   SIGNUP_STATUS,
   SIGNUP_STATUS_LABEL,
+  EVENT_FORMAT,
+  EVENT_FORMAT_LABEL,
+  DEFAULT_EVENT_FORMAT,
+  GROUPED_FORMATS,
+  KNOCKOUT_FORMATS,
+  EVENT_PLACEMENT_MODE,
+  EVENT_PLACEMENT_MODE_LABEL,
+  DEFAULT_PLACEMENT_MODE,
+  GROUP_CONFIG,
+  DEFAULT_GROUP_COUNT,
+  DEFAULT_ADVANCE_PER_GROUP,
   isRankable,
 } = require('../utils/constants.js');
 const { formatDateTime } = require('../utils/format.js');
@@ -60,6 +71,10 @@ const FIELD_ORDER = [
   'title',
   'description',
   'matchType',
+  'format',
+  'groupCount',
+  'advancePerGroup',
+  'placementMode',
   'level',
   'bronzeMode',
   'seedMode',
@@ -77,6 +92,10 @@ const VALID_BRONZE_MODES = Object.values(EVENT_BRONZE_MODE);
 const VALID_SEED_MODES = Object.values(SEED_MODE);
 /** 合法的种子数量集合（仅单打赛事需要） */
 const VALID_SEED_COUNTS = SEED_COUNTS;
+/** 合法的赛制集合 */
+const VALID_FORMATS = Object.values(EVENT_FORMAT);
+/** 合法的排位赛开关集合 */
+const VALID_PLACEMENT_MODES = Object.values(EVENT_PLACEMENT_MODE);
 
 /* ============================================================
  * 权限
@@ -350,6 +369,13 @@ function normalizeDraft(form) {
     description: text(source.description),
     // 数字枚举：'' 变成 null，交给校验去说「请选择」，而不是悄悄当成 0
     matchType: int(source.matchType),
+    // 赛制缺省按单败淘汰：历史赛事没有这个字段，表单也允许不选（等价于旧行为）
+    format: text(source.format) || DEFAULT_EVENT_FORMAT,
+    // 小组参数只有分组赛制用得上，给上缺省值即可，不强制显式选
+    groupCount: int(source.groupCount) === null ? DEFAULT_GROUP_COUNT : int(source.groupCount),
+    advancePerGroup:
+      int(source.advancePerGroup) === null ? DEFAULT_ADVANCE_PER_GROUP : int(source.advancePerGroup),
+    placementMode: text(source.placementMode) || DEFAULT_PLACEMENT_MODE,
     level: int(source.level),
     bronzeMode: text(source.bronzeMode),
     // 种子来源与数量只对单打有意义；双打留空即可，校验时也不要求
@@ -386,6 +412,29 @@ function validateEvent(form = {}) {
 
   if (!MATCH_TYPE_TO_POOL[draft.matchType]) {
     errors.matchType = '请选择单打或双打';
+  }
+
+  if (!VALID_FORMATS.includes(draft.format)) {
+    errors.format = '请选择赛制';
+  }
+
+  // 小组参数只在分组赛制下有约束：循环赛恒为单组，不看表单里的组数
+  if (draft.format === EVENT_FORMAT.GROUP_KNOCKOUT) {
+    if (!GROUP_CONFIG.COUNT_OPTIONS.includes(draft.groupCount)) {
+      errors.groupCount = `小组数只能是 ${GROUP_CONFIG.COUNT_OPTIONS.join(' / ')}`;
+    }
+    if (!GROUP_CONFIG.ADVANCE_OPTIONS.includes(draft.advancePerGroup)) {
+      errors.advancePerGroup = `每组出线人数只能是 ${GROUP_CONFIG.ADVANCE_OPTIONS.join(' / ')}`;
+    }
+  }
+
+  // 倒三角排位只在有淘汰签表的赛制下有意义
+  if (
+    !VALID_PLACEMENT_MODES.includes(draft.placementMode) ||
+    (!KNOCKOUT_FORMATS.includes(draft.format) &&
+      draft.placementMode !== EVENT_PLACEMENT_MODE.NONE)
+  ) {
+    errors.placementMode = '请选择排位赛方式';
   }
 
   if (!VALID_LEVELS.includes(draft.level)) {
@@ -463,6 +512,15 @@ function buildEventRecord(form, ctx = {}) {
       // 赛事发出去却哪儿都查不到，是最难排查的一类问题
       pool: MATCH_TYPE_TO_POOL[draft.matchType],
       level: draft.level,
+      format: draft.format,
+      // 循环赛没有淘汰阶段，排位赛开关对它无意义，统一记 none；
+      // 小组参数只在小组赛下有意义，其余留 null 表明「本场无此概念」
+      placementMode: KNOCKOUT_FORMATS.includes(draft.format)
+        ? draft.placementMode
+        : EVENT_PLACEMENT_MODE.NONE,
+      groupCount: draft.format === EVENT_FORMAT.GROUP_KNOCKOUT ? draft.groupCount : null,
+      advancePerGroup:
+        draft.format === EVENT_FORMAT.GROUP_KNOCKOUT ? draft.advancePerGroup : null,
       bronzeMode: draft.bronzeMode,
       // 种子设置只跟单打走；双打赛事不抽签，两项留 null 表明「本场无此概念」
       seedMode: draft.matchType === MATCH_TYPE.SINGLES ? draft.seedMode : null,
@@ -523,14 +581,17 @@ function canPlayBronzeMatch(entryCount) {
  * 规则：
  *   - 名次必须是正整数，且每人只出现一次；
  *   - 一场赛事有且只有一位冠军，亚军至多一位；
- *   - 并列季军：不出现第 4 名；
- *   - 打三四名：第 3 名与第 4 名成对出现，且各至多一位——
+ *   - 循环赛 / 小组赛按「阶梯」口径：名次是积分表 1..N 排出来的，
+ *     必然包含第 4 名，不再套用三四名成对规则；
+ *   - 淘汰赛并列季军：不出现第 4 名；
+ *   - 淘汰赛打三四名：第 3 名与第 4 名成对出现，且各至多一位——
  *     但参赛人数不足 4 人时打不出三四名赛（见 canPlayBronzeMatch），
  *     此时只可能出现一位季军，不能再要求成对。
  *
  * @param {Array<Object>} results [{ userId, placement }]
  * @param {Object} [options]
  * @param {string} [options.bronzeMode] 取值见 constants.EVENT_BRONZE_MODE
+ * @param {string} [options.format] 赛制，取值见 constants.EVENT_FORMAT
  * @param {number} [options.entryCount] 实际参赛人数；不传则按「打得出来」处理
  * @returns {{ok:boolean, results:Array<Object>, errors:Object, firstError:string}}
  */
@@ -559,6 +620,18 @@ function validatePlacements(results, options = {}) {
   }
 
   const countOf = (place) => normalized.filter((row) => row.placement === place).length;
+
+  // 循环赛 / 小组赛按「阶梯」口径：名次是积分表 1..N 排出来的，必然出现
+  // 第 4 名，也谈不上季军成对。套用淘汰赛的三四名规则会把正常名次表判成
+  // 非法，赛事永远结不了。这里只守住「每人一次、正整数、恰有一位冠军」。
+  if (GROUPED_FORMATS.includes(options.format)) {
+    if (countOf(1) !== 1) {
+      const message = '一场赛事有且只有一位冠军';
+      return { ok: false, results: [], errors: { results: message }, firstError: message };
+    }
+    return { ok: true, results: normalized, errors: {}, firstError: '' };
+  }
+
   // 人数不足 4 人时，这届根本排不出季军赛：只会有并列季军那一位，没有第 4 名。
   // 此时仍按「成对」卡，赛事就永远结不了（名次表无论怎么填都过不了校验）。
   const bronzePlayable = canPlayBronzeMatch(options.entryCount);
@@ -607,6 +680,12 @@ function bronzeLabelOf(event) {
 function statusLabelOf(event) {
   const status = event && event.status;
   return EVENT_STATUS_LABEL[status] || EVENT_STATUS_LABEL[EVENT_STATUS.FINISHED];
+}
+
+/** 赛制，缺省按单败淘汰（历史 / 种子赛事没有该字段，缺省即旧行为） */
+function formatOf(event) {
+  const value = event && event.format;
+  return VALID_FORMATS.includes(value) ? value : DEFAULT_EVENT_FORMAT;
 }
 
 /**
@@ -658,6 +737,17 @@ function buildEventRow(event, ctx = {}) {
     isDoubles: event.matchType === MATCH_TYPE.DOUBLES,
     levelLabel: levelLabelOf(event),
     bronzeLabel: bronzeLabelOf(event),
+    // 赛制：老赛事没有这个字段，按单败淘汰展示
+    format: formatOf(event),
+    formatLabel: EVENT_FORMAT_LABEL[formatOf(event)] || EVENT_FORMAT_LABEL[DEFAULT_EVENT_FORMAT],
+    isRoundRobin: formatOf(event) === EVENT_FORMAT.ROUND_ROBIN,
+    isGroupKnockout: formatOf(event) === EVENT_FORMAT.GROUP_KNOCKOUT,
+    isDoubleElim: formatOf(event) === EVENT_FORMAT.DOUBLE_ELIM,
+    isGrouped: GROUPED_FORMATS.includes(formatOf(event)),
+    // 倒三角排位赛开关（仅淘汰类赛制有意义）
+    isTop8Placement:
+      KNOCKOUT_FORMATS.includes(formatOf(event)) &&
+      event.placementMode === EVENT_PLACEMENT_MODE.TOP8,
     status: event.status,
     statusLabel: statusLabelOf(event),
     isSignup: event.status === EVENT_STATUS.SIGNUP,
@@ -726,6 +816,8 @@ module.exports = {
   VALID_BRONZE_MODES,
   VALID_SEED_MODES,
   VALID_SEED_COUNTS,
+  VALID_FORMATS,
+  VALID_PLACEMENT_MODES,
   canManageEvent,
   canStartEvent,
   canCheckIn,

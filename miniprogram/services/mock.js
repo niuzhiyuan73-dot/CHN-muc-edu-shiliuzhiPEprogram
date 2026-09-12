@@ -53,12 +53,12 @@ const {
 const {
   planDraw,
   buildDrawRecord,
-  buildBracketMatches,
-  planNextRound,
   buildRoundMatches,
   drawnEntryCount,
   canRedraw,
 } = require('./draw.js');
+// 赛制阶段派发：循环 / 小组 / 复合赛制的推进与名次推导都在这里
+const { buildInitialMatches, planStageMatches, derivePlacements } = require('./format-plan.js');
 const { buildProfilePatch } = require('./profile.js');
 const { getPoolRating } = require('../utils/rating.js');
 const {
@@ -729,11 +729,12 @@ function advanceEvent(id) {
   const event = events.find((item) => item._id === id);
   if (!event || !event.draw) return;
 
-  const plan = planNextRound({
-    eventId: id,
+  // 由赛制决定「下一批该排哪些」：单败排下一轮，循环排下一轮，
+  // 小组赛在全部小组打完后转去排淘汰阶段
+  const plan = planStageMatches({
+    event,
     draw: event.draw,
     matches: ledger.filter((match) => match.eventId === id),
-    bronzeMode: event.bronzeMode,
   });
   if (!plan.ok) return;
 
@@ -1197,9 +1198,8 @@ async function drawEvent(id, actor, options = {}) {
     drawnBy: actor,
     drawCount: (target.draw && target.draw.drawCount ? target.draw.drawCount : 0) + 1,
   });
-  const matches = buildBracketMatches(plan, { event: target }).map((draft) =>
-    matchStore.saveMatch(draft)
-  );
+  // 首轮（或循环赛第一轮）由赛制决定：单败摆签表，分组摆各组第一轮
+  const matches = buildInitialMatches(target, draw).map((draft) => matchStore.saveMatch(draft));
 
   eventStore.setStatus(id, { draw });
   cache = null;
@@ -1321,7 +1321,12 @@ async function finishEvent(id, results, actor) {
 
   // 以签表人数为准判「打不打得出三四名赛」；没抽签时退回报名人数
   const entryCount = drawnEntryCount(target.draw) || validUsers.size;
-  const checked = validatePlacements(results, { bronzeMode: target.bronzeMode, entryCount });
+  // 循环 / 小组赛走「阶梯」口径：名次列为 1..N，不再受三四名成对规则约束
+  const checked = validatePlacements(results, {
+    bronzeMode: target.bronzeMode,
+    entryCount,
+    format: target.format,
+  });
   if (!checked.ok) {
     return { ok: false, record: null, errors: checked.errors, firstError: checked.firstError };
   }

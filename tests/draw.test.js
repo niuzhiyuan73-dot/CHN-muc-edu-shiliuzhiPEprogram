@@ -35,6 +35,7 @@ const {
   SEED_MODE,
   RATING_POOL,
   SIGNUP_STATUS,
+  EVENT_FORMAT,
 } = require('../miniprogram/utils/constants.js');
 const { DEFAULT_FORMAT } = require('../miniprogram/utils/match-format.js');
 
@@ -303,6 +304,32 @@ describe('buildDrawRecord —— 落库形状', () => {
     assert.deepEqual(record.seeds, plan.seeds);
     assert.deepEqual(record.byes, plan.byes);
   });
+
+  test('分组赛的 draw 落库带组信息，单败淘汰不落 groups（保持旧形状）', () => {
+    const entries = ['u1', 'u2', 'u3', 'u4'];
+    const grouped = planDraw({
+      event: singlesEvent({ format: EVENT_FORMAT.ROUND_ROBIN }),
+      signups: entries.map((id) => signup(id)),
+      members: entries.map((id) => member(id)),
+      seedValue: 5,
+    });
+    const groupedRecord = buildDrawRecord(grouped, { drawnAt: new Date('2026-09-11T10:00:00'), drawnBy: 'admin' });
+
+    assert.equal(groupedRecord.format, EVENT_FORMAT.ROUND_ROBIN);
+    assert.equal(groupedRecord.groupCount, 1);
+    assert.deepEqual(groupedRecord.groups, [{ group: 0, entries: grouped.groups[0].entries }]);
+
+    const solo = planDraw({
+      event: singlesEvent(),
+      signups: entries.map((id) => signup(id)),
+      members: entries.map((id) => member(id)),
+      seedValue: 5,
+    });
+    const soloRecord = buildDrawRecord(solo, { drawnAt: new Date('2026-09-11T10:00:00'), drawnBy: 'admin' });
+
+    assert.equal(soloRecord.format, EVENT_FORMAT.SINGLE_ELIM);
+    assert.equal(soloRecord.groups, undefined);
+  });
 });
 
 describe('eventMatchKey —— 确定性编号', () => {
@@ -320,6 +347,88 @@ describe('eventMatchKey —— 确定性编号', () => {
 
   test('缺省阶段按主赛处理', () => {
     assert.equal(eventMatchKey('e1', 1, null, 2), eventMatchKey('e1', 1, BRACKET_STAGE.MAIN, 2));
+  });
+
+  test('四参调用与旧版逐字节一致（历史比赛的 _id 不能变）', () => {
+    assert.equal(eventMatchKey('e1', 1, BRACKET_STAGE.MAIN, 0), 'x_e1_r1_main_0');
+    assert.equal(eventMatchKey('e1', 2, BRACKET_STAGE.BRONZE, 0), 'x_e1_r2_bronze_0');
+  });
+
+  test('带上小组段：同轮同签位不同组是两场比赛', () => {
+    assert.equal(eventMatchKey('e1', 2, BRACKET_STAGE.GROUP, 1, 0), 'x_e1_g0_r2_group_1');
+    assert.notEqual(
+      eventMatchKey('e1', 2, BRACKET_STAGE.GROUP, 1, 0),
+      eventMatchKey('e1', 2, BRACKET_STAGE.GROUP, 1, 1)
+    );
+  });
+});
+
+describe('planDraw —— 循环 / 小组赛改走分组排期', () => {
+  const members = [
+    member('u1', { elo: 1800 }),
+    member('u2', { elo: 1700 }),
+    member('u3', { elo: 1600 }),
+    member('u4', { elo: 1500 }),
+    member('u5', { elo: 1400 }),
+    member('u6', { elo: 1300 }),
+  ];
+  const signups = members.map((m) => signup(m._id));
+
+  test('循环赛：收起成单组，六人排五轮', () => {
+    const plan = planDraw({
+      event: singlesEvent({ format: EVENT_FORMAT.ROUND_ROBIN }),
+      signups,
+      members,
+      seedValue: 5,
+    });
+
+    assert.equal(plan.ok, true);
+    assert.equal(plan.format, EVENT_FORMAT.ROUND_ROBIN);
+    assert.equal(plan.slots.length, 0, '不摆签表');
+    assert.equal(plan.groups.length, 1);
+    assert.equal(plan.groups[0].group, 0);
+    assert.equal(plan.groups[0].entries.length, 6);
+    assert.equal(plan.groups[0].rounds.length, 5);
+  });
+
+  test('小组赛：蛇形分组，种子被摊到不同组', () => {
+    const plan = planDraw({
+      event: singlesEvent({ format: EVENT_FORMAT.GROUP_KNOCKOUT, groupCount: 2 }),
+      signups,
+      members,
+      seedValue: 5,
+    });
+
+    assert.equal(plan.ok, true);
+    assert.equal(plan.groups.length, 2);
+    // 成员全是种子，顺序即 elo 序，蛇形分组的落位完全确定
+    assert.deepEqual(plan.groups[0].entries, ['u1', 'u4', 'u5']);
+    assert.deepEqual(plan.groups[1].entries, ['u2', 'u3', 'u6']);
+  });
+
+  test('不传组数按缺省 2 组；组数超过人数则收敛', () => {
+    const byDefault = planDraw({
+      event: singlesEvent({ format: EVENT_FORMAT.GROUP_KNOCKOUT }),
+      signups,
+      members,
+      seedValue: 5,
+    });
+    assert.equal(byDefault.groups.length, 2);
+
+    const three = planDraw({
+      event: singlesEvent({ format: EVENT_FORMAT.GROUP_KNOCKOUT, groupCount: 4 }),
+      signups: signups.slice(0, 3),
+      members: members.slice(0, 3),
+      seedValue: 5,
+    });
+    assert.equal(three.groups.length, 3, '不超过人数，免得出现空组');
+  });
+
+  test('同一个 seedValue 的分组结果可复核', () => {
+    const event = singlesEvent({ format: EVENT_FORMAT.GROUP_KNOCKOUT, groupCount: 2 });
+    const a = planDraw({ event, signups, members, seedValue: 42 });
+    const b = planDraw({ event, signups, members, seedValue: 42 });
+    assert.deepEqual(a.groups, b.groups);
   });
 });
 

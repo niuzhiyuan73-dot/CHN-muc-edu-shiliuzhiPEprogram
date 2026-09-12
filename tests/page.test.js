@@ -29,6 +29,8 @@ const {
   EVENT_BRONZE_MODE,
   SEED_MODE,
   SIGNUP_STATUS,
+  EVENT_FORMAT,
+  EVENT_PLACEMENT_MODE,
 } = require('../miniprogram/utils/constants.js');
 
 /* ============================================================
@@ -1583,6 +1585,76 @@ test('发布赛事 —— 填全后提交落库，并退回上一页', async () 
   assert.strictEqual(created.seedCount, 8, '种子数量默认 8');
   assert.strictEqual(created.draw, null, '创建时还没抽签');
   assert.strictEqual(created.status, EVENT_STATUS.SIGNUP);
+});
+
+test('发布赛事 —— 选循环赛落库带上赛制，组数与出线人数留空、排位不启用', async () => {
+  loginAs(STAFF);
+  const page = instantiate(eventEditConfig);
+  page.onLoad();
+
+  page.onInputTitle({ detail: { value: '循环赛测试' } });
+  page.onPickFormat({ detail: { value: '1' } }); // 下拉第 2 项 = 循环赛
+  page.onPickLevel({ detail: { value: '1' } });
+  page.onPickBronzeMode({ detail: { value: '1' } });
+  page.onPickSeedMode({ detail: { value: '1' } });
+  page.onPickDate({ detail: { value: '2026-06-10' } });
+  page.onPickTime({ detail: { value: '09:00' } });
+  page.onInputQuota({ detail: { value: '8' } });
+
+  await page.onSubmit();
+
+  const created = (await facade.getEvents()).find((item) => item.title === '循环赛测试');
+  assert.ok(created, '循环赛赛事应当落库');
+  assert.strictEqual(created.format, EVENT_FORMAT.ROUND_ROBIN);
+  assert.strictEqual(created.groupCount, null, '循环赛恒为单组，不落组数');
+  assert.strictEqual(created.advancePerGroup, null);
+  assert.strictEqual(
+    created.placementMode,
+    EVENT_PLACEMENT_MODE.NONE,
+    '循环赛没有淘汰阶段，倒三角排位不启用'
+  );
+});
+
+test('发布赛事 —— 小组赛可选出线人数，组数与出线人数一并落库', async () => {
+  loginAs(STAFF);
+  const page = instantiate(eventEditConfig);
+  page.onLoad();
+
+  page.onInputTitle({ detail: { value: '小组赛测试' } });
+  page.onPickFormat({ detail: { value: '2' } }); // 下拉第 3 项 = 小组赛
+  page.onPickGroupCount({ detail: { value: '0' } }); // 第 1 项 = 2 组
+  page.onPickAdvance({ detail: { value: '1' } }); // 第 2 项 = 每组出线 2 人
+  page.onPickLevel({ detail: { value: '1' } });
+  page.onPickBronzeMode({ detail: { value: '1' } });
+  page.onPickSeedMode({ detail: { value: '1' } });
+  page.onPickDate({ detail: { value: '2026-06-10' } });
+  page.onPickTime({ detail: { value: '09:00' } });
+  page.onInputQuota({ detail: { value: '8' } });
+
+  await page.onSubmit();
+
+  const created = (await facade.getEvents()).find((item) => item.title === '小组赛测试');
+  assert.ok(created, '小组赛赛事应当落库');
+  assert.strictEqual(created.format, EVENT_FORMAT.GROUP_KNOCKOUT);
+  assert.strictEqual(created.groupCount, 2);
+  assert.strictEqual(created.advancePerGroup, 2);
+});
+
+test('发布赛事 —— 切到双打会把赛制收回单败淘汰', () => {
+  loginAs(STAFF);
+  const page = instantiate(eventEditConfig);
+  page.onLoad();
+
+  page.onPickFormat({ detail: { value: '2' } });
+  assert.strictEqual(page.data.form.format, EVENT_FORMAT.GROUP_KNOCKOUT);
+
+  page.onPickMatchType({ detail: { value: '1' } }); // 双打
+  assert.strictEqual(
+    page.data.form.format,
+    EVENT_FORMAT.SINGLE_ELIM,
+    '双打不支持新赛制，必须收回单败，免得提交了抽签却被拦'
+  );
+  assert.strictEqual(page.data.formatIndex, 0);
 });
 
 test('录入名次 —— 未登录时整页挡住，不给名单', async () => {

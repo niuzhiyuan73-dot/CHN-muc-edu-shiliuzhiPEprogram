@@ -36,10 +36,19 @@ const {
   DEFAULT_SEED_COUNT,
   SIGNUP_STATUS,
   RATING_POOL,
+  EVENT_FORMAT,
+  DEFAULT_EVENT_FORMAT,
+  GROUPED_FORMATS,
+  EVENT_PLACEMENT_MODE,
+  DEFAULT_PLACEMENT_MODE,
+  GROUP_CONFIG,
+  DEFAULT_GROUP_COUNT,
+  DEFAULT_ADVANCE_PER_GROUP,
 } = require('../utils/constants.js');
 const { getPoolRating } = require('../utils/rating.js');
-const { createSeededRandom } = require('../utils/random.js');
+const { createSeededRandom, shuffle } = require('../utils/random.js');
 const { drawBracket, bracketSizeOf } = require('../utils/bracket.js');
+const { groupEntries, roundRobinRounds } = require('../utils/standings.js');
 const { DEFAULT_FORMAT } = require('../utils/match-format.js');
 
 /** 合法的种子来源集合 */
@@ -158,6 +167,86 @@ function resolveSeeds({ entries, members, mode, seedCount, manualOrder } = {}) {
 }
 
 /**
+ * 小组赛 / 循环赛的分组与排期。
+ *
+ * 【为什么种子先落位、非种子才洗牌】
+ * 与淘汰赛同一套纪律：名单先按强弱排好（种子在前），再蛇形分进各组，
+ * 强手自然摊到不同组。非种子在分组前洗一次牌，让「谁和谁同组」带上
+ * 随机性；洗牌由 seedValue 导出，落库后同样可复核。
+ *
+ * 循环赛没有分组的概念，调用方传 groupCount = 1，得到的就是全体单组。
+ *
+ * @param {Object} params
+ * @param {string[]} params.entries 参赛者
+ * @param {string[]} [params.seeds] 已排好的种子
+ * @param {number} params.groupCount 组数
+ * @param {number} params.seedValue 随机种子值（落库备查）
+ * @returns {{ok:boolean, groups:Array<{group:number, entries:string[], rounds:Array}>, firstError:string}}
+ */
+function planGroupDraw({ entries, seeds = [], groupCount, seedValue } = {}) {
+  const list = Array.isArray(entries) ? entries : [];
+  const seedList = Array.isArray(seeds) ? seeds : [];
+  if (list.length < 2) {
+    return { ok: false, groups: [], firstError: '参赛人数不足 2 人，无法抽签' };
+  }
+  const value = Number(seedValue);
+  if (!Number.isFinite(value)) {
+    return { ok: false, groups: [], firstError: '缺少随机种子值，无法抽签' };
+  }
+
+  const count = clampGroupCount(groupCount, list.length);
+  const seedSet = new Set(seedList);
+  const rest = shuffle(createSeededRandom(value), list.filter((id) => !seedSet.has(id)));
+  const ordered = seedList.concat(rest);
+
+  const groups = groupEntries(ordered, count).map((ids, index) => ({
+    group: index,
+    entries: ids,
+    rounds: roundRobinRounds(ids),
+  }));
+
+  return { ok: true, groups, firstError: '' };
+}
+
+/** 组数收敛到可选档位（2 / 4）；非法或缺失回落到缺省 2 组 */
+function normalizeGroupCount(value) {
+  const wanted = Number(value);
+  return GROUP_CONFIG.COUNT_OPTIONS.includes(wanted) ? wanted : DEFAULT_GROUP_COUNT;
+}
+
+/**
+ * 组数再收一道：不超过人数，免得切出空组。
+ *
+ * 【为什么不能让它回落到档位】
+ * planDraw 会先把组数收敛到可选档位，再按人数收口。若这里也按档位收敛，
+ * 「4 组但只有 3 人」会被收成 3 组，而 3 不在可选档位里，于是又被判非法
+ * 退回 2 组——档位约束与人数约束反复覆盖，最后分组与配置对不上。所以
+ * 这里只做「不超过人数」与「至少 1 组」，档位约束由 planDraw 负责。
+ *
+ * @param {number} groupCount
+ * @param {number} entryCount
+ * @returns {number}
+ */
+function clampGroupCount(groupCount, entryCount) {
+  const count = Math.floor(Number(groupCount));
+  const size = Math.max(1, Math.floor(Number(entryCount)) || 1);
+  if (!Number.isFinite(count) || count < 1) return 1;
+  return Math.min(count, size);
+}
+
+/** 每组出线人数收敛到可选档位 */
+function normalizeAdvancePerGroup(value) {
+  const wanted = Number(value);
+  return GROUP_CONFIG.ADVANCE_OPTIONS.includes(wanted) ? wanted : DEFAULT_ADVANCE_PER_GROUP;
+}
+
+/** 赛事用的赛制，非法或缺省一律回落到单败淘汰（老数据无感） */
+function formatOf(event) {
+  const value = event && event.format;
+  return Object.values(EVENT_FORMAT).includes(value) ? value : DEFAULT_EVENT_FORMAT;
+}
+
+/**
  * 计划一次抽签：算名单、排种子、落签位。
  *
  * 纯函数。调用方负责把 seedValue 记下来，抽签参数与结果一同落库，
@@ -204,6 +293,34 @@ function planDraw({ event, signups, members, seedValue, manualOrder } = {}) {
     return fail('缺少随机种子值，无法抽签');
   }
 
+  const format = formatOf(event);
+
+  // 循环 / 小组赛不摆签表，改成分组 + 圆桌排期
+  if (GROUPED_FORMATS.includes(format)) {
+    const groupCount = format === EVENT_FORMAT.ROUND_ROBIN
+      ? 1
+      : normalizeGroupCount(event.groupCount);
+    const grouped = planGroupDraw({ entries, seeds: resolved.seeds, groupCount, seedValue: value });
+    if (!grouped.ok) {
+      return fail(grouped.firstError);
+    }
+    return {
+      ok: true,
+      message: '',
+      format,
+      seedValue: value,
+      seedMode: mode,
+      seedCount,
+      size: 0,
+      slots: [],
+      seeds: resolved.seeds,
+      byes: [],
+      pairs: [],
+      groups: grouped.groups,
+      entries,
+    };
+  }
+
   const bracket = drawBracket({
     entries,
     seeds: resolved.seeds,
@@ -216,6 +333,7 @@ function planDraw({ event, signups, members, seedValue, manualOrder } = {}) {
   return {
     ok: true,
     message: '',
+    format,
     seedValue: value,
     seedMode: mode,
     seedCount,
@@ -224,6 +342,7 @@ function planDraw({ event, signups, members, seedValue, manualOrder } = {}) {
     seeds: bracket.seeds,
     byes: bracket.byes,
     pairs: bracket.pairs,
+    groups: [],
     entries,
   };
 }
@@ -242,7 +361,9 @@ function planDraw({ event, signups, members, seedValue, manualOrder } = {}) {
  * @returns {Object}
  */
 function buildDrawRecord(plan, { drawnAt, drawnBy, drawCount = 1 } = {}) {
-  return {
+  const record = {
+    // 赛制要跟着签表落库：读的时候才知道该按分组还是签表去渲染与推进
+    format: plan.format || DEFAULT_EVENT_FORMAT,
     seedMode: plan.seedMode,
     seedCount: plan.seedCount,
     seedValue: plan.seedValue,
@@ -254,6 +375,17 @@ function buildDrawRecord(plan, { drawnAt, drawnBy, drawCount = 1 } = {}) {
     seeds: plan.seeds.slice(),
     byes: plan.byes.slice(),
   };
+
+  // 分组只对循环 / 小组赛有意义；单败淘汰不落这个字段，保持旧形状
+  if (Array.isArray(plan.groups) && plan.groups.length > 0) {
+    record.groupCount = plan.groups.length;
+    record.groups = plan.groups.map((item) => ({
+      group: item.group,
+      entries: (item.entries || []).slice(),
+    }));
+  }
+
+  return record;
 }
 
 /**
@@ -267,14 +399,25 @@ function buildDrawRecord(plan, { drawnAt, drawnBy, drawCount = 1 } = {}) {
  * 键里不含时间也不含人：这些恰恰是抽签会变的东西。签位是「位置」，
  * 位置不变，坐在位置上的人变。
  *
+ * 【group 段为什么必须是可选的】
+ * 小组赛里「第 1 组第 2 轮」与「第 2 组第 2 轮」是两场不同的比赛，编号
+ * 必须能区分；但单败淘汰没有组的概念，它的历史编号一个字节都不能变
+ * （已有比赛的 _id 就长那样）。所以 group 缺省时不拼 `g*` 段，四参调用
+ * 与旧版逐字节一致。
+ *
  * @param {string} eventId
  * @param {number} round 轮次，从 1 开始
  * @param {string} [stage] 见 constants.BRACKET_STAGE
  * @param {number} slot 该轮内的签位序号，从 0 开始
+ * @param {number} [group] 小组序号，从 0 开始；不传表示无小组
  * @returns {string} 可直接用作比赛 _id
  */
-function eventMatchKey(eventId, round, stage, slot) {
-  return `x_${eventId}_r${round}_${stage || BRACKET_STAGE.MAIN}_${slot}`;
+function eventMatchKey(eventId, round, stage, slot, group) {
+  const hasGroup = group !== undefined && group !== null && group !== '';
+  const middle = hasGroup
+    ? `g${group}_r${round}_${stage || BRACKET_STAGE.MAIN}`
+    : `r${round}_${stage || BRACKET_STAGE.MAIN}`;
+  return `x_${eventId}_${middle}_${slot}`;
 }
 
 /**
@@ -325,9 +468,10 @@ function buildBracketMatches(plan, { event, format = DEFAULT_FORMAT, round = 1, 
  * @param {Object} params.draw 赛事的 draw 字段
  * @param {Array<Object>} [params.matches] 该赛事已有的全部比赛
  * @param {string} [params.bronzeMode] 见 constants.EVENT_BRONZE_MODE
+ * @param {string} [params.placementMode] 见 constants.EVENT_PLACEMENT_MODE
  * @returns {{ok:boolean, rounds:Array<{round:number, stage:string, pairs:Array<Array<string>>}>}}
  */
-function planNextRound({ eventId, draw, matches, bronzeMode } = {}) {
+function planNextRound({ eventId, draw, matches, bronzeMode, placementMode = DEFAULT_PLACEMENT_MODE } = {}) {
   if (!eventId || !draw || !Array.isArray(draw.slots) || draw.slots.length < 2) {
     return { ok: false, rounds: [] };
   }
@@ -384,10 +528,77 @@ function planNextRound({ eventId, draw, matches, bronzeMode } = {}) {
       }
     }
 
+    // 八强打完（剩下四人）→ 开了排位开关时，四个负者再排 5–8 名
+    if (
+      placementMode === EVENT_PLACEMENT_MODE.TOP8 &&
+      winners.length === 4 &&
+      losers.length === 4
+    ) {
+      planPlacement(losers, round + 1, byId, eventId).forEach((item) => rounds.push(item));
+    }
+
     entrants = winners;
   }
 
   return { ok: rounds.length > 0, rounds };
+}
+
+/**
+ * 八强负者的 5–8 名排位小签表（倒三角）。
+ *
+ * 【「倒三角」是什么】
+ * 八强战输掉的四人并没有出局待遇——再打一轮两场（5–8 名半决），
+ * 胜者争第 5、负者争第 7，名次一路排到第 8。它像三、四名赛一样是
+ * 主签表旁边的一个附加分支，只是多出一轮。
+ *
+ * 四人规模固定，所以这里不必再套通用签表代码：第一轮两场，
+ * 第二轮由第一轮的胜者组与负者组分别对出 5/6 与 7/8。
+ *
+ * @param {string[]} entrants 八强战的四名负者（按签位次序）
+ * @param {number} startRound 该排位赛首轮的轮次
+ * @param {Map<string, Object>} byId 已有比赛（按编号索引）
+ * @param {string} eventId
+ * @returns {Array<Object>} 需要补排的轮次
+ */
+function planPlacement(entrants, startRound, byId, eventId) {
+  const rounds = [];
+  const pairs = chunkPairs(entrants).slice(0, 2);
+  const winners = [];
+  const losers = [];
+  let firstResolved = true;
+
+  pairs.forEach((pair, slot) => {
+    const match = byId.get(eventMatchKey(eventId, startRound, BRACKET_STAGE.PLACEMENT, slot));
+    if (!match || match.status !== MATCH_STATUS.ACTIVE || !match.winner) {
+      firstResolved = false;
+      return;
+    }
+    winners[slot] = match.winner === 'A' ? pair[0] : pair[1];
+    losers[slot] = match.winner === 'A' ? pair[1] : pair[0];
+  });
+
+  const missingFirst = pairs.some(
+    (pair, slot) => !byId.has(eventMatchKey(eventId, startRound, BRACKET_STAGE.PLACEMENT, slot))
+  );
+  if (missingFirst) {
+    rounds.push({ round: startRound, stage: BRACKET_STAGE.PLACEMENT, pairs });
+  }
+
+  if (firstResolved) {
+    // 两场胜者争 5/6 名，两场负者争 7/8 名
+    const finals = [
+      [winners[0], winners[1]],
+      [losers[0], losers[1]],
+    ];
+    const missingFinal = finals.some(
+      (pair, slot) => !byId.has(eventMatchKey(eventId, startRound + 1, BRACKET_STAGE.PLACEMENT, slot))
+    );
+    if (missingFinal) {
+      rounds.push({ round: startRound + 1, stage: BRACKET_STAGE.PLACEMENT, pairs: finals });
+    }
+  }
+
+  return rounds;
 }
 
 /**
@@ -399,11 +610,12 @@ function planNextRound({ eventId, draw, matches, bronzeMode } = {}) {
  * @param {string} [params.stage] 见 constants.BRACKET_STAGE
  * @param {Array<Array<string>>} params.pairs 对阵
  * @param {Object} [params.format] 赛制
+ * @param {number} [params.group] 小组序号（小组赛用）
  * @returns {Array<Object>}
  */
-function buildRoundMatches(event, { round, stage = BRACKET_STAGE.MAIN, pairs, format = DEFAULT_FORMAT } = {}) {
+function buildRoundMatches(event, { round, stage = BRACKET_STAGE.MAIN, pairs, format = DEFAULT_FORMAT, group } = {}) {
   if (!event || !event._id || !Array.isArray(pairs)) return [];
-  return draftsFromPairs(event, pairs, { round, stage, format });
+  return draftsFromPairs(event, pairs, { round, stage, format, group });
 }
 
 /** 有序数组两两分组：['a','b','c','d'] → [['a','b'],['c','d']]；落单的补 null */
@@ -417,14 +629,15 @@ function chunkPairs(list) {
 }
 
 /** 由一堆对阵生成比赛草稿；一方为空的签位（轮空）跳过 */
-function draftsFromPairs(event, pairs, { round, stage, format }) {
+function draftsFromPairs(event, pairs, { round, stage, format, group } = {}) {
   const drafts = [];
+  const hasGroup = group !== undefined && group !== null && group !== '';
   (Array.isArray(pairs) ? pairs : []).forEach((pair, slot) => {
     const teamA = pair && pair[0];
     const teamB = pair && pair[1];
     if (!teamA || !teamB) return;
-    drafts.push({
-      _id: eventMatchKey(event._id, round, stage, slot),
+    const draft = {
+      _id: eventMatchKey(event._id, round, stage, slot, group),
       matchType: MATCH_TYPE.SINGLES,
       // 池必须跟着记录写死，否则按池过滤时会被静默漏掉
       pool: MATCH_TYPE_TO_POOL[MATCH_TYPE.SINGLES],
@@ -443,7 +656,10 @@ function draftsFromPairs(event, pairs, { round, stage, format }) {
       round,
       stage,
       slot,
-    });
+    };
+    // 无小组时不落 group 字段，老数据的比赛记录形状保持不变
+    if (hasGroup) draft.group = group;
+    drafts.push(draft);
   });
   return drafts;
 }
@@ -483,6 +699,7 @@ function fail(message) {
   return {
     ok: false,
     message,
+    format: DEFAULT_EVENT_FORMAT,
     seedValue: null,
     seedMode: null,
     seedCount: 0,
@@ -491,6 +708,7 @@ function fail(message) {
     seeds: [],
     byes: [],
     pairs: [],
+    groups: [],
     entries: [],
   };
 }
@@ -501,6 +719,10 @@ module.exports = {
   seedRankOf,
   actualSeedCount,
   resolveSeeds,
+  planGroupDraw,
+  normalizeGroupCount,
+  normalizeAdvancePerGroup,
+  formatOf,
   planDraw,
   buildDrawRecord,
   eventMatchKey,
@@ -509,5 +731,6 @@ module.exports = {
   buildRoundMatches,
   drawnEntryCount,
   canRedraw,
+  chunkPairs,
   bracketSizeOf,
 };

@@ -30,7 +30,7 @@
     <view class="card">
       <view class="event-title">{{view.event.title}}</view>
       <view class="event-meta">{{view.event.timeText}} · {{view.event.levelLabel}} · {{view.event.matchTypeLabel}}</view>
-      <view class="bronze-hint">{{view.bronzeHint}}</view>
+      <view class="bronze-hint">{{view.hintText || view.bronzeHint}}</view>
     </view>
 
     <!-- ========== 不可录入时的说明 ========== -->

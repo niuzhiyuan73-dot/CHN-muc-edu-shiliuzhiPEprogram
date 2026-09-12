@@ -26,6 +26,7 @@ const {
   SEED_MODE,
   MATCH_TYPE,
   MATCH_STATUS,
+  EVENT_FORMAT,
 } = require('../miniprogram/utils/constants.js');
 
 /** 用一份全新的夹具调一次接口 */
@@ -569,6 +570,82 @@ describe('云函数 —— 赛事闭环', () => {
     const ledger = await on(repo, 'getMatchRecords', { eventId: id }, admin);
     assert.equal(ledger.data.length, 3, '首轮两场 + 决赛');
     assert.equal(ledger.data.filter((m) => m.stage === BRACKET_STAGE.BRONZE).length, 0);
+  });
+
+  test('循环赛 —— 云端逐轮推进：4 人 6 场排完，阶梯名次允许第 4 名', async () => {
+    const repo = createFixtureRepo();
+    const admin = 'openid-admin';
+    const { data: published } = await on(
+      repo,
+      'publishEvent',
+      {
+        // 比赛时间取自赛事开赛时间，录分时会校验「不能晚于现在」，
+        // 所以要用夹具当前时间之前的日子（与 playFirstRound 同一口径）
+        form: {
+          ...draft,
+          format: EVENT_FORMAT.ROUND_ROBIN,
+          seedCount: 2,
+          startTime: '2026-05-20T09:00:00',
+        },
+      },
+      admin
+    );
+    const id = published.record._id;
+    await signUpAll(repo, id, ['openid-u01', 'openid-u02', 'openid-u03', 'openid-u04']);
+
+    const drawn = await on(repo, 'drawEvent', { id, seedValue: 7 }, admin);
+    assert.equal(drawn.data.ok, true, drawn.data.message);
+    assert.equal(drawn.data.draw.format, EVENT_FORMAT.ROUND_ROBIN, '赛制要落到 draw 上');
+    assert.equal(drawn.data.matches.length, 2, '4 人循环赛首轮两场');
+    assert.ok(
+      drawn.data.matches.every((m) => m.stage === BRACKET_STAGE.GROUP),
+      '循环赛的比赛都在 group 阶段'
+    );
+    assert.equal(drawn.data.matches[0].group, 0, '循环赛只有一组，组号自 0 起');
+    await on(repo, 'startEvent', { id }, admin);
+
+    // 逐轮打完：每确认一场，云端 advanceAfterConfirm 就会试着排下一轮
+    for (let guard = 0; guard < 12; guard += 1) {
+      const ledger = await on(repo, 'getMatchRecords', { eventId: id }, admin);
+      const pending = ledger.data.filter(
+        (m) => m.status === MATCH_STATUS.PENDING && m.teamA[0] && m.teamB[0]
+      );
+      if (pending.length === 0) break;
+      for (const match of pending) {
+        const scored = await on(
+          repo,
+          'submitMatch',
+          { id: match._id, scoreA: ['11', '11'], scoreB: ['3', '5'] },
+          openIdOf[match.teamA[0]]
+        );
+        assert.equal(scored.data.ok, true, scored.data.firstError);
+        const confirmed = await on(repo, 'confirmMatch', { id: match._id }, openIdOf[match.teamB[0]]);
+        assert.equal(confirmed.data.ok, true, confirmed.data.message);
+      }
+    }
+
+    const all = await on(repo, 'getMatchRecords', { eventId: id }, admin);
+    assert.equal(all.data.length, 6, '4 人循环赛共 3 轮 6 场');
+    assert.ok(all.data.every((m) => m.status === MATCH_STATUS.ACTIVE), '全部已生效');
+
+    // 阶梯名次：1..4 都要允许，不能再套三四名成对规则
+    const finished = await on(
+      repo,
+      'finishEvent',
+      {
+        id,
+        results: [
+          { userId: 'u01', placement: 1 },
+          { userId: 'u02', placement: 2 },
+          { userId: 'u03', placement: 3 },
+          { userId: 'u04', placement: 4 },
+        ],
+      },
+      admin
+    );
+    assert.equal(finished.data.ok, true, finished.data.firstError);
+    assert.equal(finished.data.record.status, EVENT_STATUS.FINISHED);
+    assert.equal(finished.data.record.results.length, 4);
   });
 
   test('给抽签生成的比赛录分 —— 非参赛者被拒，参赛者可以补录', async () => {

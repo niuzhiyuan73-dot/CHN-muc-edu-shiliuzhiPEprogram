@@ -32,11 +32,16 @@ const {
   EVENT_BRONZE_MODE,
   DEFAULT_BRONZE_MODE,
   BRACKET_STAGE,
+  EVENT_FORMAT,
+  DEFAULT_EVENT_FORMAT,
+  GROUPED_FORMATS,
   RATING_POOL,
   ROLE,
   SIGNUP_STATUS,
   isRankable,
 } = require('../utils/constants.js');
+const { computeStandings } = require('../utils/standings.js');
+const { derivePlacements } = require('./format-plan.js');
 const { getPoolRating } = require('../utils/rating.js');
 const { buildLeaderboard } = require('../utils/leaderboard.js');
 const { formatDate, formatDateTime, formatPercent, formatScore } = require('../utils/format.js');
@@ -92,6 +97,45 @@ function timeValue(value) {
   if (!value) return 0;
   const time = value instanceof Date ? value.getTime() : new Date(value).getTime();
   return Number.isFinite(time) ? time : 0;
+}
+
+/** 赛事赛制。老赛事没有这个字段，按单败淘汰处理（与 event.js 同一口径） */
+function formatOf(event) {
+  return (event && event.format) || DEFAULT_EVENT_FORMAT;
+}
+
+/** 是否循环 / 小组这类「先打小组、名次由战绩算」的赛制 */
+function isGroupedFormat(event) {
+  return GROUPED_FORMATS.includes(formatOf(event));
+}
+
+/**
+ * 组号 → 组名。
+ *
+ * 组号自 0 起（见 draw.planGroupDraw），所以 0 号要叫「A 组」而不是
+ * 「小组」——若按 1 起处理，第一组会没有名字，后面的组又整体错位一格。
+ * 循环赛只有一组，直接叫「循环赛」，免得出现孤零零的 A 组。
+ *
+ * @param {number} group
+ * @param {string} format
+ * @returns {string}
+ */
+function groupLabelOf(group, format) {
+  if (format === EVENT_FORMAT.ROUND_ROBIN) return '循环赛';
+  const index = Number(group);
+  if (!Number.isFinite(index) || index < 0) return '小组';
+  return `${String.fromCharCode(65 + index)} 组`;
+}
+
+/** 组号是否有效。0 号也是有效小组，不能用真值判断把它漏掉 */
+function hasGroup(group) {
+  return group !== undefined && group !== null && group !== '';
+}
+
+/** 净胜分带正负号，让 +3 / -2 一眼可辨；0 不带号 */
+function signedText(value) {
+  const number = Number(value) || 0;
+  return number > 0 ? `+${number}` : String(number);
 }
 
 /**
@@ -335,9 +379,19 @@ function buildResultRows(event, memberMap, actor = null) {
  * 签表（抽签结果）
  * ============================================================ */
 
-/** 阶段排序：正赛在前，季军赛在后 */
+/**
+ * 阶段排序：小组赛在前，正赛次之，季军赛 / 败者组再次之，排位赛与总决赛最后。
+ * main 与 bronze 的相对先后与此前一致（正赛在前、季军赛在后），只是整体
+ * 让位给新增的 group 阶段。
+ */
 function stageOrder(stage) {
-  return stage === BRACKET_STAGE.BRONZE ? 1 : 0;
+  if (stage === BRACKET_STAGE.GROUP) return 0;
+  if (stage === BRACKET_STAGE.WINNERS) return 1;
+  if (stage === BRACKET_STAGE.LOSERS) return 2;
+  if (stage === BRACKET_STAGE.BRONZE) return 2;
+  if (stage === BRACKET_STAGE.PLACEMENT) return 3;
+  if (stage === BRACKET_STAGE.GRAND_FINAL) return 3;
+  return 1; // 正赛 / 未标注阶段
 }
 
 /**
@@ -354,7 +408,19 @@ function stageOrder(stage) {
  */
 function roundLabelOf(round, totalRounds, stage) {
   if (stage === BRACKET_STAGE.BRONZE) return '季军赛';
+  if (stage === BRACKET_STAGE.GRAND_FINAL) return '总决赛';
+  if (stage === BRACKET_STAGE.PLACEMENT) return '5–8 名排位赛';
   const value = Number(round);
+  // 循环 / 小组 / 胜者组 / 败者组的「第几轮」没有「离决赛还有几轮」的含义，
+  // 只看数字叫；正赛仍按原口径从最后一轮倒着数
+  if (
+    stage === BRACKET_STAGE.GROUP ||
+    stage === BRACKET_STAGE.WINNERS ||
+    stage === BRACKET_STAGE.LOSERS
+  ) {
+    if (!Number.isFinite(value) || value < 1) return '轮次待定';
+    return `第 ${value} 轮`;
+  }
   // 轮次从 1 起。缺失或不是正整数时不能落进模板字符串——那正是
   // 「第 undefined 轮」的来源；null / '' 会被 Number 转成 0，也要一并挡住
   if (!Number.isFinite(value) || value < 1) return '轮次待定';
@@ -441,8 +507,13 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
   const { actor = null, isMock: mock = false } = ctx;
   const eventId = event && event._id;
   const eventRecords = asArray(records).filter((record) => record && record.eventId === eventId);
-  // 有 draw 就以签表大小为准；种子里的老赛事没有 draw，退而按最大轮次反推
-  const totalRounds = totalRoundsOf(event && event.draw) || maxRoundOf(eventRecords);
+  const grouped = isGroupedFormat(event);
+  const format = formatOf(event);
+  // 有 draw 就以签表大小为准；种子里的老赛事没有 draw，退而按最大轮次反推。
+  // 小组 / 循环赛的 draw 没有签表大小，淘汰阶段的轮次得从主签表的比赛反推
+  const totalRounds = grouped
+    ? maxRoundOf(eventRecords.filter((record) => record && record.stage !== BRACKET_STAGE.GROUP))
+    : totalRoundsOf(event && event.draw) || maxRoundOf(eventRecords);
   const nameOf = (id) => (id ? (memberMap.get(id) || {}).nickName || id : '待定');
 
   // 录分的权限要和真正写入时一致：只认参赛者本人，或管理员代录
@@ -453,12 +524,23 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
 
   return eventRecords
     .slice()
-    .sort(
-      (a, b) =>
+    .sort((a, b) => {
+      // 小组 / 循环赛先按阶段分区（小组赛全部排完再排淘汰赛），否则各组的
+      // 第 1 轮会和淘汰赛第 1 轮按同一个 round 值交错在一起
+      if (grouped) {
+        return (
+          stageOrder(a.stage) - stageOrder(b.stage) ||
+          Number(a.group || 0) - Number(b.group || 0) ||
+          timeValue(a.round) - timeValue(b.round) ||
+          Number(a.slot) - Number(b.slot)
+        );
+      }
+      return (
         timeValue(a.round) - timeValue(b.round) ||
         stageOrder(a.stage) - stageOrder(b.stage) ||
         Number(a.slot) - Number(b.slot)
-    )
+      );
+    })
     .map((record) => {
       const tag = statusTagOf(record.status, record.action);
       // 还没比分的场次不渲染比分占位符——那会和「0:0」混在一起
@@ -467,6 +549,8 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
       return {
         matchId: record._id,
         roundText: roundLabelOf(record.round, totalRounds, record.stage),
+        // 小组赛的比赛带 group 段，界面上要标出是哪一组；0 号组也要标
+        groupText: hasGroup(record.group) ? groupLabelOf(record.group, format) : '',
         teamAText: nameOf(record.teamA && record.teamA[0]),
         teamBText: nameOf(record.teamB && record.teamB[0]),
         timeText: record.matchTime ? formatDateTime(record.matchTime) : '',
@@ -484,6 +568,57 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
     });
 }
 
+
+/**
+ * 把分组信息与比赛整形成积分表（循环赛 / 小组赛用）。
+ *
+ * 【为什么名次也由这里算】
+ * 循环赛的名次是算出来的，不是打出来的（见 format-plan.derivePlacements）。
+ * 积分表要把「胜场 → 相互战绩 → 净胜局 → 净胜分」这条链展示出来，
+ * 管理员才好在名次页对着它微调。算法本身在 utils/standings.js。
+ *
+ * @param {Object} event
+ * @param {Array<Object>} records 该赛事的比赛台账
+ * @param {Map<string, Object>} memberMap
+ * @param {Object|null} [actor]
+ * @returns {Array<Object>} 每组一张积分表
+ */
+function buildStandings(event, records, memberMap, actor = null) {
+  const draw = event && event.draw;
+  const groups = asArray(draw && draw.groups);
+  if (groups.length === 0) return [];
+
+  const eventId = event && event._id;
+  const format = formatOf(event);
+  const actorId = actor ? actor._id : null;
+  const nameOf = (id) => (memberMap.get(id) || {}).nickName || id;
+
+  return groups.map((item) => {
+    const groupMatches = asArray(records).filter(
+      (record) => record && record.eventId === eventId && record.group === item.group
+    );
+    const rows = computeStandings({ entries: asArray(item.entries), matches: groupMatches });
+
+    return {
+      group: item.group,
+      groupLabel: groupLabelOf(item.group, format),
+      rows: rows.map((row) => ({
+        userId: row.id,
+        rank: row.rank,
+        rankText: row.rank === 1 ? '1' : String(row.rank),
+        nickName: nameOf(row.id),
+        avatarText: avatarOf(nameOf(row.id)),
+        avatarUrl: (memberMap.get(row.id) || {}).avatarUrl || '',
+        played: row.played,
+        wins: row.wins,
+        losses: row.losses,
+        gameDiffText: signedText(row.gameDiff),
+        pointDiffText: signedText(row.pointDiff),
+        isMe: row.id === actorId,
+      })),
+    };
+  });
+}
 
 /**
  * 装载赛事页的全部数据（赛事列表 + 赛季积分榜）。
@@ -583,6 +718,8 @@ async function loadEventDetailView(eventId, options = {}) {
       signupsEmptyNote: '',
       bracketRows: [],
       hasBracket: false,
+      standings: [],
+      hasStandings: false,
       drawText: '',
       byeText: '',
       seedCandidates: [],
@@ -603,6 +740,7 @@ async function loadEventDetailView(eventId, options = {}) {
 
   const signupRows = buildSignupRows(signups, memberMap, { actor, event });
   const bracketRows = buildBracketRows(ledger, event, memberMap, { actor, isMock: mock });
+  const standings = buildStandings(event, ledger, memberMap, actor);
   const resultRows = buildResultRows(event, memberMap, actor);
 
   // 手工指定种子的候选名单就是有效报名者；顺序由管理员在页面上点出来，
@@ -623,6 +761,8 @@ async function loadEventDetailView(eventId, options = {}) {
     signupsEmptyNote: '还没有人报名',
     bracketRows,
     hasBracket: bracketRows.length > 0,
+    standings,
+    hasStandings: standings.some((group) => group.rows.length > 0),
     drawText: describeDraw(event.draw),
     byeText: byeTextOf(event.draw, memberMap),
     // 手工指定种子要凑几位：参赛人数不够种子数时，人人都是种子
@@ -670,6 +810,7 @@ async function loadEventPlacementView(eventId, options = {}) {
       hasRows: false,
       emptyNote: '',
       bronzeHint: '',
+      hintText: '',
     };
   }
 
@@ -686,10 +827,14 @@ async function loadEventPlacementView(eventId, options = {}) {
       hasRows: false,
       emptyNote: '',
       bronzeHint: '',
+      hintText: '',
     };
   }
 
-  const signups = await getEventSignups(eventId);
+  const [signups, ledger] = await Promise.all([
+    getEventSignups(eventId),
+    getMatchRecords({ eventId }),
+  ]);
   const row = buildEventRow(event, { actor, signups });
   const memberMap = new Map(asArray(members).map((member) => [member._id, member]));
   const rows = buildSignupRows(signups, memberMap, { actor, event });
@@ -702,6 +847,19 @@ async function loadEventPlacementView(eventId, options = {}) {
       : '赛事开始后才能录入名次，请先在详情页把赛事设为「进行中」';
   }
 
+  // 循环 / 小组赛的名次是算出来的：把推导结果预填进输入框，管理员在上面
+  // 微调即可。没打完时推导失败，输入框留空，由提示文案说明原因。
+  const derived = isGroupedFormat(event)
+    ? derivePlacements({ event, draw: event.draw, matches: ledger })
+    : { ok: false, results: [], message: '' };
+  const autoPlacement = new Map(
+    derived.ok ? derived.results.map((item) => [item.userId, item.placement]) : []
+  );
+  const filled = rows.map((item) => {
+    const placement = autoPlacement.get(item.userId);
+    return placement === undefined ? item : { ...item, placementText: String(placement) };
+  });
+
   return {
     allowed: true,
     blockedText: '',
@@ -709,11 +867,35 @@ async function loadEventPlacementView(eventId, options = {}) {
     canEdit,
     statusNote,
     event: row,
-    rows,
-    hasRows: rows.length > 0,
+    rows: filled,
+    hasRows: filled.length > 0,
     emptyNote: '还没有人报名，录入名次前先让会员报名',
     bronzeHint: bronzeHintOf(event),
+    hintText: isGroupedFormat(event) ? groupedPlacementHint(event, row, derived) : bronzeHintOf(event),
   };
+}
+
+/**
+ * 循环 / 小组赛名次页的提示文案。
+ *
+ * 打完的就说明名次已自动排出、可微调；没打完的分两种：赛事根本没开始
+ * （还没抽签）与赛事刚开始（比赛没打完），说的是同一件事，文案要能各自说清。
+ *
+ * @param {Object} event
+ * @param {Object} row buildEventRow 的结果
+ * @param {Object} derived derivePlacements 的结果
+ * @returns {string}
+ */
+function groupedPlacementHint(event, row, derived) {
+  if (derived.ok) {
+    if (formatOf(event) === EVENT_FORMAT.ROUND_ROBIN) {
+      return '循环赛名次已按战绩自动排出，可直接微调后提交';
+    }
+    return '出线者按淘汰成绩、未出线者按小组名次自动排出，可直接微调后提交';
+  }
+  if (!event.draw) return '还没有抽签，抽签并打完小组赛后才能自动排名';
+  if (row.isFinished) return '';
+  return derived.message || '比赛还没打完，名次尚未确定';
 }
 
 module.exports = {
@@ -724,6 +906,9 @@ module.exports = {
   avatarOf,
   asArray,
   timeValue,
+  formatOf,
+  isGroupedFormat,
+  groupLabelOf,
   countEvents,
   describeSeason,
   buildPointsRows,
@@ -741,6 +926,7 @@ module.exports = {
   describeDraw,
   byeTextOf,
   buildBracketRows,
+  buildStandings,
   loadEventsView,
   loadEventDetailView,
   loadEventPlacementView,

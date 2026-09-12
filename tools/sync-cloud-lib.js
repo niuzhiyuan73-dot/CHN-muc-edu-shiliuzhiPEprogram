@@ -49,6 +49,7 @@ const MANIFEST = [
   'utils/format.js',
   'utils/leaderboard.js',
   'utils/stats.js',
+  'utils/standings.js',
   // 纯逻辑服务
   'services/replay.js',
   'services/match-record.js',
@@ -56,6 +57,7 @@ const MANIFEST = [
   'services/announcement.js',
   'services/event.js',
   'services/draw.js',
+  'services/format-plan.js',
   'services/profile.js',
   'services/permission.js',
   'services/season.js',

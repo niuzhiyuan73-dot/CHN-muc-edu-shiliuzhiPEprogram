@@ -26,6 +26,7 @@ const {
   EVENT_BRONZE_MODE,
   BRACKET_STAGE,
   SEED_MODE,
+  EVENT_FORMAT,
 } = require('../miniprogram/utils/constants.js');
 
 /**
@@ -1195,6 +1196,68 @@ describe('mock 数据源 —— 赛事闭环', () => {
       );
       assert.equal(finished.ok, true, finished.firstError);
       assert.equal(finished.record.status, EVENT_STATUS.FINISHED);
+    })
+  );
+
+  test(
+    '循环赛 —— 逐轮打完自动放下一轮，4 人共 6 场，名次允许出现第 4 名',
+    withCleanStore(async () => {
+      const members = await mock.getMembers();
+      const players = members.slice(0, 4).map((m) => m._id);
+      const host = players[0];
+
+      const { record } = await mock.publishEvent(
+        eventDraft({ format: EVENT_FORMAT.ROUND_ROBIN, seedCount: 2 }),
+        host
+      );
+      const id = record._id;
+      for (const userId of players) await mock.signUpEvent(id, userId);
+
+      // 抽签只在报名阶段开放，先抽再开赛
+      const drawn = await mock.drawEvent(id, host, { seedValue: 7 });
+      assert.equal(drawn.ok, true, drawn.message);
+      await mock.startEvent(id, host);
+      assert.equal(drawn.draw.format, EVENT_FORMAT.ROUND_ROBIN, '赛制要落到 draw 上');
+      assert.equal(drawn.matches.length, 2, '4 人循环赛首轮排两场');
+      assert.ok(
+        drawn.matches.every((m) => m.stage === BRACKET_STAGE.GROUP),
+        '循环赛的比赛都在 groups 阶段'
+      );
+      assert.equal(drawn.matches[0].group, 0, '循环赛只有一组，组号自 0 起');
+
+      // 每一场都录分并让对手确认；确认一场就会让引擎试着排出后续轮次。
+      // 没排完就继续，排完（没有待确认的比赛）即止，加一道闸防死循环。
+      for (let guard = 0; guard < 12; guard += 1) {
+        const pending = (await mock.getMatchRecords({ eventId: id })).filter(
+          (m) => m.status === MATCH_STATUS.PENDING && m.teamA[0] && m.teamB[0]
+        );
+        if (pending.length === 0) break;
+        for (const match of pending) {
+          const scored = await mock.submitMatch({
+            id: match._id,
+            scoreA: ['11', '11'],
+            scoreB: ['3', '5'],
+            actor: match.teamA[0],
+          });
+          assert.equal(scored.ok, true, scored.firstError);
+          const confirmed = await mock.confirmMatch(match._id, match.teamB[0]);
+          assert.equal(confirmed.ok, true, confirmed.message);
+        }
+      }
+
+      const all = await mock.getMatchRecords({ eventId: id });
+      assert.equal(all.length, 6, '4 人循环赛共 3 轮 6 场，应全部排完');
+      assert.ok(all.every((m) => m.status === MATCH_STATUS.ACTIVE), '全部已生效');
+
+      // 循环赛走「阶梯」名次口径：1..4 都要允许，不能再套三四名成对规则
+      const finished = await mock.finishEvent(
+        id,
+        players.map((userId, index) => ({ userId, placement: index + 1 })),
+        host
+      );
+      assert.equal(finished.ok, true, finished.firstError);
+      assert.equal(finished.record.status, EVENT_STATUS.FINISHED);
+      assert.equal(finished.record.results.length, 4);
     })
   );
 

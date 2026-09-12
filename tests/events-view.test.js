@@ -24,6 +24,10 @@ const {
   byeTextOf,
   buildBracketRows,
   buildSignupRows,
+  formatOf,
+  isGroupedFormat,
+  groupLabelOf,
+  buildStandings,
 } = require('../miniprogram/services/events-view.js');
 // 积分榜的搜索与排行榜页是同一套逻辑，页面复用它的纯函数
 const { describeSearch } = require('../miniprogram/services/rank-view.js');
@@ -39,6 +43,7 @@ const {
   USER_STATUS,
   ROLE,
   SIGNUP_STATUS,
+  EVENT_FORMAT,
 } = require('../miniprogram/utils/constants.js');
 
 /* ============================================================
@@ -201,6 +206,31 @@ test('roundLabelOf —— 轮次或总轮数缺失时绝不吐出 undefined', ()
   for (const [round, total] of [[undefined, undefined], [null, 0], ['', '']]) {
     assert.ok(!roundLabelOf(round, total).includes('undefined'));
   }
+});
+
+test('roundLabelOf —— 小组 / 胜者组 / 败者组看数字叫，总决赛与排位赛有专名', () => {
+  assert.strictEqual(roundLabelOf(1, 3, BRACKET_STAGE.GROUP), '第 1 轮');
+  assert.strictEqual(roundLabelOf(2, 3, BRACKET_STAGE.WINNERS), '第 2 轮');
+  assert.strictEqual(roundLabelOf(1, 3, BRACKET_STAGE.LOSERS), '第 1 轮');
+  assert.strictEqual(roundLabelOf(1, 3, BRACKET_STAGE.GRAND_FINAL), '总决赛');
+  assert.strictEqual(roundLabelOf(2, 3, BRACKET_STAGE.PLACEMENT), '5–8 名排位赛');
+  assert.strictEqual(roundLabelOf(undefined, 3, BRACKET_STAGE.GROUP), '轮次待定');
+});
+
+test('formatOf / isGroupedFormat —— 老赛事缺省按单败，不误判成要分组', () => {
+  assert.strictEqual(formatOf({}), EVENT_FORMAT.SINGLE_ELIM);
+  assert.strictEqual(formatOf(null), EVENT_FORMAT.SINGLE_ELIM);
+  assert.strictEqual(isGroupedFormat({ format: EVENT_FORMAT.ROUND_ROBIN }), true);
+  assert.strictEqual(isGroupedFormat({ format: EVENT_FORMAT.GROUP_KNOCKOUT }), true);
+  assert.strictEqual(isGroupedFormat({}), false);
+});
+
+test('groupLabelOf —— 组号自 0 起，0 号就是 A 组', () => {
+  assert.strictEqual(groupLabelOf(0, EVENT_FORMAT.GROUP_KNOCKOUT), 'A 组');
+  assert.strictEqual(groupLabelOf(1, EVENT_FORMAT.GROUP_KNOCKOUT), 'B 组');
+  assert.strictEqual(groupLabelOf(3, EVENT_FORMAT.GROUP_KNOCKOUT), 'D 组');
+  // 循环赛只有一组，不摆字母
+  assert.strictEqual(groupLabelOf(0, EVENT_FORMAT.ROUND_ROBIN), '循环赛');
 });
 
 test('totalRoundsOf —— 签位数是 2 的几次幂就几轮，非法值收敛成 0', () => {
@@ -432,6 +462,112 @@ test('buildBracketRows —— 录完分换成对手确认，且不再出现「�
   assert.strictEqual(row.winnerSide, 'A');
   assert.strictEqual(row.canRecord, false, '已经有比分，不该再给「录分」入口');
   assert.strictEqual(row.canConfirm, true, '站在录入者对面的 b 可以确认');
+});
+
+test('buildBracketRows —— 小组赛整体排在淘汰赛前，0 号组也标出组名', () => {
+  const event = {
+    _id: 'e1',
+    format: EVENT_FORMAT.GROUP_KNOCKOUT,
+    draw: {
+      groups: [
+        { group: 0, entries: ['a', 'b'] },
+        { group: 1, entries: ['c', 'd'] },
+      ],
+    },
+  };
+  const rows = buildBracketRows(
+    [
+      // 淘汰赛第 1 轮：轮次值比小组赛还小，若不按阶段分区会插到最前面
+      scheduledRecord({ _id: 'ko1', round: 1, stage: BRACKET_STAGE.MAIN, group: undefined }),
+      scheduledRecord({ _id: 'gb1', round: 1, stage: BRACKET_STAGE.GROUP, group: 1, slot: 0 }),
+      scheduledRecord({ _id: 'ga2', round: 2, stage: BRACKET_STAGE.GROUP, group: 0, slot: 0 }),
+      scheduledRecord({ _id: 'ga1', round: 1, stage: BRACKET_STAGE.GROUP, group: 0, slot: 0 }),
+    ],
+    event,
+    BRACKET_MEMBERS,
+    { actor: null }
+  );
+
+  assert.deepStrictEqual(
+    rows.map((row) => row.matchId),
+    ['ga1', 'ga2', 'gb1', 'ko1'],
+    'A 组（第 1→2 轮）→ B 组 → 淘汰赛，小组赛无论轮次都排在淘汰赛前'
+  );
+  assert.strictEqual(rows[0].groupText, 'A 组', '0 号组要有名字，不能被真值判断漏掉');
+  assert.strictEqual(rows[2].groupText, 'B 组');
+  assert.strictEqual(rows[3].groupText, '', '淘汰赛没有小组，不标组名');
+  assert.strictEqual(rows[0].roundText, '第 1 轮', '小组赛的轮次只看数字叫');
+});
+
+test('buildStandings —— 各组分表，胜场靠前的排前面，净胜带正负号', () => {
+  const event = {
+    _id: 'e1',
+    format: EVENT_FORMAT.GROUP_KNOCKOUT,
+    draw: {
+      groups: [
+        { group: 0, entries: ['a', 'b'] },
+        { group: 1, entries: ['c', 'd'] },
+      ],
+    },
+  };
+  const played = (over) =>
+    scheduledRecord({
+      status: MATCH_STATUS.ACTIVE,
+      scoreA: [11],
+      scoreB: [7],
+      winner: 'A',
+      ...over,
+    });
+  const memberMap = new Map([
+    ['a', { _id: 'a', nickName: '甲' }],
+    ['b', { _id: 'b', nickName: '乙' }],
+    ['c', { _id: 'c', nickName: '丙' }],
+    ['d', { _id: 'd', nickName: '丁' }],
+  ]);
+  const standings = buildStandings(
+    event,
+    [
+      played({ _id: 'a1', group: 0, stage: BRACKET_STAGE.GROUP, teamA: ['a'], teamB: ['b'] }),
+      // B 组这场胜者写在 B 侧，顺带验证名次确实跟着战绩走
+      played({
+        _id: 'b1',
+        group: 1,
+        stage: BRACKET_STAGE.GROUP,
+        teamA: ['c'],
+        teamB: ['d'],
+        scoreA: [7],
+        scoreB: [11],
+        winner: 'B',
+      }),
+    ],
+    memberMap,
+    { _id: 'c' }
+  );
+
+  assert.strictEqual(standings.length, 2);
+  const groupA = standings.find((item) => item.group === 0);
+  const groupB = standings.find((item) => item.group === 1);
+  assert.strictEqual(groupA.groupLabel, 'A 组');
+  assert.strictEqual(groupA.rows[0].nickName, '甲');
+  assert.strictEqual(groupA.rows[0].rank, 1);
+  assert.strictEqual(groupA.rows[0].wins, 1);
+  assert.strictEqual(groupA.rows[0].gameDiffText, '+1');
+  assert.strictEqual(groupA.rows[0].pointDiffText, '+4');
+  assert.strictEqual(groupA.rows[1].gameDiffText, '-1');
+  assert.strictEqual(groupA.rows[1].pointDiffText, '-4');
+  assert.strictEqual(groupA.rows[0].isMe, false);
+  assert.strictEqual(groupB.rows[0].nickName, '丁', 'B 组的胜者是丁');
+  const meRow = groupB.rows.find((row) => row.nickName === '丙');
+  assert.strictEqual(meRow.isMe, true, '丙登录时高亮丙那一行');
+  assert.strictEqual(groupB.rows[0].isMe, false, '胜者丁不是当前登录人');
+});
+
+test('buildStandings —— 还没抽签（没有分组）时不硬造一张空表', () => {
+  assert.deepStrictEqual(buildStandings({ _id: 'e1' }, [], BRACKET_MEMBERS), []);
+  assert.deepStrictEqual(
+    buildStandings({ _id: 'e1', draw: { groups: [] } }, [], BRACKET_MEMBERS),
+    []
+  );
 });
 
 /* ============================================================

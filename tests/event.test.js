@@ -37,6 +37,7 @@ const {
   EVENT_BRONZE_MODE,
   SEED_MODE,
   SIGNUP_STATUS,
+  EVENT_FORMAT,
 } = require('../miniprogram/utils/constants.js');
 
 /** 一位正常在册的普通会员 */
@@ -566,6 +567,41 @@ describe('validatePlacements —— 名次成对校验', () => {
 
   test('缺省方式按并列处理（历史赛事口径）', () => {
     assert.equal(validatePlacements(tiedBoard).ok, true);
+  });
+
+  test('循环赛按阶梯口径：1..N 的普通名次表放行，第 4 名不再算错', () => {
+    // 积分表排出来的名次必然出现第 4 名；若还套三四名成对规则，赛事永远结不了
+    const ladder = [
+      { userId: 'u1', placement: 1 },
+      { userId: 'u2', placement: 2 },
+      { userId: 'u3', placement: 3 },
+      { userId: 'u4', placement: 4 },
+      { userId: 'u5', placement: 5 },
+      { userId: 'u6', placement: 6 },
+    ];
+    const result = validatePlacements(ladder, { format: EVENT_FORMAT.ROUND_ROBIN });
+    assert.equal(result.ok, true);
+    assert.equal(result.results.length, 6);
+  });
+
+  test('小组赛同样走阶梯口径，不必第 3、第 4 名成对', () => {
+    const ladder = [
+      { userId: 'u1', placement: 1 },
+      { userId: 'u2', placement: 2 },
+      { userId: 'u3', placement: 3 },
+      { userId: 'u4', placement: 4 },
+    ];
+    assert.equal(validatePlacements(ladder, { format: EVENT_FORMAT.GROUP_KNOCKOUT }).ok, true);
+  });
+
+  test('阶梯口径仍守住「恰有一位冠军」', () => {
+    const noChampion = [
+      { userId: 'u1', placement: 2 },
+      { userId: 'u2', placement: 3 },
+    ];
+    const result = validatePlacements(noChampion, { format: EVENT_FORMAT.ROUND_ROBIN });
+    assert.equal(result.ok, false);
+    assert.match(result.firstError, /冠军/);
   });
 });
 

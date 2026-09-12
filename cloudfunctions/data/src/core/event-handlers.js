@@ -42,10 +42,11 @@ const {
 const {
   planDraw,
   buildDrawRecord,
-  buildBracketMatches,
   drawnEntryCount,
   canRedraw,
 } = require('../../lib/services/draw.js');
+// 首轮（或循环赛第一轮）由赛制决定：单败摆签表，分组摆各组第一轮
+const { buildInitialMatches } = require('../../lib/services/format-plan.js');
 const { EVENT_STATUS, SIGNUP_STATUS, MATCH_STATUS, MATCH_TYPE } = require('../../lib/utils/constants.js');
 
 /* ============================================================
@@ -312,7 +313,12 @@ async function finishEvent(payload = {}, ctx) {
 
   // 以签表人数为准判「打不打得出三四名赛」；没抽签时退回报名人数
   const entryCount = drawnEntryCount(event.draw) || validUsers.size;
-  const checked = validatePlacements(payload.results, { bronzeMode: event.bronzeMode, entryCount });
+  // 循环 / 小组赛走「阶梯」口径：名次列为 1..N，不再受三四名成对规则约束
+  const checked = validatePlacements(payload.results, {
+    bronzeMode: event.bronzeMode,
+    entryCount,
+    format: event.format,
+  });
   if (!checked.ok) {
     return ok({ ok: false, record: null, errors: checked.errors, firstError: checked.firstError });
   }
@@ -415,7 +421,7 @@ async function drawEvent(payload = {}, ctx) {
     // 第几次抽签：历史参数与操作人都在这里累加，便于追溯
     drawCount: (event.draw && event.draw.drawCount ? event.draw.drawCount : 0) + 1,
   });
-  const drafts = buildBracketMatches(plan, { event });
+  const drafts = buildInitialMatches(event, draw);
 
   const written = await ctx.repo.transaction(async (tx) => {
     await tx.events.update(payload.id, { draw });

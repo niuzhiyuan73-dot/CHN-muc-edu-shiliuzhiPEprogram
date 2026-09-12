@@ -30,7 +30,9 @@ const {
   fillScheduledMatch,
   isParticipant,
 } = require('../../lib/services/match-record.js');
-const { planNextRound, buildRoundMatches } = require('../../lib/services/draw.js');
+const { buildRoundMatches } = require('../../lib/services/draw.js');
+// 赛制阶段派发：单败排下一轮，循环排下一轮，小组赛在全部小组打完后转去排淘汰阶段
+const { planStageMatches } = require('../../lib/services/format-plan.js');
 const { MATCH_STATUS, ROLE } = require('../../lib/utils/constants.js');
 
 /**
@@ -149,11 +151,10 @@ async function advanceAfterConfirm(ctx, eventId) {
   const event = (dataset.events || []).find((item) => item._id === eventId);
   if (!event || !event.draw) return;
 
-  const plan = planNextRound({
-    eventId,
+  const plan = planStageMatches({
+    event,
     draw: event.draw,
     matches: dataset.ledger.filter((match) => match.eventId === eventId),
-    bronzeMode: event.bronzeMode,
   });
   if (!plan.ok) return;
 

@@ -179,6 +179,88 @@
   color: var(--color-primary);
 }
 
+/* ==================== 积分表（循环赛 / 小组赛） ==================== */
+
+.standings-group + .standings-group {
+  margin-top: var(--space-md);
+}
+
+.standings-group-title {
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  padding-bottom: var(--space-xs);
+}
+
+.standings-row {
+  display: flex;
+  align-items: center;
+  padding: 10rpx 0;
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.standings-row:last-child {
+  border-bottom: none;
+}
+
+.standings-head {
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+}
+
+.standings-row.is-me {
+  background: rgba(20, 122, 63, 0.06);
+}
+
+.standings-rank {
+  flex-shrink: 0;
+  width: 64rpx;
+  text-align: center;
+  font-size: var(--font-xs);
+  color: var(--color-text-secondary);
+}
+
+.standings-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  font-size: var(--font-sm);
+}
+
+.standings-avatar {
+  width: 44rpx;
+  height: 44rpx;
+  margin-right: var(--space-xs);
+  border-radius: 50%;
+}
+
+.standings-avatar-text {
+  width: 44rpx;
+  height: 44rpx;
+  line-height: 44rpx;
+  margin-right: var(--space-xs);
+  border-radius: 50%;
+  text-align: center;
+  font-size: var(--font-xs);
+  color: #ffffff;
+  background: var(--color-primary);
+}
+
+.standings-nick {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.standings-cell {
+  flex-shrink: 0;
+  width: 90rpx;
+  text-align: center;
+  font-size: var(--font-xs);
+  color: var(--color-text-secondary);
+}
+
 /* ==================== 演示口径提示 ==================== */
 
 .demo-notice {

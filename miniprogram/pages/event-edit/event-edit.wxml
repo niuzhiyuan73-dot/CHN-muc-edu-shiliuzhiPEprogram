@@ -37,6 +37,47 @@
       </view>
       <view wx:if="{{errors.matchType}}" class="field-error">{{errors.matchType}}</view>
 
+      <!-- 赛制：仅单打开放（决策 5）。预填单败淘汰，不选即旧行为 -->
+      <block wx:if="{{form.matchType === 1}}">
+        <view class="field-row">
+          <view class="field-label">赛制</view>
+          <picker mode="selector" range="{{formats}}" value="{{formatIndex}}" bindchange="onPickFormat">
+            <view class="field-value">{{formats[formatIndex]}} ›</view>
+          </picker>
+        </view>
+        <view wx:if="{{errors.format}}" class="field-error">{{errors.format}}</view>
+
+        <!-- 小组赛才需要组数与每组出线人数 -->
+        <block wx:if="{{form.format === 'group_knockout'}}">
+          <view class="field-row">
+            <view class="field-label">小组数</view>
+            <picker mode="selector" range="{{groupCounts}}" value="{{groupCountIndex}}" bindchange="onPickGroupCount">
+              <view class="field-value">{{groupCounts[groupCountIndex]}} ›</view>
+            </picker>
+          </view>
+          <view wx:if="{{errors.groupCount}}" class="field-error">{{errors.groupCount}}</view>
+
+          <view class="field-row">
+            <view class="field-label">出线人数</view>
+            <picker mode="selector" range="{{advanceOptions}}" value="{{advanceIndex}}" bindchange="onPickAdvance">
+              <view class="field-value">{{advanceOptions[advanceIndex]}} ›</view>
+            </picker>
+          </view>
+          <view wx:if="{{errors.advancePerGroup}}" class="field-error">{{errors.advancePerGroup}}</view>
+          <view class="field-hint">小组循环后按战绩取每组前几名进淘汰赛，跨组交叉对阵</view>
+        </block>
+
+        <!-- 倒三角排位：八强负者加赛分出 5–8 名；循环赛没有淘汰阶段，不显示 -->
+        <block wx:if="{{form.format !== 'round_robin'}}">
+          <view class="field-row">
+            <view class="field-label">5–8 名排位</view>
+            <switch checked="{{form.placementMode === 'top8'}}" bindchange="onToggleTop8" color="#2f7d4f" />
+          </view>
+          <view class="field-hint">打开后八强负者加赛两轮，分出第 5、6、7、8 名；签表不足 8 人时不启用</view>
+          <view wx:if="{{errors.placementMode}}" class="field-error">{{errors.placementMode}}</view>
+        </block>
+      </block>
+
       <!-- 等级与三四名赛方式必须选定，所以初值不留默认 -->
       <view class="field-row">
         <view class="field-label">赛事等级</view>

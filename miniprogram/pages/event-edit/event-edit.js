@@ -24,6 +24,14 @@ const {
   EVENT_LEVEL_LABEL,
   EVENT_BRONZE_MODE,
   EVENT_BRONZE_MODE_LABEL,
+  EVENT_FORMAT,
+  EVENT_FORMAT_LABEL,
+  DEFAULT_EVENT_FORMAT,
+  GROUP_CONFIG,
+  DEFAULT_GROUP_COUNT,
+  DEFAULT_ADVANCE_PER_GROUP,
+  EVENT_PLACEMENT_MODE,
+  DEFAULT_PLACEMENT_MODE,
   SEED_MODE,
   SEED_MODE_LABEL,
   SEED_COUNTS,
@@ -48,6 +56,23 @@ const BRONZE_LABELS = BRONZE_MODES.map((mode) => EVENT_BRONZE_MODE_LABEL[mode]);
 /** 项目下拉。默认单打——双打赛事不计积分，别让人一进来就踩坑 */
 const MATCH_TYPES = [MATCH_TYPE.SINGLES, MATCH_TYPE.DOUBLES];
 const MATCH_TYPE_LABELS = ['单打', '双打'];
+
+/**
+ * 赛制下拉。仅单打赛事显示（决策 5：新赛制只做单打）。
+ * 双败淘汰与复合赛制属第二批，这里先只列第一批的三种。
+ */
+const FORMATS = [EVENT_FORMAT.SINGLE_ELIM, EVENT_FORMAT.ROUND_ROBIN, EVENT_FORMAT.GROUP_KNOCKOUT];
+const FORMAT_LABELS = FORMATS.map((format) => EVENT_FORMAT_LABEL[format]);
+
+/** 小组数下拉（仅小组赛显示）。取值固定为 GROUP_CONFIG 允许的档位 */
+const GROUP_COUNT_OPTIONS = GROUP_CONFIG.COUNT_OPTIONS;
+const GROUP_COUNT_LABELS = GROUP_COUNT_OPTIONS.map((count) => `${count} 组`);
+const DEFAULT_GROUP_COUNT_INDEX = GROUP_COUNT_OPTIONS.indexOf(DEFAULT_GROUP_COUNT);
+
+/** 每组出线人数下拉（仅小组赛显示） */
+const ADVANCE_OPTIONS = GROUP_CONFIG.ADVANCE_OPTIONS;
+const ADVANCE_LABELS = ADVANCE_OPTIONS.map((count) => `每组出线 ${count} 人`);
+const DEFAULT_ADVANCE_INDEX = ADVANCE_OPTIONS.indexOf(DEFAULT_ADVANCE_PER_GROUP);
 
 /** 种子来源下拉。仅单打赛事显示（决策 1） */
 const SEED_MODES = [SEED_MODE.MANUAL, SEED_MODE.ELO, SEED_MODE.POINTS];
@@ -76,6 +101,13 @@ Page({
     /** 各下拉的数据源与当前下标 */
     matchTypes: MATCH_TYPE_LABELS,
     matchTypeIndex: 0,
+    formats: FORMAT_LABELS,
+    formatIndex: FORMATS.indexOf(DEFAULT_EVENT_FORMAT),
+    groupCounts: GROUP_COUNT_LABELS,
+    // 小组参数预填默认值；只有选中「小组赛」时才显示，也允许不选
+    groupCountIndex: DEFAULT_GROUP_COUNT_INDEX,
+    advanceOptions: ADVANCE_LABELS,
+    advanceIndex: DEFAULT_ADVANCE_INDEX,
     levels: LEVEL_LABELS,
     levelIndex: 0,
     bronzeModes: BRONZE_LABELS,
@@ -99,6 +131,11 @@ Page({
       title: '',
       description: '',
       matchType: MATCH_TYPES[0],
+      // 赛制预填单败淘汰：不选就是旧行为，老流程无感
+      format: DEFAULT_EVENT_FORMAT,
+      groupCount: DEFAULT_GROUP_COUNT,
+      advancePerGroup: DEFAULT_ADVANCE_PER_GROUP,
+      placementMode: DEFAULT_PLACEMENT_MODE,
       level: null,
       bronzeMode: '',
       // 种子来源留空必须显式选；数量预填默认值（决策 2 / 3）
@@ -178,6 +215,44 @@ Page({
     if (type === undefined) return;
     this.setData({ matchTypeIndex: index });
     this.setField('matchType', type);
+    // 新赛制只做单打（决策 5）：切到双打就把赛制收回单败淘汰，
+    // 免得带着分组赛制提交、抽签时却被「双打不支持抽签」挡下
+    if (type === MATCH_TYPE.DOUBLES && this.data.form.format !== DEFAULT_EVENT_FORMAT) {
+      this.setData({ formatIndex: FORMATS.indexOf(DEFAULT_EVENT_FORMAT) });
+      this.setField('format', DEFAULT_EVENT_FORMAT);
+    }
+  },
+
+  onPickFormat(event) {
+    const index = Number(event.detail.value);
+    const format = FORMATS[index];
+    if (format === undefined) return;
+    this.setData({ formatIndex: index });
+    this.setField('format', format);
+  },
+
+  onPickGroupCount(event) {
+    const index = Number(event.detail.value);
+    const count = GROUP_COUNT_OPTIONS[index];
+    if (count === undefined) return;
+    this.setData({ groupCountIndex: index });
+    this.setField('groupCount', count);
+  },
+
+  onPickAdvance(event) {
+    const index = Number(event.detail.value);
+    const count = ADVANCE_OPTIONS[index];
+    if (count === undefined) return;
+    this.setData({ advanceIndex: index });
+    this.setField('advancePerGroup', count);
+  },
+
+  /** 倒三角排位开关：勾上则八强负者加赛分出 5–8 名 */
+  onToggleTop8(event) {
+    this.setField(
+      'placementMode',
+      event.detail.value ? EVENT_PLACEMENT_MODE.TOP8 : EVENT_PLACEMENT_MODE.NONE
+    );
   },
 
   onPickLevel(event) {

@@ -239,16 +239,99 @@ const DEFAULT_EVENT_STATUS = EVENT_STATUS.SIGNUP;
 /**
  * 赛事签表的阶段。
  *
- *   main   —— 主赛（淘汰赛各轮）
- *   bronze —— 三四名决赛（仅 bronzeMode = playoff 时生成）
+ *   main      —— 主赛（淘汰赛各轮）
+ *   bronze    —— 三四名决赛（仅 bronzeMode = playoff 时生成）
+ *   group     —— 小组 / 循环赛（同名次赛事里的分组循环部分）
+ *   wb        —— 双败淘汰·胜者组
+ *   lb        —— 双败淘汰·败者组
+ *   gf        —— 双败淘汰·总决赛
+ *   placement —— 5–8 名排位赛（「八强倒三角」）
  *
- * 它是比赛记录上的一个字段：主赛与三四名赛都挂在同一场赛事下，靠 stages
- * 区分归属，读的时候才不会把季军赛混进半决赛的轮次里。
+ * 它是比赛记录上的一个字段：同一场赛事下的各阶段比赛靠 stage 区分归属，
+ * 读的时候才不会把季军赛混进半决赛的轮次里。
+ *
+ * 【为什么 main / bronze 的取值一个字都不能改】
+ * stage 会拼进比赛编号（见 draw.eventMatchKey），而编号是历史数据的 _id。
+ * 改掉这两个值，等于让所有已落库的签表比赛找不到自己。新增阶段只能往后加。
  */
 const BRACKET_STAGE = {
   MAIN: 'main',
   BRONZE: 'bronze',
+  GROUP: 'group',
+  WINNERS: 'wb',
+  LOSERS: 'lb',
+  GRAND_FINAL: 'gf',
+  PLACEMENT: 'placement',
 };
+
+/**
+ * 赛事赛制。
+ *
+ *   single_elim    —— 单败淘汰（历史缺省，抽签引擎原先唯一支持的形态）
+ *   round_robin    —— 循环赛：单人成组，人人与所有人交手
+ *   group_knockout —— 小组循环 + 单败淘汰（复合赛制的第一种）
+ *   double_elim    —— 双败淘汰：胜者组 / 败者组 / 总决赛
+ *
+ * 【为什么是「赛制」而不是继续加布尔开关】
+ * 复合赛制（小组打完接着淘汰）要求把多个阶段按顺序串起来。若用开关去拼，
+ * 组合数一旦上去，分支就再也理不清。这里把它收成一个有序的阶段序列
+ * （见 services/format-plan.js），新增复合形态只是多一行预设。
+ */
+const EVENT_FORMAT = {
+  SINGLE_ELIM: 'single_elim',
+  ROUND_ROBIN: 'round_robin',
+  GROUP_KNOCKOUT: 'group_knockout',
+  DOUBLE_ELIM: 'double_elim',
+};
+
+const EVENT_FORMAT_LABEL = {
+  [EVENT_FORMAT.SINGLE_ELIM]: '单败淘汰',
+  [EVENT_FORMAT.ROUND_ROBIN]: '循环赛',
+  [EVENT_FORMAT.GROUP_KNOCKOUT]: '小组赛+淘汰',
+  [EVENT_FORMAT.DOUBLE_ELIM]: '双败淘汰',
+};
+
+/** 历史赛事没有 format 字段，按单败淘汰处理——缺省即旧行为 */
+const DEFAULT_EVENT_FORMAT = EVENT_FORMAT.SINGLE_ELIM;
+
+/** 需要分组的赛制（小组数 / 出线人数只对这些有意义） */
+const GROUPED_FORMATS = [EVENT_FORMAT.ROUND_ROBIN, EVENT_FORMAT.GROUP_KNOCKOUT];
+
+/** 会产生淘汰签表的赛制（倒三角排位赛只对这些有意义） */
+const KNOCKOUT_FORMATS = [
+  EVENT_FORMAT.SINGLE_ELIM,
+  EVENT_FORMAT.GROUP_KNOCKOUT,
+  EVENT_FORMAT.DOUBLE_ELIM,
+];
+
+/**
+ * 「八强倒三角」5–8 名排位赛的开关。
+ *
+ *   none —— 不排：八强战负者并列（与历史口径一致）
+ *   top8 —— 排位：八强战负者再打一个小签表，分出第 5–8 名
+ */
+const EVENT_PLACEMENT_MODE = {
+  NONE: 'none',
+  TOP8: 'top8',
+};
+
+const EVENT_PLACEMENT_MODE_LABEL = {
+  [EVENT_PLACEMENT_MODE.NONE]: '不排位',
+  [EVENT_PLACEMENT_MODE.TOP8]: '排 5–8 名',
+};
+
+/** 历史赛事没有这个字段，按「不排位」处理 */
+const DEFAULT_PLACEMENT_MODE = EVENT_PLACEMENT_MODE.NONE;
+
+/** 小组赛的可选参数 */
+const GROUP_CONFIG = {
+  COUNT_OPTIONS: [2, 4],
+  ADVANCE_OPTIONS: [1, 2],
+};
+
+/** 缺省小组数 / 每组出线人数（4 人一组、每组前 2 出线是最常见的青少年赛制） */
+const DEFAULT_GROUP_COUNT = 2;
+const DEFAULT_ADVANCE_PER_GROUP = 2;
 
 /**
  * 三四名赛的两种办赛方式（决策 2.3）。
@@ -471,6 +554,17 @@ module.exports = {
   SEED_MODE_LABEL,
   SEED_COUNTS,
   DEFAULT_SEED_COUNT,
+  EVENT_FORMAT,
+  EVENT_FORMAT_LABEL,
+  DEFAULT_EVENT_FORMAT,
+  GROUPED_FORMATS,
+  KNOCKOUT_FORMATS,
+  EVENT_PLACEMENT_MODE,
+  EVENT_PLACEMENT_MODE_LABEL,
+  DEFAULT_PLACEMENT_MODE,
+  GROUP_CONFIG,
+  DEFAULT_GROUP_COUNT,
+  DEFAULT_ADVANCE_PER_GROUP,
   TEAM,
   RANK_PERIOD,
   RANK_PERIOD_LABEL,
