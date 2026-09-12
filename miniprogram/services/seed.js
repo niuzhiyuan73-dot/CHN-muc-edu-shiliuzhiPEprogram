@@ -20,6 +20,9 @@
 const { createSeededRandom, randomInt, pick, shuffle } = require('../utils/random.js');
 // 标准种子排位表搬到工具层，正式抽签与这里的模拟数据共用同一份
 const { standardSeedOrder } = require('../utils/bracket.js');
+// 比赛的确定性编号（轮次 + 阶段 + 签位）也只有一份，演示赛事的签表
+// 必须与正式抽签用同一个键，否则「逐轮推进」会把它当成没排过而重复生成
+const { eventMatchKey } = require('./draw.js');
 const {
   MATCH_TYPE,
   MATCH_TYPE_LABEL,
@@ -28,6 +31,7 @@ const {
   EVENT_STATUS,
   EVENT_LEVEL,
   EVENT_BRONZE_MODE,
+  BRACKET_STAGE,
   SEED_MODE,
   SIGNUP_STATUS,
   ROLE,
@@ -113,7 +117,7 @@ const ANNOUNCEMENT_SEED = [
     pinned: false,
     title: '等级分计算规则说明',
     content:
-      '等级分采用 ELO 算法，单打与双打各自独立计分，互不影响。新会员的前 10 场为定级期，分数变动会略大，属正常现象。',
+      '等级分采用 ELO 算法，单打与双打各自独立计分，互不影响。每场分数变动只取决于对手强弱：战胜强手加分多，负于弱手失分多。',
   },
   {
     week: 16,
@@ -347,9 +351,12 @@ function generateMatchScore(random, teamAWins, probA, format = DEFAULT_FORMAT) {
  * 把一场对局的信息组装成比赛记录。
  *
  * @param {Object} params
+ * @param {number} [params.round] 赛事轮次，从 1 开始；日常约球不传
+ * @param {string} [params.stage] 见 constants.BRACKET_STAGE
+ * @param {number} [params.slot] 该轮内的签位序号，从 0 开始
  * @returns {Object} 比赛记录（不含等级分变动，那由回放引擎填入）
  */
-function buildMatch({ id, matchType, teamA, teamB, teamAWins, probA, matchTime, recorder, eventId, random, location, format = DEFAULT_FORMAT }) {
+function buildMatch({ id, matchType, teamA, teamB, teamAWins, probA, matchTime, recorder, eventId, random, location, round, stage, slot, format = DEFAULT_FORMAT }) {
   const { scoreA, scoreB } = generateMatchScore(random, teamAWins, probA, format);
 
   return {
@@ -370,6 +377,11 @@ function buildMatch({ id, matchType, teamA, teamB, teamAWins, probA, matchTime, 
     recorder: recorder || teamA[0],
     status: MATCH_STATUS.ACTIVE,
     eventId: eventId || null,
+    // 轮次 / 阶段 / 签位只有赛事对局才写：签表要靠它们排出「八进四、半决赛、
+    // 决赛」这些轮次名，日常约球没有轮次可言，不能凭空捏一个
+    ...(Number.isFinite(round)
+      ? { round, stage: stage || BRACKET_STAGE.MAIN, slot: Number(slot) || 0 }
+      : {}),
   };
 }
 
@@ -437,6 +449,11 @@ function simulateBracket({ entries, random, startTime, matchType, eventId, forma
           matchTime: addDays(startTime, round),
           recorder: a.players[0],
           eventId,
+          // 轮次从 1 起，签位是这一轮里的第几场——签表靠这两个字段排序、
+          // 取名（八进四 / 半决赛 / 决赛），缺了它们轮次名就会变成 undefined
+          round: round + 1,
+          stage: BRACKET_STAGE.MAIN,
+          slot: i / 2,
           format,
           random,
         })
@@ -463,10 +480,11 @@ function simulateBracket({ entries, random, startTime, matchType, eventId, forma
  * 生成全部模拟数据。
  *
  * 【为什么场次要给到这个量级】
- * ELO 收敛得比直觉慢得多。以 K=32 估算，一个人在某池里大约要打
- * 三四十场，分数才贴近真实水平；只打七八场的话，所有人都会挤在
- * 1500 分附近，榜单看不出任何区分度。所以这里按「每周 30 场、
- * 持续 20 周」的强度生成，让每位会员在每个池里都能积累约 30 场。
+ * ELO 收敛得比直觉慢得多，且收敛速度与 K 成正比：每场只挪 K×(S−E) 分。
+ * 日常 K 统一为 16 后，一个人在某池里要打上几十场分数才贴近真实水平；
+ * 只打七八场的话，所有人都会挤在初始分附近，榜单看不出任何区分度。
+ * 所以这里按「每周 30 场、持续 20 周」的强度生成，让每位会员在每个池里
+ * 都能积累约 30 场——实测各池首尾差距仍有 150 分上下，足够排出名次。
  *
  * @param {Object} [options]
  * @param {number} [options.seed] 随机种子，换数字即可得到一整套新数据
@@ -686,17 +704,24 @@ function generateSeed(options = {}) {
     });
   });
 
-  // ---------- 4. 一场「报名中」的赛事（演示用） ----------
-  // 上面六场都已结束，赛事页的「报名中」一栏必然是空的：报名、取消、签到
-  // 这条链路在界面上根本走不到。这里补一场尚未开赛的赛事，并预置几位报名者，
+  // ---------- 4. 一场「进行中」的赛事（演示用） ----------
+  // 上面六场都已结束，赛事页的「进行中」一栏必然是空的：抽签、逐轮推进、
+  // 半决赛待打这条链路在界面上根本走不到。这里补一场已经开赛的赛事：
+  // 八人报名且已签到、四场八进四刚刚打完、u06 已进四强但半决赛还没开打，
   // 让演示与人工验收有活数据可用。
   //
   // 【为什么排在所有取随机数的地方之后】
-  // 它不参与胜负模拟（没有 results、不生成比赛），只是为了给界面一份可操作
-  // 的赛事。若把取随机数的语句插到中间，后面每一次 random() 都会错位，
-  // 这场补数据就会把前面 642 场球全部改写——那不是「补一场」，是「换一套」。
-  const openWeek = weeks + 3;
+  // 它不参与名次模拟（没有 results），比赛由这里显式补上。若把取随机数的
+  // 语句插到中间，后面每一次 random() 都会错位，这场补数据就会把前面几百场球
+  // 全部改写——那不是「补一场」，是「换一套」。
+  //
+  // 【为什么是 weeks + 2 而不是更靠后】
+  // 开赛日必须落在「现在」之前：签表里的半决赛还要现场录分，而录入校验
+  // 明确拒绝晚于当下的比赛时间；同时它又得排在所有已结束赛事之后，并且
+  // 仍在九月，才配得上「九月单打赛」这个名字。加两周正好落在这两端之间。
+  const openWeek = weeks + 2;
   const openStart = addDays(baseDate, openWeek * 7);
+  const openSize = 8;
   const openEvent = {
     _id: 'e' + String(eventPlan.length + 1).padStart(2, '0'),
     title: `${openStart.getMonth() + 1}月男子单打赛`,
@@ -707,9 +732,9 @@ function generateSeed(options = {}) {
     startTime: openStart,
     endTime: addDays(openStart, 1),
     // 名额按人数计，与已结束的赛事同一口径
-    quota: 8,
-    status: EVENT_STATUS.SIGNUP,
-    // 报名中的赛事还没有名次；results 留空，回放也就不会给它发积分
+    quota: openSize,
+    status: EVENT_STATUS.ONGOING,
+    // 名次要到决赛结束才有；results 留空，回放也就不会给它发积分
     results: [],
     level: EVENT_LEVEL.SECOND,
     bronzeMode: EVENT_BRONZE_MODE.PLAYOFF,
@@ -719,19 +744,111 @@ function generateSeed(options = {}) {
   };
   events.push(openEvent);
 
-  // 预置五位报名者：名单里有人，报名列表与「已报 N/8」才有东西可看。
-  // 剩下三个名额留给演示者自己报名。
-  const openSignups = shuffle(random, activeAt(openWeek, men))
-    .slice(0, 5)
-    .map((member, index) => ({
+  // 八位参赛者：固定把演示账号 u06 放进来，其余从当周在册男会员里补齐。
+  // u06 是「我」的默认身份，演示时点开赛事详情就能看到自己进了四强。
+  const openPool = [byId.u06].concat(
+    activeAt(openWeek, men).filter((member) => member._id !== 'u06')
+  );
+  assertEnough(openPool, openSize, openEvent.title);
+  const openEntries = openPool.slice(0, openSize);
+
+  // 与正式抽签同一套标准种子排位：先按真实水平定种子，再摆到签位上
+  const openSeeded = [...openEntries].sort((a, b) => b.trueSkill - a.trueSkill);
+  const openSlots = standardSeedOrder(openSize).map((seed) => openSeeded[seed - 1]);
+
+  const openFormat = DEFAULT_FORMAT;
+  const openMatches = [];
+  const qfWinners = [];
+
+  // 四场八进四：刚打完，比分明细齐全，胜者进四强
+  for (let slot = 0; slot < openSize / 2; slot += 1) {
+    const a = openSlots[slot * 2];
+    const b = openSlots[slot * 2 + 1];
+    // u06 所在一侧必胜——演示要的是「我进了四强」，不能让随机数把他淘汰
+    const teamAWins = a._id === 'u06' ? true : b._id === 'u06' ? false : a.trueSkill >= b.trueSkill;
+    const { scoreA, scoreB } = generateMatchScore(
+      random,
+      teamAWins,
+      winProbability(a.trueSkill, b.trueSkill),
+      openFormat
+    );
+    openMatches.push({
+      _id: eventMatchKey(openEvent._id, 1, BRACKET_STAGE.MAIN, slot),
+      matchType: MATCH_TYPE.SINGLES,
+      pool: MATCH_TYPE_TO_POOL[MATCH_TYPE.SINGLES],
+      teamA: [a._id],
+      teamB: [b._id],
+      scoreA,
+      scoreB,
+      gamePoints: openFormat.gamePoints,
+      bestOf: openFormat.bestOf,
+      winner: teamAWins ? 'A' : 'B',
+      location: openEvent.location,
+      matchTime: openStart,
+      recorder: a._id,
+      status: MATCH_STATUS.ACTIVE,
       eventId: openEvent._id,
-      userId: member._id,
-      status: SIGNUP_STATUS.SIGNED,
-      // 报名时间排在开赛前一周，与真实的报名节奏一致
-      signTime: new Date(addDays(baseDate, openWeek * 7 - 7 + index).setHours(12, 0, 0, 0)),
-      checkInTime: null,
-      actorId: member._id,
-    }));
+      round: 1,
+      stage: BRACKET_STAGE.MAIN,
+      slot,
+    });
+    qfWinners.push(teamAWins ? a : b);
+  }
+
+  // 两场半决赛：签表已排好、人也已就位，但一场都还没打——比分留空、胜者未知，
+  // 状态留 PENDING。回放引擎只认「已生效」的比赛，这两场因此不进等级分。
+  for (let slot = 0; slot < qfWinners.length / 2; slot += 1) {
+    const a = qfWinners[slot * 2];
+    const b = qfWinners[slot * 2 + 1];
+    openMatches.push({
+      _id: eventMatchKey(openEvent._id, 2, BRACKET_STAGE.MAIN, slot),
+      matchType: MATCH_TYPE.SINGLES,
+      pool: MATCH_TYPE_TO_POOL[MATCH_TYPE.SINGLES],
+      teamA: [a._id],
+      teamB: [b._id],
+      scoreA: [],
+      scoreB: [],
+      gamePoints: openFormat.gamePoints,
+      bestOf: openFormat.bestOf,
+      winner: null,
+      location: openEvent.location,
+      matchTime: addDays(openStart, 1),
+      recorder: null,
+      status: MATCH_STATUS.PENDING,
+      eventId: openEvent._id,
+      round: 2,
+      stage: BRACKET_STAGE.MAIN,
+      slot,
+    });
+  }
+
+  // 抽签记录：签表页靠 draw.size 推出总轮次，缺了它轮次名会算不出来
+  openEvent.draw = {
+    seedMode: SEED_MODE.ELO,
+    seedCount: 4,
+    seedValue: openStart.getTime(),
+    drawnAt: new Date(addDays(baseDate, openWeek * 7 - 7).setHours(12, 0, 0, 0)),
+    drawnBy: 'u01',
+    drawCount: 1,
+    size: openSize,
+    slots: openSlots.map((member) => member._id),
+    seeds: openSeeded.slice(0, 4).map((member) => member._id),
+    byes: [],
+  };
+
+  matches.push(...openMatches);
+
+  // 八人已报名且已签到：名单、状态与「已报 8/8」都对得上
+  const openSignups = openEntries.map((member, index) => ({
+    eventId: openEvent._id,
+    userId: member._id,
+    status: SIGNUP_STATUS.CHECKED_IN,
+    // 报名时间排在开赛前一周，与真实的报名节奏一致；最晚的一位也在当天中午
+    signTime: new Date(addDays(baseDate, openWeek * 7 - 7 + index).setHours(12, 0, 0, 0)),
+    // 签到在开赛当天开场前一小时，晚于任何一位的报名时间
+    checkInTime: new Date(addDays(baseDate, openWeek * 7).setHours(17, 0, 0, 0)),
+    actorId: member._id,
+  }));
 
   // 全部对局按时间升序排列，回放引擎依赖这个顺序
   matches.sort((a, b) => new Date(a.matchTime) - new Date(b.matchTime));

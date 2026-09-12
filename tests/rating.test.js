@@ -147,7 +147,7 @@ describe('池隔离 —— 本系统最核心的约束', () => {
     assert.equal(getPoolRating(user, RATING_POOL.SINGLES).matchCount, 1);
   });
 
-  test('双打打得再多，也不影响单打的定级期判定', () => {
+  test('双打打得再多，也不影响单打的场次统计', () => {
     // 一位会员打了 20 场双打，但从未打过单打
     let user = newUser();
     for (let i = 0; i < 20; i += 1) {
@@ -162,9 +162,9 @@ describe('池隔离 —— 本系统最核心的约束', () => {
       };
     }
 
-    // 双打已脱离定级期
+    // 双打已累计 20 场
     assert.equal(getPoolRating(user, RATING_POOL.DOUBLES).matchCount, 20);
-    // 但单打仍是 0 场，第一次打单打时仍应按定级期 K 值计算
+    // 但单打仍是 0 场：两个池的场次互不影响
     assert.equal(getPoolRating(user, RATING_POOL.SINGLES).matchCount, 0);
   });
 });
@@ -287,7 +287,7 @@ describe('applySeasonalResetToUser —— 赛季软重置', () => {
     assert.equal(reset[RATING_POOL.DOUBLES].elo, 1500); // 未参赛，不变
   });
 
-  test('重置后场次统计保留（避免定级期被误触发）', () => {
+  test('重置只动分数，场次统计原样保留', () => {
     const user = newUser();
     user.ratings[RATING_POOL.SINGLES].elo = 1400;
     user.ratings[RATING_POOL.SINGLES].matchCount = 30;

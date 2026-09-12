@@ -193,6 +193,11 @@
   font-size: var(--font-sm);
 }
 
+/* 单行输入（初始等级分）用不着 textarea 那么高，压回一行的高度 */
+.sheet-input.is-single {
+  height: 88rpx;
+}
+
 .sheet-error {
   margin-top: var(--space-xs);
   font-size: var(--font-xs);

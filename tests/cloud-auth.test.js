@@ -236,6 +236,29 @@ test('入会审核 —— 管理员可以通过，驳回必须给理由', async 
   assert.equal(again.data.message, '这条申请已经处理过了');
 });
 
+test('入会审核 —— 通过时可顺手指定初始分，越界则整单被挡下', async () => {
+  const repo = createFixtureRepo();
+  const admin = await contextFor(repo, 'openid-admin');
+
+  // 请求体里的分数同样不被信任：越界直接挡回，申请保持待审核
+  const tooHigh = await dispatch(
+    'approveMember',
+    { applicationId: 'u_pending', initialElo: 99999 },
+    admin
+  );
+  assert.equal(tooHigh.data.ok, false);
+  assert.match(tooHigh.data.message, /之间/);
+
+  const approved = await dispatch(
+    'approveMember',
+    { applicationId: 'u_pending', initialElo: 1620 },
+    admin
+  );
+  assert.equal(approved.data.ok, true, approved.data.message);
+  // 服务端把指定分写进账号，回放据此跳过前五场自动定级
+  assert.equal(approved.data.account.initialElo, 1620);
+});
+
 test('入会审核 —— 找不到的申请有明确文案', async () => {
   const ctx = await contextFor(createFixtureRepo(), 'openid-admin');
   const res = await dispatch('approveMember', { applicationId: 'nobody' }, ctx);

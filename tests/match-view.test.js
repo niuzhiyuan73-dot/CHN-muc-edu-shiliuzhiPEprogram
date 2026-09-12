@@ -349,14 +349,26 @@ test('loadMatchView —— 「我的比赛」里每一行都确实有我', async
   const view = await loadMatchView({ tab: TAB.MINE });
   assert.ok(view.records.length > 0, '默认会员应当参加过比赛');
   assert.ok(view.records.every((row) => row.isMine));
-  assert.ok(view.records.every((row) => row.resultText !== ''), '自己的比赛都该有胜负');
+  // 已经分出胜负的必须标出胜/负；演示赛事里还没打的签表场次没有胜负，
+  // 留空由模板挡掉，不能凭空标一个「负」
+  for (const row of view.records.filter((item) => item.winnerSide)) {
+    assert.notStrictEqual(row.resultText, '', '分出胜负的比赛该有胜/负标记');
+  }
 });
 
-test('loadMatchView —— 种子里没有待确认的比赛，待确认标签为空', async () => {
+test('loadMatchView —— 种子里待我确认的就是演示赛事里我还没打的半决赛', async () => {
+  // 只要与自己有关的场次：u06 进了四强，那场半决赛正等着录分
   const view = await loadMatchView({ tab: TAB.PENDING });
-  assert.deepStrictEqual(view.records, []);
-  assert.strictEqual(view.pendingCount, 0);
-  // 没有任何记录来自演示口径，就不该挂出演示提示
+  assert.strictEqual(view.records.length, 1, '种子里只留了一场 u06 还没打的半决赛');
+  assert.strictEqual(view.pendingCount, 1);
+
+  const [row] = view.records;
+  assert.strictEqual(row.statusLabel, '待确认');
+  assert.strictEqual(row.isEvent, true, '这是赛事签表里的场次');
+  assert.strictEqual(row.isMine, true);
+  assert.strictEqual(row.scoreText, '—', '还没打，不该渲染成 0:0');
+  assert.strictEqual(row.needsScore, true, '还没比分，应当给「录分」入口而不是「确认」');
+  // 没有比分就谈不上确认，演示口径提示这时不该挂出来
   assert.strictEqual(view.demoNotice, '');
 });
 
@@ -393,10 +405,12 @@ test(
     assert.strictEqual(submitted.ok, true, submitted.firstError);
 
     const view = await loadMatchView({ tab: TAB.PENDING });
-    assert.strictEqual(view.records.length, 1);
-    assert.strictEqual(view.pendingCount, 1);
+    // 演示赛事里那场没打的半决赛 + 刚录的这场
+    assert.strictEqual(view.records.length, 2);
+    assert.strictEqual(view.pendingCount, 2);
 
-    const [row] = view.records;
+    const row = view.records.find((item) => item.matchId === submitted.match._id);
+    assert.ok(row, '刚录的这场应当出现在待确认里');
     assert.strictEqual(row.statusLabel, '待确认');
     assert.strictEqual(row.canConfirm, true);
     assert.strictEqual(row.confirmRelaxed, true);

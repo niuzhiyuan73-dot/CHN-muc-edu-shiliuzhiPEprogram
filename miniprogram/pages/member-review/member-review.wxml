@@ -75,7 +75,7 @@
             wx:if="{{item.canApprove}}"
             class="mini-btn is-primary"
             data-application-id="{{item.applicationId}}"
-            bindtap="onApprove"
+            bindtap="onOpenApprove"
           >通过</view>
           <view
             wx:if="{{item.canReject}}"
@@ -92,18 +92,31 @@
     </view>
   </block>
 
-  <!-- ========== 驳回面板 ========== -->
-  <!-- 用页内面板而不是 wx.showModal：理由需要校验（不填不给提交） -->
+  <!-- ========== 审核面板 ========== -->
+  <!--
+    用页内面板而不是 wx.showModal：
+      - 驳回理由需要校验（不填不给提交）
+      - 通过时可以选填初始等级分（老队员不必从头慢慢定级）
+  -->
   <view wx:if="{{action.open}}" class="sheet-mask" bindtap="onCancelAction">
     <view class="sheet" catchtap="noop">
       <view class="sheet-title">{{action.title}}</view>
       <view class="sheet-hint">{{action.hint}}</view>
       <textarea
+        wx:if="{{action.mode === 'reject'}}"
         class="sheet-input"
         value="{{reason}}"
         placeholder="{{action.placeholder}}"
         maxlength="60"
         bindinput="onInputReason"
+      />
+      <input
+        wx:else
+        class="sheet-input is-single"
+        type="number"
+        value="{{rating}}"
+        placeholder="{{action.placeholder}}"
+        bindinput="onInputRating"
       />
       <view wx:if="{{actionError}}" class="sheet-error">{{actionError}}</view>
       <view class="sheet-actions">

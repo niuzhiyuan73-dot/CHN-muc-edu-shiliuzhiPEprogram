@@ -310,7 +310,7 @@ test('首页 —— 近期赛事只列报名中/进行中，按开赛时间升�
   await page.onLoad();
 
   const rows = page.data.view.upcomingEvents;
-  assert.ok(rows.length > 0, '种子里有报名中的赛事');
+  assert.ok(rows.length > 0, '种子里有进行中的赛事');
   assert.ok(rows.length <= 3, '首屏只放得下三条');
 
   // 已结束的赛事不进「近期」，否则历史赛事会把还能报名的挤下去
@@ -353,10 +353,10 @@ test('首页 —— 一场近期赛事都没有时照常出卡，由模板写空
 test('首页 —— 登录后近期赛事标出自己报没报', async () => {
   resetSession();
   const events = await facade.getEvents();
-  const upcoming = events.find((item) => item.status === EVENT_STATUS.SIGNUP);
-  assert.ok(upcoming, '种子里有报名中的赛事');
+  const upcoming = events.find((item) => item.status === EVENT_STATUS.ONGOING);
+  assert.ok(upcoming, '种子里有进行中的赛事');
 
-  // 报名者是从种子里随机挑的，这里按实际名单挑一个来登录
+  // 名单里挑一个真实报名者来登录，免得断言依赖某个写死的账号
   const signups = await facade.getEventSignups(upcoming._id);
   assert.ok(signups.length > 0);
   app.globalData.userInfo = fakeMember({ _id: signups[0].userId, nickName: '报名者' });
@@ -365,7 +365,7 @@ test('首页 —— 登录后近期赛事标出自己报没报', async () => {
   await page.onLoad();
 
   const mine = page.data.view.upcomingEvents.find((row) => row.id === upcoming._id);
-  assert.ok(mine, '报名中的赛事在近期列表里');
+  assert.ok(mine, '进行中的赛事在近期列表里');
   assert.strictEqual(mine.signedUp, true);
 });
 
@@ -1323,7 +1323,7 @@ async function publishTestEvent(overrides = {}) {
   return result.record;
 }
 
-test('赛事页 —— 赛事列表把报名中的排在已结束之前', async () => {
+test('赛事页 —— 赛事列表把报名中、进行中的排在已结束之前', async () => {
   loginAs();
   const created = await publishTestEvent();
 
@@ -1333,13 +1333,16 @@ test('赛事页 —— 赛事列表把报名中的排在已结束之前', async 
   const rows = page.data.view.events;
   assert.ok(rows.length > 0, '种子里有赛事，列表不该空着');
 
-  // 种子里那场「报名中」的赛事（e07）与刚发布的都排在已结束的之前。
-  // 同为报名中时按开赛时间由近及远——e07 在 9 月，于是排在 6 月这场之前
+  // 排序口径：报名中 → 进行中 → 已结束。刚发布的排在种子里那场
+  // 「进行中」的赛事（e07）之前，两者又都排在已结束的之前。
   const signingUp = rows.filter((row) => row.status === EVENT_STATUS.SIGNUP);
+  const ongoing = rows.filter((row) => row.status === EVENT_STATUS.ONGOING);
   assert.ok(signingUp.some((row) => row.id === created._id), '刚发布的赛事在列表里');
-  assert.ok(signingUp.some((row) => row.id === 'e07'), '种子里的报名中赛事在列表里');
+  assert.ok(ongoing.some((row) => row.id === 'e07'), '种子里的进行中赛事在列表里');
+  assert.strictEqual(rows[0].id, created._id);
   assert.strictEqual(rows[0].statusLabel, '报名中');
-  assert.strictEqual(rows[signingUp.length - 1].status, EVENT_STATUS.SIGNUP);
+  assert.strictEqual(rows[signingUp.length].id, 'e07');
+  assert.strictEqual(rows[signingUp.length].statusLabel, '进行中');
 
   const statuses = rows.map((row) => row.status);
   assert.deepStrictEqual(statuses, [...statuses].sort((a, b) => a - b), '按状态分档');
@@ -2023,7 +2026,12 @@ test('比赛页 —— 确认后成绩计入等级分，待确认标签随即空
   await page.onConfirm({ currentTarget: { dataset: { matchId: match._id } } });
 
   assert.strictEqual((await facade.getMatches()).length, before + 1);
-  assert.deepStrictEqual(page.data.view.records, [], '确认之后待确认里就不该再有它');
+  // 种子里演示赛事还留着两场没打的半决赛，它们仍会出现在待确认里；
+  // 要断言的是「刚确认的那一场」已经退出了待确认
+  assert.ok(
+    !page.data.view.records.some((item) => item.matchId === match._id),
+    '确认之后待确认里就不该再有它'
+  );
   assert.ok(calls.toasts.some((text) => /已计入等级分/.test(text)));
 });
 
@@ -2383,7 +2391,9 @@ test('录入页 —— 提交成功后返回上一页，台账里多出一场待
   await page.onLoad();
 
   fillSinglesForm(page);
-  const before = (await facade.getMatchRecords()).length;
+  const beforeRecords = await facade.getMatchRecords();
+  // 演示赛事里本就留有待确认的场次，按编号找出「新增的这一场」才不会被它顶替
+  const beforeIds = new Set(beforeRecords.map((item) => item._id));
 
   calls.toasts.length = 0;
   calls.backCount = 0;
@@ -2395,11 +2405,12 @@ test('录入页 —— 提交成功后返回上一页，台账里多出一场待
   assert.strictEqual(calls.backCount, 1, '录完要退回比赛页，onShow 会刷新出这一场');
 
   const ledger = await facade.getMatchRecords();
-  assert.strictEqual(ledger.length, before + 1);
+  assert.strictEqual(ledger.length, beforeRecords.length + 1);
 
   // 录入一律先记「待确认」——成绩要对手确认后才生效
-  const record = ledger.find((item) => item.status === MATCH_STATUS.PENDING);
-  assert.ok(record, '新增的这一场应当是待确认');
+  const record = ledger.find((item) => !beforeIds.has(item._id));
+  assert.ok(record, '新增的这一场应当在台账里');
+  assert.strictEqual(record.status, MATCH_STATUS.PENDING);
   assert.strictEqual(record.recorder, 'u06');
   assert.strictEqual(record.pool, 'singles');
   assert.strictEqual(record.gamePoints, 11);
@@ -2486,13 +2497,51 @@ test('会员审核页 —— 通过后申请离开待审列表，申请人成为
   const membersBefore = (await facade.getMembers()).length;
 
   calls.toasts.length = 0;
-  await page.onApprove({ currentTarget: { dataset: { applicationId } } });
+  // 通过要先过一块面板确认；不填初始分就是纯通过
+  await page.onOpenApprove({ currentTarget: { dataset: { applicationId } } });
+  await page.onSubmitAction();
 
   assert.strictEqual(page.data.view.rows.length, 1, '处理过的申请不该还留在待审里');
   assert.strictEqual((await facade.getMembers()).length, membersBefore + 1);
   assert.ok(calls.toasts.some((text) => /已通过/.test(text)));
   // 通过的人立刻进入会员名单，录入页的选手选择器就能选到他
   assert.ok((await facade.getMembers()).some((item) => item._id === applicationId));
+});
+
+test('会员审核页 —— 通过时填的初始分会落到账号上', async () => {
+  resetSession();
+  app.globalData.userInfo = fakeMember(STAFF);
+
+  const page = instantiate(memberReviewConfig);
+  await page.onLoad();
+
+  const applicationId = page.data.view.rows[0].applicationId;
+  await page.onOpenApprove({ currentTarget: { dataset: { applicationId } } });
+  page.onInputRating({ detail: { value: '1620' } });
+  await page.onSubmitAction();
+
+  const account = await facade.getMember(applicationId);
+  assert.strictEqual(account.status, USER_STATUS.ACTIVE);
+  assert.strictEqual(account.initialElo, 1620);
+});
+
+test('会员审核页 —— 初始分越界时挡在本地，申请保持待审核', async () => {
+  resetSession();
+  app.globalData.userInfo = fakeMember(STAFF);
+
+  const page = instantiate(memberReviewConfig);
+  await page.onLoad();
+
+  const applicationId = page.data.view.rows[0].applicationId;
+  await page.onOpenApprove({ currentTarget: { dataset: { applicationId } } });
+  page.onInputRating({ detail: { value: '99999' } });
+  await page.onSubmitAction();
+
+  assert.match(page.data.actionError, /之间/);
+  assert.strictEqual(page.data.action.open, true, '校验失败时面板不该关掉');
+
+  const account = await facade.getMember(applicationId);
+  assert.strictEqual(account.status, USER_STATUS.PENDING);
 });
 
 test('会员审核页 —— 驳回不填理由被拦下，申请原样不动', async () => {

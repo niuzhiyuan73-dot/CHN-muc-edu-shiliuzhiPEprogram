@@ -99,6 +99,13 @@
   color: var(--color-success);
 }
 
+/* 报名者名字下方的等级分与积分，比状态行再小一号，不喧宾夺主 */
+.signup-stat {
+  margin-left: var(--space-xs);
+  font-size: 20rpx;
+  color: var(--color-text-tertiary);
+}
+
 /* ==================== 签表 ==================== */
 
 /* 一轮一行：左边轮次标签，右边对阵与动作，窄屏也好读 */

@@ -20,6 +20,9 @@ const assert = require('node:assert');
 
 const {
   REVIEW_ACTION,
+  INITIAL_ELO_MIN,
+  INITIAL_ELO_MAX,
+  validateInitialElo,
   statusTagOf,
   isSelf,
   canReview,
@@ -175,7 +178,68 @@ test('validateReview —— 驳回必须给理由，通过则不必', () => {
 });
 
 /* ============================================================
- * 五、行数据的预计算布尔量
+ * 五、手工指定的初始等级分
+ * ============================================================ */
+
+test('validateInitialElo —— 留空表示不指定，不算错', () => {
+  for (const blank of [null, undefined, '', '   ']) {
+    const result = validateInitialElo(blank);
+    assert.strictEqual(result.ok, true, `空值 ${JSON.stringify(blank)} 不该被判错`);
+    assert.strictEqual(result.value, null);
+  }
+});
+
+test('validateInitialElo —— 数字与数字字符串都接受', () => {
+  assert.deepStrictEqual(validateInitialElo(1500), { ok: true, value: 1500, message: '' });
+  // WXML 的输入框给的是字符串
+  assert.strictEqual(validateInitialElo('1600').value, 1600);
+});
+
+test('validateInitialElo —— 非数字、小数、越界、布尔都被拒', () => {
+  assert.match(validateInitialElo('一千五').message, /数字/);
+  assert.match(validateInitialElo(1500.5).message, /整数/);
+  assert.match(validateInitialElo(-1).message, /之间/);
+  assert.match(validateInitialElo(INITIAL_ELO_MAX + 1).message, /之间/);
+  // 布尔值能被 Number 转成 0/1，必须显式挡掉
+  assert.strictEqual(validateInitialElo(true).ok, false);
+});
+
+test('validateInitialElo —— 上下边界本身合法', () => {
+  assert.strictEqual(validateInitialElo(INITIAL_ELO_MIN).ok, true);
+  assert.strictEqual(validateInitialElo(INITIAL_ELO_MAX).ok, true);
+});
+
+test('validateReview —— 通过时可带初始分', () => {
+  const result = validateReview(ADMIN, APPLICANT, REVIEW_ACTION.APPROVE, '', { initialElo: 1600 });
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.initialElo, 1600);
+});
+
+test('validateReview —— 不填初始分时给出 null，交由回放自动定级', () => {
+  const result = validateReview(ADMIN, APPLICANT, REVIEW_ACTION.APPROVE, '');
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.initialElo, null);
+});
+
+test('validateReview —— 初始分越界时整单被挡下', () => {
+  const result = validateReview(ADMIN, APPLICANT, REVIEW_ACTION.APPROVE, '', {
+    initialElo: INITIAL_ELO_MAX + 1,
+  });
+  assert.strictEqual(result.ok, false);
+  assert.match(result.message, /之间/);
+  assert.strictEqual(result.initialElo, null);
+});
+
+test('validateReview —— 驳回时忽略传入的初始分', () => {
+  const result = validateReview(ADMIN, APPLICANT, REVIEW_ACTION.REJECT, '资料不符', {
+    initialElo: 1600,
+  });
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.initialElo, null);
+});
+
+/* ============================================================
+ * 六、行数据的预计算布尔量
  * ============================================================ */
 
 test('buildApplicationRow —— 有权限且不是自己时，两个按钮都放行', () => {

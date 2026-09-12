@@ -150,7 +150,10 @@
             <text>{{item.nickName}}</text>
             <text wx:if="{{item.isMe}}" class="rank-me-tag">我</text>
           </view>
-          <view class="rank-detail">{{item.statusLabel}}</view>
+          <view class="rank-detail">
+            <text>{{item.statusLabel}}</text>
+            <text wx:if="{{item.statText}}" class="signup-stat">{{item.statText}}</text>
+          </view>
         </view>
 
         <!-- 代签：进行中且未签到时才出现 -->

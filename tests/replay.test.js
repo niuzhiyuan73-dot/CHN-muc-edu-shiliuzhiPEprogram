@@ -82,8 +82,9 @@ describe('replaySeason —— 基本行为', () => {
     const members = [{ _id: 'a' }, { _id: 'b' }];
     const result = replaySeason({ members, matches: [men('m1', ['a'], ['b'], 'A', 1)] });
 
-    assert.equal(getPoolRating(userOf(result, 'a'), RATING_POOL.SINGLES).elo, MALE_START + 16);
-    assert.equal(getPoolRating(userOf(result, 'b'), RATING_POOL.SINGLES).elo, MALE_START - 16);
+    // 日常 K 统一 16，同分对局胜方得分 = 16 × (1 − 0.5) = 8
+    assert.equal(getPoolRating(userOf(result, 'a'), RATING_POOL.SINGLES).elo, MALE_START + 8);
+    assert.equal(getPoolRating(userOf(result, 'b'), RATING_POOL.SINGLES).elo, MALE_START - 8);
   });
 
   test('场次与胜负记录正确累计', () => {
@@ -112,8 +113,8 @@ describe('replaySeason —— 基本行为', () => {
     assert.equal(detail.side, 'A');
     assert.equal(detail.isWin, true);
     assert.equal(detail.eloBefore, MALE_START);
-    assert.equal(detail.eloAfter, MALE_START + 16);
-    assert.equal(detail.eloDelta, 16);
+    assert.equal(detail.eloAfter, MALE_START + 8);
+    assert.equal(detail.eloDelta, 8);
     assert.equal(detail.eloBefore + detail.eloDelta, detail.eloAfter);
   });
 
@@ -205,7 +206,7 @@ describe('replaySeason —— 池隔离', () => {
     const b = getPoolRating(userOf(result, 'b'), RATING_POOL.DOUBLES);
     const c = getPoolRating(userOf(result, 'c'), RATING_POOL.DOUBLES);
     assert.equal(a.elo, b.elo);
-    assert.equal(c.elo, a.elo - 32); // 一加一减，差值正好是两倍变动量
+    assert.equal(c.elo, a.elo - 16); // 一加一减，差值正好是两倍变动量（K=16 时同分对局各变动 8）
   });
 
   test('双打池的分数总和守恒', () => {
@@ -287,8 +288,19 @@ describe('replaySeason —— 元老一律从默认初始分起步', () => {
       matches: [men('m1', ['a'], ['b'], 'A', 1)],
       options: { eloConfig: { initialRating: 1200 } },
     });
-    assert.equal(getPoolRating(userOf(result, 'a'), RATING_POOL.SINGLES).elo, 1216);
-    assert.equal(getPoolRating(userOf(result, 'b'), RATING_POOL.SINGLES).elo, 1184);
+    assert.equal(getPoolRating(userOf(result, 'a'), RATING_POOL.SINGLES).elo, 1208);
+    assert.equal(getPoolRating(userOf(result, 'b'), RATING_POOL.SINGLES).elo, 1192);
+  });
+
+  test('元老被手工指定初始分时，从指定分起步而非默认初始分', () => {
+    const members = [{ _id: 'a', initialElo: 1550 }, { _id: 'b' }];
+    const result = replaySeason({ members, matches: [men('m1', ['a'], ['b'], 'A', 1)] });
+
+    const a = userOf(result, 'a');
+    assert.equal(getPoolRating(a, RATING_POOL.SINGLES).startElo, 1550);
+    assert.equal(getPoolRating(a, RATING_POOL.DOUBLES).startElo, 1550, '两个池都该用指定分');
+    // 没被指定的人不受影响
+    assert.equal(getPoolRating(userOf(result, 'b'), RATING_POOL.SINGLES).startElo, MALE_START);
   });
 });
 
@@ -300,8 +312,9 @@ describe('replaySeason —— 新人定级', () => {
   const founder = (id) => ({ _id: id, joinDate: FOUNDED });
 
   // 六位元老先在五月打出一批有区分度的分数：
-  //   a 连胜 b 五场 → a≈1567，b≈1433；
-  //   c 胜 d 一场   → c≈1516，d≈1484。
+  //   a 连胜 b 八场 → a≈1505，b≈1395（K 统一 16 后每场只拉开 8 分，
+  //   要凑够「对手分向下取整超过初始分」需要比过去多打几场）；
+  //   c 胜 d 一场   → c≈1458，d≈1442（均分仍是初始分）。
   // 后加入者 g 紧接着和这些人交手，就能验证「按对手水平定级」。
   const roster = [
     founder('a'), founder('b'), founder('c'),
@@ -310,7 +323,7 @@ describe('replaySeason —— 新人定级', () => {
   ];
 
   const warmup = [
-    ...[1, 2, 3, 4, 5].map((day) => men('wb' + day, ['a'], ['b'], 'A', day)),
+    ...[1, 2, 3, 4, 5, 6, 7, 8].map((day) => men('wb' + day, ['a'], ['b'], 'A', day)),
     men('wd', ['c'], ['d'], 'A', 1),
   ];
 
@@ -410,10 +423,49 @@ describe('replaySeason —— 新人定级', () => {
     for (const rating of Object.values(result.meta.placements.g)) {
       assert.equal(rating % 50, 0, `定级分 ${rating} 不是 50 的倍数`);
     }
-    // 单打：赢过元老 a（赛前约 1517）→ 向下取整 1500。
-    // 双打：全败给 c/d（赛前均分约 1450）→ 1450，正好等于默认初始分。
+    // 单打：赢过元老 a（赛前约 1505）→ 向下取整 1500。
+    // 双打：全败给 c/d（赛前均分 1450）→ 1450，正好等于默认初始分。
     assert.equal(result.meta.placements.g.singles, 1500);
     assert.equal(result.meta.placements.g.doubles, MALE_START);
+  });
+
+  test('被手工指定初始分的人直接以该分起步，跳过前五场定级', () => {
+    const members = [...roster, { _id: 'h', joinDate: LATE, initialElo: 1700 }];
+    const result = replaySeason({
+      members,
+      matches: [...warmup, men('h1', ['h'], ['a'], 'B', 20)],
+    });
+
+    // 首场赛前分就等于指定分；若走自动定级，赢/输都不能让起点变成 1700
+    assert.equal(eloBeforeOf(result, 'h1', 'h'), 1700);
+    assert.equal(getPoolRating(userOf(result, 'h'), RATING_POOL.SINGLES).startElo, 1700);
+    // 没有走定级，就不该出现在定级记录里
+    assert.equal(result.meta.placements.h, undefined);
+  });
+
+  test('指定的初始分对单打、双打两个池同时生效', () => {
+    const members = [...roster, { _id: 'h', joinDate: LATE, initialElo: 1600 }];
+    const result = replaySeason({
+      members,
+      matches: [...warmup, match('h2', MATCH_TYPE.DOUBLES, ['h', 'b'], ['c', 'd'], 'A', 21)],
+    });
+
+    const h = userOf(result, 'h');
+    assert.equal(getPoolRating(h, RATING_POOL.SINGLES).startElo, 1600);
+    assert.equal(getPoolRating(h, RATING_POOL.DOUBLES).startElo, 1600);
+    assert.equal(eloBeforeOf(result, 'h2', 'h'), 1600);
+  });
+
+  test('初始分字段不是有限数值时按没填处理，仍走自动定级', () => {
+    // 云端理论上不会写入这种值，但老数据或手工改库可能带进来
+    const members = [...roster, { _id: 'h', joinDate: LATE, initialElo: '1700' }];
+    const result = replaySeason({
+      members,
+      matches: [...warmup, men('h1', ['h'], ['a'], 'A', 20)],
+    });
+
+    const opponentBefore = eloBeforeOf(result, 'h1', 'a');
+    assert.equal(result.meta.placements.h.singles, Math.floor(opponentBefore / 50) * 50);
   });
 
   test('没有比赛时不产生任何定级记录', () => {
@@ -704,7 +756,12 @@ describe('replaySeason —— 异常输入', () => {
 });
 
 describe('回放真实模拟数据 —— 端到端', () => {
-  const raw = generateSeed();
+  const seed = generateSeed();
+  // 演示赛事里排好签却还没开打的场次没有胜方，回放引擎只吃已分出胜负的比赛
+  const raw = {
+    ...seed,
+    matches: seed.matches.filter((m) => m.status !== MATCH_STATUS.PENDING),
+  };
   const result = replaySeason(raw);
 
   test('产出规模与输入一致', () => {

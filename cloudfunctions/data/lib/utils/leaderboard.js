@@ -19,7 +19,13 @@ const { RANK_PROJECT_CONFIG, RATING_POOL, isRankable } = require('./constants.js
 /** 长时间未参赛而被标记为「不活跃」的天数阈值 */
 const INACTIVE_DAYS = 90;
 
-/** 定级期场次：与 elo.js 保持一致，少于该场次标记为「定级中」 */
+/**
+ * 「分数尚未收敛」的场次门槛：少于该场次标记为「定级中」。
+ *
+ * 这是展示层的统计判据，与比赛用多大的 K 无关——日常 K 早已统一为 16，
+ * 不再有谁前几场用大 K 的说法。但一个人只打了两三场，分数确实还压在
+ * 初始分附近、说明不了水平，榜上标注出来仍是必要的。
+ */
 const PROVISIONAL_MATCH_COUNT = 10;
 
 /**

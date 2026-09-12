@@ -90,7 +90,10 @@ const revokeMatch = (id, actor, reason) => request('revokeMatch', { id, actor, r
  * OpenID 在服务端判定，前端说了不算。
  */
 const registerMember = (profile, options) => request('registerMember', { profile, options });
-const approveMember = (applicationId, actor) => request('approveMember', { applicationId, actor });
+// initialElo 是管理员在通过时手工填的初始等级分（选填）。它同样不被前端信任：
+// 云函数会用 validateInitialElo 再校验一遍取值范围。
+const approveMember = (applicationId, actor, initialElo) =>
+  request('approveMember', { applicationId, actor, initialElo });
 const rejectMember = (applicationId, actor, reason) =>
   request('rejectMember', { applicationId, actor, reason });
 

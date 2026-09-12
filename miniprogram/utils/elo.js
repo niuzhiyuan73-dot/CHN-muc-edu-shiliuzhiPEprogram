@@ -51,22 +51,19 @@ const DEFAULT_CONFIG = {
    */
   genderInitialGap: 150,
   /**
-   * 定级期场次：参赛场次少于该值的新会员使用 kProvisional
+   * 日常约球的 K 值，全员一律 16。
+   *
+   * 【为什么不再按人分段】
+   * 这里原先分三段：新人（前 10 场）32、常规 24、高分段（≥2100）16。
+   * 分段的本意是让新人快速收敛，代价是同一场球里两人的分数变动会差出
+   * 一倍，且「谁被算作新人」会让结果随场次漂移。现改为一个常数：
+   * 日常比赛对每个人一视同仁，跨场次、跨人群的分数变动都可直接比较。
+   *
+   * 注意这与「按前几场对手水平为新会员定初始分」是两回事——那套定级
+   * （见 placementMatchCount / calculatePlacementRating）只决定一个人
+   * 出场时从多少分起步，与每场用多大的 K 无关，因此不受本次改动影响。
    */
-  provisionalMatchCount: 10,
-  /** 定级期 K 值：分数快速逼近真实水平 */
-  kProvisional: 32,
-  /** 常规 K 值 */
-  kStandard: 24,
-  /** 高分段 K 值：分数趋于稳定，避免大幅波动 */
-  kHigh: 16,
-  /**
-   * 高分段门槛。
-   * 随初始分同步上调 500（原 1600 → 2100），否则「高分段降 K 值」
-   * 这条规则会在初始分抬高后失去意义——原本要打很久才够得着的门槛
-   * 会变成大部分老会员的默认状态。
-   */
-  highRatingThreshold: 2100,
+  kStandard: 16,
   /**
    * 新会员定级场次：按前几场的对手水平定出初始分。
    * 场次太少容易偶然定高定低，太多又让新人的分数长期失真，5 场是折中。
@@ -78,21 +75,21 @@ const DEFAULT_CONFIG = {
   divisor: 400,
   /**
    * 赛事比赛的固定 K 值，按赛事等级取（决策 13）。
-   *   一级 48 / 二级 36 / 三级 24（三级恰好等于常规 K）。
+   *   一级 32 / 二级 24 / 三级 16（三级恰好等于日常 K）。
    *
    * 【为什么赛事要另给一套 K】
    * 赛事名次带来的实力变化比日常约球更可信，分数也该动得更果断。
+   * 三级赛与日常同为 16，二级、一级逐级放大，体现「赛事越重要、
+   * 对分数影响越大」。
    *
-   * 【为什么是「固定」而不是沿用定级期/高分段分段】
-   * 同一场赛事里，新人按 32、高分者按 16，一场球下来两人的分数变动
-   * 会差一倍，名次对应的分数也就没法横向比较。赛事一律按等级取同一个
-   * 数字，所有人一视同仁——这也是「名次分 × 等级倍数」那套算法在
-   * 等级分这边的对称做法。
+   * 【为什么是「固定」而不是随人变化】
+   * 一场赛事里所有人按等级取同一个数字，名次对应的分数才可横向比较——
+   * 这也是「名次分 × 等级倍数」那套算法在等级分这边的对称做法。
    */
   eventK: {
-    1: 48,
-    2: 36,
-    3: 24,
+    1: 32,
+    2: 24,
+    3: 16,
   },
   /**
    * 是否为「零和」模式（默认开启）。
@@ -158,32 +155,12 @@ function expectedScore(rating, opponentRating, divisor = 400) {
 }
 
 /**
- * 根据选手状态决定本场比赛使用的 K 值。
- *
- * 优先级：定级期 > 高分段 > 常规
- * 即一个刚注册的高水平选手，仍然先按定级期的 K 值快速定级。
- *
- * @param {{rating: number, matchCount: number}} player 选手状态
- * @param {Object} config 算法配置
- * @returns {number} K 值
- */
-function resolveKFactor(player, config) {
-  if (player.matchCount < config.provisionalMatchCount) {
-    return config.kProvisional;
-  }
-  if (player.rating >= config.highRatingThreshold) {
-    return config.kHigh;
-  }
-  return config.kStandard;
-}
-
-/**
  * 赛事比赛的 K 值：按赛事等级查表，不看选手状态。
  *
  * 【为什么等级未知时退回常规 K 而不是抛错】
  * 历史赛事没有等级字段（种子数据即如此），调用方一律按三级补齐后再传进来；
  * 万一漏了，退回常规 K 让这场比赛按老规矩算，总好过整条回放中断。
- * 三级赛事的 K 本来就是 24，与常规 K 相等，所以这条兜底通常也不会
+ * 三级赛事的 K 本来就是 16，与日常 K 相等，所以这条兜底通常也不会
  * 改变结果。
  *
  * @param {number} level 赛事等级，取值见 constants.EVENT_LEVEL
@@ -206,24 +183,6 @@ function resolveEventKFactor(level, config = DEFAULT_CONFIG) {
 function teamAverageRating(team) {
   const sum = team.reduce((acc, p) => acc + p.rating, 0);
   return sum / team.length;
-}
-
-/**
- * 求一队的 K 值。
- *
- * 【为什么取平均而不是各算各的】
- * 策划书 4.2 节承诺「同队两名队员获得相同的等级分变动量」，以避免
- * 出现「搭档拖后腿」的争议。要做到两人变动量完全相同，就必须让两人
- * 使用同一个 K 值，因此这里取队伍平均 K 并四舍五入。
- * 单打时队伍只有一人，结果就是该选手自己的 K 值。
- *
- * @param {Array<Object>} team 队伍选手列表
- * @param {Object} config 算法配置
- * @returns {number} 队伍 K 值
- */
-function teamKFactor(team, config) {
-  const sum = team.reduce((acc, p) => acc + resolveKFactor(p, config), 0);
-  return Math.round(sum / team.length);
 }
 
 /**
@@ -283,7 +242,7 @@ function assertValidTeam(team, label) {
  * @param {'A'|'B'|'DRAW'} params.winner 获胜方，DRAW 表示平局
  * @param {Object} [params.config] 可选的算法配置覆盖
  * @param {number} [params.eventLevel] 赛事等级。传了就走赛事的固定 K
- *        （见 resolveEventKFactor），不传则按选手状态分段取 K。
+ *        （见 resolveEventKFactor），不传则用全员统一的日常 K（kStandard）。
  * @returns {{
  *   teamA: Array<{before:number, delta:number, after:number, k:number}>,
  *   teamB: Array<{before:number, delta:number, after:number, k:number}>,
@@ -325,25 +284,27 @@ function calculateMatchRatings({ teamA, teamB, winner, config: userConfig, event
   const actualB = 1 - actualA;
 
   // 第 4 步：K 值与变动量。
-  // 赛事比赛按等级取固定 K，双方同一数字；非赛事才走定级期/高分段的分段规则。
+  // 赛事按等级取固定 K，日常比赛取全员统一的 kStandard——两种情况都是
+  // 双方同一个数字，与选手的场次、分数无关（规则见 DEFAULT_CONFIG）。
   const isEvent = eventLevel !== null && eventLevel !== undefined;
-  const eventK = isEvent ? resolveEventKFactor(eventLevel, config) : null;
-  const kA = isEvent ? eventK : teamKFactor(teamA, config);
-  const kB = isEvent ? eventK : teamKFactor(teamB, config);
+  const k = isEvent ? resolveEventKFactor(eventLevel, config) : config.kStandard;
 
-  let deltaA = normalizeZero(Math.round(kA * (actualA - expectedA)));
-  let deltaB = normalizeZero(Math.round(kB * (actualB - expectedB)));
+  const deltaA = normalizeZero(Math.round(k * (actualA - expectedA)));
+  let deltaB = normalizeZero(Math.round(k * (actualB - expectedB)));
 
   // 零和修正：保证赢家的加分等于输家的减分，俱乐部总分不增不减。
+  // 双方 K 相同时 deltaB 本应就是 -deltaA，这里显式取反是为了绕开
+  // Math.round 在 .5 上的不对称（round(0.5)=1，round(-0.5)=-0）。
   if (config.zeroSum) {
     deltaB = normalizeZero(-deltaA);
   }
 
   /**
    * 把变动量应用到队伍中的每一位选手。
-   * 注意：同队选手的 delta 完全相同（策划书 4.2 节的公平性要求）。
+   * 注意：同队选手的 delta 完全相同（策划书 4.2 节的公平性要求），
+   * 双方也共用同一个 K（第 4 步），所以直接闭包引用即可。
    */
-  const applyDelta = (team, delta, k) =>
+  const applyDelta = (team, delta) =>
     team.map((player) => ({
       before: player.rating,
       delta,
@@ -352,8 +313,8 @@ function calculateMatchRatings({ teamA, teamB, winner, config: userConfig, event
     }));
 
   return {
-    teamA: applyDelta(teamA, deltaA, kA),
-    teamB: applyDelta(teamB, deltaB, kB),
+    teamA: applyDelta(teamA, deltaA),
+    teamB: applyDelta(teamB, deltaB),
     expectedA: Number(expectedA.toFixed(4)),
     expectedB: Number(expectedB.toFixed(4)),
     winner,
@@ -368,8 +329,8 @@ function calculateMatchRatings({ teamA, teamB, winner, config: userConfig, event
  * 赛季软重置。
  *
  * 【为什么需要】
- * 在零和体系里，分数长期打下去会逐渐固化：高分者越打越稳（K 值降到 16），
- * 落后的人即使进步也追不上；高分会员毕业离校又会带走分数。久而久之，
+ * 在零和体系里，分数长期打下去会逐渐固化：强者互相交手时分数只在小范围
+ * 内交换，落后者即使进步也追不上；高分会员毕业离校又会带走分数。久而久之，
  * 榜单失去活力。软重置相当于给所有人一次「重新开始」的机会，
  * 同时保留历史水平的大部分痕迹（不会一夜清零）。
  *
@@ -470,10 +431,8 @@ module.exports = {
   WINNER,
   initialRatingFor,
   expectedScore,
-  resolveKFactor,
   resolveEventKFactor,
   teamAverageRating,
-  teamKFactor,
   normalizeZero,
   calculateMatchRatings,
   applySeasonalReset,

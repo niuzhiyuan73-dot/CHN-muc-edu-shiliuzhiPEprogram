@@ -38,10 +38,17 @@ const smallSeed = (options = {}) => generateSeed({ weeks: 4, casualPerWeek: 6, .
 
 /**
  * 取已结束的赛事。
- * 种子里会留一场「报名中」的赛事供演示用，它没有名次也没有对局，
+ * 种子里会留一场「进行中」的赛事供演示用，它没有名次、也没打完，
  * 因此凡是「赛事应当有完整结果」的断言都必须先把它排除在外。
  */
 const finishedOf = (data) => data.events.filter((event) => event.status === EVENT_STATUS.FINISHED);
+
+/**
+ * 已经打完的比赛。
+ * 演示赛事里的半决赛排好了签位却还没开打，状态是「待确认」：没有比分、
+ * 没有胜方，凡是要核对比分自洽的断言都得跳过它们。
+ */
+const playedOf = (data) => data.matches.filter((match) => match.status !== MATCH_STATUS.PENDING);
 
 describe('generateSeed —— 可复现性', () => {
   test('相同种子生成的数据完全一致', () => {
@@ -210,10 +217,21 @@ describe('generateSeed —— 比赛流水的自洽性', () => {
     }
   });
 
-  test('比赛状态为已生效', () => {
+  test('比赛要么已生效，要么是演示赛事里排好签却还没打的场次', () => {
     const data = smallSeed();
     for (const match of data.matches) {
-      assert.equal(match.status, MATCH_STATUS.ACTIVE);
+      assert.ok(
+        match.status === MATCH_STATUS.ACTIVE || match.status === MATCH_STATUS.PENDING,
+        `比赛 ${match._id} 的状态 ${match.status} 不合法`
+      );
+      // 待确认的只能是演示赛事里尚未开打的那几场：有轮次、有对阵，但没比分
+      if (match.status === MATCH_STATUS.PENDING) {
+        assert.ok(match.eventId, '待确认的比赛应当属于某场赛事');
+        assert.ok(Number.isFinite(match.round), '待确认的比赛也应带轮次，签表才排得出');
+        assert.equal(match.scoreA.length, 0);
+        assert.equal(match.scoreB.length, 0);
+        assert.equal(match.winner, null);
+      }
     }
   });
 
@@ -228,7 +246,7 @@ describe('generateSeed —— 比赛流水的自洽性', () => {
 describe('generateSeed —— 比分与胜负一致', () => {
   test('winner 字段与比分指向同一方', () => {
     const data = generateSeed();
-    for (const match of data.matches) {
+    for (const match of playedOf(data)) {
       const aGames = match.scoreA.filter((s, i) => s > match.scoreB[i]).length;
       const bGames = match.scoreB.filter((s, i) => s > match.scoreA[i]).length;
       if (match.winner === 'A') {
@@ -244,7 +262,7 @@ describe('generateSeed —— 比分与胜负一致', () => {
     // 「局数是 2 或 3」，于是「胜方连赢两局后还多打了一局」这种
     // 根本不可能出现的比分被放了过去——642 场里错了 100 场。
     const data = generateSeed();
-    for (const match of data.matches) {
+    for (const match of playedOf(data)) {
       const result = validateMatchScore(match.scoreA, match.scoreB, match);
       assert.equal(
         result.valid,
@@ -273,7 +291,7 @@ describe('generateSeed —— 比分与胜负一致', () => {
 
   test('总局数不超过该赛制的上限，且达到获胜局数', () => {
     const data = generateSeed();
-    for (const match of data.matches) {
+    for (const match of playedOf(data)) {
       const need = gamesToWin(match.bestOf);
       assert.equal(match.scoreA.length, match.scoreB.length);
       assert.ok(match.scoreA.length <= match.bestOf, `比赛 ${match._id} 超过了局数上限`);
@@ -283,7 +301,7 @@ describe('generateSeed —— 比分与胜负一致', () => {
 
   test('单局比分符合匹克球规则：先到目标分且领先 2 分', () => {
     const data = generateSeed();
-    for (const match of data.matches) {
+    for (const match of playedOf(data)) {
       match.scoreA.forEach((score, i) => {
         const other = match.scoreB[i];
         const high = Math.max(score, other);
@@ -602,41 +620,96 @@ describe('generateSeed —— 赛事数据', () => {
     }
   });
 
-  test('留有一场报名中的赛事，供报名与签到演示', () => {
+  test('留有一场进行中的赛事，供签到、签表与逐轮推进演示', () => {
     const data = generateSeed();
-    const open = data.events.filter((event) => event.status === EVENT_STATUS.SIGNUP);
-    assert.equal(open.length, 1, '报名中的赛事应当恰好一场');
+    const ongoing = data.events.filter((event) => event.status === EVENT_STATUS.ONGOING);
+    assert.equal(ongoing.length, 1, '进行中的赛事应当恰好一场');
 
-    const [event] = open;
-    // 还没开打：没有名次，也没有安排任何对局
+    const [event] = ongoing;
+    // 还没打完：没有名次，但已抽签，签表也有了实体
     assert.deepEqual(event.results, []);
-    assert.equal(data.matches.filter((m) => m.eventId === event._id).length, 0);
-    // 封了报名参数，抽签入口才有东西可点
-    assert.ok(event.seedMode, '报名中的赛事应当写好种子口径');
-    assert.ok(event.seedCount > 0, '报名中的赛事应当写好种子数量');
+    assert.ok(event.draw, '进行中的赛事必须带抽签记录');
+    assert.equal(event.draw.size, event.quota, '签位数应与名额一致');
+    assert.equal(event.draw.slots.length, event.quota);
+    // 封了报名参数，签表与手工指定种子的入口才有依据
+    assert.ok(event.seedMode, '进行中的赛事应当写好种子口径');
+    assert.ok(event.seedCount > 0, '进行中的赛事应当写好种子数量');
     // 开赛时间必须晚于所有已结束的赛事，否则会排在「近期赛事」的中间
     for (const finished of finishedOf(data)) {
       assert.ok(
         new Date(event.startTime) > new Date(finished.startTime),
-        '报名中的赛事应当排在最后'
+        '进行中的赛事应当排在最后'
       );
     }
   });
 
-  test('报名中赛事的预置报名：都报了名、还没签到、且不超名额', () => {
+  test('进行中的赛事：八人报名、四场八进四打完、半决赛排好却没打', () => {
     const data = generateSeed();
-    const open = data.events.find((event) => event.status === EVENT_STATUS.SIGNUP);
+    const event = data.events.find((item) => item.status === EVENT_STATUS.ONGOING);
+    assert.ok(event, '种子里应当有一场进行中的赛事');
 
-    assert.ok(data.signups.length > 0, '应当预置几位报名者，否则列表是空的');
-    assert.ok(
-      data.signups.length <= open.quota,
-      '预置报名不能超过名额'
+    const own = data.matches
+      .filter((match) => match.eventId === event._id)
+      .sort(
+        (a, b) => Number(a.round) - Number(b.round) || Number(a.slot) - Number(b.slot)
+      );
+    // 8 人 3 轮：四场八进四 + 两场半决赛，决赛还没排
+    assert.equal(own.length, 6, '八进四四场、半决赛两场，共六场');
+    for (const match of own) {
+      // 轮次 / 阶段 / 签位是签表排轮次名的依据，一个都不能少
+      assert.ok(Number.isFinite(match.round), `${match._id} 缺轮次，签表会叫不出轮次名`);
+      assert.ok(match.stage, `${match._id} 缺阶段`);
+      assert.ok(Number.isFinite(match.slot), `${match._id} 缺签位`);
+    }
+
+    const qf = own.filter((match) => match.round === 1);
+    const sf = own.filter((match) => match.round === 2);
+    assert.equal(qf.length, 4);
+    assert.equal(sf.length, 2);
+
+    // 八进四刚打完：比分齐全、状态已生效
+    for (const match of qf) {
+      assert.equal(match.status, MATCH_STATUS.ACTIVE);
+      assert.ok(match.scoreA.length > 0, '打完的比赛必须有比分');
+      assert.ok(match.winner === 'A' || match.winner === 'B');
+    }
+    // 半决赛排好了签位却还没开打：没比分、没胜者、状态待确认
+    for (const match of sf) {
+      assert.equal(match.status, MATCH_STATUS.PENDING);
+      assert.deepEqual(match.scoreA, []);
+      assert.deepEqual(match.scoreB, []);
+      assert.equal(match.winner, null);
+    }
+
+    // 半决赛的两位选手正是八进四的胜者，签表前后对得上
+    const qfWinners = new Set(
+      qf.map((match) => (match.winner === 'A' ? match.teamA[0] : match.teamB[0]))
     );
+    for (const match of sf) {
+      assert.ok(qfWinners.has(match.teamA[0]), `${match.teamA[0]} 不是八进四胜者，不该进四强`);
+      assert.ok(qfWinners.has(match.teamB[0]), `${match.teamB[0]} 不是八进四胜者，不该进四强`);
+    }
+
+    // 演示账号 u06 进四强了，正站在一场还没开打的半决赛里等着
+    assert.ok(
+      sf.some((match) => match.teamA[0] === 'u06' || match.teamB[0] === 'u06'),
+      'u06 应当已经进入四强，等着打下一场'
+    );
+    // 决赛还没排出来，他不可能已经在打决赛
+    assert.ok(!own.some((match) => Number(match.round) > 2), '决赛不该提前排出来');
+  });
+
+  test('进行中赛事的预置报名：八人、都已签到、不超名额', () => {
+    const data = generateSeed();
+    const event = data.events.find((item) => item.status === EVENT_STATUS.ONGOING);
+    assert.ok(event, '种子里应当有一场进行中的赛事');
+
+    assert.equal(data.signups.length, event.quota, '进行中的赛事应当报满名额');
     for (const signup of data.signups) {
-      assert.equal(signup.eventId, open._id);
-      assert.equal(signup.status, SIGNUP_STATUS.SIGNED);
-      assert.equal(signup.checkInTime, null);
-      assert.ok(new Date(signup.signTime) < new Date(open.startTime), '报名应当早于开赛');
+      assert.equal(signup.eventId, event._id);
+      assert.equal(signup.status, SIGNUP_STATUS.CHECKED_IN);
+      assert.ok(signup.checkInTime, '已签到的报名应当留下签到时间');
+      assert.ok(new Date(signup.signTime) < new Date(event.startTime), '报名应当早于开赛');
     }
     // 报名的都是单打组的男会员——本场是男子单打
     const men = new Set(data.members.filter((m) => m.gender === 'M').map((m) => m._id));
@@ -645,6 +718,8 @@ describe('generateSeed —— 赛事数据', () => {
     for (const id of ids) {
       assert.ok(men.has(id), `${id} 不是男子组会员，不该出现在男子单打赛里`);
     }
+    // 演示账号 u06 必须在名单里，否则「我进了四强」无从演示
+    assert.ok(ids.includes('u06'), '演示账号应当报了名');
   });
 
   test('单打赛事按性别分组，标题与参赛者性别一致', () => {

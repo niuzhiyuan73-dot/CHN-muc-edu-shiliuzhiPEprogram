@@ -19,9 +19,11 @@ const {
   loadEventDetailView,
   roundLabelOf,
   totalRoundsOf,
+  maxRoundOf,
   describeDraw,
   byeTextOf,
   buildBracketRows,
+  buildSignupRows,
 } = require('../miniprogram/services/events-view.js');
 // 积分榜的搜索与排行榜页是同一套逻辑，页面复用它的纯函数
 const { describeSearch } = require('../miniprogram/services/rank-view.js');
@@ -33,8 +35,10 @@ const {
   EVENT_BRONZE_MODE,
   SEED_MODE,
   BRACKET_STAGE,
+  RATING_POOL,
   USER_STATUS,
   ROLE,
+  SIGNUP_STATUS,
 } = require('../miniprogram/utils/constants.js');
 
 /* ============================================================
@@ -183,6 +187,22 @@ test('roundLabelOf —— 从最后一轮倒着数，决赛/半决赛/四分之�
   assert.strictEqual(roundLabelOf(1, 3, BRACKET_STAGE.BRONZE), '季军赛');
 });
 
+test('roundLabelOf —— 轮次或总轮数缺失时绝不吐出 undefined', () => {
+  // 这正是「每场都显示第 undefined 轮」的病根：轮次缺失时曾直接拼进
+  // 模板字符串。缺什么就老实说什么，不能把 undefined 印到界面上。
+  assert.strictEqual(roundLabelOf(undefined, 3), '轮次待定');
+  assert.strictEqual(roundLabelOf(null, 3), '轮次待定');
+  assert.strictEqual(roundLabelOf('x', 3), '轮次待定');
+  // 总轮数算不出来（老赛事没有 draw）时不假装知道倒数第几，只报第几轮
+  assert.strictEqual(roundLabelOf(2, undefined), '第 2 轮');
+  assert.strictEqual(roundLabelOf(2, 0), '第 2 轮');
+  assert.strictEqual(roundLabelOf(2, null), '第 2 轮');
+  // 无论怎么传，都不能出现 undefined
+  for (const [round, total] of [[undefined, undefined], [null, 0], ['', '']]) {
+    assert.ok(!roundLabelOf(round, total).includes('undefined'));
+  }
+});
+
 test('totalRoundsOf —— 签位数是 2 的几次幂就几轮，非法值收敛成 0', () => {
   assert.strictEqual(totalRoundsOf({ size: 2 }), 1);
   assert.strictEqual(totalRoundsOf({ size: 4 }), 2);
@@ -191,6 +211,14 @@ test('totalRoundsOf —— 签位数是 2 的几次幂就几轮，非法值收�
   assert.strictEqual(totalRoundsOf({ size: 1 }), 0);
   assert.strictEqual(totalRoundsOf(null), 0);
   assert.strictEqual(totalRoundsOf({}), 0);
+});
+
+test('maxRoundOf —— 从比赛记录反推最大轮次，作为没有 draw 时的兜底', () => {
+  assert.strictEqual(maxRoundOf([{ round: 1 }, { round: 3 }, { round: 2 }]), 3);
+  assert.strictEqual(maxRoundOf([{ round: 2 }]), 2);
+  assert.strictEqual(maxRoundOf([{ round: 'x' }, {}]), 0);
+  assert.strictEqual(maxRoundOf([]), 0);
+  assert.strictEqual(maxRoundOf(null), 0);
 });
 
 test('describeDraw —— 说清第几次抽签、几个签位、几位种子', () => {
@@ -241,6 +269,112 @@ test('buildBracketRows —— 别的赛事的比赛不混进签表', () => {
     { actor: null }
   );
   assert.deepStrictEqual(rows, []);
+});
+
+test('buildBracketRows —— 没有 draw 的老赛事按最大轮次把轮次名认对', () => {
+  // 种子里的历史赛事是直接模拟出来的，没有抽签记录。只要比赛带轮次，
+  // 就能推回总轮数：8 签 3 轮，第 1 轮是八进四、第 2 轮半决赛、第 3 轮决赛。
+  const legacy = { _id: 'e1' };
+  const played = (over) =>
+    scheduledRecord({ status: MATCH_STATUS.ACTIVE, scoreA: [11], scoreB: [7], winner: 'A', ...over });
+  const rows = buildBracketRows(
+    [
+      played({ _id: 'final', round: 3, slot: 0 }),
+      played({ _id: 'sf', round: 2, slot: 0 }),
+      played({ _id: 'qf', round: 1, slot: 0 }),
+    ],
+    legacy,
+    BRACKET_MEMBERS,
+    { actor: null }
+  );
+
+  assert.deepStrictEqual(
+    rows.map((row) => row.roundText),
+    ['四分之一决赛', '半决赛', '决赛']
+  );
+  for (const row of rows) {
+    assert.ok(!row.roundText.includes('undefined'), `轮次名不该是 undefined：${row.roundText}`);
+  }
+});
+
+test('buildBracketRows —— 连轮次都没有的脏记录也只写「轮次待定」', () => {
+  const rows = buildBracketRows(
+    [scheduledRecord({ _id: 'mystery', round: undefined })],
+    { _id: 'e1' },
+    BRACKET_MEMBERS,
+    { actor: null }
+  );
+  assert.strictEqual(rows[0].roundText, '轮次待定');
+});
+
+test('buildSignupRows —— 每人后面带上本场池的等级分与赛季积分', () => {
+  const members = new Map([
+    [
+      'a',
+      {
+        _id: 'a',
+        nickName: '甲',
+        points: 26,
+        ratings: {
+          singles: { elo: 1523, matchCount: 12 },
+          doubles: { elo: 1401, matchCount: 3 },
+        },
+      },
+    ],
+    [
+      'b',
+      {
+        _id: 'b',
+        nickName: '乙',
+        points: 8,
+        ratings: {
+          singles: { elo: 1388, matchCount: 5 },
+          doubles: { elo: 1450, matchCount: 0 },
+        },
+      },
+    ],
+  ]);
+
+  const rows = buildSignupRows(
+    [
+      { userId: 'a', status: SIGNUP_STATUS.SIGNED, signTime: '2026-05-01T12:00:00' },
+      { userId: 'b', status: SIGNUP_STATUS.CHECKED_IN, signTime: '2026-05-02T12:00:00' },
+    ],
+    members,
+    { event: { _id: 'e1', pool: RATING_POOL.SINGLES } }
+  );
+
+  assert.strictEqual(rows[0].statText, '等级分 1523 · 积分 26');
+  assert.strictEqual(rows[1].statText, '等级分 1388 · 积分 8');
+  assert.strictEqual(rows[0].avatarText, '甲');
+});
+
+test('buildSignupRows —— 双打赛事取双打池的分，查无此人时不硬凑默认分', () => {
+  const members = new Map([
+    [
+      'a',
+      {
+        _id: 'a',
+        nickName: '甲',
+        points: 0,
+        ratings: {
+          singles: { elo: 1523, matchCount: 12 },
+          doubles: { elo: 1401, matchCount: 3 },
+        },
+      },
+    ],
+  ]);
+  const rows = buildSignupRows(
+    [
+      { userId: 'a', status: SIGNUP_STATUS.SIGNED, signTime: '2026-05-01T12:00:00' },
+      { userId: 'ghost', status: SIGNUP_STATUS.SIGNED, signTime: '2026-05-02T12:00:00' },
+    ],
+    members,
+    { event: { _id: 'e2', pool: RATING_POOL.DOUBLES } }
+  );
+
+  assert.strictEqual(rows[0].statText, '等级分 1401 · 积分 0');
+  assert.strictEqual(rows[1].statText, '', '档案缺失时留空，不假装是 1450 分');
 });
 
 test('buildBracketRows —— 没录分时参赛者只看到「录分」，看不到「确认」', () => {

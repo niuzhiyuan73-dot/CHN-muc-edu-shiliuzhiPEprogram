@@ -11,9 +11,8 @@ const {
   DEFAULT_CONFIG,
   WINNER,
   expectedScore,
-  resolveKFactor,
+  resolveEventKFactor,
   teamAverageRating,
-  teamKFactor,
   calculateMatchRatings,
   floorToStep,
   calculatePlacementRating,
@@ -53,40 +52,35 @@ describe('expectedScore —— 期望胜率', () => {
   });
 });
 
-describe('resolveKFactor —— K 值分段', () => {
-  test('定级期内（不足 10 场）使用 K = 32', () => {
-    assert.equal(resolveKFactor(player(1500, 0), DEFAULT_CONFIG), 32);
-    assert.equal(resolveKFactor(player(1500, 9), DEFAULT_CONFIG), 32);
+describe('K 值 —— 日常统一 16、赛事按等级', () => {
+  test('日常约球不再按人分段：无论场次与分数都是 16', () => {
+    // 规则已收敛为一个常数，这里直接比对配置值，防止有人又把分段加回来
+    assert.equal(DEFAULT_CONFIG.kStandard, 16);
+    assert.equal(DEFAULT_CONFIG.provisionalMatchCount, undefined);
+    assert.equal(DEFAULT_CONFIG.kProvisional, undefined);
+    assert.equal(DEFAULT_CONFIG.kHigh, undefined);
+    assert.equal(DEFAULT_CONFIG.highRatingThreshold, undefined);
   });
 
-  test('定级期结束后使用常规 K = 24', () => {
-    assert.equal(resolveKFactor(player(1500, 10), DEFAULT_CONFIG), 24);
-    assert.equal(resolveKFactor(player(2099, 50), DEFAULT_CONFIG), 24);
+  test('赛事的固定 K：一级 32、二级 24、三级 16', () => {
+    assert.equal(resolveEventKFactor(1, DEFAULT_CONFIG), 32);
+    assert.equal(resolveEventKFactor(2, DEFAULT_CONFIG), 24);
+    assert.equal(resolveEventKFactor(3, DEFAULT_CONFIG), 16);
   });
 
-  test('等级分达到 2100 后使用 K = 16', () => {
-    assert.equal(resolveKFactor(player(2100, 50), DEFAULT_CONFIG), 16);
-    assert.equal(resolveKFactor(player(2400, 50), DEFAULT_CONFIG), 16);
-  });
-
-  test('定级期优先级高于高分段：高水平新人仍先快速定级', () => {
-    // 假设一位体特生新注册，初始 1500 分但实际很强，前 10 场仍用 K=32
-    assert.equal(resolveKFactor(player(2200, 3), DEFAULT_CONFIG), 32);
+  test('赛事等级缺失时退回日常 K', () => {
+    assert.equal(resolveEventKFactor(undefined, DEFAULT_CONFIG), DEFAULT_CONFIG.kStandard);
+    assert.equal(resolveEventKFactor(99, DEFAULT_CONFIG), DEFAULT_CONFIG.kStandard);
   });
 });
 
-describe('队伍平均分与队伍 K 值', () => {
+describe('队伍平均分', () => {
   test('单打时队伍平均分即选手本人分数', () => {
     assert.equal(teamAverageRating([player(1234)]), 1234);
   });
 
   test('双打时队伍平均分为两人算术平均', () => {
     assert.equal(teamAverageRating([player(1200), player(1400)]), 1300);
-  });
-
-  test('同队两人的 K 值取平均并四舍五入', () => {
-    // 一人定级期(32)、一人常规(24) => 平均 28
-    assert.equal(teamKFactor([player(1000, 5), player(1000, 20)], DEFAULT_CONFIG), 28);
   });
 });
 
@@ -199,12 +193,13 @@ describe('calculateMatchRatings —— 单打', () => {
       teamB: [player(1000, 20)],
       winner: WINNER.TEAM_A,
     });
-    // K = 24，期望胜率 0.5，胜场得分 = 24 × (1 - 0.5) = 12
-    assert.equal(result.teamA[0].delta, 12);
+    // K = 16，期望胜率 0.5，胜场得分 = 16 × (1 - 0.5) = 8
+    assert.equal(result.teamA[0].k, 16);
+    assert.equal(result.teamA[0].delta, 8);
     assert.equal(result.teamA[0].before, 1000);
-    assert.equal(result.teamA[0].after, 1012);
-    assert.equal(result.teamB[0].delta, -12);
-    assert.equal(result.teamB[0].after, 988);
+    assert.equal(result.teamA[0].after, 1008);
+    assert.equal(result.teamB[0].delta, -8);
+    assert.equal(result.teamB[0].after, 992);
   });
 
   test('以弱胜强：低分选手获胜收益显著偏高', () => {
@@ -213,9 +208,9 @@ describe('calculateMatchRatings —— 单打', () => {
       teamB: [player(1400, 20)],
       winner: WINNER.TEAM_A,
     });
-    // 期望胜率约 0.2403，得分 = round(24 × 0.7597) = 18
-    assert.equal(result.teamA[0].delta, 18);
-    assert.ok(result.teamA[0].delta > 12, '爆冷获胜应比同分对局赢得更多分');
+    // 期望胜率约 0.2403，得分 = round(16 × 0.7597) = 12
+    assert.equal(result.teamA[0].delta, 12);
+    assert.ok(result.teamA[0].delta > 8, '爆冷获胜应比同分对局赢得更多分');
   });
 
   test('以强负弱：高分选手失利损失显著偏大', () => {
@@ -224,9 +219,9 @@ describe('calculateMatchRatings —— 单打', () => {
       teamB: [player(1200, 20)],
       winner: WINNER.TEAM_B,
     });
-    // 期望胜率约 0.7597，失利得分 = round(24 × (-0.7597)) = -18
-    assert.equal(result.teamA[0].delta, -18);
-    assert.ok(Math.abs(result.teamA[0].delta) > 12, '被爆冷应比同分对局损失更多分');
+    // 期望胜率约 0.7597，失利得分 = round(16 × (-0.7597)) = -12
+    assert.equal(result.teamA[0].delta, -12);
+    assert.ok(Math.abs(result.teamA[0].delta) > 8, '被爆冷应比同分对局损失更多分');
   });
 
   test('以强胜弱：高分选手获胜收益偏低', () => {
@@ -235,8 +230,8 @@ describe('calculateMatchRatings —— 单打', () => {
       teamB: [player(1200, 20)],
       winner: WINNER.TEAM_A,
     });
-    assert.equal(result.teamA[0].delta, 6);
-    assert.ok(result.teamA[0].delta < 12, '战胜弱手收益应低于同分对局');
+    assert.equal(result.teamA[0].delta, 4);
+    assert.ok(result.teamA[0].delta < 8, '战胜弱手收益应低于同分对局');
   });
 
   test('平局：同分选手双方均不涨分', () => {
@@ -258,13 +253,14 @@ describe('calculateMatchRatings —— 单打', () => {
     assert.equal(result.teamA[0].delta + result.teamB[0].delta, 0);
   });
 
-  test('零和约束在双方 K 值不同时依然成立', () => {
-    // A 队是定级期新人(K=32)，B 队是常规选手(K=24)，若不强制零和会破坏总分守恒
+  test('日常比赛不因场次、分数改变 K：新人与老手用同一个 K', () => {
     const result = calculateMatchRatings({
       teamA: [player(1000, 2)],
-      teamB: [player(1000, 50)],
+      teamB: [player(2200, 50)],
       winner: WINNER.TEAM_A,
     });
+    assert.equal(result.teamA[0].k, 16);
+    assert.equal(result.teamB[0].k, 16);
     assert.equal(result.teamA[0].delta + result.teamB[0].delta, 0);
   });
 
@@ -277,13 +273,25 @@ describe('calculateMatchRatings —— 单打', () => {
     assert.equal(Number((result.expectedA + result.expectedB).toFixed(4)), 1);
   });
 
-  test('新会员首场获胜按 K=32 计算', () => {
+  test('新会员首场获胜同样按日常 K=16 计算', () => {
     const result = calculateMatchRatings({
       teamA: [player(1000, 0)],
       teamB: [player(1000, 0)],
       winner: WINNER.TEAM_A,
     });
+    assert.equal(result.teamA[0].k, 16);
+    assert.equal(result.teamA[0].delta, 8);
+  });
+
+  test('赛事比赛按等级取 K，不看选手场次', () => {
+    const result = calculateMatchRatings({
+      teamA: [player(1000, 0)],
+      teamB: [player(1000, 50)],
+      winner: WINNER.TEAM_A,
+      eventLevel: 1,
+    });
     assert.equal(result.teamA[0].k, 32);
+    assert.equal(result.teamB[0].k, 32);
     assert.equal(result.teamA[0].delta, 16);
   });
 
@@ -294,7 +302,7 @@ describe('calculateMatchRatings —— 单打', () => {
       winner: WINNER.TEAM_B,
     });
     // 2400 分选手输给 400 分选手，最多损失一个 K 值（16 分），不应出现异常值
-    assert.ok(Math.abs(result.teamA[0].delta) <= DEFAULT_CONFIG.kHigh);
+    assert.ok(Math.abs(result.teamA[0].delta) <= DEFAULT_CONFIG.kStandard);
     assert.equal(result.teamB[0].delta, -result.teamA[0].delta);
   });
 });

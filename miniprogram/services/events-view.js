@@ -32,10 +32,12 @@ const {
   EVENT_BRONZE_MODE,
   DEFAULT_BRONZE_MODE,
   BRACKET_STAGE,
+  RATING_POOL,
   ROLE,
   SIGNUP_STATUS,
   isRankable,
 } = require('../utils/constants.js');
+const { getPoolRating } = require('../utils/rating.js');
 const { buildLeaderboard } = require('../utils/leaderboard.js');
 const { formatDate, formatDateTime, formatPercent, formatScore } = require('../utils/format.js');
 const {
@@ -275,20 +277,28 @@ async function loadSignupMap(events) {
 function buildSignupRows(signups, memberMap, ctx = {}) {
   const { actor = null, event = null } = ctx;
   const mayCheckIn = canCheckIn(event, actor);
+  // 名单上带的是「这场比赛所属池」的等级分：单打赛事看单打分，双打赛事
+  // 看双打分。用错池会给出一个和本场毫不相干的数字。
+  const pool = (event && event.pool) || RATING_POOL.SINGLES;
 
   return asArray(signups)
     .filter((signup) => signup && signup.status !== SIGNUP_STATUS.CANCELED)
     .slice()
     .sort((a, b) => timeValue(a.signTime) - timeValue(b.signTime))
     .map((signup) => {
-      const member = (memberMap && memberMap.get(signup.userId)) || {};
+      const member = (memberMap && memberMap.get(signup.userId)) || null;
       const state = signupStateOf(signup);
-      const row = buildSignupRow(signup, member, { actor });
+      const row = buildSignupRow(signup, member || {}, { actor });
+      // 档案查不到时不硬凑一个默认分——那会让「查无此人」看起来像 1450 分
+      const stats = member
+        ? `等级分 ${getPoolRating(member, pool).elo} · 积分 ${Number(member.points) || 0}`
+        : '';
       return {
         ...row,
         avatarText: avatarOf(row.nickName),
         // 代签按钮只在「进行中 + 已报名未签到」时出现
         canCheckIn: mayCheckIn && state.signed && !state.checkedIn,
+        statText: stats,
       };
     });
 }
@@ -344,11 +354,18 @@ function stageOrder(stage) {
  */
 function roundLabelOf(round, totalRounds, stage) {
   if (stage === BRACKET_STAGE.BRONZE) return '季军赛';
-  const fromEnd = Number(totalRounds) - Number(round);
+  const value = Number(round);
+  // 轮次从 1 起。缺失或不是正整数时不能落进模板字符串——那正是
+  // 「第 undefined 轮」的来源；null / '' 会被 Number 转成 0，也要一并挡住
+  if (!Number.isFinite(value) || value < 1) return '轮次待定';
+  const total = Number(totalRounds);
+  // 算不出总轮数（没有 draw）时只能老实报第几轮，不假装知道倒数第几
+  if (!Number.isFinite(total) || total < 1) return `第 ${value} 轮`;
+  const fromEnd = total - value;
   if (fromEnd <= 0) return '决赛';
   if (fromEnd === 1) return '半决赛';
   if (fromEnd === 2) return '四分之一决赛';
-  return `第 ${round} 轮`;
+  return `第 ${value} 轮`;
 }
 
 /** 签表大小的总轮数：2 的几次幂就是几轮。非法值返回 0 */
@@ -356,6 +373,27 @@ function totalRoundsOf(draw) {
   const size = draw && Number(draw.size);
   if (!Number.isFinite(size) || size < 2) return 0;
   return Math.round(Math.log2(size));
+}
+
+/**
+ * 从比赛记录反推总轮数，作为没有 draw 时的兜底。
+ *
+ * 【为什么需要兜底】
+ * 种子里的历史赛事是直接模拟出来的，没有走抽签，因此没有 draw 字段。
+ * 只知道「最大轮次是 3」，就能按「8 人签共 3 轮」把每轮叫对名字——
+ * 否则这些赛事的轮次会一路退化成「第 N 轮」甚至 undefined。
+ * 只适用于「各轮都已排完」的赛事；进行中的赛事有 draw，走不到这里。
+ *
+ * @param {Array<Object>} records 该赛事的比赛记录
+ * @returns {number} 最大轮次；没有可用轮次时返回 0
+ */
+function maxRoundOf(records) {
+  let max = 0;
+  for (const record of asArray(records)) {
+    const value = Number(record && record.round);
+    if (Number.isFinite(value) && value > max) max = value;
+  }
+  return max;
 }
 
 /**
@@ -402,7 +440,9 @@ function byeTextOf(draw, memberMap) {
 function buildBracketRows(records, event, memberMap, ctx = {}) {
   const { actor = null, isMock: mock = false } = ctx;
   const eventId = event && event._id;
-  const totalRounds = totalRoundsOf(event && event.draw);
+  const eventRecords = asArray(records).filter((record) => record && record.eventId === eventId);
+  // 有 draw 就以签表大小为准；种子里的老赛事没有 draw，退而按最大轮次反推
+  const totalRounds = totalRoundsOf(event && event.draw) || maxRoundOf(eventRecords);
   const nameOf = (id) => (id ? (memberMap.get(id) || {}).nickName || id : '待定');
 
   // 录分的权限要和真正写入时一致：只认参赛者本人，或管理员代录
@@ -411,8 +451,7 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
   const mayManage = Boolean(actor && actor.role === ROLE.ADMIN);
   const actorId = actor ? actor._id : null;
 
-  return asArray(records)
-    .filter((record) => record && record.eventId === eventId)
+  return eventRecords
     .slice()
     .sort(
       (a, b) =>
@@ -698,6 +737,7 @@ module.exports = {
   stageOrder,
   roundLabelOf,
   totalRoundsOf,
+  maxRoundOf,
   describeDraw,
   byeTextOf,
   buildBracketRows,

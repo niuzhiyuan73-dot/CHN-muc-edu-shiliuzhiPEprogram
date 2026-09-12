@@ -401,8 +401,10 @@ describe('mock 数据源 —— 比赛录入与流转', () => {
       const records = await mock.getMatchRecords();
       const active = await mock.getMatches();
 
-      // 种子里没有待确认的比赛，两者此刻应当一样多
-      assert.equal(records.length, active.length);
+      // 演示赛事里排好签、还没开打的半决赛只进台账，不进成绩公示
+      const pending = records.filter((record) => record.status === MATCH_STATUS.PENDING);
+      assert.ok(pending.length > 0, '种子里应当留有待确认的演示场次');
+      assert.equal(records.length, active.length + pending.length);
       assert.ok(records.length > 0);
     })
   );
@@ -441,26 +443,30 @@ describe('mock 数据源 —— 比赛录入与流转', () => {
   test(
     '按状态过滤台账，status 为 0 时也能正确筛选',
     withCleanStore(async () => {
-      // 0 是合法状态，用真值判断的话这里会返回全部，测不出问题
-      const empty = await mock.getMatchRecords({ status: MATCH_STATUS.PENDING });
-      assert.equal(empty.length, 0);
+      // 0 是合法状态，用真值判断的话这里会返回全部，测不出问题。
+      // 种子里的演示赛事本来就留了几场待确认，先记下基线再比对。
+      const seeded = await mock.getMatchRecords({ status: MATCH_STATUS.PENDING });
+      assert.ok(seeded.length > 0, '种子里应当留有待确认的演示场次');
+      assert.ok(seeded.every((record) => record.status === MATCH_STATUS.PENDING));
 
-      await mock.submitMatch(singlesDraft());
+      const { match } = await mock.submitMatch(singlesDraft());
       const pending = await mock.getMatchRecords({ status: MATCH_STATUS.PENDING });
-      assert.equal(pending.length, 1);
-      assert.equal(pending[0].status, MATCH_STATUS.PENDING);
+      assert.equal(pending.length, seeded.length + 1);
+      assert.ok(pending.some((record) => record._id === match._id));
+      assert.ok(pending.every((record) => record.status === MATCH_STATUS.PENDING));
     })
   );
 
   test(
     '录入的校验错误原样返回，不落台账',
     withCleanStore(async () => {
+      const before = (await mock.getMatchRecords({ status: MATCH_STATUS.PENDING })).length;
       const result = await mock.submitMatch(singlesDraft({ scoreA: ['11'], scoreB: ['10'] }));
 
       assert.equal(result.ok, false);
       assert.ok(result.firstError.includes('领先 2 分'));
       assert.equal(result.match, null);
-      assert.equal((await mock.getMatchRecords({ status: MATCH_STATUS.PENDING })).length, 0);
+      assert.equal((await mock.getMatchRecords({ status: MATCH_STATUS.PENDING })).length, before);
     })
   );
 
@@ -498,6 +504,7 @@ describe('mock 数据源 —— 比赛录入与流转', () => {
   test(
     '撤销和驳回都必须给理由',
     withCleanStore(async () => {
+      const seeded = (await mock.getMatchRecords({ status: MATCH_STATUS.PENDING })).length;
       const me = await mock.getCurrentUser();
       const { match } = await mock.submitMatch(singlesDraft());
 
@@ -509,8 +516,11 @@ describe('mock 数据源 —— 比赛录入与流转', () => {
       assert.equal(rejected.ok, false);
       assert.match(rejected.message, /理由/);
 
-      // 没给理由就不该改动任何状态
-      assert.equal((await mock.getMatchRecords({ status: MATCH_STATUS.PENDING })).length, 1);
+      // 没给理由就不该改动任何状态：刚录入的那场仍停在待确认
+      assert.equal(
+        (await mock.getMatchRecords({ status: MATCH_STATUS.PENDING })).length,
+        seeded + 1
+      );
     })
   );
 
@@ -652,6 +662,40 @@ describe('mock 数据源 —— 会员注册与审核', () => {
       assert.equal((await mock.getLeaderboard(RANK_PROJECT.DOUBLES)).length, before.length + 1);
       // 转正之后就不再是「申请」了
       assert.ok(!(await mock.getMemberApplications()).some((a) => a._id === account._id));
+    })
+  );
+
+  test(
+    '通过时手工指定初始分：新会员直接以该分上榜，不再走自动定级',
+    withCleanStore(async () => {
+      const me = await getManager();
+      const { account } = await mock.registerMember(draft);
+
+      const approved = await mock.approveMember(account._id, me._id, 1620);
+      assert.equal(approved.ok, true, approved.message);
+      // 指定分要落在账号上，回放据此跳过前五场定级
+      assert.equal(approved.account.initialElo, 1620);
+
+      // 男会员默认初始分是 1450，指定 1620 说明覆盖真的生效了
+      const board = await mock.getLeaderboard(RANK_PROJECT.MEN_SINGLES);
+      const row = board.find((p) => p.userId === account._id || p._id === account._id);
+      assert.ok(row, '新会员应当出现在男单榜上');
+      assert.equal(row.elo, 1620);
+    })
+  );
+
+  test(
+    '初始分越界时整单被挡下，申请保持待审核',
+    withCleanStore(async () => {
+      const me = await getManager();
+      const { account } = await mock.registerMember(draft);
+
+      const approved = await mock.approveMember(account._id, me._id, 99999);
+      assert.equal(approved.ok, false);
+      assert.match(approved.message, /之间/);
+      // 被拒绝的调用不许改动账号状态
+      const applications = await mock.getMemberApplications();
+      assert.equal(applications.find((a) => a._id === account._id).status, USER_STATUS.PENDING);
     })
   );
 
@@ -1306,6 +1350,38 @@ describe('mock 数据源 —— 赛事闭环', () => {
         actor: scheduled.teamA[0],
       });
       const confirmed = await mock.confirmMatch(scheduled._id, scheduled.teamB[0]);
+      assert.equal(confirmed.ok, true, confirmed.message);
+    })
+  );
+
+  test(
+    '种子里的待确认比赛也能录分确认 —— 台账里不留同编号的两份',
+    withCleanStore(async () => {
+      // 演示赛事 e07 的半决赛在种子里就已经「排好没打」，与现场抽签排出的
+      // 比赛不同：它不在 matchStore 里，录分走的是「按编号覆盖」。若覆盖后
+      // 种子那份还留在台账里，findRecord 会命中排在前面的空比分版，点确认
+      // 永远报「还没有比分」，签表也会同场渲染两行。
+      const scheduled = (
+        await mock.getMatchRecords({ eventId: 'e07', status: MATCH_STATUS.PENDING })
+      ).find((m) => m.teamA.concat(m.teamB).includes('u06'));
+      assert.ok(scheduled, '种子里应有 u06 还没打的半决赛');
+
+      const scored = await mock.submitMatch({
+        id: scheduled._id,
+        scoreA: ['11', '11'],
+        scoreB: ['3', '5'],
+        actor: 'u06',
+      });
+      assert.equal(scored.ok, true, scored.firstError);
+
+      const ledger = await mock.getMatchRecords({ eventId: 'e07' });
+      assert.equal(
+        ledger.filter((m) => m._id === scheduled._id).length,
+        1,
+        '同一场比赛不该在台账里出现两次'
+      );
+
+      const confirmed = await mock.confirmMatch(scheduled._id, 'u06');
       assert.equal(confirmed.ok, true, confirmed.message);
     })
   );

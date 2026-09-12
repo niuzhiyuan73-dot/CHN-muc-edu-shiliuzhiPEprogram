@@ -22,7 +22,7 @@ const {
 
 const { generateSeed } = require('../miniprogram/services/seed.js');
 const { replaySeason } = require('../miniprogram/services/replay.js');
-const { MATCH_TYPE, RATING_POOL } = require('../miniprogram/utils/constants.js');
+const { MATCH_TYPE, MATCH_STATUS, RATING_POOL } = require('../miniprogram/utils/constants.js');
 
 const day = (n) => new Date(`2026-05-${String(n).padStart(2, '0')}T18:00:00`);
 
@@ -511,7 +511,12 @@ describe('summarizeForm —— 近期状态', () => {
 });
 
 describe('统计真实模拟数据 —— 端到端', () => {
-  const raw = generateSeed({ weeks: 8, casualPerWeek: 10 });
+  const seed = generateSeed({ weeks: 8, casualPerWeek: 10 });
+  // 演示赛事里还没开打的签表场次没有胜方，回放只吃已分出胜负的比赛
+  const raw = {
+    ...seed,
+    matches: seed.matches.filter((m) => m.status !== MATCH_STATUS.PENDING),
+  };
   const result = replaySeason(raw);
   const nameOf = createNameResolver(result.users);
   const target = result.users[0];

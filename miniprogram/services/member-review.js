@@ -1,10 +1,16 @@
 /**
  * 会员审核 —— 权限与状态流转
  * ============================================================
- * 入会申请要回答三个问题，答案全在这里：
+ * 入会申请要回答四个问题，答案全在这里：
  *   1. 我有没有资格审核？（审核权）
  *   2. 我能不能审这一条？（不能审自己的）
  *   3. 我填的理由够不够格把这条申请批掉？（驳回校验）
+ *   4. 我手工填的初始等级分合不合法？（见 validateInitialElo）
+ *
+ * 【为什么「通过」还可以指定初始分】
+ * 老队员、外校交流生这类人，水平早有定论，让他从初始分起步再靠前五场
+ * 慢慢定级纯属折腾。管理员在通过时可以填一个数值，填了就跳过定级、
+ * 直接以该分起步（回放引擎见 replay.js 的 settleInitial）。
  *
  * 【为什么单独成模块】
  * 与 match-record.js 同一套路数：这三件事都是纯判断，不碰 wx、不碰数据源。
@@ -36,6 +42,14 @@ const REVIEW_ACTION = {
   APPROVE: 'approve', // 通过
   REJECT: 'reject', // 驳回
 };
+
+/**
+ * 管理员手工指定的初始等级分取值范围。
+ * 下限取 0（不设负分），上限取 3000——远高于任何正常会员的水平，
+ * 留出的余量是给「特别强的特长生」这类极端情况，同时挡住手滑多打一位数。
+ */
+const INITIAL_ELO_MIN = 0;
+const INITIAL_ELO_MAX = 3000;
 
 /**
  * 状态标签的文案与样式类。
@@ -107,6 +121,43 @@ function canReviewApplication(actor, application, options = {}) {
 }
 
 /**
+ * 校验并归一化「管理员手工指定的初始等级分」。
+ *
+ * 【为什么要单独一个函数】
+ * 这个值由人在输入框里敲出来，可能是空串、可能是「一千五」这样的乱输，
+ * 也可能多打一位数。校验规则要在本地数据源与云函数两处一字不差，
+ * 所以与审核校验放在一起，两边共用。
+ *
+ * 【三个空值的含义相同】
+ * null / undefined / 纯空白串都表示「不指定」，此时返回 value: null，
+ * 由回放引擎退回「按前五场自动定级」。空值不是错误，所以 ok 为 true。
+ *
+ * @param {*} value 输入框里的原始值
+ * @returns {{ok:boolean, value:number|null, message:string}}
+ */
+function validateInitialElo(value) {
+  const isBlank = value === null || value === undefined || String(value).trim() === '';
+  if (isBlank) return { ok: true, value: null, message: '' };
+
+  // 布尔值能被 Number 转成 0/1，不是想要的行为，显式挡掉
+  const num = typeof value === 'boolean' ? NaN : Number(value);
+  if (!Number.isFinite(num)) {
+    return { ok: false, value: null, message: '初始等级分必须是数字' };
+  }
+  if (!Number.isInteger(num)) {
+    return { ok: false, value: null, message: '初始等级分必须是整数' };
+  }
+  if (num < INITIAL_ELO_MIN || num > INITIAL_ELO_MAX) {
+    return {
+      ok: false,
+      value: null,
+      message: `初始等级分需在 ${INITIAL_ELO_MIN}–${INITIAL_ELO_MAX} 之间`,
+    };
+  }
+  return { ok: true, value: num, message: '' };
+}
+
+/**
  * 校验一次审核动作。
  *
  * 顺序刻意从「我有没有资格」到「这条单子能不能动」，这样一个没权限的人
@@ -116,25 +167,36 @@ function canReviewApplication(actor, application, options = {}) {
  * @param {Object|null} application
  * @param {string} action 取值见 REVIEW_ACTION
  * @param {string} [reason] 驳回理由，通过时可以不填
- * @param {Object} [options] 透传给 permission.canManage（如 minRole）
- * @returns {{ok:boolean, message:string}}
+ * @param {Object} [options] 透传给 permission.canManage（如 minRole），
+ *        外加 options.initialElo：管理员为这位新会员手工指定的初始等级分
+ * @returns {{ok:boolean, message:string, initialElo:number|null}}
+ *         initialElo 是归一化后的数值；未指定或本次是驳回时为 null
  */
 function validateReview(actor, application, action, reason, options = {}) {
-  if (!canReview(actor, options)) return { ok: false, message: '当前账号没有审核权限' };
-  if (!application) return { ok: false, message: '找不到这条入会申请' };
-  if (isSelf(actor, application)) return { ok: false, message: '不能审核自己的申请' };
+  if (!canReview(actor, options)) {
+    return { ok: false, message: '当前账号没有审核权限', initialElo: null };
+  }
+  if (!application) return { ok: false, message: '找不到这条入会申请', initialElo: null };
+  if (isSelf(actor, application)) {
+    return { ok: false, message: '不能审核自己的申请', initialElo: null };
+  }
   if (application.status !== USER_STATUS.PENDING) {
-    return { ok: false, message: '这条申请已经处理过了' };
+    return { ok: false, message: '这条申请已经处理过了', initialElo: null };
   }
   if (action !== REVIEW_ACTION.APPROVE && action !== REVIEW_ACTION.REJECT) {
-    return { ok: false, message: '未知的审核操作' };
+    return { ok: false, message: '未知的审核操作', initialElo: null };
   }
   // 驳回必须给理由：没有理由的驳回，申请人问起来谁也说不清当初为什么被拒
   if (action === REVIEW_ACTION.REJECT && !String(reason || '').trim()) {
-    return { ok: false, message: '请填写驳回理由' };
+    return { ok: false, message: '请填写驳回理由', initialElo: null };
   }
 
-  return { ok: true, message: '' };
+  // 初始分只在「通过」时有意义；驳回请求里带上它直接忽略，免得混进落库的补丁
+  const initialElo =
+    action === REVIEW_ACTION.APPROVE ? validateInitialElo(options.initialElo) : { ok: true, value: null };
+  if (!initialElo.ok) return { ok: false, message: initialElo.message, initialElo: null };
+
+  return { ok: true, message: '', initialElo: initialElo.value };
 }
 
 /**
@@ -181,6 +243,9 @@ function buildApplicationRow(application, ctx = {}) {
 
 module.exports = {
   REVIEW_ACTION,
+  INITIAL_ELO_MIN,
+  INITIAL_ELO_MAX,
+  validateInitialElo,
   statusTagOf,
   isSelf,
   canReview,

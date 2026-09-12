@@ -81,9 +81,10 @@ async function registerMember(payload = {}, ctx) {
  * @param {string} action 取值见 REVIEW_ACTION
  * @param {string} reason 驳回理由，驳回时必填
  * @param {Object} ctx
+ * @param {*} [initialElo] 管理员手工指定的初始等级分，留空则按前五场自动定级
  * @returns {Promise<Object>} {ok, account, message}
  */
-async function reviewMember(applicationId, action, reason, ctx) {
+async function reviewMember(applicationId, action, reason, ctx, initialElo) {
   const guard = callerError(ctx);
   if (guard) return fail(guard);
 
@@ -93,8 +94,12 @@ async function reviewMember(applicationId, action, reason, ctx) {
     members.find((item) => item._id === applicationId) ||
     null;
 
-  // 严格口径：审核权限 role >= STAFF，且不能审自己的申请
-  const verdict = validateReview(ctx.actor, application, action, reason, { isMock: false });
+  // 严格口径：审核权限 role >= STAFF，且不能审自己的申请。
+  // initialElo 也在这里校验取值范围——请求体里的任何数值都不被信任。
+  const verdict = validateReview(ctx.actor, application, action, reason, {
+    isMock: false,
+    initialElo,
+  });
   if (!verdict.ok) return ok({ ok: false, account: null, message: verdict.message });
 
   const status =
@@ -112,6 +117,12 @@ async function reviewMember(applicationId, action, reason, ctx) {
       actor: ctx.actorId,
       actedAt: ctx.now,
     };
+    // 只有「通过」且真填了分数才落这个字段；留空时字段不出现，
+    // 回放引擎据此判断该走自动定级（见 lib/services/replay.js）
+    if (action === REVIEW_ACTION.APPROVE && verdict.initialElo !== null) {
+      patch.initialElo = verdict.initialElo;
+    }
+
     await tx.users.set(applicationId, { ...current, ...patch });
     await bumpSeason(tx, { anchorTime: null, now: ctx.now });
     return { ...current, ...patch };
@@ -123,7 +134,13 @@ async function reviewMember(applicationId, action, reason, ctx) {
 
 /** 通过一条入会申请，申请人随即成为正式会员并进入回放名单 */
 async function approveMember(payload = {}, ctx) {
-  return reviewMember(payload.applicationId, REVIEW_ACTION.APPROVE, '', ctx);
+  return reviewMember(
+    payload.applicationId,
+    REVIEW_ACTION.APPROVE,
+    '',
+    ctx,
+    payload.initialElo
+  );
 }
 
 /** 驳回一条入会申请。驳回后账号处于「已禁用」，靠 action 区分文案。 */

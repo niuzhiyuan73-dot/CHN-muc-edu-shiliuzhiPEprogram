@@ -155,9 +155,17 @@ function buildCache() {
   const applications = local.filter((account) => !isMemberStatus(account.status));
   const approved = local.filter((account) => isMemberStatus(account.status));
 
-  // 2. 比赛：种子流水接上本次会话新录的，再盖上改判（确认 / 驳回 / 撤销）
+  // 2. 比赛：种子流水接上本次会话新录的，再盖上改判（确认 / 驳回 / 撤销）。
+  //    同一编号只留一条：抽签排好却还没打的比赛（如演示赛事的半决赛）本就
+  //    以空比分躺在种子里，现场录分走的是「按编号覆盖」，于是 submitted 里
+  //    会出现同一个 _id 的第二份。若两份都进台账，findRecord 的 .find() 会
+  //    命中排在前面的种子那份（比分仍为空），确认时永远报「还没有比分」，
+  //    签表也会同场渲染两行。因此先剔除种子里被覆盖的那些，再让新录的顶上。
+  const storeMatches = matchStore.listSubmitted();
+  const submittedIds = new Set(storeMatches.map((match) => match._id));
   const afterStore = seed.matches
-    .concat(matchStore.listSubmitted())
+    .filter((match) => !submittedIds.has(match._id))
+    .concat(storeMatches)
     .map((match) => {
       const patch = matchStore.overrideOf(match._id);
       return patch ? { ...match, ...patch } : match;
@@ -863,29 +871,42 @@ async function registerMember(profile, options = {}) {
  * @param {string} actor 操作者编号
  * @param {string} action 取值见 member-review.REVIEW_ACTION
  * @param {string} [reason] 驳回理由，驳回时必填
+ * @param {*} [initialElo] 管理员手工指定的初始等级分，留空则按前五场自动定级
  * @returns {Promise<{ok:boolean, account:Object|null, message:string}>}
  */
-async function reviewMember(applicationId, actor, action, reason) {
+async function reviewMember(applicationId, actor, action, reason, initialElo) {
   const account = userStore.findAccount(applicationId);
   // 审核权不再按数据源放宽：种子里 u02 张宇轩就是干事，切到该账号即可演示。
   // 「不能审自己的申请」这条本来就不放宽。
-  const verdict = validateReview(accountOf(actor), account, action, reason);
+  const verdict = validateReview(accountOf(actor), account, action, reason, { initialElo });
   if (!verdict.ok) return { ok: false, account: null, message: verdict.message };
 
-  userStore.setStatus(applicationId, {
+  const patch = {
     status: action === REVIEW_ACTION.APPROVE ? USER_STATUS.ACTIVE : USER_STATUS.DISABLED,
     action,
     reason: String(reason || '').trim(),
     actor,
     actedAt: new Date(),
-  });
+  };
+  // 只有「通过」且真的填了分数才落这个字段。留空时字段根本不出现，
+  // 回放引擎据此判断该走自动定级（见 replay.js）
+  if (action === REVIEW_ACTION.APPROVE && verdict.initialElo !== null) {
+    patch.initialElo = verdict.initialElo;
+  }
+
+  userStore.setStatus(applicationId, patch);
   cache = null;
   return { ok: true, account: userStore.findAccount(applicationId), message: '' };
 }
 
-/** 通过一条入会申请，申请人随即成为正式会员并进入回放名单 */
-async function approveMember(applicationId, actor) {
-  return reviewMember(applicationId, actor, REVIEW_ACTION.APPROVE, '');
+/**
+ * 通过一条入会申请，申请人随即成为正式会员并进入回放名单。
+ * @param {string} applicationId
+ * @param {string} actor
+ * @param {*} [initialElo] 选填：直接指定该会员的初始等级分，跳过前五场定级
+ */
+async function approveMember(applicationId, actor, initialElo) {
+  return reviewMember(applicationId, actor, REVIEW_ACTION.APPROVE, '', initialElo);
 }
 
 /**

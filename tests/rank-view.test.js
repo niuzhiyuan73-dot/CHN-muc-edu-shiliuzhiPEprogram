@@ -292,7 +292,9 @@ test('排行榜 —— 双打榜不区分男女，两边都能上', async () => 
   const genderOf = new Map(members.map((m) => [m._id, m.gender]));
 
   const view = await loadRankView({ project: RANK_PROJECT.DOUBLES });
-  const genders = new Set(view.rows.map((row) => genderOf.get(row.userId)));
+  // 用完整榜单而非截断后的前十：展示只给前 10 是界面取舍，
+  // 而「双打不区分男女」说的是榜单口径，不该被截断与否左右
+  const genders = new Set(view.allRows.map((row) => genderOf.get(row.userId)));
 
   assert.ok(genders.has('M'), '双打榜应当有男会员');
   assert.ok(genders.has('F'), '双打榜应当有女会员');

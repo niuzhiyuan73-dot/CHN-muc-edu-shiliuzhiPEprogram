@@ -91,6 +91,23 @@ function isLateJoiner(member, seasonStartTime) {
 }
 
 /**
+ * 管理员手工指定的初始等级分，没有则为 null。
+ *
+ * 【为什么它优先级最高】
+ * 审核时填了分数，就等于管理员对这位会员的水平下了判断（老队员、外校
+ * 交流生等）。此时再按「前五场对手」去猜一遍是多余的，而且头几场往往
+ * 会把他定低。所以只要字段存在且是有限数值，就直接以它起步，
+ * 完全跳过定级——男女初始分差异、对手水平一概不再参与。
+ *
+ * @param {Object} member 会员记录
+ * @returns {number|null}
+ */
+function overriddenInitialElo(member) {
+  const value = member && member.initialElo;
+  return Number.isFinite(value) ? value : null;
+}
+
+/**
  * 按「定级期对手水平」为中途入会的会员算出初始分。
  *
  * 规则详见 elo.calculatePlacementRating：赢过谁就以谁为标杆，全败则以
@@ -104,6 +121,9 @@ function isLateJoiner(member, seasonStartTime) {
  * 【对手分数取「当时」的值】
  * 用的是对手在那场比赛开打之前的分数，而不是回放结束后的分数。
  * 定级是对「入场时点」的估计，用未来数据定过去的级会造成穿越。
+ *
+ * 【被手工指定初始分的人直接跳过】
+ * 见 overriddenInitialElo：管理员已经给了分数，这里再算一遍只会覆盖他的判断。
  *
  * @param {Object} params
  * @param {Array<Object>} params.members 会员列表
@@ -122,6 +142,9 @@ function planInitialRatings({ members, observations, seasonStart, config = DEFAU
   }
 
   for (const member of members) {
+    // 已被手工指定初始分的人不参与定级：既不必算，也不该出现在
+    // meta.placements 里被误读成「按对手定出来的」
+    if (overriddenInitialElo(member) !== null) continue;
     if (!isLateJoiner(member, startTime)) continue;
 
     const byPool = observations.get(member._id);
@@ -255,10 +278,15 @@ function runReplay({
   // 所有运算都在副本上进行，调用方的数据一个字节都不会被改动。
   const roster = new Map();
   for (const member of members) {
+    // 手工指定的初始分优先；没有才按性别取（男 1450 / 女 1300）。
+    // 这一步和 settleInitial 必须用同一套判断，否则「尚未出场的档案分」
+    // 与「首次登场后的真实起点」会对不上。
+    const overridden = overriddenInitialElo(member);
+    const baseElo = overridden !== null ? overridden : initialRatingFor(member.gender, elo);
     roster.set(member._id, {
       ...member,
       points: 0,
-      ratings: createEmptyRatings({ initialElo: initialRatingFor(member.gender, elo) }),
+      ratings: createEmptyRatings({ initialElo: baseElo }),
       settled: {}, // 记录各池是否已经完成「定级」
       settledAt: {}, // 各池首次登场的时刻，用来判断是否在软重置之前就已入池
       resetApplied: {}, // 各池是否已经跨过软重置的分界
@@ -303,9 +331,10 @@ function runReplay({
   /**
    * 会员首次在某个池登场时确定他的初始分。
    *
-   * 只有两种可能：
-   *   1. 预设定级分——中途入会者按「前五场对手」规则定出来的分数；
-   *   2. 按性别取的初始分——其余所有人（含创始会员、以及打过比赛但对手
+   * 有三种可能，优先级从高到低：
+   *   1. 管理员手工指定的初始分——审核通过时填了 initialElo 的人，直接采用；
+   *   2. 预设定级分——中途入会者按「前五场对手」规则定出来的分数；
+   *   3. 按性别取的初始分——其余所有人（含创始会员、以及打过比赛但对手
    *      全是空缺、没能定出分数的极少数情况）。男会员 1450，女会员 1300。
    *
    * 这里刻意不再退回「当时池内会员的中位数」。定级规则的基准是初始分，
@@ -325,7 +354,11 @@ function runReplay({
 
     const memberPresets = presets.get(user._id);
     const placed = memberPresets ? memberPresets.get(poolName) : undefined;
-    const initial = placed !== undefined ? placed : initialRatingFor(user.gender, elo);
+    // 按优先级依次覆盖：性别初始分 < 按对手定级 < 管理员手工指定
+    let initial = initialRatingFor(user.gender, elo);
+    if (placed !== undefined) initial = placed;
+    const overridden = overriddenInitialElo(user);
+    if (overridden !== null) initial = overridden;
 
     user.ratings = {
       ...user.ratings,
@@ -433,6 +466,8 @@ function runReplay({
       const collect = (team, opponentAverage, side) => {
         const won = match.winner === side;
         for (const user of team) {
+          // 已被手工指定初始分的人不需要定级样本，连采集都省掉
+          if (overriddenInitialElo(user) !== null) continue;
           const slots = observes(user._id, poolName);
           if (slots.length >= elo.placementMatchCount) continue;
           slots.push({ opponentRating: opponentAverage, won });
@@ -448,7 +483,7 @@ function runReplay({
       teamB: snapB,
       winner: match.winner,
       config: elo,
-      // 赛事比赛按等级取固定 K；日常比赛没有 eventId，走原来的分段规则
+      // 赛事比赛按等级取固定 K；日常比赛没有 eventId，走统一 kStandard
       eventLevel: match.eventId ? eventLevelOf.get(match.eventId) : undefined,
     });
 

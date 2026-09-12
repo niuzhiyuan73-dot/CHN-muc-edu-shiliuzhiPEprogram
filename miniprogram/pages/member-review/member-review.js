@@ -10,10 +10,15 @@
  * 的访客也会被当成 u06，凭空拿到审核权。所以这里把 getApp() 里的登录态
  * 明确传下去——传 null 就是访客，见 member-review-view 的说明。
  *
- * 【为什么通过只要点一下，驳回却要填理由】
- * 通过是「资料对得上」，没什么可补充的；驳回是「资料有问题」，必须留下
- * 问题是什么，否则申请人问起来谁也说不清当初为什么被拒。所以驳回单独
- * 走一块面板，理由必填。
+ * 【通过为什么也要过一次面板】
+ * 通过本是「资料对得上」，但审核时还可以顺手指定这位新会员的初始等级分
+ * ——老队员、外校交流生这类人不必再从初始分慢慢打上来。面板里留一个选填
+ * 数字框，不填就直接通过、由回放引擎按前五场自动定级。顺带这也兑现了
+ * 「通过不可逆，先确认一句」这件事：以前点一下就直接批了。
+ *
+ * 【驳回为什么必须填理由】
+ * 资料有问题，必须留下问题是什么，否则申请人问起来谁也说不清当初为什么
+ * 被拒。所以驳回同样走面板，但理由必填。
  *
  * 【onShow 为什么要带守卫】
  * onLoad 之后紧接着就会来一次 onShow。若不加 this.loaded 判断，首屏会
@@ -23,9 +28,17 @@
  */
 
 const { loadMemberReviewView } = require('../../services/member-review-view.js');
+const { validateInitialElo, INITIAL_ELO_MIN, INITIAL_ELO_MAX } = require('../../services/member-review.js');
 const { approveMember, rejectMember, isMock } = require('../../services/index.js');
 
-/** 驳回面板的文案。通过不需要面板，只有驳回要填理由 */
+/** 通过面板的文案。初始分是选填项 */
+const APPROVE_TEXT = {
+  title: '通过这条入会申请',
+  hint: `可为 TA 指定初始等级分（${INITIAL_ELO_MIN}–${INITIAL_ELO_MAX} 的整数）；留空则按前五场对手自动定级。`,
+  placeholder: '选填，例如 1500',
+};
+
+/** 驳回面板的文案。理由必填 */
 const REJECT_TEXT = {
   title: '驳回这条入会申请',
   hint: '驳回后申请人无法使用本小程序，请说明资料哪里有出入。',
@@ -44,10 +57,12 @@ Page({
     view: {},
     /** 开发期标注模拟数据 */
     isMock,
-    /** 驳回面板 */
-    action: { open: false, applicationId: '', title: '', hint: '', placeholder: '' },
-    /** 面板里填的理由 */
+    /** 审核面板。mode 取 'approve' / 'reject'，决定面板里是数字框还是理由框 */
+    action: { open: false, mode: '', applicationId: '', title: '', hint: '', placeholder: '' },
+    /** 驳回面板里填的理由 */
     reason: '',
+    /** 通过面板里填的初始等级分（字符串，选填） */
+    rating: '',
     /** 提交中，防止连点 */
     acting: false,
     /** 面板内的错误提示 */
@@ -131,36 +146,23 @@ Page({
     return this.refresh();
   },
 
-  /* ---------- 通过 ---------- */
+  /* ---------- 通过 / 驳回面板 ---------- */
 
   /**
-   * 通过一条申请。申请人随即成为正式会员。
-   * 点错了没有回头路——通过后申请就离开待审列表了，所以先确认一句。
+   * 打开通过面板。
+   * 通过不可逆（批了就离开待审列表），所以先弹面板确认一句；面板里还留了
+   * 一个选填的初始等级分输入框。
    */
-  async onApprove(event) {
+  onOpenApprove(event) {
     const applicationId = event.currentTarget.dataset.applicationId;
-    const user = this.currentUser();
-    if (!applicationId) return undefined;
-    if (!user) {
-      this.showToast('请先登录后再审核');
-      return undefined;
-    }
-    if (this.data.acting) return undefined;
+    if (!applicationId) return;
 
-    this.setData({ acting: true });
-    const result = await approveMember(applicationId, user._id);
-    this.setData({ acting: false });
-
-    if (!result.ok) {
-      this.showToast(result.message || '操作失败');
-      return undefined;
-    }
-
-    this.showToast('已通过，该会员可以录入成绩了', 'success');
-    return this.refresh();
+    this.setData({
+      action: { open: true, mode: 'approve', applicationId, ...APPROVE_TEXT },
+      rating: '',
+      actionError: '',
+    });
   },
-
-  /* ---------- 驳回面板 ---------- */
 
   /** 打开驳回面板 */
   onOpenReject(event) {
@@ -168,7 +170,7 @@ Page({
     if (!applicationId) return;
 
     this.setData({
-      action: { open: true, applicationId, ...REJECT_TEXT },
+      action: { open: true, mode: 'reject', applicationId, ...REJECT_TEXT },
       reason: '',
       actionError: '',
     });
@@ -178,29 +180,51 @@ Page({
     this.setData({ reason: event.detail.value, actionError: '' });
   },
 
+  onInputRating(event) {
+    this.setData({ rating: event.detail.value, actionError: '' });
+  },
+
+  /** 关闭面板并清空两个输入框，取消与提交成功共用 */
+  closeAction() {
+    this.setData({
+      action: { ...this.data.action, open: false },
+      reason: '',
+      rating: '',
+      actionError: '',
+    });
+  },
+
   onCancelAction() {
     if (this.data.acting) return;
-    this.setData({ action: { ...this.data.action, open: false }, reason: '', actionError: '' });
+    this.closeAction();
   },
 
   /**
-   * 提交驳回。
-   * 理由必填——没有理由的驳回，申请人问起来谁也说不清当初为什么被拒。
-   * 校验放在这里而不是只靠后端：让用户在点下按钮的当下就看到问题。
+   * 提交面板里的操作，通过 / 驳回按 mode 分流。
+   *
+   * 校验都放在页面这一层（驳回理由必填、初始分格式），让用户点下按钮的
+   * 当下就看到问题，而不是等一个来回。后端仍会各自再校验一遍。
    */
   async onSubmitAction() {
     if (this.data.acting) return undefined;
 
-    const applicationId = this.data.action.applicationId;
-    const reason = String(this.data.reason || '').trim();
+    const { mode, applicationId } = this.data.action;
     const user = this.currentUser();
-
-    if (!reason) {
-      this.setData({ actionError: '请填写驳回理由' });
-      return undefined;
-    }
     if (!user) {
       this.showToast('请先登录后再操作');
+      return undefined;
+    }
+
+    if (mode === 'reject') return this.submitReject(applicationId, user);
+    if (mode === 'approve') return this.submitApprove(applicationId, user);
+    return undefined;
+  },
+
+  /** 提交驳回。理由必填——没有理由的驳回事后说不清 */
+  async submitReject(applicationId, user) {
+    const reason = String(this.data.reason || '').trim();
+    if (!reason) {
+      this.setData({ actionError: '请填写驳回理由' });
       return undefined;
     }
 
@@ -213,8 +237,30 @@ Page({
       return undefined;
     }
 
-    this.setData({ action: { ...this.data.action, open: false }, reason: '' });
+    this.closeAction();
     this.showToast('已驳回', 'success');
+    return this.refresh();
+  },
+
+  /** 提交通过。初始分选填，填了先过一遍本地校验 */
+  async submitApprove(applicationId, user) {
+    const check = validateInitialElo(String(this.data.rating || '').trim());
+    if (!check.ok) {
+      this.setData({ actionError: check.message });
+      return undefined;
+    }
+
+    this.setData({ acting: true, actionError: '' });
+    const result = await approveMember(applicationId, user._id, check.value);
+    this.setData({ acting: false });
+
+    if (!result.ok) {
+      this.setData({ actionError: result.message || '操作失败' });
+      return undefined;
+    }
+
+    this.closeAction();
+    this.showToast('已通过，该会员可以录入成绩了', 'success');
     return this.refresh();
   },
 
