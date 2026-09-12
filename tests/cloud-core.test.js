@@ -648,6 +648,80 @@ describe('云函数 —— 赛事闭环', () => {
     assert.equal(finished.data.record.results.length, 4);
   });
 
+  test('双败淘汰 —— 云端逐轮推进：胜者组→败者组→总决赛，4 人共 6 场', async () => {
+    const repo = createFixtureRepo();
+    const admin = 'openid-admin';
+    const { data: published } = await on(
+      repo,
+      'publishEvent',
+      {
+        form: {
+          ...draft,
+          format: EVENT_FORMAT.DOUBLE_ELIM,
+          seedCount: 2,
+          startTime: '2026-05-20T09:00:00',
+        },
+      },
+      admin
+    );
+    const id = published.record._id;
+    assert.equal(published.record.gfReset, true, '双败默认开启总决赛重赛');
+    await signUpAll(repo, id, ['openid-u01', 'openid-u02', 'openid-u03', 'openid-u04']);
+
+    const drawn = await on(repo, 'drawEvent', { id, seedValue: 7 }, admin);
+    assert.equal(drawn.data.ok, true, drawn.data.message);
+    assert.equal(drawn.data.matches.length, 2, '4 人双败首轮两场');
+    assert.ok(
+      drawn.data.matches.every((m) => m.stage === BRACKET_STAGE.WINNERS),
+      '双败的落败者先在胜者组里打出来'
+    );
+    await on(repo, 'startEvent', { id }, admin);
+
+    for (let guard = 0; guard < 16; guard += 1) {
+      const ledger = await on(repo, 'getMatchRecords', { eventId: id }, admin);
+      const pending = ledger.data.filter(
+        (m) => m.status === MATCH_STATUS.PENDING && m.teamA[0] && m.teamB[0]
+      );
+      if (pending.length === 0) break;
+      for (const match of pending) {
+        const scored = await on(
+          repo,
+          'submitMatch',
+          { id: match._id, scoreA: ['11', '11'], scoreB: ['3', '5'] },
+          openIdOf[match.teamA[0]]
+        );
+        assert.equal(scored.data.ok, true, scored.data.firstError);
+        const confirmed = await on(repo, 'confirmMatch', { id: match._id }, openIdOf[match.teamB[0]]);
+        assert.equal(confirmed.data.ok, true, confirmed.data.message);
+      }
+    }
+
+    const all = await on(repo, 'getMatchRecords', { eventId: id }, admin);
+    assert.equal(all.data.length, 6, '4 人双败共 2n−2 = 6 场');
+    assert.ok(all.data.every((m) => m.status === MATCH_STATUS.ACTIVE), '全部已生效');
+    const stages = new Set(all.data.map((m) => m.stage));
+    assert.ok(stages.has(BRACKET_STAGE.WINNERS) && stages.has(BRACKET_STAGE.LOSERS));
+    assert.ok(stages.has(BRACKET_STAGE.GRAND_FINAL), '总决赛也排出来了');
+
+    const finished = await on(
+      repo,
+      'finishEvent',
+      {
+        id,
+        results: [
+          { userId: 'u01', placement: 1 },
+          { userId: 'u02', placement: 2 },
+          { userId: 'u03', placement: 3 },
+          { userId: 'u04', placement: 4 },
+        ],
+      },
+      admin
+    );
+    assert.equal(finished.data.ok, true, finished.data.firstError);
+    assert.equal(finished.data.record.status, EVENT_STATUS.FINISHED);
+    assert.equal(finished.data.record.results.length, 4);
+  });
+
   test('给抽签生成的比赛录分 —— 非参赛者被拒，参赛者可以补录', async () => {
     const repo = createFixtureRepo();
     const admin = 'openid-admin';

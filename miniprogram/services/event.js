@@ -46,7 +46,12 @@ const {
   EVENT_FORMAT_LABEL,
   DEFAULT_EVENT_FORMAT,
   GROUPED_FORMATS,
+  GROUP_COUNT_FORMATS,
+  ADVANCE_FORMATS,
   KNOCKOUT_FORMATS,
+  DOUBLE_ELIM_FORMATS,
+  LADDER_FORMATS,
+  DEFAULT_GF_RESET,
   EVENT_PLACEMENT_MODE,
   EVENT_PLACEMENT_MODE_LABEL,
   DEFAULT_PLACEMENT_MODE,
@@ -363,6 +368,12 @@ function normalizeDraft(form) {
     const number = Number(value);
     return Number.isFinite(number) ? Math.trunc(number) : NaN;
   };
+  // 开关类字段：未提供取缺省；字符串 'false' / '0' 也算关（表单透传时常见）
+  const bool = (value, fallback) => {
+    if (value === null || value === undefined || value === '') return fallback;
+    if (typeof value === 'string') return value !== 'false' && value !== '0';
+    return Boolean(value);
+  };
 
   return {
     title: text(source.title),
@@ -376,6 +387,9 @@ function normalizeDraft(form) {
     advancePerGroup:
       int(source.advancePerGroup) === null ? DEFAULT_ADVANCE_PER_GROUP : int(source.advancePerGroup),
     placementMode: text(source.placementMode) || DEFAULT_PLACEMENT_MODE,
+    // 双败总决赛重赛开关：缺省开启（决策 D3 的标准口径）。表单未提供时按缺省，
+    // 老赛事没有这个字段也走缺省，读的时候不必判 undefined
+    gfReset: bool(source.gfReset, DEFAULT_GF_RESET),
     level: int(source.level),
     bronzeMode: text(source.bronzeMode),
     // 种子来源与数量只对单打有意义；双打留空即可，校验时也不要求
@@ -418,13 +432,20 @@ function validateEvent(form = {}) {
     errors.format = '请选择赛制';
   }
 
-  // 小组参数只在分组赛制下有约束：循环赛恒为单组，不看表单里的组数
-  if (draft.format === EVENT_FORMAT.GROUP_KNOCKOUT) {
-    if (!GROUP_CONFIG.COUNT_OPTIONS.includes(draft.groupCount)) {
-      errors.groupCount = `小组数只能是 ${GROUP_CONFIG.COUNT_OPTIONS.join(' / ')}`;
-    }
-    if (!GROUP_CONFIG.ADVANCE_OPTIONS.includes(draft.advancePerGroup)) {
-      errors.advancePerGroup = `每组出线人数只能是 ${GROUP_CONFIG.ADVANCE_OPTIONS.join(' / ')}`;
+  // 小组参数只在分组赛制下有约束：组数只对可配置组数的赛制生效，出线人数
+  // 对「单组循环赛取前 N」也有意义（见 constants 的 GROUP_COUNT/ADVANCE_FORMATS）
+  if (GROUP_COUNT_FORMATS.includes(draft.format) && !GROUP_CONFIG.COUNT_OPTIONS.includes(draft.groupCount)) {
+    errors.groupCount = `小组数只能是 ${GROUP_CONFIG.COUNT_OPTIONS.join(' / ')}`;
+  }
+  if (ADVANCE_FORMATS.includes(draft.format) && !GROUP_CONFIG.ADVANCE_OPTIONS.includes(draft.advancePerGroup)) {
+    errors.advancePerGroup = `每组出线人数只能是 ${GROUP_CONFIG.ADVANCE_OPTIONS.join(' / ')}`;
+  }
+  // 双败淘汰阶段至少要 4 名出线者：组数 × 每组出线人数 不够时提前拦下，
+  // 免得赛事发出去、抽签时才发现排不出败者组
+  if (draft.format === EVENT_FORMAT.GROUP_DOUBLE_ELIM && !errors.advancePerGroup) {
+    const qualifiers = Number(draft.groupCount) * Number(draft.advancePerGroup);
+    if (Number.isFinite(qualifiers) && qualifiers > 0 && qualifiers < 4) {
+      errors.advancePerGroup = '双败淘汰阶段至少需要 4 名出线者（组数 × 出线人数 ≥ 4）';
     }
   }
 
@@ -441,7 +462,9 @@ function validateEvent(form = {}) {
     errors.level = '请选择赛事等级';
   }
 
-  if (!VALID_BRONZE_MODES.includes(draft.bronzeMode)) {
+  // 三四名赛只对单败淘汰签表有意义：双败的名次由败者组自然排出，
+  // 循环赛根本没有淘汰阶段，两类都不该强迫选
+  if (KNOCKOUT_FORMATS.includes(draft.format) && !VALID_BRONZE_MODES.includes(draft.bronzeMode)) {
     errors.bronzeMode = '请选择三四名赛方式';
   }
 
@@ -513,15 +536,16 @@ function buildEventRecord(form, ctx = {}) {
       pool: MATCH_TYPE_TO_POOL[draft.matchType],
       level: draft.level,
       format: draft.format,
-      // 循环赛没有淘汰阶段，排位赛开关对它无意义，统一记 none；
-      // 小组参数只在小组赛下有意义，其余留 null 表明「本场无此概念」
+      // 循环赛与双败都没有「独立排位赛」的概念（双败名次由败者组自然排出），
+      // 统一记 none；小组参数只在对应赛制下有意义，其余留 null 表明「本场无此概念」
       placementMode: KNOCKOUT_FORMATS.includes(draft.format)
         ? draft.placementMode
         : EVENT_PLACEMENT_MODE.NONE,
-      groupCount: draft.format === EVENT_FORMAT.GROUP_KNOCKOUT ? draft.groupCount : null,
-      advancePerGroup:
-        draft.format === EVENT_FORMAT.GROUP_KNOCKOUT ? draft.advancePerGroup : null,
-      bronzeMode: draft.bronzeMode,
+      groupCount: GROUP_COUNT_FORMATS.includes(draft.format) ? draft.groupCount : null,
+      advancePerGroup: ADVANCE_FORMATS.includes(draft.format) ? draft.advancePerGroup : null,
+      bronzeMode: KNOCKOUT_FORMATS.includes(draft.format) ? draft.bronzeMode : null,
+      // 总决赛重赛只在双败赛制下有概念，其余留 null
+      gfReset: DOUBLE_ELIM_FORMATS.includes(draft.format) ? draft.gfReset : null,
       // 种子设置只跟单打走；双打赛事不抽签，两项留 null 表明「本场无此概念」
       seedMode: draft.matchType === MATCH_TYPE.SINGLES ? draft.seedMode : null,
       seedCount: draft.matchType === MATCH_TYPE.SINGLES ? draft.seedCount : null,
@@ -621,10 +645,10 @@ function validatePlacements(results, options = {}) {
 
   const countOf = (place) => normalized.filter((row) => row.placement === place).length;
 
-  // 循环赛 / 小组赛按「阶梯」口径：名次是积分表 1..N 排出来的，必然出现
-  // 第 4 名，也谈不上季军成对。套用淘汰赛的三四名规则会把正常名次表判成
-  // 非法，赛事永远结不了。这里只守住「每人一次、正整数、恰有一位冠军」。
-  if (GROUPED_FORMATS.includes(options.format)) {
+  // 循环赛 / 小组赛 / 双败都按「阶梯」口径：名次是积分表或败者组 1..N 排出来的，
+  // 必然出现第 4 名，也谈不上季军成对。套用淘汰赛的三四名规则会把正常名次表
+  // 判成非法，赛事永远结不了。这里只守住「每人一次、正整数、恰有一位冠军」。
+  if (LADDER_FORMATS.includes(options.format)) {
     if (countOf(1) !== 1) {
       const message = '一场赛事有且只有一位冠军';
       return { ok: false, results: [], errors: { results: message }, firstError: message };

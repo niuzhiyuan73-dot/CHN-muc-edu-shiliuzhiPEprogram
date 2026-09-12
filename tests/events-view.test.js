@@ -26,6 +26,8 @@ const {
   buildSignupRows,
   formatOf,
   isGroupedFormat,
+  isDoubleElimFormat,
+  hasAutoPlacements,
   groupLabelOf,
   buildStandings,
 } = require('../miniprogram/services/events-view.js');
@@ -208,13 +210,15 @@ test('roundLabelOf —— 轮次或总轮数缺失时绝不吐出 undefined', ()
   }
 });
 
-test('roundLabelOf —— 小组 / 胜者组 / 败者组看数字叫，总决赛与排位赛有专名', () => {
+test('roundLabelOf —— 小组看数字叫，胜者组 / 败者组带区名，总决赛与排位赛有专名', () => {
   assert.strictEqual(roundLabelOf(1, 3, BRACKET_STAGE.GROUP), '第 1 轮');
-  assert.strictEqual(roundLabelOf(2, 3, BRACKET_STAGE.WINNERS), '第 2 轮');
-  assert.strictEqual(roundLabelOf(1, 3, BRACKET_STAGE.LOSERS), '第 1 轮');
+  // 胜者组与败者组各自从第 1 轮数起，必须带区名才分得清
+  assert.strictEqual(roundLabelOf(2, 3, BRACKET_STAGE.WINNERS), '胜者组 · 第 2 轮');
+  assert.strictEqual(roundLabelOf(1, 3, BRACKET_STAGE.LOSERS), '败者组 · 第 1 轮');
   assert.strictEqual(roundLabelOf(1, 3, BRACKET_STAGE.GRAND_FINAL), '总决赛');
   assert.strictEqual(roundLabelOf(2, 3, BRACKET_STAGE.PLACEMENT), '5–8 名排位赛');
   assert.strictEqual(roundLabelOf(undefined, 3, BRACKET_STAGE.GROUP), '轮次待定');
+  assert.strictEqual(roundLabelOf(undefined, 3, BRACKET_STAGE.WINNERS), '胜者组 · 轮次待定');
 });
 
 test('formatOf / isGroupedFormat —— 老赛事缺省按单败，不误判成要分组', () => {
@@ -223,6 +227,17 @@ test('formatOf / isGroupedFormat —— 老赛事缺省按单败，不误判成�
   assert.strictEqual(isGroupedFormat({ format: EVENT_FORMAT.ROUND_ROBIN }), true);
   assert.strictEqual(isGroupedFormat({ format: EVENT_FORMAT.GROUP_KNOCKOUT }), true);
   assert.strictEqual(isGroupedFormat({}), false);
+});
+
+test('isDoubleElimFormat / hasAutoPlacements —— 双败也要自动排名次', () => {
+  assert.strictEqual(isDoubleElimFormat({ format: EVENT_FORMAT.DOUBLE_ELIM }), true);
+  assert.strictEqual(isDoubleElimFormat({ format: EVENT_FORMAT.GROUP_DOUBLE_ELIM }), true);
+  assert.strictEqual(isDoubleElimFormat({ format: EVENT_FORMAT.SINGLE_ELIM }), false);
+  assert.strictEqual(isDoubleElimFormat({}), false);
+  // 单败淘汰仍由管理员手工录名次，不预填
+  assert.strictEqual(hasAutoPlacements({ format: EVENT_FORMAT.DOUBLE_ELIM }), true);
+  assert.strictEqual(hasAutoPlacements({ format: EVENT_FORMAT.ROUND_ROBIN }), true);
+  assert.strictEqual(hasAutoPlacements({ format: EVENT_FORMAT.SINGLE_ELIM }), false);
 });
 
 test('groupLabelOf —— 组号自 0 起，0 号就是 A 组', () => {
@@ -497,6 +512,31 @@ test('buildBracketRows —— 小组赛整体排在淘汰赛前，0 号组也标
   assert.strictEqual(rows[2].groupText, 'B 组');
   assert.strictEqual(rows[3].groupText, '', '淘汰赛没有小组，不标组名');
   assert.strictEqual(rows[0].roundText, '第 1 轮', '小组赛的轮次只看数字叫');
+});
+
+test('buildBracketRows —— 双败按胜者组→败者组→总决赛分区，轮次带区名', () => {
+  const event = { _id: 'e1', format: EVENT_FORMAT.DOUBLE_ELIM, draw: { size: 4, slots: [], byes: [] } };
+  const rows = buildBracketRows(
+    [
+      // 总决赛的轮次值是 1，若不按阶段分区会插到胜者组第 2 轮之前
+      scheduledRecord({ _id: 'gf1', round: 1, stage: BRACKET_STAGE.GRAND_FINAL, slot: 0 }),
+      scheduledRecord({ _id: 'lb1', round: 1, stage: BRACKET_STAGE.LOSERS, slot: 0 }),
+      scheduledRecord({ _id: 'wb2', round: 2, stage: BRACKET_STAGE.WINNERS, slot: 0 }),
+      scheduledRecord({ _id: 'wb1', round: 1, stage: BRACKET_STAGE.WINNERS, slot: 0 }),
+    ],
+    event,
+    BRACKET_MEMBERS,
+    { actor: null }
+  );
+
+  assert.deepStrictEqual(
+    rows.map((row) => row.matchId),
+    ['wb1', 'wb2', 'lb1', 'gf1'],
+    '胜者组两轮 → 败者组 → 总决赛'
+  );
+  assert.strictEqual(rows[0].roundText, '胜者组 · 第 1 轮');
+  assert.strictEqual(rows[2].roundText, '败者组 · 第 1 轮');
+  assert.strictEqual(rows[3].roundText, '总决赛');
 });
 
 test('buildStandings —— 各组分表，胜场靠前的排前面，净胜带正负号', () => {

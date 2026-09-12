@@ -39,6 +39,8 @@ const {
   EVENT_FORMAT,
   DEFAULT_EVENT_FORMAT,
   GROUPED_FORMATS,
+  GROUP_COUNT_FORMATS,
+  DOUBLE_ELIM_FORMATS,
   EVENT_PLACEMENT_MODE,
   DEFAULT_PLACEMENT_MODE,
   GROUP_CONFIG,
@@ -208,7 +210,7 @@ function planGroupDraw({ entries, seeds = [], groupCount, seedValue } = {}) {
   return { ok: true, groups, firstError: '' };
 }
 
-/** 组数收敛到可选档位（2 / 4）；非法或缺失回落到缺省 2 组 */
+/** 组数收敛到可选档位（2 / 4 / 8）；非法或缺失回落到缺省 2 组 */
 function normalizeGroupCount(value) {
   const wanted = Number(value);
   return GROUP_CONFIG.COUNT_OPTIONS.includes(wanted) ? wanted : DEFAULT_GROUP_COUNT;
@@ -295,14 +297,32 @@ function planDraw({ event, signups, members, seedValue, manualOrder } = {}) {
 
   const format = formatOf(event);
 
+  // 双败至少要 4 人：2 人双败排不出败者组，会退化成一个奇怪的单败
+  if (DOUBLE_ELIM_FORMATS.includes(format) && entries.length < 4) {
+    return fail('双败淘汰至少需要 4 名参赛者');
+  }
+
   // 循环 / 小组赛不摆签表，改成分组 + 圆桌排期
   if (GROUPED_FORMATS.includes(format)) {
-    const groupCount = format === EVENT_FORMAT.ROUND_ROBIN
-      ? 1
-      : normalizeGroupCount(event.groupCount);
+    // 只有小组赛类赛制的组数可配；循环类恒为单组，人人在一组里碰面
+    const groupCount = GROUP_COUNT_FORMATS.includes(format)
+      ? normalizeGroupCount(event.groupCount)
+      : 1;
     const grouped = planGroupDraw({ entries, seeds: resolved.seeds, groupCount, seedValue: value });
     if (!grouped.ok) {
       return fail(grouped.firstError);
+    }
+    // 双败淘汰阶段至少要有 4 名出线者：2 个人排不出败者组。这里按「每组
+    // 实际能出线的人数」算，比只看配置更准（小组人数可能少于出线名额）
+    if (DOUBLE_ELIM_FORMATS.includes(format)) {
+      const advance = normalizeAdvancePerGroup(event.advancePerGroup);
+      const qualifiers = grouped.groups.reduce(
+        (sum, item) => sum + Math.min(advance, (item.entries || []).length),
+        0
+      );
+      if (qualifiers < 4) {
+        return fail('双败淘汰阶段至少需要 4 名出线者，请增加出线人数或调整分组');
+      }
     }
     return {
       ok: true,

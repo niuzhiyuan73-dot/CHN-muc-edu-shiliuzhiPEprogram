@@ -22,9 +22,12 @@ const {
   knockoutBracket,
   derivePlacements,
   placementsFromBracket,
+  hasDoubleKnockout,
+  walkDoubleElim,
 } = require('../miniprogram/services/format-plan.js');
 const { eventMatchKey } = require('../miniprogram/services/draw.js');
 const { roundRobinRounds } = require('../miniprogram/utils/standings.js');
+const { standardSeedOrder, bracketSizeOf } = require('../miniprogram/utils/bracket.js');
 const {
   MATCH_STATUS,
   BRACKET_STAGE,
@@ -324,6 +327,211 @@ describe('placementsFromBracket —— 倒三角 5–8 名排位', () => {
     assert.equal(placementsFromBracket(event, { size: 8, slots: eightSlots() }, matches), null);
   });
 });
+
+describe('双败淘汰 —— 胜者组 / 败者组 / 总决赛', () => {
+  const draw4 = { size: 4, slots: ['p1', 'p2', 'p3', 'p4'] };
+
+  test('4 人走完：胜者组冠军一场不败夺冠，名次 1..4 不重不漏', () => {
+    const matches = [
+      mk('de1', 1, BRACKET_STAGE.WINNERS, 0, 'p1', 'p2', { winner: 'A' }),
+      mk('de1', 1, BRACKET_STAGE.WINNERS, 1, 'p3', 'p4', { winner: 'A' }),
+      mk('de1', 2, BRACKET_STAGE.WINNERS, 0, 'p1', 'p3', { winner: 'A' }),
+      mk('de1', 1, BRACKET_STAGE.LOSERS, 0, 'p2', 'p4', { winner: 'A' }),
+      mk('de1', 2, BRACKET_STAGE.LOSERS, 0, 'p2', 'p3', { winner: 'A' }),
+      mk('de1', 1, BRACKET_STAGE.GRAND_FINAL, 0, 'p1', 'p2', { winner: 'A' }),
+    ];
+
+    const state = walkDoubleElim({ eventId: 'de1', bracket: draw4, matches });
+    assert.equal(state.complete, true);
+    assert.equal(state.champion, 'p1');
+    assert.equal(state.runnerUp, 'p2');
+    assert.deepEqual(sortedMap(state.placements), [
+      ['p1', 1],
+      ['p2', 2],
+      ['p3', 3],
+      ['p4', 4],
+    ]);
+  });
+
+  test('败者组冠军先赢总决赛时，开了重赛要加赛一场', () => {
+    const base = doubleElimFour('de2', { final: 'B' });
+    const pending = walkDoubleElim({ eventId: 'de2', bracket: draw4, matches: base, gfReset: true });
+    assert.equal(pending.complete, false);
+    assert.deepEqual(
+      pending.schedule.map((step) => [step.stage, step.round]),
+      [[BRACKET_STAGE.GRAND_FINAL, 2]]
+    );
+
+    const done = walkDoubleElim({
+      eventId: 'de2',
+      bracket: draw4,
+      matches: base.concat([mk('de2', 2, BRACKET_STAGE.GRAND_FINAL, 0, 'p1', 'p2', { winner: 'B' })]),
+      gfReset: true,
+    });
+    assert.equal(done.complete, true);
+    assert.equal(done.champion, 'p2');
+    assert.equal(done.runnerUp, 'p1');
+  });
+
+  test('关掉重赛时，败者组冠军赢下总决赛一场即夺冠', () => {
+    const state = walkDoubleElim({
+      eventId: 'de3',
+      bracket: draw4,
+      matches: doubleElimFour('de3', { final: 'B' }),
+      gfReset: false,
+    });
+    assert.equal(state.complete, true);
+    assert.equal(state.champion, 'p2');
+    assert.equal(state.runnerUp, 'p1');
+  });
+
+  test('非 2 的幂人数轮空不打乱败者组，名次仍是 1..N', () => {
+    for (let n = 5; n <= 7; n += 1) {
+      const ids = Array.from({ length: n }, (_, index) => `u${index + 1}`);
+      const draw = slotsFor(ids);
+      assert.equal(hasDoubleKnockout(EVENT_FORMAT.DOUBLE_ELIM), true);
+      const { state } = playDoubleElim(`de-n${n}`, draw, () => 'A');
+      assert.deepEqual(
+        sortedMap(state.placements).map(([, place]) => place),
+        Array.from({ length: n }, (_, index) => index + 1),
+        `${n} 人的名次应当连续`
+      );
+      assert.equal(state.placements.has(null), false, '幽灵负者不该出现在名次里');
+    }
+  });
+
+  test('4–8 人任意胜负组合，名次都是 1..N 且没有幽灵', () => {
+    for (let n = 4; n <= 8; n += 1) {
+      const ids = Array.from({ length: n }, (_, index) => `u${index + 1}`);
+      const draw = slotsFor(ids);
+      const { state } = playDoubleElim(`de-any${n}`, draw, (a, b) => (a < b ? 'A' : 'B'));
+      const places = sortedMap(state.placements).map(([, place]) => place);
+      assert.deepEqual(places, Array.from({ length: n }, (_, index) => index + 1), `n=${n}`);
+      assert.equal(new Set(state.placements.keys()).size, n, `n=${n} 人数`);
+      assert.equal(state.placements.has(null), false, `n=${n} 无幽灵`);
+    }
+  });
+});
+
+describe('双败淘汰 —— 逐轮放行与复合赛制', () => {
+  test('先排胜者组，胜者组全打完后才排败者组', () => {
+    const event = { _id: 'de4', format: EVENT_FORMAT.DOUBLE_ELIM, gfReset: true };
+    const draw = { size: 4, slots: ['p1', 'p2', 'p3', 'p4'] };
+
+    const first = planStageMatches({ event, draw, matches: [] });
+    assert.deepEqual(first.rounds.map((step) => [step.stage, step.round]), [
+      [BRACKET_STAGE.WINNERS, 1],
+    ]);
+
+    const afterFirst = first.rounds.flatMap((step) => materialize('de4', step));
+    const second = planStageMatches({ event, draw, matches: afterFirst });
+    assert.deepEqual(second.rounds.map((step) => [step.stage, step.round]), [
+      [BRACKET_STAGE.WINNERS, 2],
+    ]);
+
+    const afterSecond = afterFirst.concat(second.rounds.flatMap((step) => materialize('de4', step)));
+    const third = planStageMatches({ event, draw, matches: afterSecond });
+    assert.deepEqual(third.rounds.map((step) => [step.stage, step.round]), [
+      [BRACKET_STAGE.LOSERS, 1],
+    ]);
+  });
+
+  test('小组赛+双败：小组全部打完后，出线者直接进双败胜者组', () => {
+    const event = {
+      _id: 'gd1',
+      format: EVENT_FORMAT.GROUP_DOUBLE_ELIM,
+      advancePerGroup: 2,
+      gfReset: true,
+    };
+    const draw = {
+      groups: [
+        { group: 0, entries: ['a1', 'a2'] },
+        { group: 1, entries: ['b1', 'b2'] },
+      ],
+    };
+
+    const groupPlan = planStageMatches({ event, draw, matches: [] });
+    assert.deepEqual(groupPlan.rounds.map((step) => step.stage), [
+      BRACKET_STAGE.GROUP,
+      BRACKET_STAGE.GROUP,
+    ]);
+
+    const afterGroups = groupPlan.rounds.flatMap((step) => materialize('gd1', step));
+    const knockout = planStageMatches({ event, draw, matches: afterGroups });
+    assert.equal(knockout.ok, true);
+    assert.equal(knockout.rounds[0].stage, BRACKET_STAGE.WINNERS);
+    assert.equal(knockout.rounds[0].pairs.length, 2);
+  });
+});
+
+describe('derivePlacements —— 双败名次推导', () => {
+  test('打完的双败赛事推得出 1..N', () => {
+    const event = { _id: 'de5', format: EVENT_FORMAT.DOUBLE_ELIM, gfReset: true };
+    const draw4 = { size: 4, slots: ['p1', 'p2', 'p3', 'p4'] };
+    const result = derivePlacements({ event, draw: draw4, matches: doubleElimFour('de5') });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.results, [
+      { userId: 'p1', placement: 1 },
+      { userId: 'p2', placement: 2 },
+      { userId: 'p3', placement: 3 },
+      { userId: 'p4', placement: 4 },
+    ]);
+  });
+
+  test('没打完时不给半截名次', () => {
+    const event = { _id: 'de6', format: EVENT_FORMAT.DOUBLE_ELIM, gfReset: true };
+    const draw4 = { size: 4, slots: ['p1', 'p2', 'p3', 'p4'] };
+    const result = derivePlacements({ event, draw: draw4, matches: [] });
+    assert.equal(result.ok, false);
+  });
+});
+
+/** 4 人双败的一整套比赛：p1 胜者组夺冠，p2 从败者组杀出（可用 final 改决赛胜负） */
+function doubleElimFour(eventId, { final = 'A' } = {}) {
+  return [
+    mk(eventId, 1, BRACKET_STAGE.WINNERS, 0, 'p1', 'p2', { winner: 'A' }),
+    mk(eventId, 1, BRACKET_STAGE.WINNERS, 1, 'p3', 'p4', { winner: 'A' }),
+    mk(eventId, 2, BRACKET_STAGE.WINNERS, 0, 'p1', 'p3', { winner: 'A' }),
+    mk(eventId, 1, BRACKET_STAGE.LOSERS, 0, 'p2', 'p4', { winner: 'A' }),
+    mk(eventId, 2, BRACKET_STAGE.LOSERS, 0, 'p2', 'p3', { winner: 'A' }),
+    mk(eventId, 1, BRACKET_STAGE.GRAND_FINAL, 0, 'p1', 'p2', { winner: final }),
+  ];
+}
+
+/** 由参赛名单推出标准签表（与 drawBracket 同一套排位，只是不洗牌） */
+function slotsFor(ids) {
+  const size = bracketSizeOf(ids.length);
+  const order = standardSeedOrder(size);
+  const byRank = new Array(size).fill(null);
+  ids.forEach((id, index) => {
+    byRank[index] = id;
+  });
+  return { size, slots: order.map((rank) => byRank[rank - 1]) };
+}
+
+/** 按给定胜负规则逐轮打完双败，返回最终状态与全部比赛 */
+function playDoubleElim(eventId, draw, decide, gfReset = true) {
+  const matches = [];
+  for (let guard = 0; guard < 100; guard += 1) {
+    const state = walkDoubleElim({ eventId, bracket: draw, matches, gfReset });
+    if (state.complete) return { state, matches };
+    assert.ok(state.schedule.length > 0, '双败推进不该卡住');
+    const step = state.schedule[0];
+    step.pairs.forEach(([a, b], slot) => {
+      if (!a || !b) return; // 轮空 / 幽灵签位不产生比赛
+      matches.push(mk(eventId, step.round, step.stage, slot, a, b, { winner: decide(a, b) }));
+    });
+  }
+  throw new Error('双败推进超出上限');
+}
+
+/** Map<userId, placement> 转成按名次排好的键值对数组 */
+function sortedMap(placements) {
+  return Array.from(placements, ([userId, placement]) => [userId, placement]).sort(
+    (a, b) => a[1] - b[1]
+  );
+}
 
 /** 八人签位的名字，按签位次序 */
 function eightSlots() {

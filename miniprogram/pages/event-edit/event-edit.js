@@ -32,6 +32,7 @@ const {
   DEFAULT_ADVANCE_PER_GROUP,
   EVENT_PLACEMENT_MODE,
   DEFAULT_PLACEMENT_MODE,
+  DEFAULT_GF_RESET,
   SEED_MODE,
   SEED_MODE_LABEL,
   SEED_COUNTS,
@@ -59,9 +60,17 @@ const MATCH_TYPE_LABELS = ['单打', '双打'];
 
 /**
  * 赛制下拉。仅单打赛事显示（决策 5：新赛制只做单打）。
- * 双败淘汰与复合赛制属第二批，这里先只列第一批的三种。
+ * 顺序按「由简到繁」：单败 → 循环 → 小组 → 各复合形态；前两项的下标
+ * 与旧版一致，老表单行为不受影响。
  */
-const FORMATS = [EVENT_FORMAT.SINGLE_ELIM, EVENT_FORMAT.ROUND_ROBIN, EVENT_FORMAT.GROUP_KNOCKOUT];
+const FORMATS = [
+  EVENT_FORMAT.SINGLE_ELIM,
+  EVENT_FORMAT.ROUND_ROBIN,
+  EVENT_FORMAT.GROUP_KNOCKOUT,
+  EVENT_FORMAT.ROUND_ROBIN_KNOCKOUT,
+  EVENT_FORMAT.DOUBLE_ELIM,
+  EVENT_FORMAT.GROUP_DOUBLE_ELIM,
+];
 const FORMAT_LABELS = FORMATS.map((format) => EVENT_FORMAT_LABEL[format]);
 
 /** 小组数下拉（仅小组赛显示）。取值固定为 GROUP_CONFIG 允许的档位 */
@@ -136,6 +145,8 @@ Page({
       groupCount: DEFAULT_GROUP_COUNT,
       advancePerGroup: DEFAULT_ADVANCE_PER_GROUP,
       placementMode: DEFAULT_PLACEMENT_MODE,
+      // 双败总决赛重赛：标准口径默认开启（决策 D3）
+      gfReset: DEFAULT_GF_RESET,
       level: null,
       bronzeMode: '',
       // 种子来源留空必须显式选；数量预填默认值（决策 2 / 3）
@@ -253,6 +264,11 @@ Page({
       'placementMode',
       event.detail.value ? EVENT_PLACEMENT_MODE.TOP8 : EVENT_PLACEMENT_MODE.NONE
     );
+  },
+
+  /** 双败总决赛重赛开关：勾上则败者组冠军赢了首场要加赛定冠军 */
+  onToggleGfReset(event) {
+    this.setField('gfReset', Boolean(event.detail.value));
   },
 
   onPickLevel(event) {

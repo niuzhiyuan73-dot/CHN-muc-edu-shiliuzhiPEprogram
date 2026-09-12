@@ -10,7 +10,8 @@
  *   单败：淘汰
  *   循环：循环（单组）
  *   小组：分组循环 → 淘汰
- *   双败：胜者组 → 败者组 → 总决赛（第二批实现）
+ *   双败：胜者组 → 败者组 → 总决赛
+ *   复合：分组循环 → （单败 / 双败）淘汰
  *
  * 于是「以上所有形式的复合」不是靠穷举组合，而是阶段序列自然串联的
  * 结果；加一种预设就是加一条分支。
@@ -34,6 +35,9 @@ const {
   EVENT_BRONZE_MODE,
   EVENT_PLACEMENT_MODE,
   DEFAULT_PLACEMENT_MODE,
+  GROUPED_FORMATS,
+  DOUBLE_ELIM_FORMATS,
+  DEFAULT_GF_RESET,
 } = require('../utils/constants.js');
 const { standardSeedOrder, bracketSizeOf } = require('../utils/bracket.js');
 const { DEFAULT_FORMAT } = require('../utils/match-format.js');
@@ -69,10 +73,16 @@ function buildInitialMatches(event, draw) {
   const slots = Array.isArray(draw.slots) ? draw.slots : [];
   return buildRoundMatches(event, {
     round: 1,
-    stage: BRACKET_STAGE.MAIN,
+    // 双败的首轮长在「胜者组」上，单败长在主签表上：stage 决定它归哪一区
+    stage: hasDoubleKnockout(format) ? BRACKET_STAGE.WINNERS : BRACKET_STAGE.MAIN,
     pairs: chunkPairs(slots),
     format: DEFAULT_FORMAT,
   });
+}
+
+/** 该赛制的主淘汰阶段是不是双败 */
+function hasDoubleKnockout(format) {
+  return DOUBLE_ELIM_FORMATS.includes(format);
 }
 
 /**
@@ -88,41 +98,33 @@ function planStageMatches({ event, draw, matches } = {}) {
   if (!event || !event._id || !draw) return { ok: false, rounds: [] };
   const list = Array.isArray(matches) ? matches : [];
   const format = formatOf(event);
+  const gfReset = event.gfReset === undefined ? DEFAULT_GF_RESET : Boolean(event.gfReset);
 
+  // 纯循环赛：没有淘汰阶段，只有一组一组地排
   if (format === EVENT_FORMAT.ROUND_ROBIN) {
     const rounds = planGroupPhase(event, draw, list);
     return { ok: rounds.length > 0, rounds };
   }
 
-  if (format === EVENT_FORMAT.GROUP_KNOCKOUT) {
+  // 复合赛：先分组循环，全部小组打完后才转淘汰阶段
+  if (GROUPED_FORMATS.includes(format)) {
     const groupRounds = planGroupPhase(event, draw, list);
     if (groupRounds.length > 0) return { ok: true, rounds: groupRounds };
 
     const bracket = knockoutBracket(event, draw, list);
     if (!bracket) return { ok: false, rounds: [] };
 
-    // 淘汰签表是推出来的，首轮尚未落到台账里；planNextRound 只管
-    // 「当前轮打完排下一轮」，所以首轮要在这里补出来
-    const byId = new Set(list.map((match) => match && match._id));
-    const firstPairs = chunkPairs(bracket.slots);
-    const missingFirst = firstPairs.some(
-      (pair, slot) =>
-        pair[0] && pair[1] && !byId.has(eventMatchKey(event._id, 1, BRACKET_STAGE.MAIN, slot))
-    );
-    if (missingFirst) {
-      return { ok: true, rounds: [{ round: 1, stage: BRACKET_STAGE.MAIN, pairs: firstPairs }] };
-    }
-
-    return planNextRound({
-      eventId: event._id,
-      draw: bracket,
-      matches: list,
-      bronzeMode: event.bronzeMode,
-      placementMode: event.placementMode,
-    });
+    return hasDoubleKnockout(format)
+      ? planDoubleElim({ event, bracket, matches: list, gfReset })
+      : planSingleKnockout(event, bracket, list);
   }
 
-  // 单败淘汰（双败淘汰在第二批接入前按单败处理其主签表）
+  // 纯双败淘汰
+  if (hasDoubleKnockout(format)) {
+    return planDoubleElim({ event, bracket: draw, matches: list, gfReset });
+  }
+
+  // 单败淘汰（兼容锚点，一个字不改）
   return planNextRound({
     eventId: event._id,
     draw,
@@ -130,6 +132,260 @@ function planStageMatches({ event, draw, matches } = {}) {
     bronzeMode: event.bronzeMode,
     placementMode: event.placementMode,
   });
+}
+
+/**
+ * 小组出线后的单败淘汰：签表由小组结果推出，首轮要在这里补出来。
+ *
+ * @param {Object} event
+ * @param {{size:number, slots:Array<string|null>}} bracket
+ * @param {Array<Object>} list 已有比赛
+ * @returns {{ok:boolean, rounds:Array<Object>}}
+ */
+function planSingleKnockout(event, bracket, list) {
+  const byId = new Set(list.map((match) => match && match._id));
+  const firstPairs = chunkPairs(bracket.slots);
+  const missingFirst = firstPairs.some(
+    (pair, slot) =>
+      pair[0] && pair[1] && !byId.has(eventMatchKey(event._id, 1, BRACKET_STAGE.MAIN, slot))
+  );
+  if (missingFirst) {
+    return { ok: true, rounds: [{ round: 1, stage: BRACKET_STAGE.MAIN, pairs: firstPairs }] };
+  }
+
+  return planNextRound({
+    eventId: event._id,
+    draw: bracket,
+    matches: list,
+    bronzeMode: event.bronzeMode,
+    placementMode: event.placementMode,
+  });
+}
+
+/* ============================================================
+ * 双败淘汰
+ * ============================================================
+ * 双败的结构可以拆成三块，全部由已有比赛确定性重推：
+ *
+ *   胜者组（wb）：标准单败。第 r 轮的负者掉进败者组。
+ *   败者组（lb）：奇数轮把败者组内部的两两消化掉，偶数轮接住胜者组
+ *                 刚掉下来的人。共 2R−2 轮（R 为胜者组轮数）。
+ *   总决赛（gf）：胜者组冠军 对 败者组冠军。开了重赛时，胜者组冠军
+ *                 先记 1:0——若首场输给败者组冠军，加赛一场定冠军。
+ *
+ * 【为什么要一次走完，而不是分阶段各排各的】
+ * 败者组每一轮的对阵都依赖上一轮结果与胜者组掉下来的人，任何一环没
+ * 打完，后面就无从谈起。所以这里从头走一遍，遇到第一个「该排却没排」
+ * 的轮次就停下来把它交给调用方，遇到「排了还没打完」就安静收手。
+ * ============================================================ */
+
+/**
+ * 把一轮的对阵还原成胜负。
+ *
+ * 【轮空为什么要记一个「空负者」】
+ * 签表补到 2 的幂，人数不满时首轮会出现空位。双败的败者组靠「每轮固定
+ * 几个负者往下走」维持结构，若轮空不产生负者，败者组各轮人数就会对不
+ * 上（第 2 轮该接住 2 个落败者，实际只掉下来 1 个）。所以这里把空位当成
+ * 一个「幽灵选手」：它照样占一个负者位、照样往后传递，只是到算名次时
+ * 统一滤掉（见 doubleElimPlacements）。这样 5 / 6 / 7 人也能排出正确的
+ * 双败签表，而不必强求人数正好是 4 / 8 / 16。
+ *
+ * 缺记录时 missing 为真——这一轮就是「该排还没排」的那一轮。空位不产生
+ * 比赛，因此不会让 missing 为真。
+ *
+ * @param {string} eventId
+ * @param {number} round
+ * @param {string} stage
+ * @param {Array<Array<string|null>>} pairs
+ * @param {Map<string, Object>} byId
+ * @returns {{decided:boolean, missing:boolean, winners:Array<string|null>, losers:Array<string|null>}}
+ */
+function resolvePairs(eventId, round, stage, pairs, byId) {
+  const winners = [];
+  const losers = [];
+  let decided = true;
+  let missing = false;
+
+  pairs.forEach((pair, slot) => {
+    const a = pair && pair[0];
+    const b = pair && pair[1];
+    if (!a && !b) {
+      // 空位对空位：幽灵之间的「比赛」，只用来占住结构上的一个位置
+      winners.push(null);
+      losers.push(null);
+      return;
+    }
+    if (!a || !b) {
+      // 一方轮空：在签的一方不战而胜；空位记为空负者，把幽灵顺下去
+      winners.push(a || b);
+      losers.push(null);
+      return;
+    }
+    const match = byId.get(eventMatchKey(eventId, round, stage, slot));
+    if (!match) {
+      missing = true;
+      decided = false;
+      return;
+    }
+    if (match.status !== MATCH_STATUS.ACTIVE || !match.winner) {
+      decided = false;
+      return;
+    }
+    winners.push(match.winner === 'A' ? a : b);
+    losers.push(match.winner === 'A' ? b : a);
+  });
+
+  return { decided, missing, winners, losers };
+}
+
+/**
+ * 从头走一遍双败签表，返回当前状态。
+ *
+ * @param {Object} params
+ * @param {string} params.eventId
+ * @param {{size:number, slots:Array<string|null>}} params.bracket
+ * @param {Array<Object>} [params.matches]
+ * @param {boolean} [params.gfReset=true]
+ * @returns {Object} 见函数内 state 结构
+ */
+function walkDoubleElim({ eventId, bracket, matches, gfReset = DEFAULT_GF_RESET } = {}) {
+  const byId = new Map((Array.isArray(matches) ? matches : []).map((m) => [m && m._id, m]));
+  const slots = bracket && Array.isArray(bracket.slots) ? bracket.slots : [];
+  const size = Number(bracket && bracket.size) || slots.length;
+  const rounds = Math.round(Math.log2(size));
+  const state = {
+    size,
+    rounds,
+    wb: [],
+    lb: [],
+    gf: null,
+    // 该排却没排的轮次，按先后顺序
+    schedule: [],
+    complete: false,
+    champion: null,
+    runnerUp: null,
+    placements: null,
+  };
+  // 双败至少要 4 人（胜者组两轮）才谈得上「败者组」
+  if (!(rounds >= 2)) return state;
+
+  // ---------- 胜者组 ----------
+  let entrants = slots.slice();
+  for (let round = 1; round <= rounds; round += 1) {
+    const pairs = chunkPairs(entrants);
+    const res = resolvePairs(eventId, round, BRACKET_STAGE.WINNERS, pairs, byId);
+    state.wb.push({ round, pairs, ...res });
+    if (res.missing) {
+      state.schedule.push({ round, stage: BRACKET_STAGE.WINNERS, pairs });
+      return state;
+    }
+    if (!res.decided) return state;
+    entrants = res.winners;
+  }
+
+  // ---------- 败者组 ----------
+  const lbRounds = 2 * rounds - 2;
+  let lbEntrants = state.wb[0].losers;
+  for (let round = 1; round <= lbRounds; round += 1) {
+    let pairs;
+    if (round % 2 === 1) {
+      // 奇数轮：败者组幸存者内部两两消化（第 1 轮则是胜者组首轮的负者）
+      pairs = chunkPairs(lbEntrants);
+    } else {
+      // 偶数轮：胜者组该轮掉下来的人，与败者组幸存者一一对位
+      const droppers = state.wb[round / 2].losers;
+      pairs = lbEntrants.map((id, index) => [id, droppers[index] === undefined ? null : droppers[index]]);
+    }
+    const res = resolvePairs(eventId, round, BRACKET_STAGE.LOSERS, pairs, byId);
+    state.lb.push({ round, pairs, ...res });
+    if (res.missing) {
+      state.schedule.push({ round, stage: BRACKET_STAGE.LOSERS, pairs });
+      return state;
+    }
+    if (!res.decided) return state;
+    lbEntrants = res.winners;
+  }
+
+  // ---------- 总决赛 ----------
+  const wbChamp = state.wb[rounds - 1].winners[0];
+  const lbChamp = state.lb[lbRounds - 1].winners[0];
+  const gfPairs = [[wbChamp, lbChamp]];
+  const gfRes = resolvePairs(eventId, 1, BRACKET_STAGE.GRAND_FINAL, gfPairs, byId);
+  state.gf = { pairs: gfPairs, ...gfRes };
+  if (gfRes.missing) {
+    state.schedule.push({ round: 1, stage: BRACKET_STAGE.GRAND_FINAL, pairs: gfPairs });
+    return state;
+  }
+  if (!gfRes.decided) return state;
+
+  const firstWinner = gfRes.winners[0];
+  if (firstWinner === wbChamp || !gfReset) {
+    // 胜者组冠军赢下首场，或压根不开重赛：一场定胜负
+    state.champion = firstWinner;
+    state.runnerUp = firstWinner === wbChamp ? lbChamp : wbChamp;
+  } else {
+    // 败者组冠军赢了首场：加赛一场（胜者组冠军「先记 1:0」的等价实现）
+    const resetPairs = [[wbChamp, lbChamp]];
+    const resetRes = resolvePairs(eventId, 2, BRACKET_STAGE.GRAND_FINAL, resetPairs, byId);
+    state.gf.reset = { pairs: resetPairs, ...resetRes };
+    if (resetRes.missing) {
+      state.schedule.push({ round: 2, stage: BRACKET_STAGE.GRAND_FINAL, pairs: resetPairs });
+      return state;
+    }
+    if (!resetRes.decided) return state;
+    const resetWinner = resetRes.winners[0];
+    state.champion = resetWinner;
+    state.runnerUp = resetWinner === wbChamp ? lbChamp : wbChamp;
+  }
+
+  state.placements = doubleElimPlacements(state);
+  state.complete = true;
+  return state;
+}
+
+/**
+ * 双败的名次：冠军 1、亚军 2，其余按「在败者组第几轮被淘汰」从后往前排。
+ *
+ * 【为什么按淘汰轮次倒着排】
+ * 越晚被淘汰名次越好。败者组最后一轮的负者是最接近决赛的人（第 3 名），
+ * 再往前一轮的负者第 4，依此类推。双败里每个人恰好输两次才出局，因此
+ * 这样排出来正好是不重不漏的 1..N。同一轮内的若干负者名次相邻。
+ *
+ * 轮空产生的「幽灵负者」（null）不是人，先滤掉再顺次编号——滤掉后名次
+ * 天然连续，不需要再去补空洞。
+ *
+ * @param {Object} state walkDoubleElim 的状态
+ * @returns {Map<string, number>}
+ */
+function doubleElimPlacements(state) {
+  const placements = new Map();
+  placements.set(state.champion, 1);
+  placements.set(state.runnerUp, 2);
+  const order = [];
+  for (let index = state.lb.length - 1; index >= 0; index -= 1) {
+    state.lb[index].losers.forEach((id) => {
+      if (id) order.push(id);
+    });
+  }
+  order.forEach((id, index) => placements.set(id, index + 3));
+  return placements;
+}
+
+/**
+ * 双败淘汰的阶段派发：只把「下一批该排的轮次」交出去。
+ *
+ * @param {Object} params
+ * @param {Object} params.event
+ * @param {{size:number, slots:Array<string|null>}} params.bracket
+ * @param {Array<Object>} [params.matches]
+ * @param {boolean} [params.gfReset]
+ * @returns {{ok:boolean, rounds:Array<Object>}}
+ */
+function planDoubleElim({ event, bracket, matches, gfReset = DEFAULT_GF_RESET } = {}) {
+  if (!event || !event._id || !bracket) return { ok: false, rounds: [] };
+  const state = walkDoubleElim({ eventId: event._id, bracket, matches, gfReset });
+  if (state.schedule.length === 0) return { ok: false, rounds: [] };
+  return { ok: true, rounds: state.schedule };
 }
 
 /**
@@ -258,8 +514,17 @@ function derivePlacements({ event, draw, matches } = {}) {
     return { ok: true, results: rows.map((row) => ({ userId: row.id, placement: row.rank })), message: '' };
   }
 
-  if (format === EVENT_FORMAT.GROUP_KNOCKOUT) {
+  if (GROUPED_FORMATS.includes(format)) {
     return deriveGroupedPlacements(event, draw, list);
+  }
+
+  if (hasDoubleKnockout(format)) {
+    const gfReset = event.gfReset === undefined ? DEFAULT_GF_RESET : Boolean(event.gfReset);
+    const state = walkDoubleElim({ eventId: event._id, bracket: draw, matches: list, gfReset });
+    if (!state.complete || !state.placements) {
+      return { ok: false, results: [], message: '比赛还没打完，名次尚未确定' };
+    }
+    return { ok: true, results: sortedResults(state.placements), message: '' };
   }
 
   if (format === EVENT_FORMAT.SINGLE_ELIM) {
@@ -289,7 +554,14 @@ function deriveGroupedPlacements(event, draw, matches) {
     return { ok: false, results: [], message: '小组赛还没打完，名次尚未确定' };
   }
 
-  const knockout = placementsFromBracket(event, bracket, matches);
+  let knockout;
+  if (hasDoubleKnockout(formatOf(event))) {
+    const gfReset = event.gfReset === undefined ? DEFAULT_GF_RESET : Boolean(event.gfReset);
+    const state = walkDoubleElim({ eventId: event._id, bracket, matches, gfReset });
+    knockout = state.complete ? state.placements : null;
+  } else {
+    knockout = placementsFromBracket(event, bracket, matches);
+  }
   if (!knockout) {
     return { ok: false, results: [], message: '淘汰赛还没打完，名次尚未确定' };
   }
@@ -432,6 +704,13 @@ function placementsFromBracket(event, bracket, matches) {
   return placements;
 }
 
+/** 把 Map<userId, placement> 转成按名次排好的 results */
+function sortedResults(placements) {
+  return Array.from(placements, ([userId, placement]) => ({ userId, placement })).sort(
+    (a, b) => a.placement - b.placement
+  );
+}
+
 /** 把一场排位赛的胜者与负者分别写到两个名次上 */
 function assignments(match, pair, placements, winnerPlacement, loserPlacement) {
   placements.set(match.winner === 'A' ? pair[0] : pair[1], winnerPlacement);
@@ -482,7 +761,13 @@ module.exports = {
   buildInitialMatches,
   planStageMatches,
   planGroupPhase,
+  planSingleKnockout,
   knockoutBracket,
   derivePlacements,
   placementsFromBracket,
+  hasDoubleKnockout,
+  planDoubleElim,
+  walkDoubleElim,
+  doubleElimPlacements,
+  sortedResults,
 };

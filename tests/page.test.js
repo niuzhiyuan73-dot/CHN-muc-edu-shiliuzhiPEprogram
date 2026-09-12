@@ -1657,6 +1657,77 @@ test('发布赛事 —— 切到双打会把赛制收回单败淘汰', () => {
   assert.strictEqual(page.data.formatIndex, 0);
 });
 
+test('发布赛事 —— 选双败淘汰：可关掉总决赛重赛，组数与三四名留空', async () => {
+  loginAs(STAFF);
+  const page = instantiate(eventEditConfig);
+  page.onLoad();
+
+  page.onInputTitle({ detail: { value: '双败测试' } });
+  page.onPickFormat({ detail: { value: '4' } }); // 下拉第 5 项 = 双败淘汰
+  page.onToggleGfReset({ detail: { value: false } });
+  page.onPickLevel({ detail: { value: '1' } });
+  page.onPickSeedMode({ detail: { value: '1' } });
+  page.onPickDate({ detail: { value: '2026-06-10' } });
+  page.onPickTime({ detail: { value: '09:00' } });
+  page.onInputQuota({ detail: { value: '8' } });
+
+  await page.onSubmit();
+
+  const created = (await facade.getEvents()).find((item) => item.title === '双败测试');
+  assert.ok(created, '双败赛事应当落库');
+  assert.strictEqual(created.format, EVENT_FORMAT.DOUBLE_ELIM);
+  assert.strictEqual(created.gfReset, false, '关掉重赛要落库');
+  assert.strictEqual(created.groupCount, null, '双败不分组，不落组数');
+  assert.strictEqual(created.advancePerGroup, null);
+  assert.strictEqual(created.bronzeMode, null, '双败名次由败者组排出，没有三四名赛');
+  assert.strictEqual(created.placementMode, EVENT_PLACEMENT_MODE.NONE);
+});
+
+test('发布赛事 —— 小组赛+双败：出线人数不足 4 人时挡下不落库', async () => {
+  loginAs(STAFF);
+  const page = instantiate(eventEditConfig);
+  page.onLoad();
+
+  page.onInputTitle({ detail: { value: '双败人不够' } });
+  page.onPickFormat({ detail: { value: '5' } }); // 下拉第 6 项 = 小组赛+双败
+  page.onPickGroupCount({ detail: { value: '0' } }); // 2 组
+  page.onPickAdvance({ detail: { value: '0' } }); // 每组出线 1 人 → 共 2 人
+  page.onPickLevel({ detail: { value: '1' } });
+  page.onPickSeedMode({ detail: { value: '1' } });
+  page.onPickDate({ detail: { value: '2026-06-10' } });
+  page.onPickTime({ detail: { value: '09:00' } });
+
+  await page.onSubmit();
+
+  assert.ok(page.data.errors.advancePerGroup, '要给出线人数一条错误提示');
+  const created = (await facade.getEvents()).find((item) => item.title === '双败人不够');
+  assert.strictEqual(created, undefined, '排不出败者组，不该落库');
+});
+
+test('发布赛事 —— 小组赛+双败：2 组出线 2 人（共 4 人）正常落库', async () => {
+  loginAs(STAFF);
+  const page = instantiate(eventEditConfig);
+  page.onLoad();
+
+  page.onInputTitle({ detail: { value: '小组双败测试' } });
+  page.onPickFormat({ detail: { value: '5' } });
+  page.onPickGroupCount({ detail: { value: '0' } }); // 2 组
+  page.onPickAdvance({ detail: { value: '1' } }); // 每组出线 2 人
+  page.onPickLevel({ detail: { value: '1' } });
+  page.onPickSeedMode({ detail: { value: '1' } });
+  page.onPickDate({ detail: { value: '2026-06-10' } });
+  page.onPickTime({ detail: { value: '09:00' } });
+
+  await page.onSubmit();
+
+  const created = (await facade.getEvents()).find((item) => item.title === '小组双败测试');
+  assert.ok(created, '小组赛+双败应当落库');
+  assert.strictEqual(created.format, EVENT_FORMAT.GROUP_DOUBLE_ELIM);
+  assert.strictEqual(created.groupCount, 2);
+  assert.strictEqual(created.advancePerGroup, 2);
+  assert.strictEqual(created.gfReset, true, '重赛默认开启');
+});
+
 test('录入名次 —— 未登录时整页挡住，不给名单', async () => {
   loginAs();
   const created = await publishTestEvent();

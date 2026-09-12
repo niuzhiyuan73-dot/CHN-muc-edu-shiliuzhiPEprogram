@@ -1262,6 +1262,66 @@ describe('mock 数据源 —— 赛事闭环', () => {
   );
 
   test(
+    '双败淘汰 —— 胜者组→败者组→总决赛逐轮推进，4 人共 6 场',
+    withCleanStore(async () => {
+      const members = await mock.getMembers();
+      const players = members.slice(0, 4).map((m) => m._id);
+      const host = players[0];
+
+      const { record } = await mock.publishEvent(
+        eventDraft({ format: EVENT_FORMAT.DOUBLE_ELIM, seedCount: 2 }),
+        host
+      );
+      const id = record._id;
+      assert.equal(record.gfReset, true, '双败默认开启总决赛重赛');
+      for (const userId of players) await mock.signUpEvent(id, userId);
+
+      const drawn = await mock.drawEvent(id, host, { seedValue: 7 });
+      assert.equal(drawn.ok, true, drawn.message);
+      await mock.startEvent(id, host);
+      assert.equal(drawn.matches.length, 2, '4 人双败首轮排两场');
+      assert.ok(
+        drawn.matches.every((m) => m.stage === BRACKET_STAGE.WINNERS),
+        '双败的落败者要先在胜者组里打出来'
+      );
+
+      for (let guard = 0; guard < 16; guard += 1) {
+        const pending = (await mock.getMatchRecords({ eventId: id })).filter(
+          (m) => m.status === MATCH_STATUS.PENDING && m.teamA[0] && m.teamB[0]
+        );
+        if (pending.length === 0) break;
+        for (const match of pending) {
+          const scored = await mock.submitMatch({
+            id: match._id,
+            scoreA: ['11', '11'],
+            scoreB: ['3', '5'],
+            actor: match.teamA[0],
+          });
+          assert.equal(scored.ok, true, scored.firstError);
+          const confirmed = await mock.confirmMatch(match._id, match.teamB[0]);
+          assert.equal(confirmed.ok, true, confirmed.message);
+        }
+      }
+
+      const all = await mock.getMatchRecords({ eventId: id });
+      assert.equal(all.length, 6, '4 人双败共 2n−2 = 6 场');
+      assert.ok(all.every((m) => m.status === MATCH_STATUS.ACTIVE), '全部已生效');
+      const stages = new Set(all.map((m) => m.stage));
+      assert.ok(stages.has(BRACKET_STAGE.WINNERS), '有胜者组比赛');
+      assert.ok(stages.has(BRACKET_STAGE.LOSERS), '有败者组比赛');
+      assert.ok(stages.has(BRACKET_STAGE.GRAND_FINAL), '有总决赛');
+
+      const finished = await mock.finishEvent(
+        id,
+        players.map((userId, index) => ({ userId, placement: index + 1 })),
+        host
+      );
+      assert.equal(finished.ok, true, finished.firstError);
+      assert.equal(finished.record.results.length, 4);
+    })
+  );
+
+  test(
     '取消报名 —— 只置状态不删记录，重新报名落回同一条',
     withCleanStore(async () => {
       const me = await getManager();

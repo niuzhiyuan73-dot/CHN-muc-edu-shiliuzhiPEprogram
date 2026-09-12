@@ -267,10 +267,12 @@ const BRACKET_STAGE = {
 /**
  * 赛事赛制。
  *
- *   single_elim    —— 单败淘汰（历史缺省，抽签引擎原先唯一支持的形态）
- *   round_robin    —— 循环赛：单人成组，人人与所有人交手
- *   group_knockout —— 小组循环 + 单败淘汰（复合赛制的第一种）
- *   double_elim    —— 双败淘汰：胜者组 / 败者组 / 总决赛
+ *   single_elim          —— 单败淘汰（历史缺省，抽签引擎原先唯一支持的形态）
+ *   round_robin          —— 循环赛：单人成组，人人与所有人交手
+ *   group_knockout       —— 小组循环 + 单败淘汰（复合赛制的第一种）
+ *   round_robin_knockout —— 循环赛 + 单败淘汰（小组赛只有一个组时的形态）
+ *   double_elim          —— 双败淘汰：胜者组 / 败者组 / 总决赛
+ *   group_double_elim    —— 小组循环 + 双败淘汰（复合赛制）
  *
  * 【为什么是「赛制」而不是继续加布尔开关】
  * 复合赛制（小组打完接着淘汰）要求把多个阶段按顺序串起来。若用开关去拼，
@@ -281,28 +283,75 @@ const EVENT_FORMAT = {
   SINGLE_ELIM: 'single_elim',
   ROUND_ROBIN: 'round_robin',
   GROUP_KNOCKOUT: 'group_knockout',
+  ROUND_ROBIN_KNOCKOUT: 'round_robin_knockout',
   DOUBLE_ELIM: 'double_elim',
+  GROUP_DOUBLE_ELIM: 'group_double_elim',
 };
 
 const EVENT_FORMAT_LABEL = {
   [EVENT_FORMAT.SINGLE_ELIM]: '单败淘汰',
   [EVENT_FORMAT.ROUND_ROBIN]: '循环赛',
   [EVENT_FORMAT.GROUP_KNOCKOUT]: '小组赛+淘汰',
+  [EVENT_FORMAT.ROUND_ROBIN_KNOCKOUT]: '循环赛+淘汰',
   [EVENT_FORMAT.DOUBLE_ELIM]: '双败淘汰',
+  [EVENT_FORMAT.GROUP_DOUBLE_ELIM]: '小组赛+双败',
 };
 
 /** 历史赛事没有 format 字段，按单败淘汰处理——缺省即旧行为 */
 const DEFAULT_EVENT_FORMAT = EVENT_FORMAT.SINGLE_ELIM;
 
 /** 需要分组的赛制（小组数 / 出线人数只对这些有意义） */
-const GROUPED_FORMATS = [EVENT_FORMAT.ROUND_ROBIN, EVENT_FORMAT.GROUP_KNOCKOUT];
+const GROUPED_FORMATS = [
+  EVENT_FORMAT.ROUND_ROBIN,
+  EVENT_FORMAT.GROUP_KNOCKOUT,
+  EVENT_FORMAT.ROUND_ROBIN_KNOCKOUT,
+  EVENT_FORMAT.GROUP_DOUBLE_ELIM,
+];
 
-/** 会产生淘汰签表的赛制（倒三角排位赛只对这些有意义） */
+/** 组数可配置（2 / 4 组）的赛制：循环类恒为单组，不需要这个参数 */
+const GROUP_COUNT_FORMATS = [EVENT_FORMAT.GROUP_KNOCKOUT, EVENT_FORMAT.GROUP_DOUBLE_ELIM];
+
+/** 出线人数可配置的赛制（单组循环赛取前 N 名进淘汰，N 由这里给） */
+const ADVANCE_FORMATS = [
+  EVENT_FORMAT.GROUP_KNOCKOUT,
+  EVENT_FORMAT.ROUND_ROBIN_KNOCKOUT,
+  EVENT_FORMAT.GROUP_DOUBLE_ELIM,
+];
+
+/**
+ * 主淘汰阶段是「单败」的赛制。
+ *
+ * 三四名赛与 5–8 名排位赛都长在单败主签表上：半决赛负者打季军赛、八强
+ * 负者打排位赛。双败淘汰有自己的名次体系（人人排出 1..N），用不上它们。
+ */
 const KNOCKOUT_FORMATS = [
   EVENT_FORMAT.SINGLE_ELIM,
   EVENT_FORMAT.GROUP_KNOCKOUT,
-  EVENT_FORMAT.DOUBLE_ELIM,
+  EVENT_FORMAT.ROUND_ROBIN_KNOCKOUT,
 ];
+
+/**
+ * 主淘汰阶段是「双败」的赛制。
+ * 总决赛重赛开关只对它们有意义（见 services/format-plan.js）。
+ */
+const DOUBLE_ELIM_FORMATS = [
+  EVENT_FORMAT.DOUBLE_ELIM,
+  EVENT_FORMAT.GROUP_DOUBLE_ELIM,
+];
+
+/**
+ * 名次由赛制自动推导为 1..N 的赛制。
+ *
+ * 循环赛按积分表排、双败按淘汰轮次排，名次天然包含第 4 名甚至更靠后，
+ * 名次校验对它们走「阶梯」口径，不再套三四名成对规则（见 event.validatePlacements）。
+ */
+const LADDER_FORMATS = [...GROUPED_FORMATS, ...DOUBLE_ELIM_FORMATS];
+
+/**
+ * 双败总决赛是否默认启用「重赛」。
+ * 决策 D3：标准口径——胜者组冠军先记 1:0，若输给败者组冠军则加赛一场。
+ */
+const DEFAULT_GF_RESET = true;
 
 /**
  * 「八强倒三角」5–8 名排位赛的开关。
@@ -325,8 +374,8 @@ const DEFAULT_PLACEMENT_MODE = EVENT_PLACEMENT_MODE.NONE;
 
 /** 小组赛的可选参数 */
 const GROUP_CONFIG = {
-  COUNT_OPTIONS: [2, 4],
-  ADVANCE_OPTIONS: [1, 2],
+  COUNT_OPTIONS: [2, 4, 8],
+  ADVANCE_OPTIONS: [1, 2, 3, 4],
 };
 
 /** 缺省小组数 / 每组出线人数（4 人一组、每组前 2 出线是最常见的青少年赛制） */
@@ -558,7 +607,12 @@ module.exports = {
   EVENT_FORMAT_LABEL,
   DEFAULT_EVENT_FORMAT,
   GROUPED_FORMATS,
+  GROUP_COUNT_FORMATS,
+  ADVANCE_FORMATS,
   KNOCKOUT_FORMATS,
+  DOUBLE_ELIM_FORMATS,
+  LADDER_FORMATS,
+  DEFAULT_GF_RESET,
   EVENT_PLACEMENT_MODE,
   EVENT_PLACEMENT_MODE_LABEL,
   DEFAULT_PLACEMENT_MODE,

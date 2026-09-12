@@ -24,6 +24,8 @@ const {
   planNextRound,
   buildRoundMatches,
   canRedraw,
+  normalizeGroupCount,
+  normalizeAdvancePerGroup,
 } = require('../miniprogram/services/draw.js');
 const {
   MATCH_TYPE,
@@ -429,6 +431,24 @@ describe('planDraw —— 循环 / 小组赛改走分组排期', () => {
     const a = planDraw({ event, signups, members, seedValue: 42 });
     const b = planDraw({ event, signups, members, seedValue: 42 });
     assert.deepEqual(a.groups, b.groups);
+  });
+
+  test('小组数可选 8 组，出线人数可选 4 人', () => {
+    const many = Array.from({ length: 8 }, (_, index) =>
+      member(`u${index + 1}`, { elo: 2000 - index * 10 })
+    );
+    const plan = planDraw({
+      event: singlesEvent({ format: EVENT_FORMAT.GROUP_KNOCKOUT, groupCount: 8 }),
+      signups: many.map((item) => signup(item._id)),
+      members: many,
+      seedValue: 5,
+    });
+
+    assert.equal(plan.ok, true);
+    assert.equal(plan.groups.length, 8, '8 人恰好一人一组');
+    assert.equal(normalizeGroupCount(8), 8);
+    assert.equal(normalizeAdvancePerGroup(4), 4);
+    assert.equal(normalizeAdvancePerGroup(9), 2, '越界回落到缺省');
   });
 });
 

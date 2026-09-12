@@ -41,7 +41,7 @@ const {
   isRankable,
 } = require('../utils/constants.js');
 const { computeStandings } = require('../utils/standings.js');
-const { derivePlacements } = require('./format-plan.js');
+const { derivePlacements, hasDoubleKnockout } = require('./format-plan.js');
 const { getPoolRating } = require('../utils/rating.js');
 const { buildLeaderboard } = require('../utils/leaderboard.js');
 const { formatDate, formatDateTime, formatPercent, formatScore } = require('../utils/format.js');
@@ -107,6 +107,21 @@ function formatOf(event) {
 /** 是否循环 / 小组这类「先打小组、名次由战绩算」的赛制 */
 function isGroupedFormat(event) {
   return GROUPED_FORMATS.includes(formatOf(event));
+}
+
+/** 主淘汰阶段是不是双败（要分区显示胜者组 / 败者组 / 总决赛） */
+function isDoubleElimFormat(event) {
+  return hasDoubleKnockout(formatOf(event));
+}
+
+/**
+ * 名次能不能由赛制自动推出来。
+ *
+ * 循环 / 小组按积分表排，双败按淘汰轮次排，两类都能预填；单败淘汰要
+ * 管理员手工录。这个判断在名次页有几处用途，统一在这里说一次。
+ */
+function hasAutoPlacements(event) {
+  return isGroupedFormat(event) || isDoubleElimFormat(event);
 }
 
 /**
@@ -411,13 +426,16 @@ function roundLabelOf(round, totalRounds, stage) {
   if (stage === BRACKET_STAGE.GRAND_FINAL) return '总决赛';
   if (stage === BRACKET_STAGE.PLACEMENT) return '5–8 名排位赛';
   const value = Number(round);
-  // 循环 / 小组 / 胜者组 / 败者组的「第几轮」没有「离决赛还有几轮」的含义，
-  // 只看数字叫；正赛仍按原口径从最后一轮倒着数
-  if (
-    stage === BRACKET_STAGE.GROUP ||
-    stage === BRACKET_STAGE.WINNERS ||
-    stage === BRACKET_STAGE.LOSERS
-  ) {
+  // 胜者组 / 败者组各自从第 1 轮数起，两边的「第 1 轮」是两轮不同的比赛，
+  // 必须带区名，否则签表上会出现两个一模一样的「第 1 轮」
+  if (stage === BRACKET_STAGE.WINNERS || stage === BRACKET_STAGE.LOSERS) {
+    const zone = stage === BRACKET_STAGE.WINNERS ? '胜者组' : '败者组';
+    if (!Number.isFinite(value) || value < 1) return `${zone} · 轮次待定`;
+    return `${zone} · 第 ${value} 轮`;
+  }
+  // 循环 / 小组的「第几轮」没有「离决赛还有几轮」的含义，只看数字叫；
+  // 正赛仍按原口径从最后一轮倒着数
+  if (stage === BRACKET_STAGE.GROUP) {
     if (!Number.isFinite(value) || value < 1) return '轮次待定';
     return `第 ${value} 轮`;
   }
@@ -508,12 +526,16 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
   const eventId = event && event._id;
   const eventRecords = asArray(records).filter((record) => record && record.eventId === eventId);
   const grouped = isGroupedFormat(event);
+  const doubleElim = isDoubleElimFormat(event);
   const format = formatOf(event);
   // 有 draw 就以签表大小为准；种子里的老赛事没有 draw，退而按最大轮次反推。
   // 小组 / 循环赛的 draw 没有签表大小，淘汰阶段的轮次得从主签表的比赛反推
   const totalRounds = grouped
     ? maxRoundOf(eventRecords.filter((record) => record && record.stage !== BRACKET_STAGE.GROUP))
     : totalRoundsOf(event && event.draw) || maxRoundOf(eventRecords);
+  // 多阶段赛制（分组、双败）要按「阶段优先」排：否则双败的总决赛轮次是 1，
+  // 会排到第 2 轮的胜者组之前；小组赛的各组也会和淘汰赛同轮号交错
+  const stageFirst = grouped || doubleElim;
   const nameOf = (id) => (id ? (memberMap.get(id) || {}).nickName || id : '待定');
 
   // 录分的权限要和真正写入时一致：只认参赛者本人，或管理员代录
@@ -525,9 +547,9 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
   return eventRecords
     .slice()
     .sort((a, b) => {
-      // 小组 / 循环赛先按阶段分区（小组赛全部排完再排淘汰赛），否则各组的
-      // 第 1 轮会和淘汰赛第 1 轮按同一个 round 值交错在一起
-      if (grouped) {
+      // 多阶段赛制先按阶段分区（小组赛全部排完再排淘汰赛、胜者组→败者组→
+      // 总决赛），否则各组的第 1 轮会和淘汰赛第 1 轮按同一个 round 值交错
+      if (stageFirst) {
         return (
           stageOrder(a.stage) - stageOrder(b.stage) ||
           Number(a.group || 0) - Number(b.group || 0) ||
@@ -847,9 +869,9 @@ async function loadEventPlacementView(eventId, options = {}) {
       : '赛事开始后才能录入名次，请先在详情页把赛事设为「进行中」';
   }
 
-  // 循环 / 小组赛的名次是算出来的：把推导结果预填进输入框，管理员在上面
-  // 微调即可。没打完时推导失败，输入框留空，由提示文案说明原因。
-  const derived = isGroupedFormat(event)
+  // 循环 / 小组 / 双败的名次是算出来的：把推导结果预填进输入框，管理员在
+  // 上面微调即可。没打完时推导失败，输入框留空，由提示文案说明原因。
+  const derived = hasAutoPlacements(event)
     ? derivePlacements({ event, draw: event.draw, matches: ledger })
     : { ok: false, results: [], message: '' };
   const autoPlacement = new Map(
@@ -871,7 +893,7 @@ async function loadEventPlacementView(eventId, options = {}) {
     hasRows: filled.length > 0,
     emptyNote: '还没有人报名，录入名次前先让会员报名',
     bronzeHint: bronzeHintOf(event),
-    hintText: isGroupedFormat(event) ? groupedPlacementHint(event, row, derived) : bronzeHintOf(event),
+    hintText: hasAutoPlacements(event) ? groupedPlacementHint(event, row, derived) : bronzeHintOf(event),
   };
 }
 
@@ -891,9 +913,12 @@ function groupedPlacementHint(event, row, derived) {
     if (formatOf(event) === EVENT_FORMAT.ROUND_ROBIN) {
       return '循环赛名次已按战绩自动排出，可直接微调后提交';
     }
+    if (isDoubleElimFormat(event)) {
+      return '双败名次已按淘汰轮次自动排出，可直接微调后提交';
+    }
     return '出线者按淘汰成绩、未出线者按小组名次自动排出，可直接微调后提交';
   }
-  if (!event.draw) return '还没有抽签，抽签并打完小组赛后才能自动排名';
+  if (!event.draw) return '还没有抽签，抽签并打完比赛后才能自动排名';
   if (row.isFinished) return '';
   return derived.message || '比赛还没打完，名次尚未确定';
 }
@@ -908,6 +933,8 @@ module.exports = {
   timeValue,
   formatOf,
   isGroupedFormat,
+  isDoubleElimFormat,
+  hasAutoPlacements,
   groupLabelOf,
   countEvents,
   describeSeason,

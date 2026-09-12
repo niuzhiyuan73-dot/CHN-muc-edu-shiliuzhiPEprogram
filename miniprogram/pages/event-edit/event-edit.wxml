@@ -47,8 +47,8 @@
         </view>
         <view wx:if="{{errors.format}}" class="field-error">{{errors.format}}</view>
 
-        <!-- 小组赛才需要组数与每组出线人数 -->
-        <block wx:if="{{form.format === 'group_knockout'}}">
+        <!-- 小组数只对「小组赛类」赛制有意义（循环类恒为单组） -->
+        <block wx:if="{{form.format === 'group_knockout' || form.format === 'group_double_elim'}}">
           <view class="field-row">
             <view class="field-label">小组数</view>
             <picker mode="selector" range="{{groupCounts}}" value="{{groupCountIndex}}" bindchange="onPickGroupCount">
@@ -56,7 +56,10 @@
             </picker>
           </view>
           <view wx:if="{{errors.groupCount}}" class="field-error">{{errors.groupCount}}</view>
+        </block>
 
+        <!-- 出线人数：小组赛类与「循环赛+淘汰」都要（后者是单组取前 N） -->
+        <block wx:if="{{form.format === 'group_knockout' || form.format === 'round_robin_knockout' || form.format === 'group_double_elim'}}">
           <view class="field-row">
             <view class="field-label">出线人数</view>
             <picker mode="selector" range="{{advanceOptions}}" value="{{advanceIndex}}" bindchange="onPickAdvance">
@@ -64,11 +67,22 @@
             </picker>
           </view>
           <view wx:if="{{errors.advancePerGroup}}" class="field-error">{{errors.advancePerGroup}}</view>
-          <view class="field-hint">小组循环后按战绩取每组前几名进淘汰赛，跨组交叉对阵</view>
+          <view class="field-hint">
+            {{form.format === 'round_robin_knockout' ? '循环赛按战绩取前几名进淘汰赛' : '小组循环后按战绩取每组前几名进淘汰赛，跨组交叉对阵'}}
+          </view>
         </block>
 
-        <!-- 倒三角排位：八强负者加赛分出 5–8 名；循环赛没有淘汰阶段，不显示 -->
-        <block wx:if="{{form.format !== 'round_robin'}}">
+        <!-- 双败总决赛重赛：只对双败类赛制有意义 -->
+        <block wx:if="{{form.format === 'double_elim' || form.format === 'group_double_elim'}}">
+          <view class="field-row">
+            <view class="field-label">总决赛重赛</view>
+            <switch checked="{{form.gfReset}}" bindchange="onToggleGfReset" color="#2f7d4f" />
+          </view>
+          <view class="field-hint">打开后胜者组冠军先记 1:0，若首场输给败者组冠军则加赛一场定冠军</view>
+        </block>
+
+        <!-- 倒三角排位只长在单败主签表上：循环赛与双败都没有独立排位赛 -->
+        <block wx:if="{{form.format === 'single_elim' || form.format === 'group_knockout' || form.format === 'round_robin_knockout'}}">
           <view class="field-row">
             <view class="field-label">5–8 名排位</view>
             <switch checked="{{form.placementMode === 'top8'}}" bindchange="onToggleTop8" color="#2f7d4f" />
@@ -88,18 +102,21 @@
         </picker>
       </view>
       <view wx:if="{{errors.level}}" class="field-error">{{errors.level}}</view>
-      <view class="field-hint">等级决定名次分的倍数：一级 ×4、二级 ×2、三级 ×1</view>
+      <view class="field-hint">等级同时定等级分与名次分：一级 每场 K=32、名次 ×4；二级 K=24、名次 ×2；三级 K=16、名次 ×1</view>
 
-      <view class="field-row">
-        <view class="field-label">三四名赛</view>
-        <picker mode="selector" range="{{bronzeModes}}" value="{{bronzeIndex}}" bindchange="onPickBronzeMode">
-          <view class="field-value {{form.bronzeMode === '' ? 'is-placeholder' : ''}}">
-            {{form.bronzeMode === '' ? '请选择三四名赛方式' : bronzeModes[bronzeIndex]}} ›
-          </view>
-        </picker>
-      </view>
-      <view wx:if="{{errors.bronzeMode}}" class="field-error">{{errors.bronzeMode}}</view>
-      <view class="field-hint">并列：两位半决赛负者都记季军；打三四名：加赛一场，分出第三、第四名</view>
+      <!-- 三四名赛只对单败签表有意义：双败的名次由败者组自然排出 -->
+      <block wx:if="{{form.format === 'single_elim' || form.format === 'group_knockout' || form.format === 'round_robin_knockout'}}">
+        <view class="field-row">
+          <view class="field-label">三四名赛</view>
+          <picker mode="selector" range="{{bronzeModes}}" value="{{bronzeIndex}}" bindchange="onPickBronzeMode">
+            <view class="field-value {{form.bronzeMode === '' ? 'is-placeholder' : ''}}">
+              {{form.bronzeMode === '' ? '请选择三四名赛方式' : bronzeModes[bronzeIndex]}} ›
+            </view>
+          </picker>
+        </view>
+        <view wx:if="{{errors.bronzeMode}}" class="field-error">{{errors.bronzeMode}}</view>
+        <view class="field-hint">并列：两位半决赛负者都记季军；打三四名：加赛一场，分出第三、第四名</view>
+      </block>
 
       <!-- 抽签只对单打开放（决策 1），双打不显示这两项 -->
       <block wx:if="{{form.matchType === 1}}">
