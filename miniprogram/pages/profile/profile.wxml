@@ -29,14 +29,6 @@
     <view class="entry-card-arrow">›</view>
   </view>
 
-  <view wx:if="{{seasonEntry.visible}}" class="card entry-card" bindtap="onGoSeasonManage">
-    <view class="entry-card-main">
-      <view class="entry-card-title">赛季管理</view>
-      <view class="entry-card-hint">{{seasonEntry.hint}}</view>
-    </view>
-    <view class="entry-card-arrow">›</view>
-  </view>
-
   <!--
     未登录：这一页只有「自己」可看，没有自己就没什么可看的。
     不要让模板去渲染数据源答出来的「当前用户」——云端认的是

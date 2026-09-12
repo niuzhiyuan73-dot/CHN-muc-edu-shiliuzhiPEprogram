@@ -1126,13 +1126,19 @@ describe('mock 数据源 —— 赛事闭环', () => {
       const me = await getManager();
       const pointsBefore = me.points;
 
-      const { record } = await mock.publishEvent(eventDraft(), me._id);
+      const { record } = await mock.publishEvent(eventDraft({ seedCount: 2 }), me._id);
       const id = record._id;
 
       const signed = await mock.signUpEvent(id, me._id);
       assert.equal(signed.ok, true, signed.message);
       assert.equal(signed.record.status, SIGNUP_STATUS.SIGNED);
       assert.equal((await mock.getEventSignups(id)).length, 1);
+
+      // 单打要先抽签才能开赛；再拉一位会员进来，好让签表排得出来
+      const other = (await mock.getMembers()).find((m) => m._id !== me._id);
+      await mock.signUpEvent(id, other._id);
+      const drawn = await mock.drawEvent(id, me._id, { seedValue: 3 });
+      assert.equal(drawn.ok, true, drawn.message);
 
       const started = await mock.startEvent(id, me._id);
       assert.equal(started.ok, true, started.message);
@@ -1157,7 +1163,11 @@ describe('mock 数据源 —— 赛事闭环', () => {
     '录入名次 —— 没报名的人拿不到名次',
     withCleanStore(async () => {
       const me = await getManager();
-      const { record } = await mock.publishEvent(eventDraft(), me._id);
+      // 双打不需要抽签，可直接开赛，专测「没报名的人拿不到名次」
+      const { record } = await mock.publishEvent(
+        eventDraft({ matchType: MATCH_TYPE.DOUBLES }),
+        me._id
+      );
       await mock.startEvent(record._id, me._id);
 
       const result = await mock.finishEvent(record._id, [{ userId: 'u01', placement: 1 }], me._id);
@@ -1349,7 +1359,11 @@ describe('mock 数据源 —— 赛事闭环', () => {
     '报名 —— 赛事开始后就截止了',
     withCleanStore(async () => {
       const me = await getManager();
-      const { record } = await mock.publishEvent(eventDraft(), me._id);
+      // 双打不需要抽签，可直接开赛，专测「开赛后报名截止」
+      const { record } = await mock.publishEvent(
+        eventDraft({ matchType: MATCH_TYPE.DOUBLES }),
+        me._id
+      );
       await mock.startEvent(record._id, me._id);
 
       const result = await mock.signUpEvent(record._id, me._id);

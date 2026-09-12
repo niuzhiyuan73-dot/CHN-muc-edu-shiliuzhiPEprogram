@@ -538,11 +538,13 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
   const stageFirst = grouped || doubleElim;
   const nameOf = (id) => (id ? (memberMap.get(id) || {}).nickName || id : '待定');
 
-  // 录分的权限要和真正写入时一致：只认参赛者本人，或管理员代录
+  // 录分的权限要和真正写入时一致：参赛者本人，或干事及以上的代录
   // （见 mock.submitMatch 与云端 submitScheduledMatch）。这里不按数据源
   // 放宽——否则普通会员会在签表上看到一列不属于自己的「录分」入口。
-  const mayManage = Boolean(actor && actor.role === ROLE.ADMIN);
+  const mayRecord = Boolean(actor && Number(actor.role) >= ROLE.STAFF);
   const actorId = actor ? actor._id : null;
+  // 确认要带上角色：管理员可确认任意一场（见 match-record.canConfirm）
+  const confirmOptions = { isMock: mock, role: actor ? actor.role : undefined };
 
   return eventRecords
     .slice()
@@ -582,10 +584,8 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
         statusClass: tag.className,
         isMine: Boolean(actorId && (isParticipant(record, actorId))),
         // 还没比分的场次先录分，录完才谈得上确认
-        canRecord: Boolean(waiting && actorId && (isParticipant(record, actorId) || mayManage)),
-        canConfirm: Boolean(
-          !waiting && canConfirm(record, actorId, { isMock: mock })
-        ),
+        canRecord: Boolean(waiting && actorId && (isParticipant(record, actorId) || mayRecord)),
+        canConfirm: Boolean(!waiting && canConfirm(record, actorId, confirmOptions)),
       };
     });
 }

@@ -79,13 +79,13 @@ async function submitScheduledMatch(id, scores, { dataset, ctx, now }) {
   if (!target) {
     return ok({ ok: false, match: null, errors: {}, scoreErrors: [], firstError: '找不到这场比赛' });
   }
-  if (!isParticipant(target, ctx.actorId) && ctx.role !== ROLE.ADMIN) {
+  if (!isParticipant(target, ctx.actorId) && Number(ctx.role) < ROLE.STAFF) {
     return ok({
       ok: false,
       match: null,
       errors: {},
       scoreErrors: [],
-      firstError: '只有参赛者可以录入这场比赛的成绩',
+      firstError: '只有参赛者或干事以上可以录入这场比赛的成绩',
     });
   }
 
@@ -263,7 +263,7 @@ async function confirmMatch(payload = {}, ctx) {
 
   // canConfirm 本身就要求「处于待确认状态」，所以非待确认的比赛
   // 会走到这里被挡下，与 mock 的文案一致
-  if (!canConfirm(match, ctx.actorId, { isMock: false })) {
+  if (!canConfirm(match, ctx.actorId, { isMock: false, role: ctx.role })) {
     return ok({ ok: false, match: null, message: '你无权确认这场比赛' });
   }
 
@@ -319,7 +319,7 @@ async function rejectMatch(payload = {}, ctx) {
   if (match.status !== MATCH_STATUS.PENDING) {
     return ok({ ok: false, match: null, message: '只有待确认的比赛可以驳回' });
   }
-  if (!canConfirm(match, ctx.actorId, { isMock: false })) {
+  if (!canConfirm(match, ctx.actorId, { isMock: false, role: ctx.role })) {
     return ok({ ok: false, match: null, message: '你无权驳回这场比赛' });
   }
   if (!String(reason || '').trim()) {

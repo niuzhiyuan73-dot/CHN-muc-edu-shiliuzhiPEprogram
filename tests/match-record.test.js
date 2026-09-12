@@ -80,6 +80,19 @@ test('canConfirm —— 录入者不在场上时不做额外限制', () => {
   assert.strictEqual(canConfirm(orphan, 'u01'), true);
 });
 
+test('canConfirm —— 管理员可以确认任意一场（含自己没打的）', () => {
+  // 临场收口：双方都认账却没人掏手机点确认，管理员代为确认
+  assert.strictEqual(canConfirm(DOUBLES, 'u99', { role: ROLE.ADMIN }), true);
+  assert.strictEqual(canConfirm(DOUBLES, 'u01', { role: ROLE.ADMIN }), true);
+  // 但仍只限「待确认」：已生效的要比分要改，得先撤销
+  assert.strictEqual(
+    canConfirm({ ...DOUBLES, status: MATCH_STATUS.ACTIVE }, 'u99', { role: ROLE.ADMIN }),
+    false
+  );
+  // 干事没有这项放宽，仍按对手方口径
+  assert.strictEqual(canConfirm(DOUBLES, 'u99', { role: ROLE.STAFF }), false);
+});
+
 /* ============================================================
  * 三、撤销权
  * ============================================================ */

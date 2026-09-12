@@ -78,6 +78,11 @@ function isRecorder(match, userId) {
  * 生产口径是「对手确认」：录入方不能给自己盖章，否则一个人就能凭空
  * 造出一场胜利并让自己涨分。只有站在对面的人点了确认，成绩才生效。
  *
+ * 【管理员为什么可以确认任意一场】
+ * 临场常见的收口场景：双方都到场、都认账，但没人愿意掏手机点确认，或者
+ * 录入手机没电了。这时管理员代为确认，比让这场成绩一直悬着更可靠。
+ * 管理员权限本就包含「撤销任意一场」，确认口径与撤销对齐，不再额外设限。
+ *
  * 【mock 下为什么放宽】
  * 本地演示只有一个账号，真要严格按「对手确认」，任何一场待确认的比赛
  * 都永远确认不了，整条链路没法走通。所以 isMock 时放宽为「参与即可」，
@@ -88,12 +93,16 @@ function isRecorder(match, userId) {
  * @param {string} userId
  * @param {Object} [options]
  * @param {boolean} [options.isMock=false]
+ * @param {number} [options.role] 操作者角色；管理员可确认任意比分
  * @returns {boolean}
  */
 function canConfirm(match, userId, options = {}) {
-  const { isMock = false } = options;
+  const { isMock = false, role = ROLE.MEMBER } = options;
 
   if (!match || match.status !== MATCH_STATUS.PENDING) return false;
+  // 管理员可确认任意一场（含不是自己打的），但仍只限「待确认」状态：
+  // 已生效的成绩要改，得先撤销。
+  if (role === ROLE.ADMIN) return true;
   if (!isParticipant(match, userId)) return false;
 
   const recorderSide = sideOf(match, match.recorder);

@@ -152,7 +152,6 @@ require('../miniprogram/pages/announcement-manage/announcement-manage.js');
 require('../miniprogram/pages/announcement-edit/announcement-edit.js');
 require('../miniprogram/pages/profile-edit/profile-edit.js');
 require('../miniprogram/pages/profile-detail/profile-detail.js');
-require('../miniprogram/pages/season-manage/season-manage.js');
 require('../miniprogram/pages/events/events.js');
 require('../miniprogram/pages/event-detail/event-detail.js');
 require('../miniprogram/pages/event-edit/event-edit.js');
@@ -229,11 +228,10 @@ const announcementManageConfig = registered[9];
 const announcementEditConfig = registered[10];
 const profileEditConfig = registered[11];
 const profileDetailConfig = registered[12];
-const seasonManageConfig = registered[13];
-const eventsConfig = registered[14];
-const eventDetailConfig = registered[15];
-const eventEditConfig = registered[16];
-const eventPlacementConfig = registered[17];
+const eventsConfig = registered[13];
+const eventDetailConfig = registered[14];
+const eventEditConfig = registered[15];
+const eventPlacementConfig = registered[16];
 
 // 写接口（确认 / 撤销 / 录入）只改内存，跑完一条用例就得把内存退回种子状态，
 // 否则上一条确认过的比赛会让下一条拿到的榜单与台账都不一样
@@ -270,8 +268,9 @@ function loginAs(overrides) {
 
 /**
  * 演示数据里的两种管理者。
- * 管理门槛是干事，赛季重置是管理员——普通会员（默认 u06）与线上一样被挡住。
- * 管理类动作要按这两个身份登录，别再拿普通会员顶替。
+ * 发布 / 抽签 / 开始 / 结束赛事一律只有管理员能做；干事比会员多的只是
+ * 「代签到」与「录入比分」——普通会员（默认 u06）与线上一样被挡住。
+ * 管理类动作要按对应身份登录，别再拿普通会员顶替。
  */
 const STAFF = { role: 1, _id: 'u02', nickName: '张宇轩' };
 const ADMIN = { role: 2, _id: 'u01', nickName: '巴特尔' };
@@ -564,10 +563,9 @@ test('我的页 —— 普通会员看不到任何管理入口', async () => {
   const page = instantiate(profileConfig);
   await page.onLoad({});
 
-  // 演示数据源不再放宽：普通会员与线上一样，三个管理入口一个都不给
+  // 演示数据源不再放宽：普通会员与线上一样，管理入口一个都不给
   assert.strictEqual(page.data.reviewEntry.visible, false);
   assert.strictEqual(page.data.adminEntry.visible, false);
-  assert.strictEqual(page.data.seasonEntry.visible, false);
 });
 
 test('我的页 —— 干事看到审核入口，点进去跳转审核页', async () => {
@@ -579,8 +577,6 @@ test('我的页 —— 干事看到审核入口，点进去跳转审核页', asy
 
   assert.strictEqual(page.data.reviewEntry.visible, true);
   assert.ok(page.data.reviewEntry.hint, '入口卡上要写清楚点进去是干什么的');
-  // 赛季重置门槛是管理员，干事不该看到
-  assert.strictEqual(page.data.seasonEntry.visible, false);
 
   calls.navigations.length = 0;
   page.onGoReview();
@@ -636,40 +632,16 @@ test('我的页 —— 退出登录后 onShow 会把公告管理入口一并收�
   assert.strictEqual(page.data.adminEntry.visible, false, '权限没了，入口不能还挂着');
 });
 
-test('我的页 —— 访客看不到赛季管理入口', async () => {
-  resetSession();
-  const page = instantiate(profileConfig);
-  await page.onLoad({});
-
-  assert.strictEqual(page.data.seasonEntry.visible, false);
-});
-
-test('我的页 —— 管理员看到赛季管理入口，点进去跳转赛季管理页', async () => {
+test('我的页 —— 赛季管理入口已移除，管理员也看不到', async () => {
   resetSession();
   app.globalData.userInfo = fakeMember({ role: 2, _id: 'u01', nickName: '巴特尔' });
 
   const page = instantiate(profileConfig);
   await page.onLoad({});
 
-  assert.strictEqual(page.data.seasonEntry.visible, true);
-  assert.ok(page.data.seasonEntry.hint, '入口卡上要写清楚点进去是干什么的');
-
-  calls.navigations.length = 0;
-  page.onGoSeasonManage();
-  assert.deepStrictEqual(calls.navigations, ['/pages/season-manage/season-manage']);
-});
-
-test('我的页 —— 退出登录后 onShow 会把赛季管理入口一并收回去', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember({ role: 2, _id: 'u01', nickName: '巴特尔' });
-
-  const page = instantiate(profileConfig);
-  await page.onLoad({});
-  assert.strictEqual(page.data.seasonEntry.visible, true);
-
-  app.globalData.userInfo = null;
-  page.onShow();
-  assert.strictEqual(page.data.seasonEntry.visible, false, '权限没了，入口不能还挂着');
+  // 赛季更新改为在云控制台手动操作，小程序内不再提供入口
+  assert.strictEqual(page.data.seasonEntry, undefined);
+  assert.strictEqual(typeof page.onGoSeasonManage, 'undefined');
 });
 
 test('我的页 —— 已登录才给退出按钮，点了清登录态并回首页', async () => {
@@ -1374,15 +1346,21 @@ test('赛事页 —— 点空白行不会乱跳', async () => {
   assert.deepStrictEqual(calls.navigations, []);
 });
 
-test('赛事页 —— 有管理权才渲染发布入口', async () => {
-  loginAs(STAFF);
+test('赛事页 —— 只有管理员才渲染发布入口', async () => {
+  loginAs(ADMIN);
   const allowed = instantiate(eventsConfig);
   await allowed.onLoad();
-  assert.strictEqual(allowed.data.view.canPublish, true, '干事才给发布入口');
+  assert.strictEqual(allowed.data.view.canPublish, true, '管理员才给发布入口');
 
   calls.navigations.length = 0;
   allowed.onOpenPublish();
   assert.deepStrictEqual(calls.navigations, ['/pages/event-edit/event-edit']);
+
+  // 干事只多「代签到」与「录入比分」，操盘赛事的入口不给
+  loginAs(STAFF);
+  const staff = instantiate(eventsConfig);
+  await staff.onLoad();
+  assert.strictEqual(staff.data.view.canPublish, false, '干事不给发布入口');
 
   // 普通会员登录也一样看不到：演示数据源不再放宽
   loginAs();
@@ -1438,8 +1416,9 @@ test('赛事详情 —— 找不到的赛事给出提示而不是白屏', async 
 });
 
 test('赛事详情 —— 开始赛事之后可以给报名者代签', async () => {
-  loginAs(STAFF);
-  const created = await publishTestEvent();
+  loginAs(ADMIN);
+  // 双打无需抽签即可开赛，专测「开赛后代签」这一段
+  const created = await publishTestEvent({ matchType: MATCH_TYPE.DOUBLES });
   await facade.signUpEvent(created._id, 'u06');
 
   const page = instantiate(eventDetailConfig);
@@ -1456,8 +1435,28 @@ test('赛事详情 —— 开始赛事之后可以给报名者代签', async () 
   assert.strictEqual(page.data.view.signupRows[0].canCheckIn, false);
 });
 
+test('赛事详情 —— 单打没抽签就点开始赛事：不生效并提示先抽签', async () => {
+  loginAs(ADMIN);
+  const created = await publishTestEvent();
+  await facade.signUpEvent(created._id, 'u06');
+
+  const page = instantiate(eventDetailConfig);
+  await page.onLoad({ eventId: created._id });
+  // 按钮照常显示，点下去才拿到「请先抽签」——否则管理员不知道还差什么
+  assert.strictEqual(page.data.view.event.canStart, true);
+
+  calls.toasts.length = 0;
+  await page.onStart();
+
+  assert.strictEqual(page.data.view.event.isOngoing, false, '没抽签不该开始');
+  assert.ok(
+    calls.toasts.some((text) => /抽签/.test(text)),
+    '要明确提示先抽签'
+  );
+});
+
 test('赛事详情 —— 手工指定种子：点抽签先弹面板，凑齐人数才真正落签', async () => {
-  loginAs(STAFF);
+  loginAs(ADMIN);
   const created = await publishTestEvent({ seedMode: SEED_MODE.MANUAL, seedCount: 2 });
   for (const userId of ['u06', 'u01', 'u02']) await facade.signUpEvent(created._id, userId);
 
@@ -1513,7 +1512,7 @@ test('赛事详情 —— 手工指定种子：点抽签先弹面板，凑齐人
 });
 
 test('赛事详情 —— 手工种子面板可以清空重选、点遮罩关掉', async () => {
-  loginAs(STAFF);
+  loginAs(ADMIN);
   const created = await publishTestEvent({ seedMode: SEED_MODE.MANUAL, seedCount: 2 });
   for (const userId of ['u06', 'u01', 'u02']) await facade.signUpEvent(created._id, userId);
 
@@ -1542,7 +1541,7 @@ test('发布赛事 —— 未登录时不给表单', () => {
 });
 
 test('发布赛事 —— 等级与三四名赛没选就提交，逐字段报错', async () => {
-  loginAs(STAFF);
+  loginAs(ADMIN);
   const page = instantiate(eventEditConfig);
   page.onLoad();
 
@@ -1560,7 +1559,7 @@ test('发布赛事 —— 等级与三四名赛没选就提交，逐字段报错
 });
 
 test('发布赛事 —— 填全后提交落库，并退回上一页', async () => {
-  loginAs(STAFF);
+  loginAs(ADMIN);
   const page = instantiate(eventEditConfig);
   page.onLoad();
 
@@ -1588,7 +1587,7 @@ test('发布赛事 —— 填全后提交落库，并退回上一页', async () 
 });
 
 test('发布赛事 —— 选循环赛落库带上赛制，组数与出线人数留空、排位不启用', async () => {
-  loginAs(STAFF);
+  loginAs(ADMIN);
   const page = instantiate(eventEditConfig);
   page.onLoad();
 
@@ -1616,7 +1615,7 @@ test('发布赛事 —— 选循环赛落库带上赛制，组数与出线人数
 });
 
 test('发布赛事 —— 小组赛可选出线人数，组数与出线人数一并落库', async () => {
-  loginAs(STAFF);
+  loginAs(ADMIN);
   const page = instantiate(eventEditConfig);
   page.onLoad();
 
@@ -1641,7 +1640,7 @@ test('发布赛事 —— 小组赛可选出线人数，组数与出线人数一
 });
 
 test('发布赛事 —— 切到双打会把赛制收回单败淘汰', () => {
-  loginAs(STAFF);
+  loginAs(ADMIN);
   const page = instantiate(eventEditConfig);
   page.onLoad();
 
@@ -1658,7 +1657,7 @@ test('发布赛事 —— 切到双打会把赛制收回单败淘汰', () => {
 });
 
 test('发布赛事 —— 选双败淘汰：可关掉总决赛重赛，组数与三四名留空', async () => {
-  loginAs(STAFF);
+  loginAs(ADMIN);
   const page = instantiate(eventEditConfig);
   page.onLoad();
 
@@ -1684,7 +1683,7 @@ test('发布赛事 —— 选双败淘汰：可关掉总决赛重赛，组数与
 });
 
 test('发布赛事 —— 小组赛+双败：出线人数不足 4 人时挡下不落库', async () => {
-  loginAs(STAFF);
+  loginAs(ADMIN);
   const page = instantiate(eventEditConfig);
   page.onLoad();
 
@@ -1705,7 +1704,7 @@ test('发布赛事 —— 小组赛+双败：出线人数不足 4 人时挡下�
 });
 
 test('发布赛事 —— 小组赛+双败：2 组出线 2 人（共 4 人）正常落库', async () => {
-  loginAs(STAFF);
+  loginAs(ADMIN);
   const page = instantiate(eventEditConfig);
   page.onLoad();
 
@@ -1742,8 +1741,9 @@ test('录入名次 —— 未登录时整页挡住，不给名单', async () => 
 });
 
 test('录入名次 —— 一个名次都没填就提交，给出提示', async () => {
-  loginAs(STAFF);
-  const created = await publishTestEvent();
+  loginAs(ADMIN);
+  // 双打无需抽签即可开赛，专注名次录入这一段
+  const created = await publishTestEvent({ matchType: MATCH_TYPE.DOUBLES });
   await facade.signUpEvent(created._id, 'u06');
   await facade.startEvent(created._id, ADMIN._id);
 
@@ -1756,8 +1756,9 @@ test('录入名次 —— 一个名次都没填就提交，给出提示', async 
 });
 
 test('录入名次 —— 提交后赛事结束、名次落定', async () => {
-  loginAs(STAFF);
-  const created = await publishTestEvent();
+  loginAs(ADMIN);
+  // 双打无需抽签即可开赛，专注名次录入这一段
+  const created = await publishTestEvent({ matchType: MATCH_TYPE.DOUBLES });
   await facade.signUpEvent(created._id, 'u06');
   await facade.startEvent(created._id, ADMIN._id);
 
@@ -3137,73 +3138,8 @@ test('我的页 —— 改完昵称返回后会重取数据，头卡显示新名
 });
 
 /* ============================================================
- * 赛季管理页
+ * 赛季管理
+ * ============================================================
+ * 页面已从「我的」移除，赛季更新改为在云控制台手动操作；
+ * 云端 resetSeason 能力与 mock 数据源的行为仍由 season-reset.test.js 覆盖。
  * ============================================================ */
-
-test('赛季管理页 —— 访客被整页挡住，赛季数据一个字段都拿不到', async () => {
-  resetSession();
-
-  const page = instantiate(seasonManageConfig);
-  await page.onLoad();
-
-  assert.strictEqual(page.data.view.allowed, false);
-  assert.match(page.data.view.blockedText, /登录/);
-  assert.strictEqual(page.data.view.policyText, '');
-});
-
-test('赛季管理页 —— 管理员看到赛季状态与压分说明', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember(ADMIN);
-
-  const page = instantiate(seasonManageConfig);
-  await page.onLoad();
-
-  assert.strictEqual(page.data.view.allowed, true);
-  assert.strictEqual(page.data.view.hasReset, false);
-  assert.strictEqual(page.data.view.resetText, '本赛季尚未重置');
-  assert.ok(page.data.view.policyText, '要说明重置后会怎么压分');
-});
-
-test('赛季管理页 —— 执行重置后状态翻新并给出成功提示', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember(ADMIN);
-
-  const page = instantiate(seasonManageConfig);
-  await page.onLoad();
-  assert.strictEqual(page.data.view.hasReset, false);
-
-  calls.toasts.length = 0;
-  await page.onReset();
-
-  assert.strictEqual(page.data.view.hasReset, true);
-  assert.notStrictEqual(page.data.view.resetText, '本赛季尚未重置');
-  assert.strictEqual(page.data.acting, false, '动作结束后按钮要能再点');
-  assert.ok(calls.toasts.includes('新赛季已开始'));
-});
-
-test('赛季管理页 —— 从别处返回时刷新状态', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember(ADMIN);
-
-  const page = instantiate(seasonManageConfig);
-  await page.onLoad();
-  assert.strictEqual(page.data.view.hasReset, false);
-
-  // 模拟管理员在别处刚重置过，返回本页时不该仍显示「尚未重置」
-  await facade.resetSeason(ADMIN._id);
-  await page.onShow();
-
-  assert.strictEqual(page.data.view.hasReset, true);
-});
-
-test('赛季管理页 —— 下拉刷新会收掉刷新动画', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember(ADMIN);
-
-  const page = instantiate(seasonManageConfig);
-  await page.onLoad();
-
-  calls.pullDownStopped = 0;
-  await page.onPullDownRefresh();
-  assert.strictEqual(calls.pullDownStopped, 1);
-});

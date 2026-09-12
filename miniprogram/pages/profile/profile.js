@@ -21,7 +21,6 @@ const { createMemberPage } = require('../../templates/member-view.js');
 const { isMock } = require('../../services/index.js');
 const { canReview } = require('../../services/member-review.js');
 const { canPublish } = require('../../services/announcement.js');
-const { canResetSeason } = require('../../services/season.js');
 
 // 先建出公共配置，再把本页独有的字段并进去，
 // 避免为了加一个字段就把 createMemberPage 整个再调一次
@@ -39,8 +38,6 @@ Page({
     reviewEntry: { visible: false, hint: '' },
     /** 公告管理入口。与审核入口同理，没权限就不渲染 */
     adminEntry: { visible: false, hint: '' },
-    /** 赛季管理入口。只有管理员看得到，与其它入口同一套判定 */
-    seasonEntry: { visible: false, hint: '' },
   },
 
   onLoad(query) {
@@ -175,7 +172,6 @@ Page({
     const user = this.currentUser();
     const canReviewNow = canReview(user, { isMock });
     const canPublishNow = canPublish(user, { isMock });
-    const canResetNow = canResetSeason(user, { isMock });
 
     this.setData({
       loggedIn: Boolean(user),
@@ -186,10 +182,6 @@ Page({
       adminEntry: {
         visible: canPublishNow,
         hint: canPublishNow ? '发布或下架俱乐部公告' : '',
-      },
-      seasonEntry: {
-        visible: canResetNow,
-        hint: canResetNow ? '查看赛季状态或开始新赛季' : '',
       },
     });
   },
@@ -222,11 +214,6 @@ Page({
   /** 进公告管理页 */
   onGoAnnouncementsAdmin() {
     wx.navigateTo({ url: '/pages/announcement-manage/announcement-manage' });
-  },
-
-  /** 进赛季管理页 */
-  onGoSeasonManage() {
-    wx.navigateTo({ url: '/pages/season-manage/season-manage' });
   },
 
   /** 点头卡头像进个人详情页。走势、战绩、交手这些细账都在那边 */

@@ -58,6 +58,7 @@ const {
   GROUP_CONFIG,
   DEFAULT_GROUP_COUNT,
   DEFAULT_ADVANCE_PER_GROUP,
+  ROLE,
   isRankable,
 } = require('../utils/constants.js');
 const { formatDateTime } = require('../utils/format.js');
@@ -107,18 +108,27 @@ const VALID_PLACEMENT_MODES = Object.values(EVENT_PLACEMENT_MODE);
  * ============================================================ */
 
 /**
- * 有没有发布 / 管理赛事的资格。
+ * 有没有发布 / 修改赛事的资格。**仅管理员**。
+ *
+ * 【为什么门槛是管理员而不是干事】
+ * 发布、修改、抽签、开始、结束赛事都会决定整场赛事的走向（谁能报、
+ * 跟谁打、算不算成绩），一旦出错就是全场的账要重算。这类「定盘子」
+ * 的操作收口到管理员；干事只保留两项临场事务：代签到与录入比分。
  *
  * @param {Object|null} actor
- * @param {Object} [options] 透传给 permission.canManage（如 minRole）
+ * @param {Object} [options] 透传给 permission.canManage（如 isMock）
  * @returns {boolean}
  */
 function canManageEvent(actor, options = {}) {
-  return canManage(actor, options);
+  return canManage(actor, { ...options, minRole: ROLE.ADMIN });
 }
 
 /**
- * 能不能开始一场赛事（报名中 → 进行中）。
+ * 能不能点「开始赛事」（报名中 → 进行中）。**仅管理员**。
+ *
+ * 这里只看资格与状态，不判有没有抽签——按钮要照常显示，让管理员点下去
+ * 拿到「请先抽签」的提示；抽签这一条由 startBlockedReason 在写入端把关。
+ *
  * @param {Object} event
  * @param {Object|null} actor
  * @param {Object} [options]
@@ -130,7 +140,30 @@ function canStartEvent(event, actor, options = {}) {
 }
 
 /**
- * 能不能给某位会员代签。
+ * 开始赛事还差什么。返回空串表示可以开始，否则是要展示给管理员的提示。
+ *
+ * 【为什么单打必须先抽签】
+ * 单打的赛程完全由签表决定，不抽签就没有任何一场比赛可打；先把赛事推到
+ * 「进行中」，抽签入口又会随之关闭（只能报名阶段抽签），整场赛事就此卡死。
+ * 双打不支持抽签，故不受此限。
+ *
+ * @param {Object} event
+ * @returns {string}
+ */
+function startBlockedReason(event) {
+  if (!event) return '找不到这场赛事';
+  if (event.matchType === MATCH_TYPE.SINGLES && !event.draw) {
+    return '请先抽签，再开始赛事';
+  }
+  return '';
+}
+
+/**
+ * 能不能给某位会员代签。**干事 + 管理员**。
+ *
+ * 【为什么干事就能签、却不给抽签】
+ * 签到是赛事当天最高频、最琐碎的临场事务，交给干事分担；它只记录
+ * 「人到了没有」，改不了赛程也改不了成绩，风险可控。
  *
  * 【为什么只有管理端能签】
  * 决策 4：不做会员自助签到。签到是赛事当天「人到了没有」的凭证，
@@ -143,7 +176,7 @@ function canStartEvent(event, actor, options = {}) {
  */
 function canCheckIn(event, actor, options = {}) {
   if (!event || event.status !== EVENT_STATUS.ONGOING) return false;
-  return canManageEvent(actor, options);
+  return canManage(actor, { ...options, minRole: ROLE.STAFF });
 }
 
 /**
@@ -844,6 +877,7 @@ module.exports = {
   VALID_PLACEMENT_MODES,
   canManageEvent,
   canStartEvent,
+  startBlockedReason,
   canCheckIn,
   canFinishEvent,
   canDrawEvent,

@@ -1,11 +1,12 @@
 /**
  * 赛季软重置 —— 端到端
  * ============================================================
- * 这一组盯的是「重置之后分数到底怎么变」，横跨四层：
+ * 这一组盯的是「重置之后分数到底怎么变」，横跨三层：
  *   1. 回放引擎：分界点之前打的球在分界处统一压分，起点分同步刷新；
  *   2. 云函数：resetSeason 只认管理员，写分界点并把版本号加一；
- *   3. mock 数据源：与云端返回同一形状，分数同样被压过；
- *   4. 视图模型：没有权限时失败关闭，文案与策略参数对得上。
+ *   3. mock 数据源：与云端返回同一形状，分数同样被压过。
+ * 小程序内已不再提供赛季管理入口，重置改由云控制台手动触发，
+ * 因此不再有对应的页面视图模型。
  *
  * 【为什么要断言「起点分」】
  * 起点分是进步榜的分母。历史上重置只改 elo、不动 startElo，导致新赛季
@@ -26,11 +27,8 @@ const {
   MATCH_TYPE,
   MATCH_STATUS,
   RATING_POOL,
-  ROLE,
-  USER_STATUS,
 } = require('../miniprogram/utils/constants.js');
 const { DEFAULT_RESET_POLICY } = require('../miniprogram/services/season.js');
-const { loadSeasonManageView, describePolicy } = require('../miniprogram/services/season-view.js');
 
 const mock = require('../miniprogram/services/mock.js');
 const { dispatch } = require('../cloudfunctions/data/src/core/dispatch.js');
@@ -57,11 +55,6 @@ function singles(id, a, b, winner, time) {
     eventId: null,
     status: MATCH_STATUS.ACTIVE,
   };
-}
-
-/** 一位正常在册的会员 */
-function account(id, role = ROLE.MEMBER) {
-  return { _id: id, nickname: id, status: USER_STATUS.ACTIVE, role };
 }
 
 /* ============================================================
@@ -292,60 +285,6 @@ describe('mock 数据源 —— 赛季状态与重置', () => {
 });
 
 /* ============================================================
- * 视图模型
+ * 页面视图模型已随 season-manage 页面一并移除；
+ * 赛季更新的入口从「我的」收敛到云控制台手动操作。
  * ============================================================ */
-
-describe('season-view —— 赛季管理页视图', () => {
-  test('描述策略时给出与参数对得上的例子', () => {
-    const text = describePolicy(DEFAULT_RESET_POLICY);
-    assert.match(text, /75%/);
-    assert.match(text, /1900 分降到 1788 分/);
-    assert.match(text, /1200 分升到 1263 分/);
-  });
-
-  test('访客失败关闭，一个字段都不下发', async () => {
-    const view = await loadSeasonManageView({ user: null, isMock: true });
-    assert.equal(view.allowed, false);
-    assert.match(view.blockedText, /请先登录/);
-    assert.equal(view.policyText, '');
-  });
-
-  test('普通会员无论哪个数据源口径都无权', async () => {
-    const member = account('u1', ROLE.MEMBER);
-    // 门槛是管理员，普通会员在本地与线上一样被挡住——演示数据源不再放宽
-    for (const isMock of [false, true]) {
-      const view = await loadSeasonManageView({ user: member, isMock });
-      assert.equal(view.allowed, false);
-      assert.match(view.blockedText, /权限/);
-      assert.equal(view.policyText, '');
-    }
-  });
-
-  test('干事也无权重置，门槛是管理员而不是干事', async () => {
-    const view = await loadSeasonManageView({ user: account('u2', ROLE.STAFF), isMock: true });
-    assert.equal(view.allowed, false);
-    assert.match(view.blockedText, /权限/);
-  });
-
-  test('管理员放行，能看到赛季状态与压分说明', async () => {
-    mock.resetCache();
-    const view = await loadSeasonManageView({ user: account('admin', ROLE.ADMIN), isMock: false });
-
-    assert.equal(view.allowed, true);
-    assert.equal(view.hasReset, false);
-    assert.equal(view.resetText, '本赛季尚未重置');
-    assert.equal(view.versionText, '第 1 赛季', '没有开始新赛季之前恒为第一赛季');
-    assert.ok(view.policyText, '有权限时要给出压分说明');
-  });
-
-  test('开始新赛季后，界面编号前进到第二赛季', async () => {
-    mock.resetCache();
-    // 重置要管理员，种子里的管理员是 u01
-    await mock.resetSeason('u01');
-
-    const view = await loadSeasonManageView({ user: account('admin', ROLE.ADMIN), isMock: false });
-    assert.equal(view.versionText, '第 2 赛季');
-
-    mock.resetCache();
-  });
-});

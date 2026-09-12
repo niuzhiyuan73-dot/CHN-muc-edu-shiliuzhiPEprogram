@@ -14,7 +14,6 @@
     "pages/announcement-edit/announcement-edit",
     "pages/profile-edit/profile-edit",
     "pages/profile-detail/profile-detail",
-    "pages/season-manage/season-manage",
     "pages/event-detail/event-detail",
     "pages/event-edit/event-edit",
     "pages/event-placement/event-placement"

@@ -26,9 +26,8 @@ const { DEFAULT_RESET_POLICY, canResetSeason } = require('../../lib/services/sea
  *
  * 「谁能重置」不在这里判定，只回报赛季本身的状态。
  * 与其它读接口（read-handlers.js）一致：不拦未登录，也不把权限结论
- * 混进返回值——权限是视图层的事（services/season-view.js 用
- * canResetSeason 自行判定），数据接口只负责给数据。
- * 这样 mock 与云端返回同一形状，页面行为才不会分叉。
+ * 混进返回值。小程序内的赛季管理页已移除，重置改为管理员在云控制台
+ * 手动调用 resetSeason；读接口仍供赛事页显示「第 N 赛季」。
  * ============================================================ */
 
 /**

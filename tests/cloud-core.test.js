@@ -293,7 +293,13 @@ describe('云函数 —— 赛事闭环', () => {
     const repo = createFixtureRepo();
     const admin = 'openid-admin';
 
-    const { data: published } = await on(repo, 'publishEvent', { form: draft }, admin);
+    // 双打不支持抽签，可越过「单打必须先抽签才能开赛」的闸门
+    const { data: published } = await on(
+      repo,
+      'publishEvent',
+      { form: { ...draft, matchType: MATCH_TYPE.DOUBLES } },
+      admin
+    );
     const id = published.record._id;
 
     // 报名：报名人由 OpenID 决定，不接受前端传的 userId
@@ -326,7 +332,13 @@ describe('云函数 —— 赛事闭环', () => {
   test('录入名次 —— 没报名的人拿不到名次', async () => {
     const repo = createFixtureRepo();
     const admin = 'openid-admin';
-    const { data: published } = await on(repo, 'publishEvent', { form: draft }, admin);
+    // 双打不需要抽签，可直接开赛，专测「没报名的人拿不到名次」
+    const { data: published } = await on(
+      repo,
+      'publishEvent',
+      { form: { ...draft, matchType: MATCH_TYPE.DOUBLES } },
+      admin
+    );
     const id = published.record._id;
     await on(repo, 'startEvent', { id }, admin);
 
@@ -466,10 +478,19 @@ describe('云函数 —— 赛事闭环', () => {
     assert.equal(doublesRes.data.ok, false);
     assert.match(doublesRes.data.message, /双打/);
 
+    // 单打要先抽签才开得了赛，于是「开赛后不能再抽」就落在重抽这一步
     const startedRepo = createFixtureRepo();
-    const { data: started } = await on(startedRepo, 'publishEvent', { form: draft }, admin);
-    await on(startedRepo, 'startEvent', { id: started.record._id }, admin);
-    const startedRes = await on(startedRepo, 'drawEvent', { id: started.record._id }, admin);
+    const { data: started } = await on(
+      startedRepo,
+      'publishEvent',
+      { form: { ...draft, seedCount: 2 } },
+      admin
+    );
+    const startedId = started.record._id;
+    await signUpAll(startedRepo, startedId, ['openid-u02', 'openid-u03']);
+    await on(startedRepo, 'drawEvent', { id: startedId, seedValue: 7 }, admin);
+    await on(startedRepo, 'startEvent', { id: startedId }, admin);
+    const startedRes = await on(startedRepo, 'drawEvent', { id: startedId, seedValue: 8 }, admin);
     assert.equal(startedRes.data.ok, false);
     assert.match(startedRes.data.message, /报名阶段/);
 

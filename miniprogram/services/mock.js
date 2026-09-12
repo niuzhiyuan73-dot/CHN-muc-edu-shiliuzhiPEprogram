@@ -39,6 +39,7 @@ const { canPublish, buildAnnouncementRecord } = require('./announcement.js');
 const {
   canManageEvent,
   canStartEvent,
+  startBlockedReason,
   canCheckIn,
   canFinishEvent,
   canDrawEvent,
@@ -600,11 +601,11 @@ async function submitMatch(params = {}) {
       return { ok: false, match: null, errors: {}, scoreErrors: [], firstError: '找不到这场比赛' };
     }
     const actor = (params.actor) || null;
-    // 抽签比赛的成绩由场上的人补录，或由管理员代录——与云端
+    // 抽签比赛的成绩由场上的人补录，或由干事及以上代录——与云端
     // submitScheduledMatch 一字不差。这里不按数据源放宽：签表上的「录分」
     // 按钮与之同源（见 events-view.buildBracketRows），两处一旦分叉，
     // 就会出现「看得见按钮、点下去却被拒」。
-    const mayRecord = isParticipant(target, actor) || roleOf(actor) === ROLE.ADMIN;
+    const mayRecord = isParticipant(target, actor) || roleOf(actor) >= ROLE.STAFF;
     if (!mayRecord) {
       return {
         ok: false,
@@ -693,7 +694,7 @@ async function confirmMatch(id, actor) {
 
   // 本数据源就是模拟数据源：确认权按 mock 口径放宽为「参与即可」，
   // 界面上会明确标注这是演示口径（见 match-view 的 demoNotice）
-  if (!canConfirm(match, actor, { isMock: true })) {
+  if (!canConfirm(match, actor, { isMock: true, role: roleOf(actor) })) {
     return { ok: false, match: null, message: '你无权确认这场比赛' };
   }
 
@@ -765,7 +766,7 @@ async function rejectMatch(id, actor, reason) {
   if (match.status !== MATCH_STATUS.PENDING) {
     return { ok: false, match: null, message: '只有待确认的比赛可以驳回' };
   }
-  if (!canConfirm(match, actor, { isMock: true })) {
+  if (!canConfirm(match, actor, { isMock: true, role: roleOf(actor) })) {
     return { ok: false, match: null, message: '你无权驳回这场比赛' };
   }
   if (!String(reason || '').trim()) {
@@ -1133,6 +1134,11 @@ async function startEvent(id, actor) {
     }
     return { ok: false, record: null, message: '当前账号没有管理赛事的权限' };
   }
+
+  // 单打不抽签就没有任何一场比赛可打，且开赛后抽签入口会关闭，
+  // 整场赛事会卡死。拦住并说清该做什么。
+  const blocked = startBlockedReason(target);
+  if (blocked) return { ok: false, record: null, message: blocked };
 
   eventStore.setStatus(id, { status: EVENT_STATUS.ONGOING, actor, actedAt: new Date() });
   cache = null;

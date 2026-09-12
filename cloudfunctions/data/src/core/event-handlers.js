@@ -29,6 +29,7 @@ const { eventNaturalKey, signupNaturalKey } = require('./idempotency.js');
 const {
   canManageEvent,
   canStartEvent,
+  startBlockedReason,
   canCheckIn,
   canFinishEvent,
   canDrawEvent,
@@ -137,6 +138,11 @@ async function startEvent(payload = {}, ctx) {
     }
     return ok({ ok: false, record: null, message: '当前账号没有管理赛事的权限' });
   }
+
+  // 单打不抽签就没有任何一场比赛可打，且开赛后抽签入口会关闭，
+  // 整场赛事会卡死。拦住并说清该做什么。
+  const blocked = startBlockedReason(event);
+  if (blocked) return ok({ ok: false, record: null, message: blocked });
 
   const patch = { status: EVENT_STATUS.ONGOING, actor: ctx.actorId, actedAt: ctx.now };
   const record = await ctx.repo.transaction(async (tx) => {

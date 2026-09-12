@@ -132,8 +132,8 @@ function buildRecordRow(record, ctx = {}) {
   // 抽签排出的比赛还没比分，此时谈「确认」为时过早：确认要按胜方计分，
   // 没有胜方就无从计起。先在比赛页给一个「录分」入口。
   const waiting = needsScore(record);
-  const relaxedConfirm = !waiting && canConfirm(record, userId, { isMock: mock });
-  const strictConfirm = !waiting && canConfirm(record, userId, { isMock: false });
+  const relaxedConfirm = !waiting && canConfirm(record, userId, { isMock: mock, role });
+  const strictConfirm = !waiting && canConfirm(record, userId, { isMock: false, role });
 
   return {
     matchId: record._id,
@@ -162,9 +162,9 @@ function buildRecordRow(record, ctx = {}) {
     confirmRelaxed: relaxedConfirm && !strictConfirm,
     // 还没比分的赛事比赛：给「录分」而不是「确认」
     needsScore: waiting,
-    // 录分权与写入端一致：参赛者或管理员；演示数据源放宽为登录即可
+    // 录分权与写入端一致：参赛者，或干事及以上代录；演示数据源放宽为登录即可
     canRecord: Boolean(
-      waiting && userId && (isMine || role === ROLE.ADMIN || mock)
+      waiting && userId && (isMine || Number(role) >= ROLE.STAFF || mock)
     ),
     canRevoke: canRevoke(record, userId, { role }),
   };

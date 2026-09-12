@@ -7,6 +7,7 @@ const assert = require('node:assert/strict');
 const {
   canManageEvent,
   canStartEvent,
+  startBlockedReason,
   canCheckIn,
   canFinishEvent,
   canDrawEvent,
@@ -58,6 +59,15 @@ const staff = (id = 's1', extra = {}) => ({
   ...extra,
 });
 
+/** 一位管理员 */
+const admin = (id = 'a1', extra = {}) => ({
+  _id: id,
+  nickName: `管理员${id}`,
+  role: ROLE.ADMIN,
+  status: USER_STATUS.ACTIVE,
+  ...extra,
+});
+
 /** 一场处于「报名中」的赛事 */
 const openEvent = (extra = {}) => ({
   _id: 'e01',
@@ -96,40 +106,45 @@ const validForm = (extra = {}) => ({
   ...extra,
 });
 
-describe('canManageEvent —— 发布 / 管理权', () => {
-  test('干事与管理员可以管理', () => {
-    assert.equal(canManageEvent(staff()), true);
-    assert.equal(canManageEvent(staff('a1', { role: ROLE.ADMIN })), true);
+describe('canManageEvent —— 发布 / 管理权（仅管理员）', () => {
+  test('只有管理员可以发布 / 修改 / 抽签 / 开始 / 结束赛事', () => {
+    assert.equal(canManageEvent(admin()), true);
   });
 
-  test('普通会员没有管理权，本地模拟数据源也不放宽', () => {
+  test('干事与普通会员都没有管理权，本地模拟数据源也不放宽', () => {
+    // 干事比会员多的只是「代签到」与「录入比分」，赛事本身的操盘权收到管理员
+    assert.equal(canManageEvent(staff()), false);
     assert.equal(canManageEvent(member('m1')), false);
     // 判定只看角色——否则本地上每位会员都会看到「＋发布」
     assert.equal(canManageEvent(member('m1'), { isMock: true }), false);
   });
 
   test('待审核 / 离校 / 已禁用 / 未登录一律不行', () => {
-    assert.equal(canManageEvent(member('m1', { status: USER_STATUS.PENDING })), false);
-    assert.equal(canManageEvent(member('m1', { status: USER_STATUS.DISABLED })), false);
-    assert.equal(canManageEvent(member('m1', { status: USER_STATUS.LEFT })), false);
+    assert.equal(canManageEvent(admin('a1', { status: USER_STATUS.PENDING })), false);
+    assert.equal(canManageEvent(admin('a1', { status: USER_STATUS.DISABLED })), false);
+    assert.equal(canManageEvent(admin('a1', { status: USER_STATUS.LEFT })), false);
     assert.equal(canManageEvent(null), false);
   });
 });
 
 describe('赛事状态机 —— 开始 / 签到 / 结束', () => {
-  test('只有报名中的赛事能开始', () => {
-    assert.equal(canStartEvent(openEvent(), staff()), true);
-    assert.equal(canStartEvent(openEvent({ status: EVENT_STATUS.ONGOING }), staff()), false);
-    assert.equal(canStartEvent(openEvent({ status: EVENT_STATUS.FINISHED }), staff()), false);
+  test('只有报名中的赛事能开始（且只有管理员）', () => {
+    assert.equal(canStartEvent(openEvent(), admin()), true);
+    assert.equal(canStartEvent(openEvent(), staff()), false);
+    assert.equal(canStartEvent(openEvent({ status: EVENT_STATUS.ONGOING }), admin()), false);
+    assert.equal(canStartEvent(openEvent({ status: EVENT_STATUS.FINISHED }), admin()), false);
   });
 
   test('只有进行中的赛事能签到与结束', () => {
     const ongoing = openEvent({ status: EVENT_STATUS.ONGOING });
+    // 签到放给干事分担；结束赛事仍只有管理员
     assert.equal(canCheckIn(ongoing, staff()), true);
-    assert.equal(canFinishEvent(ongoing, staff()), true);
+    assert.equal(canCheckIn(ongoing, admin()), true);
+    assert.equal(canFinishEvent(ongoing, admin()), true);
+    assert.equal(canFinishEvent(ongoing, staff()), false);
 
     assert.equal(canCheckIn(openEvent(), staff()), false);
-    assert.equal(canFinishEvent(openEvent(), staff()), false);
+    assert.equal(canFinishEvent(openEvent(), admin()), false);
     assert.equal(canCheckIn(openEvent({ status: EVENT_STATUS.FINISHED }), staff()), false);
   });
 
@@ -140,18 +155,40 @@ describe('赛事状态机 —— 开始 / 签到 / 结束', () => {
   });
 });
 
-describe('canDrawEvent —— 抽签资格', () => {
-  test('干事在报名中可抽签', () => {
-    assert.equal(canDrawEvent(openEvent(), staff()), true);
+describe('startBlockedReason —— 单打未抽签不得开赛', () => {
+  test('单打没抽签时给出「请先抽签」', () => {
+    assert.equal(startBlockedReason(openEvent()), '请先抽签，再开始赛事');
+  });
+
+  test('单打已抽签可以开始', () => {
+    assert.equal(startBlockedReason(openEvent({ draw: { seedValue: 1 } })), '');
+  });
+
+  test('双打不支持抽签，不受此限', () => {
+    assert.equal(startBlockedReason(openEvent({ matchType: MATCH_TYPE.DOUBLES })), '');
+  });
+
+  test('赛事不存在时给出提示', () => {
+    assert.equal(startBlockedReason(null), '找不到这场赛事');
+  });
+});
+
+describe('canDrawEvent —— 抽签资格（仅管理员）', () => {
+  test('管理员在报名中可抽签', () => {
+    assert.equal(canDrawEvent(openEvent(), admin()), true);
+  });
+
+  test('干事不再有抽签权', () => {
+    assert.equal(canDrawEvent(openEvent(), staff()), false);
   });
 
   test('开赛后不可抽签 / 重抽（决策 7）', () => {
-    assert.equal(canDrawEvent(openEvent({ status: EVENT_STATUS.ONGOING }), staff()), false);
-    assert.equal(canDrawEvent(openEvent({ status: EVENT_STATUS.FINISHED }), staff()), false);
+    assert.equal(canDrawEvent(openEvent({ status: EVENT_STATUS.ONGOING }), admin()), false);
+    assert.equal(canDrawEvent(openEvent({ status: EVENT_STATUS.FINISHED }), admin()), false);
   });
 
   test('双打赛事不出现抽签（决策 1）', () => {
-    assert.equal(canDrawEvent(openEvent({ matchType: MATCH_TYPE.DOUBLES }), staff()), false);
+    assert.equal(canDrawEvent(openEvent({ matchType: MATCH_TYPE.DOUBLES }), admin()), false);
   });
 
   test('普通会员与访客都不行', () => {
@@ -649,11 +686,17 @@ describe('buildEventRow —— 把权限算进数据里', () => {
     assert.equal(row.mySignupLabel, '已报名');
   });
 
-  test('干事看到管理按钮（mock 下会员也能看到，界面须明示）', () => {
+  test('干事只看到代签到，结束赛事交给管理员', () => {
     const row = buildEventRow(openEvent({ status: EVENT_STATUS.ONGOING }), { actor: staff('s1') });
     assert.equal(row.canCheckIn, true);
-    assert.equal(row.canFinish, true);
+    assert.equal(row.canFinish, false);
     assert.equal(row.canStart, false);
+  });
+
+  test('管理员看到代签到与结束赛事', () => {
+    const row = buildEventRow(openEvent({ status: EVENT_STATUS.ONGOING }), { actor: admin('a1') });
+    assert.equal(row.canCheckIn, true);
+    assert.equal(row.canFinish, true);
   });
 
   test('名额与时间文案成形，缺字段也不显示 undefined', () => {
