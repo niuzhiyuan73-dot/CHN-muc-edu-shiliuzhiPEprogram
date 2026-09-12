@@ -59,6 +59,42 @@
       </view>
     </view>
 
+    <!-- ========== 学院赛（名单制报名的入口） ========== -->
+    <!-- 学院赛不个人报名，由学院负责人交名单；同一行对管理员与干事去不同的页 -->
+    <view class="card">
+      <view class="rank-head">
+        <view class="rank-head-title">学院赛</view>
+        <view wx:if="{{view.canManageCollege}}" class="event-publish" bindtap="onOpenCollegePublish">＋ 学院赛</view>
+      </view>
+
+      <view wx:if="{{!view.hasCollegeEvents}}" class="empty-note">{{view.collegeEventsEmptyNote}}</view>
+
+      <view
+        wx:for="{{view.collegeEvents}}"
+        wx:key="eventId"
+        class="event-row"
+        data-event-id="{{item.eventId}}"
+        data-can-submit="{{item.canSubmit}}"
+        bindtap="onOpenCollegeEvent"
+      >
+        <view class="event-main">
+          <view class="event-title">
+            <text class="event-name">{{item.title}}</text>
+            <text class="tag {{item.statusClass}}">{{item.statusLabel}}</text>
+          </view>
+          <view class="event-meta">
+            {{item.startTimeText}}<text wx:if="{{item.location}}"> · {{item.location}}</text>
+          </view>
+          <view class="event-meta">{{item.legPlanText}} · 名单 {{item.rosterText}}</view>
+        </view>
+
+        <view class="event-side">
+          <view wx:if="{{item.actionText}}" class="event-action">{{item.actionText}}</view>
+          <view wx:else class="event-arrow">›</view>
+        </view>
+      </view>
+    </view>
+
     <!-- ========== 我在积分榜上的位置 ========== -->
     <view wx:if="{{view.me}}" class="card my-rank">
       <view class="my-rank-value">

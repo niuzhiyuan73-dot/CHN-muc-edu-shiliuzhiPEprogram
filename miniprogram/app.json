@@ -16,7 +16,14 @@
     "pages/profile-detail/profile-detail",
     "pages/event-detail/event-detail",
     "pages/event-edit/event-edit",
-    "pages/event-placement/event-placement"
+    "pages/event-placement/event-placement",
+    "pages/college-event-edit/college-event-edit",
+    "pages/college-entry/college-entry",
+    "pages/college-entry-review/college-entry-review",
+    "pages/college-event-detail/college-event-detail",
+    "pages/college-lineup/college-lineup",
+    "pages/college-match/college-match",
+    "pages/college-placement/college-placement"
   ],
   "window": {
     "backgroundTextStyle": "dark",

@@ -1,0 +1,77 @@
+/*
+ * 学院赛排阵页样式
+ * 卡片（.card）、按钮（.btn）、标签（.tag-*）都在 app.wxss 里，与其它页共用。
+ * 队员勾选与提交栏沿用名单页同款——页面样式表按页隔离，所以照样写一份。
+ */
+
+.block-back {
+  margin-top: var(--space-lg);
+  padding: 0 var(--space-xl);
+}
+
+/* ==================== 大场信息 ==================== */
+
+.event-meta {
+  margin-top: var(--space-xs);
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+
+.field-hint {
+  margin-top: var(--space-sm);
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  line-height: 1.5;
+}
+
+.field-error {
+  margin-top: var(--space-xs);
+  font-size: var(--font-xs);
+  color: var(--color-danger);
+  line-height: 1.5;
+}
+
+/* ==================== 每个小项 ==================== */
+
+.leg-picked {
+  margin: var(--space-sm) 0;
+  font-size: var(--font-sm);
+  color: var(--color-primary);
+  line-height: 1.5;
+}
+
+.member-row {
+  display: flex;
+  align-items: center;
+  min-height: 96rpx;
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.member-row:last-child {
+  border-bottom: none;
+}
+
+.member-name {
+  margin-left: var(--space-sm);
+  font-size: var(--font-md);
+}
+
+/* ==================== 提交 ==================== */
+
+.page-hint {
+  padding: 0 var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+.submit-bar {
+  display: flex;
+  margin-bottom: var(--space-md);
+}
+
+.submit-btn {
+  flex: 1;
+}
+
+.submit-btn + .submit-btn {
+  margin-left: var(--space-sm);
+}

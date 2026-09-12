@@ -483,8 +483,15 @@ function runReplay({
       teamB: snapB,
       winner: match.winner,
       config: elo,
-      // 赛事比赛按等级取固定 K；日常比赛没有 eventId，走统一 kStandard
-      eventLevel: match.eventId ? eventLevelOf.get(match.eventId) : undefined,
+      // 赛事比赛按等级取固定 K；日常比赛没有 eventId，走统一 kStandard。
+      // 学院赛的小场不属于个人赛的 events，等级直接写在记录上（一级 K=32），
+      // 因此记录自带的 level 优先——它才是「这场比赛按几级算」的第一手依据。
+      eventLevel:
+        match.level !== undefined && match.level !== null
+          ? match.level
+          : match.eventId
+            ? eventLevelOf.get(match.eventId)
+            : undefined,
     });
 
     const players = [];

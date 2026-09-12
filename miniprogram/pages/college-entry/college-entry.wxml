@@ -1,0 +1,97 @@
+<!--
+  提交学院名单
+  数据形状见 services/college-view.js 的 loadCollegeEntryView。
+  校验在 services/college-entry.js，这里只渲染，并把勾选交回去。
+-->
+<view class="page-container">
+
+  <view wx:if="{{loading}}" class="loading">正在加载…</view>
+
+  <view wx:elif="{{error}}" class="empty-state">
+    <view class="empty-state-icon">⚠️</view>
+    <view class="empty-state-text">{{error}}</view>
+  </view>
+
+  <!-- 没有提交权（未登录 / 名单锁定 / 非本学院）时整页顶掉 -->
+  <view wx:elif="{{view.blockReason}}" class="empty-state">
+    <view class="empty-state-icon">🔒</view>
+    <view class="empty-state-text">{{view.blockReason}}</view>
+    <view class="btn btn-outline block-back" bindtap="onCancel">返回</view>
+  </view>
+
+  <block wx:else>
+
+    <!-- ========== 赛事信息 ========== -->
+    <view class="card">
+      <view class="rank-head">
+        <view class="rank-head-title">{{view.title}}</view>
+        <text class="tag tag-success">{{view.statusLabel}}</text>
+      </view>
+      <view class="event-meta">{{view.legPlanText}}</view>
+      <view class="event-meta">名单 {{view.rosterText}} · {{view.startTimeText}}</view>
+      <view wx:if="{{view.location}}" class="event-meta">{{view.location}}</view>
+      <view class="field-hint">我方参赛学院：{{view.college}}</view>
+    </view>
+
+    <!-- 已提交过时显示状态，退回的还要把理由带出来 -->
+    <view wx:if="{{view.entryStatus !== null}}" class="card">
+      <view class="entry-state">
+        <text class="entry-state-label">当前名单：{{view.entryStatusLabel}}</text>
+        <text wx:if="{{view.entryApproved}}" class="entry-state-note">已通过，等待管理员抽签锁定</text>
+        <text wx:elif="{{view.entryReturned}}" class="entry-state-note">被退回，请修改后重新提交</text>
+        <text wx:else class="entry-state-note">等待管理员审核</text>
+      </view>
+      <view wx:if="{{view.entryReason}}" class="field-error">退回理由：{{view.entryReason}}</view>
+    </view>
+
+    <!-- ========== 勾选队员 ========== -->
+    <view class="card">
+      <view class="rank-head">
+        <view class="rank-head-title">勾选队员</view>
+        <view class="rank-head-count">已选 {{view.selectedCount}} 人 / 需 {{view.rosterText}}</view>
+      </view>
+      <view class="card-subtitle">只能从本院在册会员中选择；名单内未上场的队员即为替补</view>
+
+      <view wx:if="{{view.candidates.length === 0}}" class="empty-note">
+        本院还没有可选的会员
+      </view>
+
+      <checkbox-group bindchange="onToggleMember">
+        <label
+          wx:for="{{view.candidates}}"
+          wx:key="memberId"
+          class="member-row"
+        >
+          <checkbox value="{{item.memberId}}" checked="{{item.checked}}" color="#2f7d4f" />
+          <view class="member-avatar">
+            <image wx:if="{{item.avatarUrl}}" class="member-avatar-img" src="{{item.avatarUrl}}" mode="aspectFill" />
+            <text wx:else>{{item.avatarText}}</text>
+          </view>
+          <view class="member-name">{{item.nickName}}</view>
+        </label>
+      </checkbox-group>
+    </view>
+
+    <!-- ========== 备注 ========== -->
+    <view class="card">
+      <view class="card-title">备注</view>
+      <view class="card-subtitle">选填，例如伤病、兼项说明</view>
+      <textarea
+        class="content-input"
+        value="{{remark}}"
+        maxlength="100"
+        placeholder="给管理员的话"
+        bindinput="onInputRemark"
+      />
+    </view>
+
+    <view class="submit-bar">
+      <view class="btn btn-outline submit-btn" bindtap="onCancel">取消</view>
+      <view
+        class="btn btn-primary submit-btn {{submitting ? 'btn-disabled' : ''}}"
+        bindtap="onSubmit"
+      >提交名单</view>
+    </view>
+
+  </block>
+</view>

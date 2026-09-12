@@ -1,0 +1,101 @@
+<!--
+  学院名单审核
+  数据形状见 services/college-view.js 的 loadCollegeEntryReviewView。
+  权限与文案都在视图模型里算好，这里只渲染。
+-->
+<view class="page-container">
+
+  <view wx:if="{{loading}}" class="loading">正在加载…</view>
+
+  <view wx:elif="{{error}}" class="empty-state">
+    <view class="empty-state-icon">⚠️</view>
+    <view class="empty-state-text">{{error}}</view>
+  </view>
+
+  <!-- 只有管理员能审核；无权时整页顶掉，不给「点进去再被拒」的机会 -->
+  <view wx:elif="{{view.blockReason}}" class="empty-state">
+    <view class="empty-state-icon">🔒</view>
+    <view class="empty-state-text">{{view.blockReason}}</view>
+  </view>
+
+  <block wx:else>
+
+    <!-- ========== 赛事信息 ========== -->
+    <view class="card">
+      <view class="rank-head">
+        <view class="rank-head-title">{{view.title}}</view>
+        <text class="tag tag-success">{{view.statusLabel}}</text>
+      </view>
+      <view class="event-meta">{{view.legPlanText}}</view>
+      <view class="event-meta">名单 {{view.rosterText}} · {{view.startTimeText}}</view>
+      <view wx:if="{{view.location}}" class="event-meta">{{view.location}}</view>
+      <view class="field-hint">{{view.substituteHint}}</view>
+    </view>
+
+    <!-- ========== 名单列表 ========== -->
+    <view class="card">
+      <view class="rank-head">
+        <view class="rank-head-title">各学院名单</view>
+        <view class="rank-head-count">待审核 {{view.pendingCount}} 份</view>
+      </view>
+
+      <view wx:if="{{!view.hasRows}}" class="empty-note">{{view.emptyNote}}</view>
+
+      <view wx:for="{{view.rows}}" wx:key="entryId" class="entry-row">
+        <view class="entry-head">
+          <text class="entry-college">{{item.college}}</text>
+          <text class="tag {{item.isApproved ? 'tag-success' : (item.isReturned ? 'tag-gray' : 'tag-warning')}}">{{item.statusLabel}}</text>
+        </view>
+
+        <view class="entry-meta">共 {{item.memberCount}} 人 · 由 {{item.submittedName}} 提交于 {{item.submitTimeText}}</view>
+        <view class="entry-members">{{item.memberNamesText}}</view>
+        <view wx:if="{{item.remark}}" class="entry-remark">备注：{{item.remark}}</view>
+        <!-- 退回过的要把理由带出来，学院才知道上一份为什么没过 -->
+        <view wx:if="{{item.reason}}" class="field-error">退回理由：{{item.reason}}</view>
+
+        <view wx:if="{{item.canReview}}" class="entry-actions">
+          <view
+            class="btn btn-outline entry-btn {{acting === item.entryId ? 'btn-disabled' : ''}}"
+            data-entry-id="{{item.entryId}}"
+            data-college="{{item.college}}"
+            bindtap="onOpenReject"
+          >退回</view>
+          <view
+            class="btn btn-primary entry-btn {{acting === item.entryId ? 'btn-disabled' : ''}}"
+            data-entry-id="{{item.entryId}}"
+            bindtap="onApprove"
+          >通过</view>
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{isMock}}" class="mock-note">
+      当前为本地模拟数据，用于开发预览，并非真实成绩
+    </view>
+
+  </block>
+
+  <!-- ========== 退回面板 ========== -->
+  <view wx:if="{{reject.open}}" class="panel-mask" bindtap="onCancelReject">
+    <view class="panel" catchtap="noop">
+      <view class="panel-title">退回 {{reject.college}} 的名单</view>
+      <view class="panel-hint">退回后该学院可以修改并重新提交，请说明原因。</view>
+      <textarea
+        class="panel-input"
+        value="{{reason}}"
+        maxlength="100"
+        placeholder="例如：名单里有非本院队员"
+        bindinput="onInputReason"
+      />
+      <view wx:if="{{actionError}}" class="field-error">{{actionError}}</view>
+      <view class="panel-actions">
+        <view class="btn btn-outline panel-btn" bindtap="onCancelReject">取消</view>
+        <view
+          class="btn btn-primary panel-btn {{acting ? 'btn-disabled' : ''}}"
+          bindtap="onSubmitReject"
+        >确认退回</view>
+      </view>
+    </view>
+  </view>
+
+</view>

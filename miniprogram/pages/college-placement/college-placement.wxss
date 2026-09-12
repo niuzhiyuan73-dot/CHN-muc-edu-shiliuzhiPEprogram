@@ -1,0 +1,87 @@
+/*
+ * 录入学院名次样式
+ * 卡片头与错误 / 提交条复用 templates/rank-board.wxss，与榜单同一副面孔。
+ * 一行是一所学院，没有头像，故比个人赛的名次页少一组头像样式。
+ */
+@import "../../templates/rank-board.wxss";
+
+/* ==================== 这场学院赛 ==================== */
+
+.event-title {
+  font-size: var(--font-lg);
+  font-weight: 600;
+}
+
+.event-meta {
+  margin-top: 6rpx;
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+
+/* 名次口径看漏了会填错，用暖色块顶出来 */
+.bronze-hint {
+  margin-top: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  font-size: var(--font-xs);
+  color: #b45309;
+  background: #fef3c7;
+  border-radius: var(--radius-sm);
+  line-height: 1.6;
+}
+
+/* ==================== 名次名单 ==================== */
+
+.place-row {
+  display: flex;
+  align-items: center;
+  padding: var(--space-sm) 0;
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.place-row:last-child {
+  border-bottom: none;
+}
+
+.place-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.place-name {
+  font-size: var(--font-md);
+}
+
+/* 名次输入框：只占一小格，一眼能扫完一整列 */
+.place-input {
+  width: 120rpx;
+  flex-shrink: 0;
+  margin-left: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  box-sizing: border-box;
+  text-align: center;
+  font-size: var(--font-md);
+  background: var(--color-bg);
+  border-radius: var(--radius-sm);
+}
+
+/* ==================== 错误与提交 ==================== */
+
+.submit-error {
+  font-size: var(--font-sm);
+  color: var(--color-danger);
+  text-align: center;
+  padding: var(--space-sm) 0;
+}
+
+.submit-bar {
+  display: flex;
+  margin-bottom: var(--space-md);
+}
+
+.submit-btn {
+  flex: 1;
+}
+
+.submit-btn + .submit-btn {
+  margin-left: var(--space-sm);
+}

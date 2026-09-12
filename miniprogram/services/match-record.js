@@ -29,7 +29,10 @@ const {
   MATCH_TYPE,
   MATCH_TYPE_TO_POOL,
   MATCH_STATUS,
+  MATCH_COMPETITION,
+  MATCH_OUTCOME,
   ROLE,
+  TEAM,
 } = require('../utils/constants.js');
 const { validateMatchScore, isValidFormat } = require('../utils/match-format.js');
 
@@ -200,6 +203,85 @@ function canRevoke(match, userId, options = {}) {
  */
 function needsScore(match) {
   return Boolean(match) && match.status === MATCH_STATUS.PENDING && !match.winner;
+}
+
+/**
+ * 能不能给这场比赛记弃权（M5-3）。
+ *
+ * 【为什么只有个人赛走这里】
+ * 学院赛小场的弃权是「学院丢一项」，由管理员在大场页操作（college-handlers
+ * 的 recordForfeit），落点是 tie 不是 match。个人赛没有大场这层，弃权就是
+ * 一个人的事（D41），所以另开一条路，靠 competition 把两者分开，免得
+ * 两套规则在同一函数里互相牵扯。
+ *
+ * 【为什么约球不能弃权】
+ * 日常约球没有「晋级」这回事，弃了也不影响谁；没有 eventId 就一律拒绝。
+ *
+ * 【为什么本人之外还放管理员】
+ * D41 说「本人可以自选弃权」，但临场没到场、又不肯掏手机的人总得有人收口。
+ * 管理员口径与「可确认 / 可撤销任意一场」对齐——他本就能替这场比赛下结论，
+ * 再挡一次弃权只是逼他先去改比分，反而留下假成绩。
+ *
+ * @param {Object} match
+ * @param {string} forfeitBy 弃权者编号，必须是场上的人
+ * @param {string} actorId 操作者编号
+ * @param {Object} [options]
+ * @param {number} [options.role=ROLE.MEMBER] 操作者角色
+ * @returns {boolean}
+ */
+function canForfeit(match, forfeitBy, actorId, options = {}) {
+  const { role = ROLE.MEMBER } = options;
+
+  if (!match || !forfeitBy || !actorId) return false;
+  // 赛事比赛才谈得上弃权与晋级
+  if (!match.eventId) return false;
+  // 学院赛小场有自己的一套（记给学院），别从这条路进来
+  if (match.competition === MATCH_COMPETITION.COLLEGE) return false;
+  // 已生效的成绩要改，走撤销；已作废的不必再弃
+  if (match.status !== MATCH_STATUS.PENDING) return false;
+  // 弃权的是场上的人，不是随便谁
+  if (!isParticipant(match, forfeitBy)) return false;
+
+  if (Number(role) >= ROLE.ADMIN) return true;
+  return actorId === forfeitBy;
+}
+
+/**
+ * 弃权要写进比赛记录的字段（M5-3）。
+ *
+ * 与学院赛弃权（college-handlers.recordForfeit）同一形状：比分清空、胜方
+ * 判给对手、状态直接生效，结果性质由 outcome 表达。这样个人赛与学院赛的
+ * 弃权在回放侧走同一条路——isEloEligibleMatch 只认 outcome，不计 ELO。
+ *
+ * 【为什么胜方由 forfeitBy 推出，而不是调用方传入】
+ * 与录入比分同一纪律：胜负是算出来的事实，不是填进来的参数。传入 winner
+ * 就等于给了「让 A 弃权却判 B 赢」的错配空间。
+ *
+ * @param {Object} match
+ * @param {string} forfeitBy 弃权者编号
+ * @param {Object} ctx
+ * @param {string} ctx.actorId 操作者编号
+ * @param {Date} [ctx.now]
+ * @returns {Object}
+ */
+function buildForfeitPatch(match, forfeitBy, ctx = {}) {
+  const { actorId = '', now = new Date() } = ctx;
+  const side = sideOf(match, forfeitBy);
+  // 站在 A 边的人弃权，就是 B 边获胜
+  const winner = side === 'A' ? TEAM.B : TEAM.A;
+
+  return {
+    outcome: MATCH_OUTCOME.FORFEIT,
+    forfeitBy,
+    winner,
+    scoreA: [],
+    scoreB: [],
+    recorder: actorId,
+    status: MATCH_STATUS.ACTIVE,
+    action: 'forfeit',
+    actor: actorId,
+    actedAt: now,
+  };
 }
 
 /**
@@ -470,6 +552,8 @@ module.exports = {
   canConfirm,
   canRevoke,
   needsScore,
+  canForfeit,
+  buildForfeitPatch,
   toScore,
   normalizeScores,
   buildMatchRecord,

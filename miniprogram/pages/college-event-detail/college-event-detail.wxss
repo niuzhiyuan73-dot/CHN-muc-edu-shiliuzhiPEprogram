@@ -1,0 +1,206 @@
+/*
+ * 学院赛详情页样式
+ * 卡片（.card）、按钮（.btn）、标签（.tag-*）都在 app.wxss 里，与其它页共用。
+ * 种子行、签表、大场列表是本页特有，写在这里。
+ */
+
+.block-back {
+  margin-top: var(--space-md);
+}
+
+/* ==================== 赛事信息 ==================== */
+
+.event-meta {
+  margin-top: var(--space-xs);
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+
+.field-hint {
+  margin-top: var(--space-sm);
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  line-height: 1.5;
+}
+
+/* ==================== 种子选择 ==================== */
+
+.seed-row {
+  display: flex;
+  align-items: center;
+  padding: var(--space-sm) var(--space-md);
+  margin-top: var(--space-xs);
+  border: 2rpx solid var(--color-divider);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+}
+
+/* 已选种子：描边与底色都换成主色，一眼看出点过 */
+.seed-row-on {
+  border-color: var(--color-primary);
+  background: var(--color-card);
+}
+
+.seed-college {
+  font-size: var(--font-sm);
+}
+
+.seed-tag {
+  margin-left: auto;
+}
+
+/* ==================== 签表 ==================== */
+
+.draw-pairs {
+  margin-top: var(--space-sm);
+  font-size: var(--font-sm);
+  line-height: 1.8;
+}
+
+/* ==================== 开始赛事按钮 ==================== */
+
+.start-event-btn {
+  margin-top: var(--space-md);
+}
+
+/* ==================== 最终名次 ==================== */
+
+.result-row {
+  display: flex;
+  align-items: center;
+  padding: var(--space-sm) 0;
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.result-row:last-child {
+  border-bottom: none;
+}
+
+/* 名次文案（冠军 / 亚军 / 四强）固定宽度，学院名对齐成一列 */
+.result-place {
+  width: 160rpx;
+  flex-shrink: 0;
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: var(--color-primary);
+}
+
+.result-college {
+  flex: 1;
+  font-size: var(--font-md);
+}
+
+/* ==================== 大场 ==================== */
+
+.tie-row {
+  padding: var(--space-md) 0;
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.tie-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.tie-head {
+  display: flex;
+  align-items: center;
+}
+
+.tie-college {
+  font-size: var(--font-md);
+  font-weight: 600;
+}
+
+.tie-vs {
+  margin: 0 var(--space-sm);
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+}
+
+/* 状态标签推到最右边 */
+.tie-status {
+  margin-left: auto;
+}
+
+.tie-meta {
+  margin-top: var(--space-xs);
+  font-size: var(--font-xs);
+  color: var(--color-text-secondary);
+}
+
+.leg-list {
+  margin-top: var(--space-sm);
+  padding: var(--space-sm);
+  background: var(--color-bg);
+  border-radius: var(--radius-sm);
+}
+
+.leg-row {
+  display: flex;
+  align-items: center;
+  font-size: var(--font-xs);
+  line-height: 1.8;
+}
+
+.leg-no {
+  color: var(--color-text-secondary);
+  width: 120rpx;
+}
+
+.leg-discipline {
+  flex: 1;
+}
+
+.leg-pending {
+  color: var(--color-text-tertiary);
+}
+
+.leg-outcome {
+  color: var(--color-danger);
+}
+
+.leg-enter {
+  margin-left: var(--space-sm);
+  color: var(--color-primary);
+}
+
+.lineup-flags {
+  display: flex;
+  margin-top: var(--space-sm);
+}
+
+.lineup-flag {
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  padding: 2rpx var(--space-sm);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+}
+
+.lineup-flag + .lineup-flag {
+  margin-left: var(--space-sm);
+}
+
+.lineup-flag-on {
+  color: var(--color-primary);
+  background: rgba(30, 122, 85, 0.1);
+}
+
+.entry-actions {
+  display: flex;
+  margin-top: var(--space-sm);
+}
+
+.entry-btn {
+  flex: 1;
+  height: 68rpx;
+  line-height: 68rpx;
+  padding: 0;
+  font-size: var(--font-sm);
+  text-align: center;
+}
+
+.entry-btn + .entry-btn {
+  margin-left: var(--space-sm);
+}

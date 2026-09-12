@@ -16,7 +16,7 @@ const assert = require('node:assert/strict');
 const cloud = require('../miniprogram/services/cloud.js');
 const { ALL_ACTIONS } = require('../cloudfunctions/data/src/actions.js');
 const { HANDLERS, dispatch } = require('../cloudfunctions/data/src/core/dispatch.js');
-const { createFixtureRepo, contextFor } = require('./helpers/cloud-fixture.js');
+const { createFixtureRepo, contextFor, USERS } = require('./helpers/cloud-fixture.js');
 const {
   EVENT_STATUS,
   SIGNUP_STATUS,
@@ -27,6 +27,12 @@ const {
   MATCH_TYPE,
   MATCH_STATUS,
   EVENT_FORMAT,
+  ROLE,
+  COLLEGE_EVENT_STATUS,
+  COLLEGE_ENTRY_STATUS,
+  TIE_STATUS,
+  LEG_DISCIPLINE,
+  DOUBLES_DISCIPLINES,
 } = require('../miniprogram/utils/constants.js');
 
 /** 用一份全新的夹具调一次接口 */
@@ -815,5 +821,357 @@ describe('云函数 —— 赛事闭环', () => {
 
     assert.equal(res.ok, false);
     assert.equal(res.message, '请先登录后再操作');
+  });
+});
+
+describe('云函数 —— 学院赛闭环', () => {
+  /**
+   * 学院赛要两所学院才测得出跨院权限，夹具默认全在体育学院，这里把
+   * u02 提成信息工程学院的干事、u03/u04 划过去，于是：
+   *   体育学院 —— 管理员兜底名单，u01 是普通会员
+   *   信息工程学院 —— u02 是干事，u03/u04 是名单里的队员
+   */
+  const collegeFixtureRepo = () =>
+    createFixtureRepo({
+      users: USERS.map((user) => {
+        if (user._id === 'u02') return { ...user, role: ROLE.STAFF, college: '信息工程学院' };
+        if (user._id === 'u03' || user._id === 'u04') return { ...user, college: '信息工程学院' };
+        return user;
+      }),
+    });
+
+  /** 在同一份仓储上换个身份再调一次 */
+  const on = async (repo, action, payload, openId) =>
+    dispatch(action, payload, await contextFor(repo, openId));
+
+  const admin = 'openid-admin';
+  const COLLEGE_SPORTS = '体育学院';
+  const COLLEGE_INFO = '信息工程学院';
+  const ROSTER_SPORTS = ['u01'];
+  const ROSTER_INFO = ['u03', 'u04'];
+
+  /** 一份合法的学院赛表单：两个单打小项，每院 1–10 人 */
+  const collegeDraft = {
+    title: '学院团体赛',
+    description: '以学院为单位报名',
+    legPlan: [LEG_DISCIPLINE.MS, LEG_DISCIPLINE.WS],
+    rosterMin: 1,
+    rosterMax: 10,
+    startTime: '2026-06-10T09:00:00',
+    location: '学校体育馆',
+  };
+
+  const publishCollege = async (repo, form = {}) => {
+    const { data } = await on(
+      repo,
+      'publishCollegeEvent',
+      { form: { ...collegeDraft, ...form } },
+      admin
+    );
+    assert.equal(data.ok, true, data.firstError);
+    return data.record._id;
+  };
+
+  const submitEntry = async (repo, eventId, openId, college, memberIds) => {
+    const res = await on(repo, 'submitCollegeEntry', { eventId, college, memberIds }, openId);
+    assert.equal(res.data.ok, true, res.data.message);
+    return res.data.record._id;
+  };
+
+  const approveEntry = async (repo, entryId) => {
+    const res = await on(repo, 'reviewCollegeEntry', { entryId, action: 'approve' }, admin);
+    assert.equal(res.data.ok, true, res.data.message);
+  };
+
+  /** 两所学院各交一份名单并双双通过审核 */
+  const submitBothEntries = async (repo, eventId) => {
+    const sports = await submitEntry(repo, eventId, admin, COLLEGE_SPORTS, ROSTER_SPORTS);
+    const info = await submitEntry(repo, eventId, 'openid-u02', COLLEGE_INFO, ROSTER_INFO);
+    await approveEntry(repo, sports);
+    await approveEntry(repo, info);
+    return { sports, info };
+  };
+
+  /** 抽签 + 赛事级开始，返回首轮大场 */
+  const startCollege = async (repo, eventId, seedValue = 42) => {
+    const drawn = await on(repo, 'drawCollegeEvent', { eventId, seedValue }, admin);
+    assert.equal(drawn.data.ok, true, drawn.data.message);
+    const started = await on(repo, 'startCollegeEvent', { eventId }, admin);
+    assert.equal(started.data.ok, true, started.data.message);
+    return started.data.ties;
+  };
+
+  /** 一个小项需要几个人：双打 2 人，单打 1 人 */
+  const legNeed = (discipline) => (DOUBLES_DISCIPLINES.includes(discipline) ? 2 : 1);
+
+  /** 按名单顺序给每个小项派够人（默认允许兼项，人手不够可以重复上） */
+  const lineupFrom = (tie, roster) =>
+    tie.legs.map((leg) => ({ legNo: leg.legNo, players: roster.slice(0, legNeed(leg.discipline)) }));
+
+  test('发布学院赛 —— 仅管理员，落库即报名中', async () => {
+    const repo = collegeFixtureRepo();
+
+    const byStaff = await on(repo, 'publishCollegeEvent', { form: collegeDraft }, 'openid-u02');
+    assert.equal(byStaff.data.ok, false);
+    assert.match(byStaff.data.firstError, /没有发布学院赛的权限/);
+
+    const id = await publishCollege(repo);
+    const event = (await on(repo, 'getCollegeEvent', { id }, admin)).data;
+    assert.equal(event.status, COLLEGE_EVENT_STATUS.SIGNUP);
+    assert.equal(event.format, EVENT_FORMAT.SINGLE_ELIM, '学院赛固定团体单败');
+    assert.deepEqual(event.legPlan, [LEG_DISCIPLINE.MS, LEG_DISCIPLINE.WS]);
+  });
+
+  test('提交名单 —— 干事限本学院，重交覆盖同一条', async () => {
+    const repo = collegeFixtureRepo();
+    const id = await publishCollege(repo);
+
+    // 会员没有提交权；别院干事也不能替体育学院交
+    const byMember = await on(
+      repo,
+      'submitCollegeEntry',
+      { eventId: id, college: COLLEGE_SPORTS, memberIds: ROSTER_SPORTS },
+      'openid-u01'
+    );
+    assert.equal(byMember.data.ok, false);
+    assert.match(byMember.data.message, /只能提交本学院的名单/);
+
+    const byOtherStaff = await on(
+      repo,
+      'submitCollegeEntry',
+      { eventId: id, college: COLLEGE_SPORTS, memberIds: ROSTER_SPORTS },
+      'openid-u02'
+    );
+    assert.equal(byOtherStaff.data.ok, false);
+    assert.match(byOtherStaff.data.message, /只能提交本学院的名单/);
+
+    // 跨院凑人被拦：体育学院的名单里塞了信息工程学院的人
+    const cross = await on(
+      repo,
+      'submitCollegeEntry',
+      { eventId: id, college: COLLEGE_SPORTS, memberIds: ['u03'] },
+      admin
+    );
+    assert.equal(cross.data.ok, false);
+    assert.match(cross.data.message, /不属于本学院/);
+
+    const first = await submitEntry(repo, id, admin, COLLEGE_SPORTS, ROSTER_SPORTS);
+    const again = await submitEntry(repo, id, admin, COLLEGE_SPORTS, ROSTER_SPORTS);
+    assert.equal(again, first, '同一赛事同一学院恒为一条（自然键当 _id）');
+
+    const entries = (await on(repo, 'getCollegeEntries', { eventId: id }, admin)).data;
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].status, COLLEGE_ENTRY_STATUS.PENDING);
+  });
+
+  test('审核名单 —— 仅管理员，退回必须给理由', async () => {
+    const repo = collegeFixtureRepo();
+    const id = await publishCollege(repo);
+    const entryId = await submitEntry(repo, id, admin, COLLEGE_SPORTS, ROSTER_SPORTS);
+
+    const byStaff = await on(repo, 'reviewCollegeEntry', { entryId, action: 'approve' }, 'openid-u02');
+    assert.equal(byStaff.data.ok, false);
+    assert.match(byStaff.data.message, /只有管理员/);
+
+    const noReason = await on(repo, 'reviewCollegeEntry', { entryId, action: 'reject' }, admin);
+    assert.equal(noReason.data.ok, false);
+    assert.match(noReason.data.message, /必须说明理由/);
+
+    const returned = await on(
+      repo,
+      'reviewCollegeEntry',
+      { entryId, action: 'reject', reason: '名单人数不足' },
+      admin
+    );
+    assert.equal(returned.data.ok, true, returned.data.message);
+    assert.equal(returned.data.record.status, COLLEGE_ENTRY_STATUS.RETURNED);
+
+    // 处理过的不再受理，避免「退回后又被悄悄通过」
+    const twice = await on(repo, 'reviewCollegeEntry', { entryId, action: 'approve' }, admin);
+    assert.equal(twice.data.ok, false);
+    assert.match(twice.data.message, /已经处理过/);
+  });
+
+  test('抽签 —— 只收已通过审核的学院，抽完即锁定名单', async () => {
+    const repo = collegeFixtureRepo();
+    const id = await publishCollege(repo);
+    const sports = await submitEntry(repo, id, admin, COLLEGE_SPORTS, ROSTER_SPORTS);
+    const info = await submitEntry(repo, id, 'openid-u02', COLLEGE_INFO, ROSTER_INFO);
+
+    // 两份都还待审核：一所学院都进不了签表
+    const none = await on(repo, 'drawCollegeEvent', { eventId: id, seedValue: 42 }, admin);
+    assert.equal(none.data.ok, false);
+    assert.match(none.data.message, /不足 2 个/);
+
+    await approveEntry(repo, sports);
+    const one = await on(repo, 'drawCollegeEvent', { eventId: id, seedValue: 42 }, admin);
+    assert.equal(one.data.ok, false, '只有一个通过也抽不了');
+
+    await approveEntry(repo, info);
+    const byStaff = await on(repo, 'drawCollegeEvent', { eventId: id, seedValue: 42 }, 'openid-u02');
+    assert.equal(byStaff.data.ok, false);
+    assert.match(byStaff.data.message, /只有管理员/);
+
+    const drawn = await on(repo, 'drawCollegeEvent', { eventId: id, seedValue: 42 }, admin);
+    assert.equal(drawn.data.ok, true, drawn.data.message);
+    assert.equal(drawn.data.record.status, COLLEGE_EVENT_STATUS.READY);
+    assert.equal(drawn.data.record.draw.size, 2);
+
+    // 抽完名单锁定（D13）：再交名单被拒，再抽也被拒
+    const late = await on(
+      repo,
+      'submitCollegeEntry',
+      { eventId: id, college: COLLEGE_SPORTS, memberIds: ROSTER_SPORTS },
+      admin
+    );
+    assert.equal(late.data.ok, false);
+    assert.match(late.data.message, /锁定/);
+
+    const again = await on(repo, 'drawCollegeEvent', { eventId: id, seedValue: 99 }, admin);
+    assert.equal(again.data.ok, false);
+    assert.match(again.data.message, /只能在报名阶段抽签/);
+  });
+
+  test('赛事级开始 —— 没抽签不能开，开赛生成首轮大场', async () => {
+    const repo = collegeFixtureRepo();
+    const id = await publishCollege(repo);
+    await submitBothEntries(repo, id);
+
+    const early = await on(repo, 'startCollegeEvent', { eventId: id }, admin);
+    assert.equal(early.data.ok, false);
+    assert.match(early.data.message, /还没有抽签/);
+
+    await on(repo, 'drawCollegeEvent', { eventId: id, seedValue: 42 }, admin);
+    const byStaff = await on(repo, 'startCollegeEvent', { eventId: id }, 'openid-u02');
+    assert.equal(byStaff.data.ok, false);
+    assert.match(byStaff.data.message, /只有管理员/);
+
+    const started = await on(repo, 'startCollegeEvent', { eventId: id }, admin);
+    assert.equal(started.data.ok, true, started.data.message);
+    assert.equal(started.data.record.status, COLLEGE_EVENT_STATUS.ONGOING);
+    assert.equal(started.data.ties.length, 1, '两所学院首轮一场');
+
+    const tie = started.data.ties[0];
+    assert.equal(tie.legs.length, 2, '小项序列铺到每个大场上');
+    assert.equal(tie.status, TIE_STATUS.PENDING_LINEUP);
+    assert.equal(tie.lineupA, false);
+    assert.equal(tie.lineupB, false);
+    assert.deepEqual(
+      [tie.collegeA, tie.collegeB].sort(),
+      [COLLEGE_SPORTS, COLLEGE_INFO].sort()
+    );
+
+    // 落库的与返回的是同一批大场（确定性主键）
+    const stored = (await on(repo, 'getCollegeTies', { eventId: id }, admin)).data;
+    assert.equal(stored.length, 1);
+    assert.equal(stored[0]._id, tie._id);
+  });
+
+  test('排阵与大场开始 —— 双方交齐才能开，开完不能再改', async () => {
+    const repo = collegeFixtureRepo();
+    const id = await publishCollege(repo);
+    await submitBothEntries(repo, id);
+    const [tie] = await startCollege(repo, id);
+    const tieId = tie._id;
+
+    const sportsLineup = lineupFrom(tie, ROSTER_SPORTS);
+    const infoLineup = lineupFrom(tie, ROSTER_INFO);
+
+    // 未登录 → 顶层失败；会员 / 别院干事 → 业务失败
+    const anon = await on(repo, 'submitLineup', { tieId, college: COLLEGE_SPORTS, entries: sportsLineup }, null);
+    assert.equal(anon.ok, false);
+    assert.equal(anon.message, '请先登录后再操作');
+
+    const byMember = await on(
+      repo,
+      'submitLineup',
+      { tieId, college: COLLEGE_SPORTS, entries: sportsLineup },
+      'openid-u01'
+    );
+    assert.equal(byMember.data.ok, false);
+    assert.match(byMember.data.message, /只能提交本学院大场的排阵/);
+
+    const byOther = await on(
+      repo,
+      'submitLineup',
+      { tieId, college: COLLEGE_SPORTS, entries: sportsLineup },
+      'openid-u02'
+    );
+    assert.equal(byOther.data.ok, false);
+
+    // 少排一个人不给交（D40）
+    const short = await on(
+      repo,
+      'submitLineup',
+      { tieId, college: COLLEGE_SPORTS, entries: [sportsLineup[0]] },
+      admin
+    );
+    assert.equal(short.data.ok, false);
+    assert.match(short.data.message, /第 2 场还没排满/);
+
+    // 名单外的人不给上（D37）
+    const outsider = await on(
+      repo,
+      'submitLineup',
+      {
+        tieId,
+        college: COLLEGE_SPORTS,
+        entries: [{ legNo: 1, players: ['u03'] }, { legNo: 2, players: ROSTER_SPORTS }],
+      },
+      admin
+    );
+    assert.equal(outsider.data.ok, false);
+    assert.match(outsider.data.message, /不在本学院名单内/);
+
+    // 先交体育学院：只翻自己那一侧，仍待排阵
+    const first = await on(
+      repo,
+      'submitLineup',
+      { tieId, college: COLLEGE_SPORTS, entries: sportsLineup },
+      admin
+    );
+    assert.equal(first.data.ok, true, first.data.message);
+    let stored = (await on(repo, 'getCollegeTies', { eventId: id }, admin)).data[0];
+    assert.equal(Boolean(stored.lineupA) !== Boolean(stored.lineupB), true, '只有一侧置真');
+    assert.equal(stored.status, TIE_STATUS.PENDING_LINEUP);
+
+    // 还差一方，管理员不能开（D38）
+    const notYet = await on(repo, 'startTie', { tieId }, admin);
+    assert.equal(notYet.data.ok, false);
+    assert.match(notYet.data.message, /排阵还没交齐/);
+
+    // 信息工程学院补齐 → 双方排阵齐
+    const infoSubmitted = await on(
+      repo,
+      'submitLineup',
+      { tieId, college: COLLEGE_INFO, entries: infoLineup },
+      'openid-u02'
+    );
+    assert.equal(infoSubmitted.data.ok, true, infoSubmitted.data.message);
+    stored = (await on(repo, 'getCollegeTies', { eventId: id }, admin)).data[0];
+    assert.equal(stored.lineupA && stored.lineupB, true);
+
+    // 会员不能开大场；管理员可以
+    const byMemberStart = await on(repo, 'startTie', { tieId }, 'openid-u01');
+    assert.equal(byMemberStart.data.ok, false);
+    assert.match(byMemberStart.data.message, /只有管理员/);
+
+    const started = await on(repo, 'startTie', { tieId }, admin);
+    assert.equal(started.data.ok, true, started.data.message);
+    assert.equal(started.data.record.status, TIE_STATUS.ONGOING);
+
+    // 开完再交 / 再开都被拒
+    const afterStart = await on(
+      repo,
+      'submitLineup',
+      { tieId, college: COLLEGE_SPORTS, entries: sportsLineup },
+      admin
+    );
+    assert.equal(afterStart.data.ok, false);
+    assert.match(afterStart.data.message, /已经开始/);
+
+    const twice = await on(repo, 'startTie', { tieId }, admin);
+    assert.equal(twice.data.ok, false);
+    assert.match(twice.data.message, /已经开始/);
   });
 });

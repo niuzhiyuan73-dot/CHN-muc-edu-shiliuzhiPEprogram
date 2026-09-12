@@ -153,6 +153,48 @@ function buildCollections(scope, inTx) {
       update: (id, patch) => col('eventSignups').doc(id).update({ data: patch }),
     },
 
+    collegeEvents: {
+      list: () => list('collegeEvents'),
+      getById: (id) => readDoc(scope, COLLECTIONS.collegeEvents, id),
+      insert: (doc) => col('collegeEvents').doc(doc._id).set({ data: withoutId(doc) }),
+      update: (id, patch) => col('collegeEvents').doc(id).update({ data: patch }),
+    },
+
+    collegeEntries: {
+      list: () => list('collegeEntries'),
+      // 一场学院赛的名单按赛事过滤：与 eventSignups 同一套翻页办法
+      listByEvent: (eventId) => {
+        if (inTx) throw new Error('事务内不允许条件读取（collegeEntries），请改用 getById');
+        return readWhere(scope, COLLECTIONS.collegeEntries, { eventId });
+      },
+      getById: (id) => readDoc(scope, COLLECTIONS.collegeEntries, id),
+      insert: (doc) => col('collegeEntries').doc(doc._id).set({ data: withoutId(doc) }),
+      update: (id, patch) => col('collegeEntries').doc(id).update({ data: patch }),
+    },
+
+    ties: {
+      list: () => list('ties'),
+      // 一场学院赛的大场数远在单页之内，但仍按同一套翻页办法实现
+      listByEvent: (eventId) => {
+        if (inTx) throw new Error('事务内不允许条件读取（ties），请改用 getById');
+        return readWhere(scope, COLLECTIONS.ties, { eventId });
+      },
+      getById: (id) => readDoc(scope, COLLECTIONS.ties, id),
+      insert: (doc) => col('ties').doc(doc._id).set({ data: withoutId(doc) }),
+      update: (id, patch) => col('ties').doc(id).update({ data: patch }),
+    },
+
+    lineups: {
+      list: () => list('lineups'),
+      listByEvent: (eventId) => {
+        if (inTx) throw new Error('事务内不允许条件读取（lineups），请改用 getById');
+        return readWhere(scope, COLLECTIONS.lineups, { eventId });
+      },
+      getById: (id) => readDoc(scope, COLLECTIONS.lineups, id),
+      insert: (doc) => col('lineups').doc(doc._id).set({ data: withoutId(doc) }),
+      update: (id, patch) => col('lineups').doc(id).update({ data: patch }),
+    },
+
     announcements: {
       list: () => list('announcements'),
       getById: (id) => readDoc(scope, COLLECTIONS.announcements, id),

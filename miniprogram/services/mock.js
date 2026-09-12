@@ -23,6 +23,7 @@ const matchStore = require('./match-store.js');
 const userStore = require('./user-store.js');
 const announcementStore = require('./announcement-store.js');
 const eventStore = require('./event-store.js');
+const collegeStore = require('./college-store.js');
 const profileStore = require('./profile-store.js');
 const roleStore = require('./role-store.js');
 const seasonStore = require('./season-store.js');
@@ -33,7 +34,9 @@ const {
   canConfirm,
   canRevoke,
   canRecordScore,
+  canForfeit,
   buildMatchRecord,
+  buildForfeitPatch,
   fillScheduledMatch,
 } = require('./match-record.js');
 const { canPublish, buildAnnouncementRecord } = require('./announcement.js');
@@ -52,6 +55,37 @@ const {
   buildCheckInPatch,
   validatePlacements,
 } = require('./event.js');
+// 学院赛与个人赛并行的另一套：发布与名单的校验同样住在纯模块里
+const {
+  canManageCollegeEvent,
+  buildCollegeEventRecord,
+  validateCollegePlacements,
+} = require('./college-event.js');
+const { buildCollegeEntryRecord, validateEntryReview } = require('./college-entry.js');
+const {
+  planCollegeDraw,
+  buildCollegeDrawRecord,
+} = require('./college-draw.js');
+const {
+  firstRoundPairsOf,
+  buildTiesForRound,
+  buildLegMatchDrafts,
+  legResultOf,
+  summarizeTie,
+  nextRoundPairsOf,
+  isEloEligibleMatch,
+  canStartCollegeEvent,
+  canStartTie,
+} = require('./college-tie.js');
+const { buildLineupRecord } = require('./college-lineup.js');
+const {
+  COLLEGE_EVENT_STATUS,
+  COLLEGE_ENTRY_STATUS,
+  TIE_STATUS,
+  MATCH_COMPETITION,
+  MATCH_OUTCOME,
+  TEAM,
+} = require('../utils/constants.js');
 const {
   planDraw,
   buildDrawRecord,
@@ -173,7 +207,10 @@ function buildCache() {
       return patch ? { ...match, ...patch } : match;
     });
 
-  const activeOnly = afterStore.filter((match) => match.status === MATCH_STATUS.ACTIVE);
+  // 进回放的只有「计个人等级分」的比赛：已生效、非弃权，且学院赛里只有
+  // 单打小场（双打小场只汇总大场，见 college-tie.isEloEligibleMatch）。
+  // 台账仍是完整的 afterStore，录分页按编号取小场不受影响。
+  const activeOnly = afterStore.filter((match) => isEloEligibleMatch(match));
 
   // 2.5 赛事：种子接上本次会话新发的，再盖上改判（开始 / 结束与名次）。
   //     与比赛同一套路数——把 override 作用于拼接后的整条数组，于是种子里的
@@ -291,6 +328,8 @@ function resetCache() {
   // 本地赛事同理：新发的、开始/结束的改判、报名记录都属于临时写入。
   // 编号也要一起复位，否则测试里「第一场新赛事是 le0001」会随用例顺序飘移
   eventStore.reset();
+  // 学院赛同理：新发的学院赛与各学院名单都是临时写入，编号也要一起复位
+  collegeStore.reset();
   // 资料补丁同理：改过的昵称头像也是临时写入
   profileStore.reset();
   // 角色任免同理：管理员把谁设成了干事也是临时写入
@@ -400,6 +439,37 @@ async function getEvents() {
  */
 async function getEventSignups(eventId) {
   return eventStore.listSignups(eventId);
+}
+
+/**
+ * 学院赛列表。与 getEvents 分开：两者是互不干扰的两套体系（D1），
+ * 混在一个列表里会让「这场比赛是个人赛还是学院赛」在展示层反复判断。
+ * @returns {Promise<Array<Object>>}
+ */
+async function getCollegeEvents() {
+  return collegeStore.listEvents();
+}
+
+/**
+ * 单场学院赛。
+ * @param {string} id
+ * @returns {Promise<Object|null>}
+ */
+async function getCollegeEvent(id) {
+  return collegeStore.findEvent(id);
+}
+
+/**
+ * 某场学院赛的名单（含待审核 / 已通过 / 已退回）。
+ *
+ * 【为什么不进 buildCache】
+ * 与报名记录同理：名单不参与回放，只被页面直接读来展示与审核。
+ *
+ * @param {string} [eventId] 缺省取全部
+ * @returns {Promise<Array<Object>>}
+ */
+async function getCollegeEntries(eventId) {
+  return collegeStore.listEntries(eventId);
 }
 
 /**
@@ -723,8 +793,13 @@ async function confirmMatch(id, actor) {
     actedAt: new Date(),
   });
   cache = null;
-  // 刚打完的若是某一轮的最后一场，把下一轮排出来
-  advanceEvent(match.eventId);
+  if (match.competition === MATCH_COMPETITION.COLLEGE) {
+    // 学院赛小场：把结果写回大场，本轮打完则排下一轮
+    advanceCollegeAfterLeg({ ...match, status: MATCH_STATUS.ACTIVE });
+  } else {
+    // 刚打完的若是某一轮的最后一场，把下一轮排出来
+    advanceEvent(match.eventId);
+  }
   return { ok: true, match, message: '' };
 }
 
@@ -832,6 +907,38 @@ async function revokeMatch(id, actor, reason) {
   });
   cache = null;
   return { ok: true, match, message: '' };
+}
+
+/**
+ * 个人赛弃权（M5-3）。参赛者本人自选，或管理员代记。
+ * 与云端 forfeitMatch 同一套规则，复用同一个纯函数算字段。
+ *
+ * 【为什么弃权后要调 advanceEvent】
+ * 弃权在赛制里就是「这一场有结果了」：单败里对手晋级下一轮，循环 /
+ * 小组赛里记对手一胜。晋级靠重排签表实现（见 advanceEvent），所以写完
+ * 必须让它跑一次，否则对手会被卡在原地。
+ *
+ * @param {string} id
+ * @param {string} forfeitBy 弃权者编号，必须是场上的人
+ * @param {string} actor 操作人编号
+ * @returns {Promise<{ok:boolean, match:Object|null, message:string}>}
+ */
+async function forfeitMatch(id, forfeitBy, actor) {
+  const match = findRecord(id);
+  if (!match) return { ok: false, match: null, message: '找不到这场比赛' };
+
+  const by = String(forfeitBy || '').trim();
+  if (!canForfeit(match, by, actor, { role: roleOf(actor) })) {
+    return { ok: false, match: null, message: '你无权记录这次弃权' };
+  }
+
+  const patch = buildForfeitPatch(match, by, { actorId: actor, now: new Date() });
+  matchStore.setStatus(id, patch);
+  cache = null;
+
+  const patched = { ...match, ...patch };
+  advanceEvent(patched.eventId);
+  return { ok: true, match: patched, message: '' };
 }
 
 /* ---------- 会员注册与审核 ---------- */
@@ -1398,6 +1505,405 @@ async function finishEvent(id, results, actor) {
   return { ok: true, record: findEvent(id), errors: {}, firstError: '' };
 }
 
+/* ---------- 学院赛闭环 ---------- */
+/* 发布 → 收名单 → 审核名单。与云端 college-handlers.js 同一套规则，
+   校验一律复用 services/college-event.js / college-entry.js 的纯函数，
+   这里只管判权、落库与返回形状。学院赛不进回放，因此无需失效缓存。 */
+
+/**
+ * 发布一场学院赛。落库即「报名中」。
+ *
+ * 发布权仅管理员（见 college-event.canManageCollegeEvent）——学院赛要定
+ * 小项序列、人数上下限、胜负算法，这些是整场赛事的规则，定错所有学院跟着重来。
+ *
+ * @param {Object} form 学院赛表单
+ * @param {string} actor 发布者编号
+ * @returns {Promise<{ok:boolean, record:Object|null, errors:Object, firstError:string}>}
+ */
+async function publishCollegeEvent(form, actor) {
+  const account = accountOf(actor);
+  if (!canManageCollegeEvent(account)) {
+    return { ok: false, record: null, errors: {}, firstError: '当前账号没有发布学院赛的权限' };
+  }
+
+  const built = buildCollegeEventRecord(form, { actor: account });
+  if (!built.ok) {
+    return { ok: false, record: null, errors: built.errors, firstError: built.firstError };
+  }
+
+  const record = collegeStore.addEvent(built.record);
+  return { ok: true, record, errors: {}, firstError: '' };
+}
+
+/**
+ * 提交本学院的参赛名单。**干事（本学院）+ 管理员**，且仅在报名中。
+ *
+ * 队员身份一律用台账里的会员回查（不信任调用方给的 college），
+ * 与 accountOf 同一思路。同一赛事同一学院只有一份名单，重复提交覆盖旧的。
+ *
+ * @param {Object} payload { eventId, college, memberIds, remark }
+ * @param {string} actor 提交人编号
+ * @returns {Promise<{ok:boolean, record:Object|null, message:string}>}
+ */
+async function submitCollegeEntry(payload = {}, actor) {
+  const account = accountOf(actor);
+  const event = collegeStore.findEvent(payload.eventId);
+  const built = buildCollegeEntryRecord(payload, {
+    event,
+    actor: account,
+    members: load().members,
+  });
+
+  if (!built.ok) {
+    return { ok: false, record: null, message: built.message };
+  }
+
+  const record = collegeStore.saveEntry(built.record);
+  return { ok: true, record, message: '' };
+}
+
+/**
+ * 审核一份名单。**仅管理员**，且只能处理「待审核」的那一份。
+ *
+ * 退回必须给理由（与入会审核同一条硬规则）：没有理由，学院只知道没过，
+ * 不知道该改哪里。通过时清空理由，避免上一轮退回的说明留在通过记录上。
+ *
+ * @param {string} entryId
+ * @param {string} action REVIEW_ACTION.APPROVE / REJECT
+ * @param {string} [reason]
+ * @param {string} actor 审核人编号
+ * @returns {Promise<{ok:boolean, record:Object|null, message:string}>}
+ */
+async function reviewCollegeEntry(entryId, action, reason, actor) {
+  const account = accountOf(actor);
+  const entry = collegeStore.findEntryById(entryId);
+  const checked = validateEntryReview(account, entry, action, reason);
+
+  if (!checked.ok) {
+    return { ok: false, record: null, message: checked.message };
+  }
+
+  const record = collegeStore.updateEntry(entryId, {
+    status: checked.status,
+    reviewedBy: account ? account._id : '',
+    reviewedAt: new Date(),
+    reason: action === REVIEW_ACTION.REJECT ? String(reason || '').trim() : '',
+  });
+  return { ok: true, record, message: '' };
+}
+
+/* ---------- 学院赛抽签 / 大场 / 排阵 ---------- */
+/* 与云端 college-handlers.js 同一套规则，校验一律复用纯模块。 */
+
+/**
+ * 某场学院赛的大场列表。
+ * @param {string} [eventId]
+ * @returns {Promise<Array<Object>>}
+ */
+async function getCollegeTies(eventId) {
+  return collegeStore.listTies(eventId);
+}
+
+/**
+ * 某场学院赛的排阵列表（整批取，供「自动沿用上次」用）。
+ * @param {string} [eventId]
+ * @returns {Promise<Array<Object>>}
+ */
+async function getCollegeLineups(eventId) {
+  return collegeStore.listLineups(eventId);
+}
+
+/**
+ * 抽签：把已通过审核的学院排进签表，赛事转入「待开赛」（即锁定名单）。
+ *
+ * @param {string} eventId
+ * @param {string} actor 操作人编号
+ * @param {Object} [options] { seedColleges, seedValue }
+ * @returns {Promise<{ok:boolean, record:Object|null, message:string}>}
+ */
+async function drawCollegeEvent(eventId, actor, options = {}) {
+  const account = accountOf(actor);
+  const event = collegeStore.findEvent(eventId);
+  if (!event) return { ok: false, record: null, message: '找不到这场学院赛' };
+
+  const entries = collegeStore.listEntries(eventId);
+  // seedValue 由调用方给（测试可复现）；没给就现取一个随机值并落库备查
+  const seedValue = Number.isFinite(Number(options.seedValue))
+    ? Number(options.seedValue)
+    : Math.floor(Math.random() * 0x7fffffff);
+
+  const plan = planCollegeDraw({
+    event,
+    actor: account,
+    entries,
+    seedColleges: options.seedColleges,
+    seedValue,
+  });
+  if (!plan.ok) return { ok: false, record: null, message: plan.message };
+
+  const draw = buildCollegeDrawRecord(plan, {
+    drawnAt: new Date(),
+    drawnBy: account ? account._id : '',
+  });
+  const record = collegeStore.updateEvent(eventId, { draw, status: COLLEGE_EVENT_STATUS.READY });
+  return { ok: true, record, message: '' };
+}
+
+/**
+ * 赛事级「开始」：转入进行中，并生成第一轮全部大场（D35、D36）。
+ *
+ * @param {string} eventId
+ * @param {string} actor 操作人编号
+ * @returns {Promise<{ok:boolean, record:Object|null, ties:Array<Object>, message:string}>}
+ */
+async function startCollegeEvent(eventId, actor) {
+  const account = accountOf(actor);
+  const event = collegeStore.findEvent(eventId);
+  if (!event) return { ok: false, record: null, ties: [], message: '找不到这场学院赛' };
+
+  if (!canStartCollegeEvent(event, account)) {
+    if (event.status !== COLLEGE_EVENT_STATUS.READY) {
+      return { ok: false, record: null, ties: [], message: '还没有抽签，不能开始' };
+    }
+    return { ok: false, record: null, ties: [], message: '只有管理员可以开始赛事' };
+  }
+
+  const ties = buildTiesForRound({ event, round: 1, pairs: firstRoundPairsOf(event.draw) });
+  collegeStore.saveTies(ties);
+  const record = collegeStore.updateEvent(eventId, {
+    status: COLLEGE_EVENT_STATUS.ONGOING,
+    currentRound: 1,
+    startedAt: new Date(),
+  });
+  return { ok: true, record, ties, message: '' };
+}
+
+/**
+ * 提交本大场的排阵。**干事（本学院）+ 管理员**，且大场尚未开始（D37）。
+ *
+ * @param {Object} payload { tieId, college, entries }
+ * @param {string} actor 提交人编号
+ * @returns {Promise<{ok:boolean, record:Object|null, message:string}>}
+ */
+async function submitLineup(payload = {}, actor) {
+  const account = accountOf(actor);
+  const tie = collegeStore.findTie(payload.tieId);
+  if (!tie) return { ok: false, record: null, message: '找不到这个大场' };
+
+  const event = collegeStore.findEvent(tie.eventId);
+  const college = String(payload.college || (account && account.college) || '').trim();
+  // 排阵的人必须出自本学院已通过审核的名单
+  const entry = collegeStore.findEntry(tie.eventId, college);
+
+  const built = buildLineupRecord(
+    { ...payload, college },
+    { tie, event, actor: account, entry, carriedFrom: payload.carriedFrom }
+  );
+  if (!built.ok) return { ok: false, record: null, message: built.message };
+
+  const record = collegeStore.saveLineup(built.record);
+  // 每次只翻自己那一侧，另一方不受影响
+  const side = built.record.college === tie.collegeA ? 'lineupA' : 'lineupB';
+  collegeStore.updateTie(tie._id, { [side]: true });
+  return { ok: true, record, message: '' };
+}
+
+/**
+ * 大场级「开始」。**仅管理员**，且双方排阵已齐（D38）。
+ *
+ * @param {string} tieId
+ * @param {string} actor 操作人编号
+ * @returns {Promise<{ok:boolean, record:Object|null, message:string}>}
+ */
+async function startTie(tieId, actor) {
+  const account = accountOf(actor);
+  const tie = collegeStore.findTie(tieId);
+  if (!tie) return { ok: false, record: null, message: '找不到这个大场' };
+
+  if (!canStartTie(tie, account)) {
+    if (tie.status === TIE_STATUS.ONGOING || tie.status === TIE_STATUS.FINISHED) {
+      return { ok: false, record: null, message: '这个大场已经开始' };
+    }
+    if (!(tie.lineupA && tie.lineupB)) {
+      return { ok: false, record: null, message: '双方排阵还没交齐，不能开始' };
+    }
+    return { ok: false, record: null, message: '只有管理员可以开始大场' };
+  }
+
+  const event = collegeStore.findEvent(tie.eventId);
+  const built = buildLegMatchDrafts({
+    event,
+    tie,
+    lineups: collegeStore.listLineups(tie.eventId),
+    now: new Date(),
+  });
+  if (!built.ok) return { ok: false, record: null, message: built.message };
+
+  // 每个小项落一场待确认的比赛，并把编号写回小项，录分页据此取场次
+  const byLegNo = new Map(built.drafts.map((draft) => [Number(draft.legNo), draft._id]));
+  for (const draft of built.drafts) matchStore.saveMatch(draft);
+  const legs = (Array.isArray(tie.legs) ? tie.legs : []).map((leg) => ({
+    ...leg,
+    matchId: byLegNo.get(Number(leg.legNo)) || leg.matchId || '',
+  }));
+
+  const record = collegeStore.updateTie(tieId, {
+    status: TIE_STATUS.ONGOING,
+    startedAt: new Date(),
+    legs,
+  });
+  cache = null;
+  return { ok: true, record, message: '' };
+}
+
+/**
+ * 小场确认后推进大场：写回小项结果、定出大场胜负，本轮打完则排下一轮。
+ * 与云端 college-advance.js 同一套规则，复用同一批纯函数。
+ *
+ * @param {Object} legMatch 刚生效的小场记录
+ */
+function advanceCollegeAfterLeg(legMatch) {
+  if (!legMatch || !legMatch.tieId) return;
+  const tie = collegeStore.findTie(legMatch.tieId);
+  if (!tie) return;
+  const event = collegeStore.findEvent(tie.eventId);
+
+  const legs = (Array.isArray(tie.legs) ? tie.legs : []).map((leg) =>
+    Number(leg.legNo) === Number(legMatch.legNo) ? { ...leg, ...legResultOf(tie, legMatch) } : leg
+  );
+  const summary = summarizeTie({ tie: { ...tie, legs }, event });
+
+  const patch = { legs };
+  if (summary.complete && summary.winnerSide) {
+    patch.status = TIE_STATUS.FINISHED;
+    patch.winner = summary.winner;
+    patch.finishedAt = new Date();
+  }
+  collegeStore.updateTie(tie._id, patch);
+
+  if (!patch.winner) return;
+  const merged = collegeStore
+    .listTies(tie.eventId)
+    .map((item) => (item._id === tie._id ? { ...item, ...patch } : item));
+  const pairs = nextRoundPairsOf({ draw: event.draw, ties: merged, round: tie.round });
+  if (pairs.length === 0) return;
+  const nextTies = buildTiesForRound({ event, round: Number(tie.round) + 1, pairs });
+  // 只补不覆盖：已排过的轮次不重排，免得冲掉已录的比分
+  const taken = new Set(collegeStore.listTies(tie.eventId).map((item) => item._id));
+  collegeStore.saveTies(nextTies.filter((draft) => !taken.has(draft._id)));
+}
+
+/**
+ * 管理员记一次弃权（M4-7）。**仅管理员**，且大场已开始。
+ * 与云端 recordForfeit 同一套规则：弃权方丢掉这一小项、对手晋级，且不计 ELO。
+ *
+ * @param {string} tieId
+ * @param {number} legNo
+ * @param {string} forfeitBy 弃权学院（必须是本大场参赛学院）
+ * @param {string} actor 操作人编号
+ * @returns {Promise<{ok:boolean, match:Object|null, message:string}>}
+ */
+async function recordForfeit(tieId, legNo, forfeitBy, actor) {
+  const account = accountOf(actor);
+  if (!canManageCollegeEvent(account)) {
+    return { ok: false, match: null, message: '只有管理员可以记录弃权' };
+  }
+
+  const tie = collegeStore.findTie(tieId);
+  if (!tie) return { ok: false, match: null, message: '找不到这个大场' };
+  if (tie.status === TIE_STATUS.FINISHED) {
+    return { ok: false, match: null, message: '这个大场已经结束' };
+  }
+  if (tie.status !== TIE_STATUS.ONGOING) {
+    return { ok: false, match: null, message: '大场还没开始，不能记弃权' };
+  }
+
+  const leg = (Array.isArray(tie.legs) ? tie.legs : []).find(
+    (item) => Number(item.legNo) === Number(legNo)
+  );
+  if (!leg) return { ok: false, match: null, message: '找不到这个小项' };
+  if (!leg.matchId) return { ok: false, match: null, message: '这个小项还没有生成比赛' };
+  if (leg.winner) return { ok: false, match: null, message: '这个小项已经有结果了' };
+
+  const college = String(forfeitBy || '').trim();
+  if (college !== tie.collegeA && college !== tie.collegeB) {
+    return { ok: false, match: null, message: '弃权的必须是本大场的参赛学院' };
+  }
+
+  const match = findRecord(leg.matchId);
+  if (!match) return { ok: false, match: null, message: '找不到这个小项的比赛' };
+  if (match.status === MATCH_STATUS.ACTIVE) {
+    return { ok: false, match: null, message: '这个小项已经生效，不能再记弃权' };
+  }
+
+  const winner = college === tie.collegeA ? TEAM.B : TEAM.A;
+  const patch = {
+    outcome: MATCH_OUTCOME.FORFEIT,
+    forfeitBy: college,
+    winner,
+    scoreA: [],
+    scoreB: [],
+    recorder: actor,
+    status: MATCH_STATUS.ACTIVE,
+    action: 'forfeit',
+    actor,
+    actedAt: new Date(),
+  };
+  matchStore.setStatus(leg.matchId, patch);
+  cache = null;
+
+  const patched = { ...match, ...patch };
+  advanceCollegeAfterLeg(patched);
+  return { ok: true, match: patched, message: '' };
+}
+
+/**
+ * 录入学院名次并结束赛事（M5-1）。**仅管理员**，且赛事已进入比赛态。
+ * 与云端 finishCollegeEvent 同一套规则，复用同一个纯校验。
+ *
+ * 【为什么不重放缓存】
+ * 学院赛名次不产生个人等级分与赛季积分（M5-2）：它写在 college_events
+ * 集合里，回放的 events 输入只取个人赛，两者本就不相交。写完即可返回。
+ *
+ * @param {string} id 学院赛编号
+ * @param {Array<{college:string, placement:number|string}>} results
+ * @param {string} actor 操作人编号
+ * @returns {Promise<{ok:boolean, record:Object|null, message:string}>}
+ */
+async function finishCollegeEvent(id, results, actor) {
+  const account = accountOf(actor);
+  if (!canManageCollegeEvent(account)) {
+    return { ok: false, record: null, message: '只有管理员可以录入名次' };
+  }
+
+  const event = collegeStore.findEvent(id);
+  if (!event) return { ok: false, record: null, message: '找不到这场学院赛' };
+  if (event.status === COLLEGE_EVENT_STATUS.FINISHED) {
+    return { ok: false, record: null, message: '这场学院赛已经结束了' };
+  }
+  if (event.status !== COLLEGE_EVENT_STATUS.ONGOING) {
+    return { ok: false, record: null, message: '学院赛还没开始，不能录入名次' };
+  }
+
+  // 只能给「已通过审核」的学院记名次，挡住手滑写进来的学院名
+  const colleges = collegeStore
+    .listEntries(id)
+    .filter((entry) => entry.status === COLLEGE_ENTRY_STATUS.APPROVED)
+    .map((entry) => entry.college);
+
+  const checked = validateCollegePlacements(results, { colleges });
+  if (!checked.ok) return { ok: false, record: null, message: checked.firstError };
+
+  const patch = {
+    status: COLLEGE_EVENT_STATUS.FINISHED,
+    results: checked.results,
+    finishedAt: new Date(),
+    actor,
+  };
+  const record = collegeStore.updateEvent(id, patch);
+  return { ok: true, record, message: '' };
+}
+
 module.exports = {
   DEFAULT_CURRENT_USER_ID,
   SEED_OPTIONS,
@@ -1409,6 +1915,7 @@ module.exports = {
   confirmMatch,
   rejectMatch,
   revokeMatch,
+  forfeitMatch,
   registerMember,
   approveMember,
   rejectMember,
@@ -1424,6 +1931,15 @@ module.exports = {
   cancelSignupEvent,
   checkInEvent,
   finishEvent,
+  publishCollegeEvent,
+  submitCollegeEntry,
+  reviewCollegeEntry,
+  drawCollegeEvent,
+  startCollegeEvent,
+  submitLineup,
+  startTie,
+  recordForfeit,
+  finishCollegeEvent,
   getCurrentUser,
   getMembers,
   getMember,
@@ -1431,6 +1947,11 @@ module.exports = {
   getMatches,
   getEvents,
   getEventSignups,
+  getCollegeEvents,
+  getCollegeEvent,
+  getCollegeEntries,
+  getCollegeTies,
+  getCollegeLineups,
   getAnnouncements,
   getAnnouncementRecords,
   getLeaderboard,

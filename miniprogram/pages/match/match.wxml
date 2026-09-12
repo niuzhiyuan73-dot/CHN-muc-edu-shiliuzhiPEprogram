@@ -102,7 +102,7 @@
         <!-- 作废的比赛把理由亮出来，否则看到「已撤销」会一头雾水 -->
         <view wx:if="{{item.statusReason}}" class="match-reason">理由：{{item.statusReason}}</view>
 
-        <view wx:if="{{item.canRecord || item.canConfirm || item.canRevoke}}" class="match-actions">
+        <view wx:if="{{item.canRecord || item.canConfirm || item.canRevoke || item.canForfeit}}" class="match-actions">
           <!-- 抽签排出的比赛还没有比分：先录分，之后才有「确认」可谈 -->
           <view
             wx:if="{{item.canRecord}}"
@@ -110,6 +110,13 @@
             data-match-id="{{item.matchId}}"
             bindtap="onRecordMatch"
           >录分</view>
+          <!-- 本人自选弃权：对手直接晋级，且不计个人等级分 -->
+          <view
+            wx:if="{{item.canForfeit}}"
+            class="mini-btn is-danger"
+            data-match-id="{{item.matchId}}"
+            bindtap="onForfeit"
+          >弃权</view>
           <view
             wx:if="{{item.canConfirm}}"
             class="mini-btn is-primary"

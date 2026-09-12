@@ -27,7 +27,14 @@ const { MATCH_STATUS, MATCH_STATUS_LABEL, MATCH_TYPE_LABEL, ROLE, ROLE_LABEL } =
 const { formatDateTime, formatScore } = require('../utils/format.js');
 const { formatMatchFormat } = require('../utils/match-format.js');
 const { createNameResolver } = require('../utils/stats.js');
-const { canConfirm, canRecordScore, canRevoke, needsScore, sideOf } = require('./match-record.js');
+const {
+  canConfirm,
+  canForfeit,
+  canRecordScore,
+  canRevoke,
+  needsScore,
+  sideOf,
+} = require('./match-record.js');
 const { getCurrentUser, getMember, getMembers, getMatchRecords, isMock } = require('./index.js');
 
 /**
@@ -176,6 +183,9 @@ function buildRecordRow(record, ctx = {}) {
     // 一个点下去会被拒的入口。
     canRecord: Boolean(waiting && userId && canRecordScore(record, userId, { role, college, collegeOf })),
     canRevoke: canRevoke(record, userId, { role }),
+    // 本人自选弃权（D41）：只有赛事的待确认比赛可以，约球不行；本人弃自己那场，
+    // 管理员若也在场上同样成立。弃权后对手直接晋级，且不计个人等级分。
+    canForfeit: canForfeit(record, userId, userId, { role }),
   };
 }
 

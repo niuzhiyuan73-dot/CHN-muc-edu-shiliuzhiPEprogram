@@ -1,0 +1,173 @@
+/*
+ * 学院赛小场录分页样式
+ * 卡片（.card）、按钮（.btn）、标签（.tag-*）都在 app.wxss 里，与其它页共用。
+ * 页面样式表按页隔离，所以用到的几处另写一份。
+ */
+
+.block-back {
+  margin-top: var(--space-lg);
+  padding: 0 var(--space-xl);
+}
+
+/* ==================== 小场信息 ==================== */
+
+.rank-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.rank-head-title {
+  font-size: var(--font-lg);
+  font-weight: 600;
+}
+
+.event-meta {
+  margin-top: var(--space-xs);
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+
+.field-hint {
+  margin-top: var(--space-sm);
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  line-height: 1.5;
+}
+
+.field-error {
+  margin-top: var(--space-xs);
+  font-size: var(--font-sm);
+  color: var(--color-danger);
+  line-height: 1.5;
+}
+
+/* ==================== 对阵 ==================== */
+
+.side-row {
+  display: flex;
+  align-items: center;
+  padding: var(--space-sm) 0;
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.side-row:last-child {
+  border-bottom: none;
+}
+
+.side-name {
+  width: 180rpx;
+  font-size: var(--font-md);
+  font-weight: 600;
+}
+
+.side-players {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.player-chip {
+  margin-right: var(--space-xs);
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+
+/* ==================== 比分 ==================== */
+
+.score-readonly {
+  margin-top: var(--space-md);
+  text-align: center;
+}
+
+.score-readonly-text {
+  display: block;
+  font-size: 48rpx;
+  font-weight: 600;
+}
+
+.score-readonly-note {
+  display: block;
+  margin-top: var(--space-xs);
+  font-size: var(--font-sm);
+  color: var(--color-primary);
+}
+
+.score-input-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: var(--space-md);
+}
+
+.score-input {
+  width: 160rpx;
+  height: 88rpx;
+  text-align: center;
+  border: 2rpx solid var(--color-divider);
+  border-radius: 12rpx;
+  font-size: var(--font-xl);
+}
+
+.score-colon {
+  margin: 0 var(--space-md);
+  font-size: var(--font-xl);
+}
+
+.score-preview {
+  margin-top: var(--space-sm);
+  text-align: center;
+  font-size: var(--font-sm);
+  color: var(--color-primary);
+}
+
+/* ==================== 演示口径提示 ==================== */
+
+.demo-notice {
+  margin: 0 var(--space-sm) var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: 12rpx;
+  background: #fef3c7;
+  color: #b45309;
+  font-size: var(--font-xs);
+  line-height: 1.5;
+}
+
+/* ==================== 操作 ==================== */
+
+.submit-bar {
+  display: flex;
+  margin-bottom: var(--space-md);
+}
+
+.submit-btn {
+  flex: 1;
+}
+
+.submit-btn + .submit-btn {
+  margin-left: var(--space-sm);
+}
+
+.btn-danger-text {
+  color: var(--color-danger);
+}
+
+.forfeit-box {
+  margin-top: var(--space-lg);
+  padding: var(--space-md);
+  border: 2rpx dashed var(--color-divider);
+  border-radius: 12rpx;
+}
+
+.forfeit-title {
+  font-size: var(--font-md);
+  font-weight: 600;
+}
+
+.forfeit-hint {
+  margin-top: var(--space-xs);
+  margin-bottom: var(--space-sm);
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  line-height: 1.5;
+}

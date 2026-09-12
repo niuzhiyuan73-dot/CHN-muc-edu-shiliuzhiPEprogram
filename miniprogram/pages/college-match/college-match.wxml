@@ -1,0 +1,139 @@
+<!--
+  学院赛小场录分
+  数据形状见 services/college-view.js 的 loadCollegeMatchView。
+  对阵与赛制由排阵锁定，这里只收局分；弃权入口只给管理员。
+-->
+<view class="page-container">
+
+  <view wx:if="{{loading}}" class="loading">正在加载…</view>
+
+  <view wx:elif="{{error}}" class="empty-state">
+    <view class="empty-state-icon">⚠️</view>
+    <view class="empty-state-text">{{error}}</view>
+    <view class="btn btn-outline block-back" bindtap="onBack">返回</view>
+  </view>
+
+  <view wx:elif="{{!view.found || view.blockReason}}" class="empty-state">
+    <view class="empty-state-icon">🔒</view>
+    <view class="empty-state-text">{{view.blockReason || '找不到这场比赛'}}</view>
+    <view class="btn btn-outline block-back" bindtap="onBack">返回</view>
+  </view>
+
+  <block wx:else>
+
+    <!-- ========== 小场信息 ========== -->
+    <view class="card">
+      <view class="rank-head">
+        <view class="rank-head-title">{{view.collegeA}} VS {{view.collegeB}}</view>
+        <text class="tag {{view.statusTagClass}}">{{view.statusLabel}}</text>
+      </view>
+      <view class="event-meta">{{view.title}}</view>
+      <view class="event-meta">{{view.roundText}} · {{view.legNoText}} · {{view.disciplineLabel}}</view>
+      <view class="event-meta">{{view.formatText}}<text wx:if="{{view.location}}"> · {{view.location}}</text></view>
+      <view class="field-hint">{{view.eloHint}}</view>
+    </view>
+
+    <!-- ========== 对阵与比分 ========== -->
+    <view class="card">
+      <view class="side-row">
+        <view class="side-name">{{view.collegeA}}</view>
+        <view class="side-players">
+          <text wx:for="{{view.teamARows}}" wx:key="userId" class="player-chip">{{item.nickName}}</text>
+        </view>
+      </view>
+      <view class="side-row">
+        <view class="side-name">{{view.collegeB}}</view>
+        <view class="side-players">
+          <text wx:for="{{view.teamBRows}}" wx:key="userId" class="player-chip">{{item.nickName}}</text>
+        </view>
+      </view>
+
+      <!-- 已生效 / 已作废：只读展示比分 -->
+      <view wx:if="{{!view.canRecord}}" class="score-readonly">
+        <text class="score-readonly-text">{{view.scoreText || '—'}}</text>
+        <text wx:if="{{view.forfeitText}}" class="score-readonly-note">{{view.forfeitText}}</text>
+        <text wx:elif="{{view.winnerText}}" class="score-readonly-note">{{view.winnerText}}</text>
+      </view>
+
+      <!-- 待确认且有权录入：比分行 -->
+      <block wx:else>
+        <view class="score-input-row" wx:for="{{scoreRows}}" wx:key="index">
+          <input
+            class="score-input"
+            type="number"
+            value="{{item.a}}"
+            data-side="A"
+            data-slot="{{item.index}}"
+            bindinput="onInputScore"
+            placeholder="0"
+          />
+          <text class="score-colon">:</text>
+          <input
+            class="score-input"
+            type="number"
+            value="{{item.b}}"
+            data-side="B"
+            data-slot="{{item.index}}"
+            bindinput="onInputScore"
+            placeholder="0"
+          />
+        </view>
+        <view wx:if="{{winnerText}}" class="score-preview">{{winnerText}}</view>
+      </block>
+    </view>
+
+    <view wx:if="{{view.statusReason}}" class="card">
+      <view class="field-error">{{view.statusReason}}</view>
+    </view>
+
+    <view wx:if="{{view.demoNotice}}" class="demo-notice">{{view.demoNotice}}</view>
+
+    <!-- ========== 操作 ========== -->
+    <view wx:if="{{view.canRecord}}" class="submit-bar">
+      <view class="btn btn-outline submit-btn" bindtap="onBack">返回</view>
+      <view
+        class="btn btn-primary submit-btn {{submitting ? 'btn-disabled' : ''}}"
+        bindtap="onSubmit"
+      >保存比分</view>
+    </view>
+
+    <view wx:elif="{{view.canConfirm}}" class="submit-bar">
+      <view class="btn btn-outline submit-btn" bindtap="onBack">返回</view>
+      <view
+        class="btn btn-primary submit-btn {{acting ? 'btn-disabled' : ''}}"
+        bindtap="onConfirm"
+      >确认生效</view>
+    </view>
+
+    <view wx:elif="{{view.canRevoke}}" class="submit-bar">
+      <view class="btn btn-outline submit-btn" bindtap="onBack">返回</view>
+      <view
+        class="btn btn-outline submit-btn btn-danger-text {{acting ? 'btn-disabled' : ''}}"
+        bindtap="onRevoke"
+      >撤销</view>
+    </view>
+
+    <view wx:else class="submit-bar">
+      <view class="btn btn-outline submit-btn" bindtap="onBack">返回</view>
+    </view>
+
+    <!-- 管理员记弃权：明确写「谁弃权」，胜方由数据层推 -->
+    <view wx:if="{{view.canForfeit}}" class="forfeit-box">
+      <view class="forfeit-title">管理员：一方弃权</view>
+      <view class="forfeit-hint">弃权方丢掉这一小项，对手直接得分，且不计个人等级分。</view>
+      <view class="submit-bar">
+        <view
+          class="btn btn-outline submit-btn btn-danger-text {{acting ? 'btn-disabled' : ''}}"
+          data-college="{{view.collegeA}}"
+          bindtap="onForfeit"
+        >{{view.collegeA}} 弃权</view>
+        <view
+          class="btn btn-outline submit-btn btn-danger-text {{acting ? 'btn-disabled' : ''}}"
+          data-college="{{view.collegeB}}"
+          bindtap="onForfeit"
+        >{{view.collegeB}} 弃权</view>
+      </view>
+    </view>
+
+  </block>
+</view>

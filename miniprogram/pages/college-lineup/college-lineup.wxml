@@ -1,0 +1,66 @@
+<!--
+  学院赛排阵
+  数据形状见 services/college-view.js 的 loadCollegeLineupView。
+  每个小项一个 checkbox-group，超限由页面拦、缺人由数据层拦。
+-->
+<view class="page-container">
+
+  <view wx:if="{{loading}}" class="loading">正在加载…</view>
+
+  <view wx:elif="{{error}}" class="empty-state">
+    <view class="empty-state-icon">⚠️</view>
+    <view class="empty-state-text">{{error}}</view>
+    <view class="btn btn-outline block-back" bindtap="onBack">返回</view>
+  </view>
+
+  <!-- 未登录 / 非参赛学院 / 大场已开始 / 名单未通过，整页顶掉 -->
+  <view wx:elif="{{view.blockReason}}" class="empty-state">
+    <view class="empty-state-icon">🔒</view>
+    <view class="empty-state-text">{{view.blockReason}}</view>
+    <view class="btn btn-outline block-back" bindtap="onBack">返回</view>
+  </view>
+
+  <block wx:else>
+
+    <!-- ========== 大场信息 ========== -->
+    <view class="card">
+      <view class="rank-head">
+        <view class="rank-head-title">{{view.collegeA}} VS {{view.collegeB}}</view>
+        <text class="tag {{view.hasLineup ? 'tag-success' : 'tag-warning'}}">{{view.statusLabel}}</text>
+      </view>
+      <view class="event-meta">{{view.title}}</view>
+      <view class="event-meta">{{view.roundText}} · 我方：{{view.college}}</view>
+      <view class="field-hint">{{view.carryHint}}</view>
+      <view wx:if="{{view.rosterEmpty}}" class="field-error">本学院名单里没有队员，请先联系管理员</view>
+    </view>
+
+    <!-- ========== 逐个小项排人 ========== -->
+    <view wx:for="{{view.legs}}" wx:key="legNo" class="card">
+      <view class="rank-head">
+        <view class="rank-head-title">第 {{item.legNo}} 场 · {{item.disciplineLabel}}</view>
+        <view class="rank-head-count">需 {{item.needText}}</view>
+      </view>
+      <view class="leg-picked">已排：{{item.pickedText}}</view>
+
+      <checkbox-group data-leg-no="{{item.legNo}}" bindchange="onTogglePlayer">
+        <label wx:for="{{item.options}}" wx:for-item="player" wx:key="memberId" class="member-row">
+          <checkbox value="{{player.memberId}}" checked="{{player.checked}}" color="#2f7d4f" />
+          <view class="member-name">{{player.name}}</view>
+        </label>
+      </checkbox-group>
+    </view>
+
+    <view class="field-hint page-hint">
+      名单内未上场的队员即为替补：要换人就在对应的那一项里改选，改完直接提交即可。
+    </view>
+
+    <view class="submit-bar">
+      <view class="btn btn-outline submit-btn" bindtap="onBack">取消</view>
+      <view
+        class="btn btn-primary submit-btn {{submitting ? 'btn-disabled' : ''}}"
+        bindtap="onSubmit"
+      >{{view.hasLineup ? '更新排阵' : '提交排阵'}}</view>
+    </view>
+
+  </block>
+</view>

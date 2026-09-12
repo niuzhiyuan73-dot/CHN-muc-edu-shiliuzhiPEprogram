@@ -562,6 +562,11 @@ const COLLECTION = {
   ANNOUNCEMENTS: 'announcements',
   AUDIT_LOGS: 'audit_logs',
   SEASONS: 'seasons',
+  // 学院赛独立成体系，不与个人赛共用集合（见「学院赛设计方案」D1）
+  COLLEGE_EVENTS: 'college_events',
+  COLLEGE_ENTRIES: 'college_entries',
+  TIES: 'ties',
+  COLLEGE_LINEUPS: 'lineups',
 };
 
 /** 本地缓存键名 */
@@ -601,6 +606,226 @@ const ANNOUNCEMENT_STATUS_LABEL = {
   [ANNOUNCEMENT_STATUS.PUBLISHED]: '已发布',
   [ANNOUNCEMENT_STATUS.ARCHIVED]: '已下架',
 };
+
+/* ============================================================
+ * 学院赛
+ * ============================================================
+ * 学院赛与个人赛是两套并行的体系（D1）：个人赛仍是一个赛事一个项目、
+ * 一张签表；学院赛则以学院为单位报名，一场「大场」由若干「小场」组成。
+ * 下面这些常量只服务于学院赛，个人赛一行都不用改。
+ * ============================================================ */
+
+/**
+ * 小项（小场）的项目池。
+ *
+ * 取值用国际通行的项目缩写：男单 MS、女单 WS、男双 MD、女双 WD、混双 XD。
+ * 与个人赛的 MATCH_TYPE 分开，是因为学院赛的一个小项还要带上「男女」
+ * 与「单双」两重信息，而 MATCH_TYPE 只有单/双，且女单编号已被废弃过
+ * （见 MATCH_TYPE 的说明），不便复用。
+ *
+ * 同一场大场里同名小项可以重复出现（D19），例如两场男单——
+ * 因此这里只能是一份「可选值清单」，不能当成唯一键。
+ */
+const LEG_DISCIPLINE = {
+  MS: 'MS',
+  WS: 'WS',
+  MD: 'MD',
+  WD: 'WD',
+  XD: 'XD',
+};
+
+const LEG_DISCIPLINE_LABEL = {
+  [LEG_DISCIPLINE.MS]: '男单',
+  [LEG_DISCIPLINE.WS]: '女单',
+  [LEG_DISCIPLINE.MD]: '男双',
+  [LEG_DISCIPLINE.WD]: '女双',
+  [LEG_DISCIPLINE.XD]: '混双',
+};
+
+/** 项目池的合法取值，用于校验「小项序列非空且都在池内」 */
+const ALL_LEG_DISCIPLINES = Object.values(LEG_DISCIPLINE);
+
+/**
+ * 不计个人分的双打类小项。
+ *
+ * 男双 / 女双 / 混双只参与大场胜负的汇总，不产生 ELO，也不产生赛事积分
+ * （D25）。单打小项则照一级赛事口径计 ELO（K=32），但不计积分（D24）。
+ */
+const DOUBLES_DISCIPLINES = [LEG_DISCIPLINE.MD, LEG_DISCIPLINE.WD, LEG_DISCIPLINE.XD];
+
+/**
+ * 大场胜负算法（D23 / D33）。
+ *
+ *   FULL_POINTS —— 打满比净胜：所有小项都打完，比净胜
+ *   FIRST_TO_N  —— 先到 N 场胜：先赢够 N 场者胜，N = 小项数的一半加一（D29）
+ *
+ * 两种都实现，由管理员发布学院赛时二选一。
+ */
+const TIE_ALGO = {
+  FULL_POINTS: 'full_points',
+  FIRST_TO_N: 'first_to_n',
+};
+
+const TIE_ALGO_LABEL = {
+  [TIE_ALGO.FULL_POINTS]: '打满比净胜',
+  [TIE_ALGO.FIRST_TO_N]: '先到 N 场胜',
+};
+
+/** 默认「打满比净胜」（D29） */
+const DEFAULT_TIE_ALGO = TIE_ALGO.FULL_POINTS;
+
+/**
+ * 「打满比净胜」里「净胜」的口径（D34）。
+ *
+ *   WIN_DIFF   —— 小场胜场差：赢的小场数减去输的小场数
+ *   POINT_DIFF —— 累计局分净胜：把所有小场的局分累加起来再比
+ *
+ * 两套口径都实现，同样由管理员发布时选择。选「先到 N 场胜」时本项无意义。
+ */
+const TIE_NET_MODE = {
+  WIN_DIFF: 'win_diff',
+  POINT_DIFF: 'point_diff',
+};
+
+const TIE_NET_MODE_LABEL = {
+  [TIE_NET_MODE.WIN_DIFF]: '小场胜场差',
+  [TIE_NET_MODE.POINT_DIFF]: '累计局分净胜',
+};
+
+/** 默认「小场胜场差」 */
+const DEFAULT_TIE_NET_MODE = TIE_NET_MODE.WIN_DIFF;
+
+/**
+ * 学院赛状态机（D35）。
+ *
+ *   报名中 ──抽签──▶ 待开赛 ──赛事级开始──▶ 进行中 ──录入名次──▶ 已结束
+ *
+ * 与个人赛的 EVENT_STATUS 分开：学院赛在「报名中」与「进行中」之间多一个
+ * 「待开赛」，因为抽签与开赛是两次独立的管理员操作（先排种子、再开始），
+ * 中间要能停住。
+ *
+ * 【编号规则】与 EVENT_STATUS 一样，上线后只增不改。
+ */
+const COLLEGE_EVENT_STATUS = {
+  SIGNUP: 0, // 报名中：名单可提交、可修改，尚未抽签
+  READY: 1, // 待开赛：已抽签、名单已锁定，等待赛事级「开始」
+  ONGOING: 2, // 进行中：已生成首轮大场，逐场排阵、开赛、录分
+  FINISHED: 3, // 已结束：学院名次已录入
+};
+
+const COLLEGE_EVENT_STATUS_LABEL = {
+  [COLLEGE_EVENT_STATUS.SIGNUP]: '报名中',
+  [COLLEGE_EVENT_STATUS.READY]: '待开赛',
+  [COLLEGE_EVENT_STATUS.ONGOING]: '进行中',
+  [COLLEGE_EVENT_STATUS.FINISHED]: '已结束',
+};
+
+/** 新发布的学院赛先落在「报名中」 */
+const DEFAULT_COLLEGE_EVENT_STATUS = COLLEGE_EVENT_STATUS.SIGNUP;
+
+/**
+ * 大场状态（D38：大场级独立开始）。
+ *
+ *   待排阵 ──双方交齐排阵──▶ 待开赛 ──管理员点「开始」──▶ 进行中 ──小场录完──▶ 已结束
+ *
+ * 与学院赛整体状态分开：赛事级「开始」只把整场推进到进行中并生成首轮大场，
+ * 每个大场还要各自等排阵、各自开始，所以大场需要一条自己的状态线。
+ *
+ * 【编号规则】与其它状态机一样，上线后只增不改。
+ */
+const TIE_STATUS = {
+  PENDING_LINEUP: 0, // 待排阵：至少一方尚未提交出场安排
+  READY: 1, // 待开赛：双方排阵已齐，等待管理员点该大场的「开始」
+  ONGOING: 2, // 进行中：大场已开始，逐个小项录分
+  FINISHED: 3, // 已结束：大场胜负已定
+};
+
+const TIE_STATUS_LABEL = {
+  [TIE_STATUS.PENDING_LINEUP]: '待排阵',
+  [TIE_STATUS.READY]: '待开赛',
+  [TIE_STATUS.ONGOING]: '进行中',
+  [TIE_STATUS.FINISHED]: '已结束',
+};
+
+/** 新生成的大场先落在「待排阵」 */
+const DEFAULT_TIE_STATUS = TIE_STATUS.PENDING_LINEUP;
+
+/**
+ * 一场比赛的结果性质（D41）。
+ *
+ *   NORMAL  —— 正常打完，按比分判胜负，该计 ELO 的照计
+ *   FORFEIT —— 弃权：不计 ELO，但对阵照常推进（对手晋级 / 大场汇总照算）
+ *
+ * 个人赛不带这个字段时一律按 NORMAL 处理，既有流水不受影响。
+ */
+const MATCH_OUTCOME = {
+  NORMAL: 'normal',
+  FORFEIT: 'forfeit',
+};
+
+/**
+ * 比赛记录属于哪套体系（D1）。
+ *
+ *   personal —— 个人赛：一场比赛就是一场比赛，按等级分池计分
+ *   college  —— 学院赛的小场：一场大场里的一个项目，只有单打算个人分（D24/D25）
+ *
+ * 【为什么要有这个字段】
+ * 学院赛的小场复用个人赛那条「录分 → 对手确认 → 计等级分」的通路，
+ * 于是两者同住 matches 集合。但个人读路径（排行榜、个人页、赛事列表）
+ * 绝不能把小场当成自己的比赛，回放也要据此分流计分口径——所以必须能
+ * 一眼分清谁是谁。缺省一律视为个人赛，既有流水一行都不用改。
+ */
+const MATCH_COMPETITION = {
+  PERSONAL: 'personal',
+  COLLEGE: 'college',
+};
+
+/**
+ * 名单状态。
+ *
+ * 没有记录即「尚未提交」；提交后进「待审核」；管理员通过或退回。
+ * 「退回」保留记录而不是删掉——跟入会审核借「已禁用」的壳是同一个道理，
+ * 得让学院知道上一份为什么没过，才能改了再交。
+ */
+const COLLEGE_ENTRY_STATUS = {
+  PENDING: 0, // 待审核：已提交，等待管理员审核
+  APPROVED: 1, // 已通过：名单有效，等待抽签锁定
+  RETURNED: 2, // 已退回：管理员打回，可修改后重新提交
+};
+
+const COLLEGE_ENTRY_STATUS_LABEL = {
+  [COLLEGE_ENTRY_STATUS.PENDING]: '待审核',
+  [COLLEGE_ENTRY_STATUS.APPROVED]: '已通过',
+  [COLLEGE_ENTRY_STATUS.RETURNED]: '已退回',
+};
+
+/**
+ * 名单人数的边界与默认区间（D22 / D28）。
+ *
+ * 管理员可在发布时自定义每院最少 / 最多报名人数，默认 4–20；替补计入其中
+ * （名单里没上场的都算替补，不单列替补栏）。上下界本身另设硬限制：
+ * 太少的「最少」等于没约束，太多的「最多」会把整个年级塞进一份名单。
+ */
+const ROSTER_LIMITS = {
+  MIN: 1,
+  MAX: 50,
+  DEFAULT_MIN: 4,
+  DEFAULT_MAX: 20,
+};
+
+/** 默认允许兼项（D20）：同一队员可参加多个小项 */
+const DEFAULT_ALLOW_MULTI_ENTRY = true;
+
+/**
+ * 学院赛小场的赛制：11 分制、一局一胜。
+ *
+ * 【为什么写死而不是让管理员选】
+ * 一场大场里往往有多个小项，每个小项再各自三局两胜，赛程会长到一天打不完；
+ * 小场又是大场胜负的计量单位，赛制还得整齐划一才好比较「净胜」。因此
+ * 学院赛先统一按一局一胜跑，需要时从这里整体调整——与个人赛 DEFAULT_FORMAT
+ * （三局两胜）刻意不同。
+ */
+const COLLEGE_LEG_FORMAT = { gamePoints: 11, bestOf: 1 };
 
 module.exports = {
   ROLE,
@@ -668,4 +893,27 @@ module.exports = {
   ANNOUNCEMENT_CATEGORIES,
   ANNOUNCEMENT_STATUS,
   ANNOUNCEMENT_STATUS_LABEL,
+  LEG_DISCIPLINE,
+  LEG_DISCIPLINE_LABEL,
+  ALL_LEG_DISCIPLINES,
+  DOUBLES_DISCIPLINES,
+  TIE_ALGO,
+  TIE_ALGO_LABEL,
+  DEFAULT_TIE_ALGO,
+  TIE_NET_MODE,
+  TIE_NET_MODE_LABEL,
+  DEFAULT_TIE_NET_MODE,
+  COLLEGE_EVENT_STATUS,
+  COLLEGE_EVENT_STATUS_LABEL,
+  DEFAULT_COLLEGE_EVENT_STATUS,
+  COLLEGE_ENTRY_STATUS,
+  COLLEGE_ENTRY_STATUS_LABEL,
+  TIE_STATUS,
+  TIE_STATUS_LABEL,
+  DEFAULT_TIE_STATUS,
+  MATCH_OUTCOME,
+  MATCH_COMPETITION,
+  ROSTER_LIMITS,
+  DEFAULT_ALLOW_MULTI_ENTRY,
+  COLLEGE_LEG_FORMAT,
 };

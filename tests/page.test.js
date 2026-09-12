@@ -22,6 +22,7 @@ const facade = require('../miniprogram/services/index.js');
 const mock = require('../miniprogram/services/mock.js');
 const {
   MATCH_STATUS,
+  MATCH_OUTCOME,
   MATCH_TYPE,
   USER_STATUS,
   EVENT_STATUS,
@@ -31,6 +32,8 @@ const {
   SIGNUP_STATUS,
   EVENT_FORMAT,
   EVENT_PLACEMENT_MODE,
+  COLLEGE_EVENT_STATUS,
+  COLLEGE_ENTRY_STATUS,
 } = require('../miniprogram/utils/constants.js');
 
 /* ============================================================
@@ -45,6 +48,9 @@ const calls = {
   pullDownStopped: 0,
   toasts: [],
   backCount: 0,
+  // 弃权确认框的内容。默认一律「确认」，用例要测取消就把 modalConfirmed 置 false
+  modals: [],
+  modalConfirmed: true,
 };
 
 /** 供 canvas 使用的假 2d 上下文，只记录调用 */
@@ -110,6 +116,14 @@ global.wx = {
   navigateBack: () => {
     calls.backCount += 1;
   },
+  // 弃权等破坏性操作先弹确认框。这里同步回调，用例不必自己造 Promise
+  showModal: (options) => {
+    calls.modals.push(options.content || options.title || '');
+    const confirmed = calls.modalConfirmed !== false;
+    if (typeof options.success === 'function') {
+      options.success({ confirm: confirmed, cancel: !confirmed });
+    }
+  },
 };
 
 /**
@@ -156,6 +170,13 @@ require('../miniprogram/pages/events/events.js');
 require('../miniprogram/pages/event-detail/event-detail.js');
 require('../miniprogram/pages/event-edit/event-edit.js');
 require('../miniprogram/pages/event-placement/event-placement.js');
+require('../miniprogram/pages/college-event-edit/college-event-edit.js');
+require('../miniprogram/pages/college-entry/college-entry.js');
+require('../miniprogram/pages/college-entry-review/college-entry-review.js');
+require('../miniprogram/pages/college-event-detail/college-event-detail.js');
+require('../miniprogram/pages/college-lineup/college-lineup.js');
+require('../miniprogram/pages/college-match/college-match.js');
+require('../miniprogram/pages/college-placement/college-placement.js');
 
 /**
  * 深拷贝页面初值。
@@ -232,11 +253,20 @@ const eventsConfig = registered[13];
 const eventDetailConfig = registered[14];
 const eventEditConfig = registered[15];
 const eventPlacementConfig = registered[16];
+const collegeEventEditConfig = registered[17];
+const collegeEntryConfig = registered[18];
+const collegeEntryReviewConfig = registered[19];
+const collegeEventDetailConfig = registered[20];
+const collegeLineupConfig = registered[21];
+const collegeMatchConfig = registered[22];
+const collegePlacementConfig = registered[23];
 
 // 写接口（确认 / 撤销 / 录入）只改内存，跑完一条用例就得把内存退回种子状态，
 // 否则上一条确认过的比赛会让下一条拿到的榜单与台账都不一样
 beforeEach(() => {
   facade.resetCache();
+  calls.modals.length = 0;
+  calls.modalConfirmed = true;
 });
 
 /** 每一条用例开始前把登录态清干净，避免互相串味 */
@@ -3163,6 +3193,818 @@ test('我的页 —— 改完昵称返回后会重取数据，头卡显示新名
   // 只比编号就不会重取，这一页会一直挂着旧名字
   assert.strictEqual(page.data.view.user.nickName, '改过的名字');
   assert.strictEqual(page.data.view.user.realName, '赵明宇');
+});
+
+/* ============================================================
+ * 学院赛 —— 发布（M2-2）
+ * ============================================================ */
+
+test('发布学院赛 —— 只有管理员能进表单，干事与会员被挡', () => {
+  loginAs(ADMIN);
+  const allowed = instantiate(collegeEventEditConfig);
+  allowed.onLoad();
+  assert.strictEqual(allowed.data.blockReason, '', '管理员给表单');
+
+  // 干事管的是本学院临场事务，发布学院赛定的是整场规则，门槛收口到管理员
+  loginAs(STAFF);
+  const staff = instantiate(collegeEventEditConfig);
+  staff.onLoad();
+  assert.match(staff.data.blockReason, /没有发布学院赛的权限/);
+
+  loginAs();
+  const member = instantiate(collegeEventEditConfig);
+  member.onLoad();
+  assert.match(member.data.blockReason, /没有发布学院赛的权限/);
+
+  resetSession();
+  const guest = instantiate(collegeEventEditConfig);
+  guest.onLoad();
+  assert.match(guest.data.blockReason, /请先登录/);
+});
+
+test('发布学院赛 —— 填齐配置可发布，落库即报名中', async () => {
+  loginAs(ADMIN);
+  const page = instantiate(collegeEventEditConfig);
+  page.onLoad();
+
+  page.onInputTitle({ detail: { value: '学院团体赛' } });
+  page.onInputDescription({ detail: { value: '各院限报一队' } });
+  page.onPickDate({ detail: { value: '2026-10-01' } });
+  page.onPickTime({ detail: { value: '09:00' } });
+  page.onInputLocation({ detail: { value: '体育馆' } });
+  // 勾选三个小项，勾选状态也跟着回写
+  page.onToggleLegPlan({ detail: { value: ['MS', 'WS', 'XD'] } });
+  assert.strictEqual(page.data.legOptions.find((item) => item.value === 'WS').checked, true);
+
+  calls.backCount = 0;
+  await page.onSubmit();
+
+  assert.strictEqual(page.data.errorText, '', page.data.errorText);
+  assert.strictEqual(calls.backCount, 1, '发布后返回上一页');
+
+  const list = await facade.getCollegeEvents();
+  assert.strictEqual(list.length, 1);
+  assert.strictEqual(list[0].title, '学院团体赛');
+  assert.deepStrictEqual(list[0].legPlan, ['MS', 'WS', 'XD']);
+  assert.strictEqual(list[0].status, COLLEGE_EVENT_STATUS.SIGNUP, '发布即报名中');
+  // 人数留空取默认区间；算法默认打满比净胜
+  assert.strictEqual(list[0].rosterMin, 4);
+  assert.strictEqual(list[0].rosterMax, 20);
+  assert.strictEqual(list[0].tieAlgo, 'full_points');
+  assert.strictEqual(list[0].tieNetMode, 'win_diff');
+});
+
+test('发布学院赛 —— 没选小项被拒，且不落库', async () => {
+  loginAs(ADMIN);
+  const page = instantiate(collegeEventEditConfig);
+  page.onLoad();
+
+  page.onInputTitle({ detail: { value: '学院团体赛' } });
+  page.onPickDate({ detail: { value: '2026-10-01' } });
+  page.onPickTime({ detail: { value: '09:00' } });
+  await page.onSubmit();
+
+  assert.match(page.data.errors.legPlan, /至少安排一个小项/);
+  assert.strictEqual((await facade.getCollegeEvents()).length, 0, '校验不过不落库');
+});
+
+test('发布学院赛 —— 先到 N 场胜时不校验净胜口径', async () => {
+  loginAs(ADMIN);
+  const page = instantiate(collegeEventEditConfig);
+  page.onLoad();
+
+  page.onInputTitle({ detail: { value: '学院团体赛' } });
+  page.onPickDate({ detail: { value: '2026-10-01' } });
+  page.onPickTime({ detail: { value: '09:00' } });
+  page.onToggleLegPlan({ detail: { value: ['MS'] } });
+  page.onPickTieAlgo({ detail: { value: '1' } });
+  await page.onSubmit();
+
+  const list = await facade.getCollegeEvents();
+  assert.strictEqual(list.length, 1);
+  assert.strictEqual(list[0].tieAlgo, 'first_to_n');
+  // 用不上净胜口径时记 null，读的时候不必判「这个字段有没有意义」
+  assert.strictEqual(list[0].tieNetMode, null);
+});
+
+test('赛事页 —— 学院赛发布入口同样只给管理员', async () => {
+  loginAs(ADMIN);
+  const admin = instantiate(eventsConfig);
+  await admin.onLoad();
+  assert.strictEqual(admin.data.view.canManageCollege, true, '管理员才给学院赛入口');
+
+  calls.navigations.length = 0;
+  admin.onOpenCollegePublish();
+  assert.deepStrictEqual(calls.navigations, ['/pages/college-event-edit/college-event-edit']);
+
+  loginAs(STAFF);
+  const staff = instantiate(eventsConfig);
+  await staff.onLoad();
+  assert.strictEqual(staff.data.view.canManageCollege, false, '干事不给学院赛入口');
+
+  loginAs();
+  const member = instantiate(eventsConfig);
+  await member.onLoad();
+  assert.strictEqual(member.data.view.canManageCollege, false, '普通会员不给学院赛入口');
+});
+
+/* ============================================================
+ * 学院赛 —— 名单提交（M2-3）与名单审核（M2-4）
+ * ============================================================ */
+
+/** 演示数据里干事的学院（张宇轩 u02 / 郑凯文同院），名单用例都围着它转 */
+const STAFF_COLLEGE = '信息工程学院';
+
+/**
+ * 造一场「报名中」的学院赛。门槛是管理员，这里以管理员身份落库，
+ * 用例想以谁的身份看，自己在 onLoad 前摆登录态即可。
+ * 默认人数下限压到 1：演示数据里单个学院凑不满默认的 4 人。
+ */
+async function publishTestCollegeEvent(overrides = {}) {
+  const result = await facade.publishCollegeEvent(
+    {
+      title: '学院团体赛',
+      legPlan: ['MS', 'WS'],
+      startTime: '2026-10-01T09:00:00',
+      rosterMin: 1,
+      rosterMax: 20,
+      ...overrides,
+    },
+    ADMIN._id
+  );
+  assert.strictEqual(result.ok, true, `发布学院赛失败：${result.firstError}`);
+  return result.record;
+}
+
+/** 取某学院在册会员的编号，用于拼一份合法名单 */
+async function memberIdsOf(college) {
+  const members = await facade.getMembers();
+  return members.filter((member) => member.college === college).map((member) => member._id);
+}
+
+test('名单提交 —— 干事只看得到本学院的候选，外院的人不在其中', async () => {
+  const event = await publishTestCollegeEvent();
+  loginAs({ role: 1, _id: 'u02', college: STAFF_COLLEGE });
+
+  const page = instantiate(collegeEntryConfig);
+  await page.onLoad({ eventId: event._id });
+
+  assert.strictEqual(page.data.view.canSubmit, true);
+  assert.strictEqual(page.data.view.blockReason, '');
+  assert.strictEqual(page.data.view.college, STAFF_COLLEGE);
+  assert.ok(page.data.view.candidates.length > 0, '本院应有候选队员');
+
+  const members = await facade.getMembers();
+  const byId = new Map(members.map((member) => [member._id, member]));
+  for (const candidate of page.data.view.candidates) {
+    assert.strictEqual(byId.get(candidate.memberId).college, STAFF_COLLEGE, '候选里不许混进外院的人');
+  }
+});
+
+test('名单提交 —— 干事提交本学院名单成功，落库为待审核', async () => {
+  const event = await publishTestCollegeEvent();
+  loginAs({ role: 1, _id: 'u02', college: STAFF_COLLEGE });
+
+  const page = instantiate(collegeEntryConfig);
+  await page.onLoad({ eventId: event._id });
+
+  const ids = page.data.view.candidates.map((candidate) => candidate.memberId);
+  page.onToggleMember({ detail: { value: ids } });
+  assert.strictEqual(page.data.view.selectedCount, ids.length, '勾选人数回写到视图模型');
+
+  calls.backCount = 0;
+  await page.onSubmit();
+
+  assert.strictEqual(calls.backCount, 1, '提交成功后返回上一页');
+  const entries = await facade.getCollegeEntries(event._id);
+  assert.strictEqual(entries.length, 1);
+  assert.strictEqual(entries[0].college, STAFF_COLLEGE);
+  assert.strictEqual(entries[0].status, COLLEGE_ENTRY_STATUS.PENDING, '提交即待审核');
+  assert.deepStrictEqual(
+    entries[0].members.slice().sort(),
+    ids.slice().sort(),
+    '名单里的人就是勾选的人'
+  );
+});
+
+test('名单提交 —— 普通会员与访客都被挡在名单页外', async () => {
+  const event = await publishTestCollegeEvent();
+
+  // 普通会员：有账号但管不了任何学院
+  loginAs();
+  const member = instantiate(collegeEntryConfig);
+  await member.onLoad({ eventId: event._id });
+  assert.strictEqual(member.data.view.canSubmit, false);
+  assert.match(member.data.view.blockReason, /只能提交本学院的名单/);
+
+  // 访客：连登录都没有
+  resetSession();
+  const guest = instantiate(collegeEntryConfig);
+  await guest.onLoad({ eventId: event._id });
+  assert.match(guest.data.view.blockReason, /请先登录/);
+});
+
+test('名单提交 —— 名单混入外院队员被数据层拒下，不落库', async () => {
+  const event = await publishTestCollegeEvent();
+  const members = await facade.getMembers();
+  const outsider = members.find((member) => member.college !== STAFF_COLLEGE && member.status === USER_STATUS.ACTIVE);
+  assert.ok(outsider, '演示数据里应有一个外院会员');
+  loginAs({ role: 1, _id: 'u02', college: STAFF_COLLEGE });
+
+  const result = await facade.submitCollegeEntry(
+    { eventId: event._id, college: STAFF_COLLEGE, memberIds: [outsider._id] },
+    'u02'
+  );
+
+  assert.strictEqual(result.ok, false);
+  assert.match(result.message, /不属于本学院/);
+  assert.strictEqual((await facade.getCollegeEntries(event._id)).length, 0, '校验不过不落库');
+});
+
+test('名单提交 —— 干事替别的学院提交被拒', async () => {
+  const event = await publishTestCollegeEvent();
+  const members = await facade.getMembers();
+  const otherCollege = members.find((member) => member.college !== STAFF_COLLEGE).college;
+  loginAs({ role: 1, _id: 'u02', college: STAFF_COLLEGE });
+
+  const result = await facade.submitCollegeEntry(
+    { eventId: event._id, college: otherCollege, memberIds: [] },
+    'u02'
+  );
+
+  assert.strictEqual(result.ok, false);
+  assert.match(result.message, /只能提交本学院的名单/);
+});
+
+test('名单提交 —— 人数不在上下限内会被数据层拒下', async () => {
+  // 演示数据里每个学院恰好两人，把区间定成 1–1 就能同时卡住两端
+  const event = await publishTestCollegeEvent({ rosterMin: 1, rosterMax: 1 });
+  const ids = await memberIdsOf(STAFF_COLLEGE);
+  assert.ok(ids.length >= 2, '演示数据里本院至少两人');
+
+  loginAs({ role: 1, _id: 'u02', college: STAFF_COLLEGE });
+  const args = { eventId: event._id, college: STAFF_COLLEGE };
+
+  const justRight = await facade.submitCollegeEntry({ ...args, memberIds: ids.slice(0, 1) }, 'u02');
+  assert.strictEqual(justRight.ok, true, '刚好落在区间内可以提交');
+
+  const tooMany = await facade.submitCollegeEntry({ ...args, memberIds: ids.slice(0, 2) }, 'u02');
+  assert.strictEqual(tooMany.ok, false);
+  assert.match(tooMany.message, /最多 1 人/);
+
+  // 下限同样由数据层把关：另开一场要求至少两人
+  const strict = await publishTestCollegeEvent({ rosterMin: 2, rosterMax: 2 });
+  const tooFew = await facade.submitCollegeEntry(
+    { eventId: strict._id, college: STAFF_COLLEGE, memberIds: ids.slice(0, 1) },
+    'u02'
+  );
+  assert.strictEqual(tooFew.ok, false);
+  assert.match(tooFew.message, /至少 2 人/);
+});
+
+test('赛事页 —— 学院赛一行按身份去不同的页', async () => {
+  const event = await publishTestCollegeEvent();
+
+  // 管理员：进详情页（抽签、开赛、大场与审核入口都在那里）
+  loginAs(ADMIN);
+  const admin = instantiate(eventsConfig);
+  await admin.onLoad();
+  assert.strictEqual(admin.data.view.hasCollegeEvents, true);
+  const adminRow = admin.data.view.collegeEvents[0];
+  assert.strictEqual(adminRow.canReview, true);
+  assert.strictEqual(adminRow.canSubmit, false);
+  assert.strictEqual(adminRow.actionText, '管理');
+
+  calls.navigations.length = 0;
+  admin.onOpenCollegeEvent({
+    currentTarget: { dataset: { eventId: event._id, canSubmit: false } },
+  });
+  assert.deepStrictEqual(calls.navigations, [
+    `/pages/college-event-detail/college-event-detail?eventId=${event._id}`,
+  ]);
+
+  // 干事：报名中直接进本学院的名单页
+  loginAs({ role: 1, _id: 'u02', college: STAFF_COLLEGE });
+  const staff = instantiate(eventsConfig);
+  await staff.onLoad();
+  const staffRow = staff.data.view.collegeEvents[0];
+  assert.strictEqual(staffRow.canReview, false, '干事没有审核权');
+  assert.strictEqual(staffRow.canSubmit, true);
+  assert.strictEqual(staffRow.actionText, '提交名单');
+
+  calls.navigations.length = 0;
+  staff.onOpenCollegeEvent({
+    currentTarget: { dataset: { eventId: event._id, canSubmit: true } },
+  });
+  assert.deepStrictEqual(calls.navigations, [
+    `/pages/college-entry/college-entry?eventId=${event._id}`,
+  ]);
+
+  // 普通会员：进详情页看签表与对阵
+  loginAs();
+  const member = instantiate(eventsConfig);
+  await member.onLoad();
+  const memberRow = member.data.view.collegeEvents[0];
+  assert.strictEqual(memberRow.canSubmit, false);
+  assert.strictEqual(memberRow.actionText, '查看');
+
+  calls.navigations.length = 0;
+  member.onOpenCollegeEvent({
+    currentTarget: { dataset: { eventId: event._id, canSubmit: false } },
+  });
+  assert.deepStrictEqual(calls.navigations, [
+    `/pages/college-event-detail/college-event-detail?eventId=${event._id}`,
+  ]);
+});
+
+test('名单审核 —— 只有管理员能进，干事被挡', async () => {
+  const event = await publishTestCollegeEvent();
+
+  loginAs(ADMIN);
+  const admin = instantiate(collegeEntryReviewConfig);
+  await admin.onLoad({ eventId: event._id });
+  assert.strictEqual(admin.data.view.canReview, true);
+  assert.strictEqual(admin.data.view.blockReason, '');
+
+  loginAs({ role: 1, _id: 'u02', college: STAFF_COLLEGE });
+  const staff = instantiate(collegeEntryReviewConfig);
+  await staff.onLoad({ eventId: event._id });
+  assert.match(staff.data.view.blockReason, /只有管理员/);
+});
+
+test('名单审核 —— 通过后状态变为已通过', async () => {
+  const event = await publishTestCollegeEvent();
+  const ids = await memberIdsOf(STAFF_COLLEGE);
+  await facade.submitCollegeEntry(
+    { eventId: event._id, college: STAFF_COLLEGE, memberIds: ids },
+    'u02'
+  );
+
+  loginAs(ADMIN);
+  const page = instantiate(collegeEntryReviewConfig);
+  await page.onLoad({ eventId: event._id });
+
+  assert.strictEqual(page.data.view.pendingCount, 1);
+  const { entryId } = page.data.view.rows[0];
+
+  await page.onApprove({ currentTarget: { dataset: { entryId } } });
+
+  assert.strictEqual(page.data.view.pendingCount, 0);
+  assert.strictEqual(page.data.view.rows[0].statusLabel, '已通过');
+  const entries = await facade.getCollegeEntries(event._id);
+  assert.strictEqual(entries[0].status, COLLEGE_ENTRY_STATUS.APPROVED);
+});
+
+test('名单审核 —— 退回必须填理由，填了才生效', async () => {
+  const event = await publishTestCollegeEvent();
+  const ids = await memberIdsOf(STAFF_COLLEGE);
+  await facade.submitCollegeEntry(
+    { eventId: event._id, college: STAFF_COLLEGE, memberIds: ids },
+    'u02'
+  );
+
+  loginAs(ADMIN);
+  const page = instantiate(collegeEntryReviewConfig);
+  await page.onLoad({ eventId: event._id });
+  const { entryId } = page.data.view.rows[0];
+
+  page.onOpenReject({ currentTarget: { dataset: { entryId, college: STAFF_COLLEGE } } });
+  assert.strictEqual(page.data.reject.open, true);
+
+  // 没填理由：挡下，名单仍是待审核
+  await page.onSubmitReject();
+  assert.match(page.data.actionError, /请填写退回理由/);
+  assert.strictEqual((await facade.getCollegeEntries(event._id))[0].status, COLLEGE_ENTRY_STATUS.PENDING);
+
+  // 填了理由：退回生效，理由留在记录上
+  page.onInputReason({ detail: { value: '名单人数不足' } });
+  await page.onSubmitReject();
+
+  assert.strictEqual(page.data.reject.open, false);
+  const entries = await facade.getCollegeEntries(event._id);
+  assert.strictEqual(entries[0].status, COLLEGE_ENTRY_STATUS.RETURNED);
+  assert.strictEqual(entries[0].reason, '名单人数不足');
+  assert.strictEqual(page.data.view.rows[0].statusLabel, '已退回');
+});
+
+/* ============================================================
+ * 学院赛详情 / 排阵 / 大场开始
+ * ============================================================ */
+
+/** 体育学院 —— 演示数据里的另一所参赛学院 */
+const OTHER_COLLEGE = '体育学院';
+
+/**
+ * 造一场两院参赛、已抽签并已开始的学院赛。
+ * 路线与管理员实际操作一致：交名单 → 审核通过 → 抽签 → 开始赛事。
+ *
+ * @returns {Promise<{event:Object, ties:Array<Object>}>}
+ */
+async function startTestCollegeEvent() {
+  const event = await publishTestCollegeEvent({ legPlan: ['MS', 'WS'] });
+
+  await facade.submitCollegeEntry(
+    { eventId: event._id, college: STAFF_COLLEGE, memberIds: await memberIdsOf(STAFF_COLLEGE) },
+    'u02'
+  );
+  await facade.submitCollegeEntry(
+    { eventId: event._id, college: OTHER_COLLEGE, memberIds: await memberIdsOf(OTHER_COLLEGE) },
+    ADMIN._id
+  );
+
+  for (const entry of await facade.getCollegeEntries(event._id)) {
+    await facade.reviewCollegeEntry(entry._id, 'approve', '', ADMIN._id);
+  }
+
+  const drawn = await facade.drawCollegeEvent(event._id, ADMIN._id, { seedValue: 42 });
+  assert.strictEqual(drawn.ok, true, `抽签失败：${drawn.message}`);
+
+  const started = await facade.startCollegeEvent(event._id, ADMIN._id);
+  assert.strictEqual(started.ok, true, `开始赛事失败：${started.message}`);
+  return { event: drawn.record, ties: started.ties };
+}
+
+test('学院赛详情 —— 未登录整页挡住', async () => {
+  const event = await publishTestCollegeEvent();
+  resetSession();
+
+  const page = instantiate(collegeEventDetailConfig);
+  await page.onLoad({ eventId: event._id });
+
+  assert.match(page.data.view.blockReason, /请先登录/);
+});
+
+test('学院赛详情 —— 管理员点选种子并抽签，名单就此锁定', async () => {
+  const event = await publishTestCollegeEvent({ legPlan: ['MS', 'WS'] });
+  await facade.submitCollegeEntry(
+    { eventId: event._id, college: STAFF_COLLEGE, memberIds: await memberIdsOf(STAFF_COLLEGE) },
+    'u02'
+  );
+  await facade.submitCollegeEntry(
+    { eventId: event._id, college: OTHER_COLLEGE, memberIds: await memberIdsOf(OTHER_COLLEGE) },
+    ADMIN._id
+  );
+  for (const entry of await facade.getCollegeEntries(event._id)) {
+    await facade.reviewCollegeEntry(entry._id, 'approve', '', ADMIN._id);
+  }
+
+  loginAs(ADMIN);
+  const page = instantiate(collegeEventDetailConfig);
+  await page.onLoad({ eventId: event._id });
+
+  assert.strictEqual(page.data.view.blockReason, '');
+  assert.strictEqual(page.data.view.canManage, true, '管理员应看到抽签入口');
+  assert.strictEqual(page.data.view.hasApprovedColleges, true);
+  assert.strictEqual(page.data.seedRows.length, 2);
+
+  // 点两下同一所学院：先选中，再取消
+  page.onToggleSeed({ currentTarget: { dataset: { college: OTHER_COLLEGE } } });
+  assert.deepStrictEqual(page.data.seeds, [OTHER_COLLEGE]);
+  assert.strictEqual(page.data.seedRows.find((row) => row.college === OTHER_COLLEGE).seedOrderText, '种子 1');
+
+  page.onToggleSeed({ currentTarget: { dataset: { college: OTHER_COLLEGE } } });
+  assert.deepStrictEqual(page.data.seeds, []);
+
+  // 按顺序指定两个种子，抽签落库
+  page.onToggleSeed({ currentTarget: { dataset: { college: OTHER_COLLEGE } } });
+  page.onToggleSeed({ currentTarget: { dataset: { college: STAFF_COLLEGE } } });
+  await page.onDraw();
+
+  assert.strictEqual(page.data.view.hasDraw, true);
+  assert.strictEqual(page.data.view.isReady, true, '抽签后转「待开赛」，名单锁定');
+  assert.strictEqual(page.data.view.canStartEvent, true);
+
+  const saved = await facade.getCollegeEvent(event._id);
+  assert.strictEqual(saved.status, COLLEGE_EVENT_STATUS.READY);
+  assert.deepStrictEqual(saved.draw.seeds, [OTHER_COLLEGE, STAFF_COLLEGE]);
+});
+
+test('学院赛详情 —— 干事报名中能从详情页进名单页', async () => {
+  const event = await publishTestCollegeEvent();
+  loginAs({ role: 1, _id: 'u02', college: STAFF_COLLEGE });
+
+  const page = instantiate(collegeEventDetailConfig);
+  await page.onLoad({ eventId: event._id });
+
+  assert.strictEqual(page.data.view.canSubmitEntry, true);
+  assert.strictEqual(page.data.view.canManage, false, '干事不该看到抽签入口');
+
+  calls.navigations.length = 0;
+  page.onOpenEntry();
+  assert.deepStrictEqual(calls.navigations, [`/pages/college-entry/college-entry?eventId=${event._id}`]);
+});
+
+test('学院赛详情 —— 开始赛事生成首轮大场，双方排阵齐后可开始大场', async () => {
+  const event = await publishTestCollegeEvent({ legPlan: ['MS', 'WS'] });
+  await facade.submitCollegeEntry(
+    { eventId: event._id, college: STAFF_COLLEGE, memberIds: await memberIdsOf(STAFF_COLLEGE) },
+    'u02'
+  );
+  await facade.submitCollegeEntry(
+    { eventId: event._id, college: OTHER_COLLEGE, memberIds: await memberIdsOf(OTHER_COLLEGE) },
+    ADMIN._id
+  );
+  for (const entry of await facade.getCollegeEntries(event._id)) {
+    await facade.reviewCollegeEntry(entry._id, 'approve', '', ADMIN._id);
+  }
+  await facade.drawCollegeEvent(event._id, ADMIN._id, { seedValue: 42 });
+
+  loginAs(ADMIN);
+  const page = instantiate(collegeEventDetailConfig);
+  await page.onLoad({ eventId: event._id });
+  assert.strictEqual(page.data.view.canStartEvent, true);
+
+  await page.onStartEvent();
+
+  assert.strictEqual(page.data.view.isOngoing, true);
+  assert.strictEqual(page.data.view.hasTies, true);
+  const tieRow = page.data.view.ties[0];
+  assert.strictEqual(tieRow.isPendingLineup, true, '刚生成的大场在等双方排阵');
+  assert.strictEqual(tieRow.canStart, false, '排阵没齐不能开始');
+  assert.strictEqual(tieRow.legRows.length, 2, '小项按赛事配置铺好');
+});
+
+test('排阵页 —— 未登录与非本大场的学院都被挡住', async () => {
+  const { event, ties } = await startTestCollegeEvent();
+  const tie = ties[0];
+
+  resetSession();
+  const anon = instantiate(collegeLineupConfig);
+  await anon.onLoad({ tieId: tie._id, eventId: event._id });
+  assert.match(anon.data.view.blockReason, /请先登录/);
+
+  // 用一所没进这场大场的学院登录：看不到也排不了
+  loginAs({ role: 1, _id: 'u05', college: '经济学院' });
+  const outsider = instantiate(collegeLineupConfig);
+  await outsider.onLoad({ tieId: tie._id, eventId: event._id });
+  assert.match(outsider.data.view.blockReason, /不在本大场的参赛学院内/);
+});
+
+test('排阵页 —— 干事按默认值排人并提交，A 侧标记为已排阵', async () => {
+  const { event, ties } = await startTestCollegeEvent();
+  const tie = ties[0];
+  loginAs({ role: 1, _id: 'u02', college: STAFF_COLLEGE });
+
+  const page = instantiate(collegeLineupConfig);
+  await page.onLoad({ tieId: tie._id, eventId: event._id });
+
+  assert.strictEqual(page.data.view.blockReason, '');
+  assert.strictEqual(page.data.view.college, STAFF_COLLEGE);
+  assert.strictEqual(page.data.view.hasLineup, false);
+  // 演示数据里两所学院各两人，单打各需一人
+  assert.deepStrictEqual(page.data.view.legs.map((leg) => leg.need), [1, 1]);
+
+  const ids = await memberIdsOf(STAFF_COLLEGE);
+  page.onTogglePlayer({ currentTarget: { dataset: { legNo: 1 } }, detail: { value: [ids[0]] } });
+  page.onTogglePlayer({ currentTarget: { dataset: { legNo: 2 } }, detail: { value: [ids[1]] } });
+
+  await page.onSubmit();
+
+  assert.strictEqual(page.data.view.hasLineup, true, '提交后本场有我方排阵');
+  assert.match(page.data.view.carryHint, /已提交过本场排阵/);
+
+  const lineups = await facade.getCollegeLineups(event._id);
+  assert.strictEqual(lineups.length, 1);
+  assert.strictEqual(lineups[0].college, STAFF_COLLEGE);
+  assert.deepStrictEqual(lineups[0].entries.map((row) => row.players), [[ids[0]], [ids[1]]]);
+
+  // 该大场的对应一侧被翻开
+  const saved = (await facade.getCollegeTies(event._id)).find((item) => item._id === tie._id);
+  const mySide = STAFF_COLLEGE === tie.collegeA ? saved.lineupA : saved.lineupB;
+  assert.strictEqual(mySide, true);
+});
+
+test('排阵页 —— 超过小项人数上限时撤回过多的点选并提示', async () => {
+  const { event, ties } = await startTestCollegeEvent();
+  const tie = ties[0];
+  loginAs({ role: 1, _id: 'u02', college: STAFF_COLLEGE });
+
+  const page = instantiate(collegeLineupConfig);
+  await page.onLoad({ tieId: tie._id, eventId: event._id });
+
+  const ids = await memberIdsOf(STAFF_COLLEGE);
+  calls.toasts.length = 0;
+  page.onTogglePlayer({ currentTarget: { dataset: { legNo: 1 } }, detail: { value: ids } });
+
+  assert.match(calls.toasts[0], /第 1 场最多只能排 1 名队员/);
+  assert.strictEqual(page.data.view.legs[0].pickedText, '未排人', '超限整次改动作废');
+});
+
+test('排阵页 —— 有人没排满时提交被数据层拒下', async () => {
+  const { event, ties } = await startTestCollegeEvent();
+  const tie = ties[0];
+  loginAs({ role: 1, _id: 'u02', college: STAFF_COLLEGE });
+
+  const page = instantiate(collegeLineupConfig);
+  await page.onLoad({ tieId: tie._id, eventId: event._id });
+
+  const ids = await memberIdsOf(STAFF_COLLEGE);
+  page.onTogglePlayer({ currentTarget: { dataset: { legNo: 1 } }, detail: { value: [ids[0]] } });
+
+  calls.toasts.length = 0;
+  await page.onSubmit();
+
+  assert.match(calls.toasts[0], /第 2 场还没排满 1 名队员/);
+  assert.strictEqual((await facade.getCollegeLineups(event._id)).length, 0, '没排满不落库');
+});
+
+test('大场开始 —— 双方排阵齐后管理员才能点开始', async () => {
+  const { event, ties } = await startTestCollegeEvent();
+  const tie = ties[0];
+
+  // 一人排一半：大场起始仍是待排阵，管理员点不动
+  const staffIds = await memberIdsOf(STAFF_COLLEGE);
+  await facade.submitLineup(
+    {
+      tieId: tie._id,
+      college: STAFF_COLLEGE,
+      entries: [
+        { legNo: 1, players: [staffIds[0]] },
+        { legNo: 2, players: [staffIds[1]] },
+      ],
+    },
+    'u02'
+  );
+
+  loginAs(ADMIN);
+  const partial = instantiate(collegeEventDetailConfig);
+  await partial.onLoad({ eventId: event._id });
+  assert.strictEqual(partial.data.view.ties[0].canStart, false, '只交了一方，不能开');
+  assert.match(partial.data.view.ties[0].statusLabel, /待排阵/);
+
+  // 另一方也交齐
+  const otherIds = await memberIdsOf(OTHER_COLLEGE);
+  await facade.submitLineup(
+    {
+      tieId: tie._id,
+      college: OTHER_COLLEGE,
+      entries: [
+        { legNo: 1, players: [otherIds[0]] },
+        { legNo: 2, players: [otherIds[1]] },
+      ],
+    },
+    ADMIN._id
+  );
+
+  await partial.refresh();
+  const readyRow = partial.data.view.ties[0];
+  assert.strictEqual(readyRow.statusLabel, '待开赛');
+  assert.strictEqual(readyRow.lineupASubmitted, true);
+  assert.strictEqual(readyRow.lineupBSubmitted, true);
+  assert.strictEqual(readyRow.canStart, true);
+
+  await partial.onStartTie({ currentTarget: { dataset: { tieId: tie._id } } });
+
+  assert.match(partial.data.view.ties[0].statusLabel, /进行中/);
+});
+
+/* ============================================================
+ * 个人赛弃权（M5-3）入口
+ * ============================================================ */
+
+/**
+ * 造一场进行中的 4 人单败赛事，返回首轮其中一场。
+ * 路线与真人一致：发布 → 报名 → 抽签 → 开赛。
+ */
+async function scheduledSinglesMatch() {
+  const members = await facade.getMembers();
+  const players = members.slice(0, 4).map((member) => member._id);
+
+  const published = await facade.publishEvent(
+    {
+      title: '弃权入口自检赛',
+      description: 'M5-3 页面入口',
+      matchType: MATCH_TYPE.SINGLES,
+      level: EVENT_LEVEL.SECOND,
+      bronzeMode: EVENT_BRONZE_MODE.PLAYOFF,
+      seedMode: SEED_MODE.ELO,
+      seedCount: 4,
+      startTime: '2026-05-20T09:00:00',
+      location: '学校体育馆',
+      quota: 4,
+    },
+    ADMIN._id
+  );
+  assert.strictEqual(published.ok, true, `发布赛事失败：${published.firstError}`);
+
+  const eventId = published.record._id;
+  for (const userId of players) {
+    await facade.signUpEvent(eventId, userId);
+  }
+  await facade.drawEvent(eventId, ADMIN._id, { seedValue: 11 });
+  await facade.startEvent(eventId, ADMIN._id);
+
+  const matches = await facade.getMatchRecords({ eventId });
+  return { eventId, players, match: matches.filter((item) => item.round === 1)[0] };
+}
+
+test('比赛页 —— 赛事里待打的比赛给本人「弃权」入口，确认后对手晋级且不计分', async () => {
+  const { eventId, match } = await scheduledSinglesMatch();
+  const me = match.teamA[0];
+  const expectedWinner = 'B';
+
+  const before = await facade.getMembers();
+  loginAs({ _id: me, role: 0, status: 1 });
+
+  const page = instantiate(matchConfig);
+  await page.onLoad();
+  await page.onSwitchTab({ currentTarget: { dataset: { tab: 'mine' } } });
+
+  const row = page.data.view.records.find((item) => item.matchId === match._id);
+  assert.ok(row, '自己那场应在「我的比赛」里');
+  assert.strictEqual(row.canForfeit, true, '待打的赛事比赛给本人弃权入口');
+
+  calls.modals.length = 0;
+  await page.onForfeit({ currentTarget: { dataset: { matchId: match._id } } });
+
+  assert.strictEqual(calls.modals.length, 1, '破坏性操作先弹确认框');
+  assert.match(calls.modals[0], /不计个人等级分/, '要说清弃权的后果');
+
+  const after = (await facade.getMatchRecords({ eventId })).find((item) => item._id === match._id);
+  assert.strictEqual(after.outcome, MATCH_OUTCOME.FORFEIT);
+  assert.strictEqual(after.winner, expectedWinner);
+  assert.deepStrictEqual(await facade.getMembers(), before, '弃权不计任何个人等级分或积分');
+});
+
+test('比赛页 —— 取消确认框时不落库', async () => {
+  const { eventId, match } = await scheduledSinglesMatch();
+  loginAs({ _id: match.teamA[0], role: 0, status: 1 });
+
+  const page = instantiate(matchConfig);
+  await page.onLoad();
+
+  calls.modalConfirmed = false;
+  await page.onForfeit({ currentTarget: { dataset: { matchId: match._id } } });
+
+  const after = (await facade.getMatchRecords({ eventId })).find((item) => item._id === match._id);
+  assert.strictEqual(after.outcome, undefined, '点了取消就不该写库');
+  assert.strictEqual(after.status, MATCH_STATUS.PENDING);
+});
+
+/* ============================================================
+ * 学院名次录入页（M5-1）
+ * ============================================================ */
+
+test('学院名次页 —— 管理员填名次并提交，赛事随即结束', async () => {
+  const { event } = await startTestCollegeEvent();
+  loginAs(ADMIN);
+
+  const page = instantiate(collegePlacementConfig);
+  await page.onLoad({ eventId: event._id });
+
+  assert.strictEqual(page.data.loading, false);
+  assert.strictEqual(page.data.view.canSubmit, true);
+  assert.strictEqual(page.data.view.hasRows, true);
+  assert.strictEqual(page.data.view.rows.length, 2, '两所已通过名单的学院各一行');
+
+  const [first, second] = page.data.view.rows.map((row) => row.college);
+  page.onInputPlacement({ currentTarget: { dataset: { index: 0 } }, detail: { value: '1' } });
+  page.onInputPlacement({ currentTarget: { dataset: { index: 1 } }, detail: { value: '2' } });
+
+  calls.toasts.length = 0;
+  const backsBefore = calls.backCount;
+  await page.onSubmit();
+
+  const saved = await facade.getCollegeEvent(event._id);
+  assert.strictEqual(saved.status, COLLEGE_EVENT_STATUS.FINISHED);
+  assert.deepStrictEqual(saved.results, [
+    { college: first, placement: 1 },
+    { college: second, placement: 2 },
+  ]);
+  assert.ok(calls.toasts.some((text) => /名次已录入/.test(text)));
+  assert.strictEqual(calls.backCount, backsBefore + 1, '提交完回详情页');
+});
+
+test('学院名次页 —— 名次不是正整数时挡下，赛事不结束', async () => {
+  const { event } = await startTestCollegeEvent();
+  loginAs(ADMIN);
+
+  const page = instantiate(collegePlacementConfig);
+  await page.onLoad({ eventId: event._id });
+  page.onInputPlacement({ currentTarget: { dataset: { index: 0 } }, detail: { value: '1.5' } });
+
+  await page.onSubmit();
+
+  assert.match(page.data.errorText, /整数/);
+  assert.strictEqual(
+    (await facade.getCollegeEvent(event._id)).status,
+    COLLEGE_EVENT_STATUS.ONGOING,
+    '校验不过时不能结束赛事'
+  );
+});
+
+test('学院名次页 —— 干事与会员整页挡住，一条学院名单都不下发', async () => {
+  const { event } = await startTestCollegeEvent();
+
+  for (const actor of [{ role: 1, _id: 'u02', college: STAFF_COLLEGE }, { role: 0, _id: 'u06' }]) {
+    loginAs(actor);
+    const page = instantiate(collegePlacementConfig);
+    await page.onLoad({ eventId: event._id });
+
+    assert.strictEqual(page.data.view.canSubmit, false);
+    assert.match(page.data.view.blockReason, /只有管理员/);
+    assert.deepStrictEqual(page.data.view.rows, [], '没有录入资格就不给名单');
+  }
 });
 
 /* ============================================================

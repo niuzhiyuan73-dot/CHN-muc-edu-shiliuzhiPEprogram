@@ -34,6 +34,10 @@ function emptyStore() {
     matches: new Map(),
     events: new Map(),
     eventSignups: new Map(),
+    collegeEvents: new Map(),
+    collegeEntries: new Map(),
+    ties: new Map(),
+    lineups: new Map(),
     announcements: new Map(),
     seasons: new Map(),
     auditLogs: [],
@@ -133,6 +137,76 @@ function createMemoryRepo(seed = {}) {
           const current = target.eventSignups.get(id);
           if (!current) throw new Error(`更新失败：找不到报名记录 ${id}`);
           target.eventSignups.set(id, { ...current, ...patch });
+        },
+      },
+
+      collegeEvents: {
+        list: () => list('collegeEvents'),
+        getById: (id) => read('collegeEvents', id),
+        insert: async (doc) => {
+          target.collegeEvents.set(doc._id, clone(doc));
+        },
+        update: async (id, patch) => {
+          const current = target.collegeEvents.get(id);
+          if (!current) throw new Error(`更新失败：找不到学院赛 ${id}`);
+          target.collegeEvents.set(id, { ...current, ...patch });
+        },
+      },
+
+      collegeEntries: {
+        list: () => list('collegeEntries'),
+        listByEvent: (eventId) => {
+          if (inTx) throw new Error('事务内不允许条件读取（collegeEntries），请改用 getById');
+          return [...target.collegeEntries.values()]
+            .filter((doc) => doc.eventId === eventId)
+            .map(clone);
+        },
+        getById: (id) => read('collegeEntries', id),
+        insert: async (doc) => {
+          target.collegeEntries.set(doc._id, clone(doc));
+        },
+        update: async (id, patch) => {
+          const current = target.collegeEntries.get(id);
+          if (!current) throw new Error(`更新失败：找不到学院名单 ${id}`);
+          target.collegeEntries.set(id, { ...current, ...patch });
+        },
+      },
+
+      ties: {
+        list: () => list('ties'),
+        listByEvent: (eventId) => {
+          if (inTx) throw new Error('事务内不允许条件读取（ties），请改用 getById');
+          return [...target.ties.values()]
+            .filter((doc) => doc.eventId === eventId)
+            .map(clone);
+        },
+        getById: (id) => read('ties', id),
+        insert: async (doc) => {
+          target.ties.set(doc._id, clone(doc));
+        },
+        update: async (id, patch) => {
+          const current = target.ties.get(id);
+          if (!current) throw new Error(`更新失败：找不到大场 ${id}`);
+          target.ties.set(id, { ...current, ...patch });
+        },
+      },
+
+      lineups: {
+        list: () => list('lineups'),
+        listByEvent: (eventId) => {
+          if (inTx) throw new Error('事务内不允许条件读取（lineups），请改用 getById');
+          return [...target.lineups.values()]
+            .filter((doc) => doc.eventId === eventId)
+            .map(clone);
+        },
+        getById: (id) => read('lineups', id),
+        insert: async (doc) => {
+          target.lineups.set(doc._id, clone(doc));
+        },
+        update: async (id, patch) => {
+          const current = target.lineups.get(id);
+          if (!current) throw new Error(`更新失败：找不到排阵 ${id}`);
+          target.lineups.set(id, { ...current, ...patch });
         },
       },
 

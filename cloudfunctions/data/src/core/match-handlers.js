@@ -23,17 +23,21 @@ const { callerError } = require('./context.js');
 const { getDataset } = require('./derive.js');
 const { bumpSeason } = require('./season.js');
 const { matchNaturalKey } = require('./idempotency.js');
+// 学院赛小场确认后，把结果写回大场并推进轮次（单向依赖，无环）
+const { advanceCollegeAfterLeg } = require('./college-advance.js');
 const {
   canConfirm,
   canRevoke,
+  canForfeit,
   buildMatchRecord,
+  buildForfeitPatch,
   fillScheduledMatch,
   canRecordScore,
 } = require('../../lib/services/match-record.js');
 const { buildRoundMatches } = require('../../lib/services/draw.js');
 // 赛制阶段派发：单败排下一轮，循环排下一轮，小组赛在全部小组打完后转去排淘汰阶段
 const { planStageMatches } = require('../../lib/services/format-plan.js');
-const { MATCH_STATUS, ROLE } = require('../../lib/utils/constants.js');
+const { MATCH_STATUS, ROLE, MATCH_COMPETITION } = require('../../lib/utils/constants.js');
 
 /**
  * 在台账里找一场比赛（含待确认与已撤销）。
@@ -304,6 +308,66 @@ async function confirmMatch(payload = {}, ctx) {
   // 刚打完的若是某一轮的最后一场，把下一轮排出来
   await advanceAfterConfirm(ctx, patched.eventId);
 
+  // 学院赛的小场：把结果写回大场、定出大场胜负，并在本轮打完时排出下一轮。
+  // 它没有个人赛的 eventId，上面那条推进会直接返回。
+  if (patched.competition === MATCH_COMPETITION.COLLEGE) {
+    await advanceCollegeAfterLeg(ctx, patched);
+  }
+
+  return ok({ ok: true, match: patched, message: '' });
+}
+
+/**
+ * 个人赛弃权：参赛者本人自选，或管理员代记（M5-3 / D41、D42）。
+ *
+ * 【弃权为什么也写成一场「已生效」的比赛】
+ * 与学院赛小场弃权（college-handlers.recordForfeit）同一取舍：胜方直接判给
+ * 对手、状态直接生效、比分留空，性质由 outcome 表达。于是晋级（单败）、
+ * 小组积分（循环 / 小组赛）与排名分三处都不必为弃权再开分支——它们本来
+ * 就按「谁赢了这场比赛」算，而这场比赛现在明明白白写着对手赢。
+ *
+ * 【ELO 为什么不在这里处理】
+ * 回放侧 isEloEligibleMatch 已经把 outcome=forfeit 的比赛挡在等级分之外，
+ * 不管它是个人赛还是学院赛。这里只要把字段写对，分数自然不动。
+ *
+ * @param {Object} payload { id, forfeitBy }
+ * @param {Object} ctx
+ * @returns {Promise<Object>} {ok, match, message}
+ */
+async function forfeitMatch(payload = {}, ctx) {
+  const guard = callerError(ctx);
+  if (guard) return fail(guard);
+
+  const { id } = payload;
+  const forfeitBy = String(payload.forfeitBy || '').trim();
+  const dataset = await getDataset(ctx);
+  const match = findRecord(dataset, id);
+  if (!match) return ok({ ok: false, match: null, message: '找不到这场比赛' });
+
+  if (!canForfeit(match, forfeitBy, ctx.actorId, { role: ctx.role })) {
+    return ok({ ok: false, match: null, message: '你无权记录这次弃权' });
+  }
+
+  const patch = buildForfeitPatch(match, forfeitBy, { actorId: ctx.actorId, now: ctx.now });
+
+  const patched = await ctx.repo.transaction(async (tx) => {
+    const current = await tx.matches.getById(id);
+    // 事务内再核一次状态：并发的「确认」与「弃权」只有一次能落地
+    if (!current || current.status !== MATCH_STATUS.PENDING) return null;
+
+    await tx.matches.update(id, patch);
+    await bumpSeason(tx, {
+      anchorTime: anchorCandidate(dataset, current.matchTime),
+      now: ctx.now,
+    });
+    return { ...current, ...patch };
+  });
+
+  if (!patched) return ok({ ok: false, match: null, message: '这场比赛已经处理过了' });
+
+  // 弃权也算「这一场有了结果」：单败里对手晋级，循环 / 小组赛里记对手一胜
+  await advanceAfterConfirm(ctx, patched.eventId);
+
   return ok({ ok: true, match: patched, message: '' });
 }
 
@@ -407,4 +471,4 @@ async function revokeMatch(payload = {}, ctx) {
   return ok({ ok: true, match: patched, message: '' });
 }
 
-module.exports = { submitMatch, confirmMatch, rejectMatch, revokeMatch };
+module.exports = { submitMatch, confirmMatch, rejectMatch, revokeMatch, forfeitMatch };

@@ -22,9 +22,9 @@
  */
 
 const { replaySeason } = require('../../lib/services/replay.js');
+const { isEloEligibleMatch } = require('../../lib/services/college-tie.js');
 const { createNameResolver } = require('../../lib/utils/stats.js');
 const {
-  MATCH_STATUS,
   USER_STATUS,
   ANNOUNCEMENT_STATUS,
   isMemberStatus,
@@ -67,7 +67,10 @@ async function buildDataset(repo, season) {
 
   // 复制一份再动：就地改数据库读回来的对象，会让调用方看到意外变化
   const staged = allMatches.map((match) => ({ ...match }));
-  const activeOnly = staged.filter((match) => match.status === MATCH_STATUS.ACTIVE);
+  // 进回放的只有「计个人等级分」的比赛：已生效、非弃权，且学院赛里只有
+  // 单打小场（双打小场只汇总大场，见 college-tie.isEloEligibleMatch）。
+  // 台账仍是完整的 staged，录分页按编号取小场不受影响。
+  const activeOnly = staged.filter((match) => isEloEligibleMatch(match));
 
   const replayed = replaySeason({
     members,

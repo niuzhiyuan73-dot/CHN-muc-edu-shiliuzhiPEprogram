@@ -23,6 +23,25 @@
  *   repo.eventSignups.getById(id)       → Promise<Object|null>
  *   repo.eventSignups.insert(doc)       → Promise<Object>
  *   repo.eventSignups.update(id, patch) → Promise<void>
+ *   repo.collegeEvents.list()           → Promise<Array<Object>>
+ *   repo.collegeEvents.getById(id)      → Promise<Object|null>
+ *   repo.collegeEvents.insert(doc)      → Promise<Object>  doc 必须自带 _id
+ *   repo.collegeEvents.update(id, patch)→ Promise<void>
+ *   repo.collegeEntries.list()          → Promise<Array<Object>>
+ *   repo.collegeEntries.listByEvent(eid)→ Promise<Array<Object>>
+ *   repo.collegeEntries.getById(id)     → Promise<Object|null>
+ *   repo.collegeEntries.insert(doc)     → Promise<Object>
+ *   repo.collegeEntries.update(id, patch)→ Promise<void>
+ *   repo.ties.list()                    → Promise<Array<Object>>
+ *   repo.ties.listByEvent(eid)          → Promise<Array<Object>>
+ *   repo.ties.getById(id)               → Promise<Object|null>
+ *   repo.ties.insert(doc)               → Promise<Object>  doc 必须自带 _id
+ *   repo.ties.update(id, patch)         → Promise<void>
+ *   repo.lineups.list()                 → Promise<Array<Object>>
+ *   repo.lineups.listByEvent(eid)       → Promise<Array<Object>>
+ *   repo.lineups.getById(id)            → Promise<Object|null>
+ *   repo.lineups.insert(doc)            → Promise<Object>  doc 必须自带 _id
+ *   repo.lineups.update(id, patch)      → Promise<void>
  *   repo.announcements.list()           → Promise<Array<Object>>
  *   repo.announcements.getById(id)      → Promise<Object|null>
  *   repo.announcements.insert(doc)      → Promise<Object>
@@ -47,6 +66,10 @@ const COLLECTIONS = {
   matches: COLLECTION.MATCHES,
   events: COLLECTION.EVENTS,
   eventSignups: COLLECTION.EVENT_SIGNUPS,
+  collegeEvents: COLLECTION.COLLEGE_EVENTS,
+  collegeEntries: COLLECTION.COLLEGE_ENTRIES,
+  ties: COLLECTION.TIES,
+  lineups: COLLECTION.COLLEGE_LINEUPS,
   announcements: COLLECTION.ANNOUNCEMENTS,
   seasons: COLLECTION.SEASONS,
   auditLogs: COLLECTION.AUDIT_LOGS,

@@ -1,0 +1,265 @@
+/**
+ * 发布学院赛
+ * ============================================================
+ * 只做一件事：把一张填好的单子变成一场「报名中」的学院赛。
+ * 校验与组装在 services/college-event.js（纯函数），这里负责交互与 setData。
+ *
+ * 【为什么独立成页而不是赛事页里的一个弹层】
+ * 小项序列、人数上下限、胜负算法、净胜口径、时间、场地、说明七项，
+ * 说明还要一大块输入区，弹层里挤不下；带参数的独立页也更好扩展。
+ *
+ * 【为什么小项用多选而不是单选的赛制下拉】
+ * 一场学院赛的大场由若干小项组成（例如男单 + 女单 + 混双），打哪几项
+ * 由管理员一次配好。用勾选最直观，也避免「选了又换」时丢已选项。
+ *
+ * 【胜负算法为什么必选、净胜口径为什么按条件显示】
+ * 「打满比净胜」与「先到 N 场胜」是两种完全不同的判分口径，留空取默认
+ * 等于悄悄替管理员定了规则；而净胜口径只对前者有意义，选后者时这一项
+ * 不显示，校验也会跳过（见 college-event.validateCollegeEvent）。
+ *
+ * 【没有发布权为什么不让进】
+ * 用户可能绕过入口直接从小程序码进来。填完再被拒，比一开始就说清楚
+ * 糟得多，所以进来先判一道，不给表单。
+ * ============================================================
+ */
+
+const {
+  ALL_LEG_DISCIPLINES,
+  LEG_DISCIPLINE_LABEL,
+  TIE_ALGO,
+  TIE_ALGO_LABEL,
+  DEFAULT_TIE_ALGO,
+  TIE_NET_MODE,
+  TIE_NET_MODE_LABEL,
+  DEFAULT_TIE_NET_MODE,
+  ROSTER_LIMITS,
+  DEFAULT_ALLOW_MULTI_ENTRY,
+} = require('../../utils/constants.js');
+const {
+  TITLE_MAX,
+  DESCRIPTION_MAX,
+  LOCATION_MAX,
+  canManageCollegeEvent,
+} = require('../../services/college-event.js');
+const { publishCollegeEvent, isMock } = require('../../services/index.js');
+
+/** 大场胜负算法下拉。顺序：打满比净胜 → 先到 N 场胜 */
+const TIE_ALGOS = [TIE_ALGO.FULL_POINTS, TIE_ALGO.FIRST_TO_N];
+const TIE_ALGO_LABELS = TIE_ALGOS.map((algo) => TIE_ALGO_LABEL[algo]);
+
+/** 净胜口径下拉。仅「打满比净胜」时显示 */
+const TIE_NET_MODES = [TIE_NET_MODE.WIN_DIFF, TIE_NET_MODE.POINT_DIFF];
+const TIE_NET_MODE_LABELS = TIE_NET_MODES.map((mode) => TIE_NET_MODE_LABEL[mode]);
+
+/** 小项勾选项。初值全不勾，由管理员显式挑 */
+const LEG_OPTIONS = ALL_LEG_DISCIPLINES.map((value) => ({
+  value,
+  label: LEG_DISCIPLINE_LABEL[value],
+  checked: false,
+}));
+
+/** 日期选择器的下界：今天。赛事不该往过去发 */
+function todayText(now = new Date()) {
+  const pad = (value) => String(value).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+Page({
+  data: {
+    /** 提交中，防止连点重复提交 */
+    submitting: false,
+    isMock,
+
+    /** 没有发布权时的原因，非空就在页面上顶掉整张表单 */
+    blockReason: '',
+
+    /** 小项勾选项与各下拉的数据源、当前下标 */
+    legOptions: LEG_OPTIONS.map((item) => ({ ...item })),
+    tieAlgos: TIE_ALGO_LABELS,
+    tieAlgoIndex: TIE_ALGOS.indexOf(DEFAULT_TIE_ALGO),
+    tieNetModes: TIE_NET_MODE_LABELS,
+    tieNetModeIndex: TIE_NET_MODES.indexOf(DEFAULT_TIE_NET_MODE),
+
+    /** 日期选择器的下界 */
+    today: todayText(),
+
+    /** 输入长度上限，交给 maxlength 属性 */
+    titleMax: TITLE_MAX,
+    descriptionMax: DESCRIPTION_MAX,
+    locationMax: LOCATION_MAX,
+
+    /** 人数硬边界，交给输入提示 */
+    rosterHardMin: ROSTER_LIMITS.MIN,
+    rosterHardMax: ROSTER_LIMITS.MAX,
+
+    /** 表单本体。tieAlgo 初值为默认算法，但净胜口径随算法显隐 */
+    form: {
+      title: '',
+      description: '',
+      legPlan: [],
+      allowMultiEntry: DEFAULT_ALLOW_MULTI_ENTRY,
+      rosterMin: ROSTER_LIMITS.DEFAULT_MIN,
+      rosterMax: ROSTER_LIMITS.DEFAULT_MAX,
+      tieAlgo: DEFAULT_TIE_ALGO,
+      tieNetMode: DEFAULT_TIE_NET_MODE,
+      location: '',
+      date: '',
+      time: '',
+    },
+    /** 逐字段的错误提示 */
+    errors: {},
+    /** 整体错误提示 */
+    errorText: '',
+  },
+
+  onLoad() {
+    const user = this.currentUser();
+    const allowed = canManageCollegeEvent(user, { isMock });
+    this.setData({ blockReason: this.describeBlock(allowed, user) });
+  },
+
+  /** 不能发布的原因。能发布时返回空串 */
+  describeBlock(allowed, user) {
+    if (allowed) return '';
+    return user ? '当前账号没有发布学院赛的权限，请联系管理员' : '请先登录后再发布学院赛';
+  },
+
+  /** 读取全局登录态。app 可能还没初始化好，逐层兜底 */
+  currentUser() {
+    const app = getApp();
+    if (!app) return null;
+    if (typeof app.getUserInfo === 'function') return app.getUserInfo();
+    return app.globalData ? app.globalData.userInfo : null;
+  },
+
+  /** 轻提示。测试环境里可能没有这个 API */
+  showToast(title, icon = 'none') {
+    if (typeof wx !== 'undefined' && typeof wx.showToast === 'function') {
+      wx.showToast({ title, icon });
+    }
+  },
+
+  /* ---------- 表单交互 ---------- */
+
+  /**
+   * 写入一个字段，并清掉它的旧错误。
+   * 一律走这里，免得某个字段改了、错误提示却没跟着消失。
+   */
+  setField(key, value) {
+    this.setData({
+      form: { ...this.data.form, [key]: value },
+      errors: { ...this.data.errors, [key]: '' },
+      errorText: '',
+    });
+  },
+
+  onInputTitle(event) {
+    this.setField('title', event.detail.value);
+  },
+
+  onInputDescription(event) {
+    this.setField('description', event.detail.value);
+  },
+
+  onInputLocation(event) {
+    this.setField('location', event.detail.value);
+  },
+
+  onInputRosterMin(event) {
+    this.setField('rosterMin', event.detail.value);
+  },
+
+  onInputRosterMax(event) {
+    this.setField('rosterMax', event.detail.value);
+  },
+
+  /** 勾选 / 取消一个小项。checked 的取值就是 LEG_DISCIPLINE 的代码 */
+  onToggleLegPlan(event) {
+    const legPlan = Array.isArray(event.detail.value) ? [...event.detail.value] : [];
+    const picked = new Set(legPlan);
+    this.setData({
+      legOptions: this.data.legOptions.map((item) => ({
+        ...item,
+        checked: picked.has(item.value),
+      })),
+    });
+    this.setField('legPlan', legPlan);
+  },
+
+  /** 是否允许多项兼报 */
+  onToggleMultiEntry(event) {
+    this.setField('allowMultiEntry', Boolean(event.detail.value));
+  },
+
+  onPickTieAlgo(event) {
+    const index = Number(event.detail.value);
+    const algo = TIE_ALGOS[index];
+    if (algo === undefined) return;
+    this.setData({ tieAlgoIndex: index });
+    this.setField('tieAlgo', algo);
+  },
+
+  onPickTieNetMode(event) {
+    const index = Number(event.detail.value);
+    const mode = TIE_NET_MODES[index];
+    if (mode === undefined) return;
+    this.setData({ tieNetModeIndex: index });
+    this.setField('tieNetMode', mode);
+  },
+
+  onPickDate(event) {
+    this.setField('date', event.detail.value);
+  },
+
+  onPickTime(event) {
+    this.setField('time', event.detail.value);
+  },
+
+  /* ---------- 提交 ---------- */
+
+  /** 把日期与时间两栏拼成 ISO 字符串，缺一不可 */
+  buildStartTime() {
+    const { date, time } = this.data.form;
+    if (!date || !time) return '';
+    return `${date}T${time}:00`;
+  },
+
+  /**
+   * 提交。校验不通过时逐字段标红并给一条总提示——只标红的话，
+   * 用户可能滚不到出错的那一项。
+   */
+  async onSubmit() {
+    if (this.data.submitting) return undefined;
+    if (this.data.blockReason) return undefined;
+
+    const user = this.currentUser();
+    if (!user) {
+      this.showToast('请先登录后再发布学院赛');
+      return undefined;
+    }
+
+    const form = { ...this.data.form, startTime: this.buildStartTime() };
+
+    this.setData({ submitting: true, errors: {}, errorText: '' });
+    const result = await publishCollegeEvent(form, user._id);
+
+    if (!result.ok) {
+      this.setData({
+        submitting: false,
+        errors: result.errors || {},
+        errorText: result.firstError || '发布失败',
+      });
+      return undefined;
+    }
+
+    this.setData({ submitting: false });
+    this.showToast('已发布', 'success');
+    // 退回上一页，onShow 会刷新，刚发的这场就在列表里
+    wx.navigateBack();
+    return undefined;
+  },
+
+  onCancel() {
+    wx.navigateBack();
+  },
+});

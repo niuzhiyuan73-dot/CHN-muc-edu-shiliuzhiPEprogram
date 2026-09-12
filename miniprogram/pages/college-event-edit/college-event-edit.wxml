@@ -1,0 +1,168 @@
+<!--
+  发布学院赛
+  表单的校验在 services/college-event.js，这里只渲染，并把用户的操作交回去。
+-->
+<view class="page-container">
+
+  <!-- 没有发布权时不给表单：填完再被拒，比一开始就说清楚糟得多 -->
+  <view wx:if="{{blockReason}}" class="empty-state">
+    <view class="empty-state-icon">🔒</view>
+    <view class="empty-state-text">{{blockReason}}</view>
+    <view class="btn btn-outline block-back" bindtap="onCancel">返回</view>
+  </view>
+
+  <block wx:else>
+
+    <!-- ========== 基本信息 ========== -->
+    <view class="card">
+      <view class="card-title">赛事信息</view>
+
+      <view class="field-row">
+        <view class="field-label">赛事名称</view>
+        <input
+          class="field-input"
+          value="{{form.title}}"
+          maxlength="{{titleMax}}"
+          placeholder="例如：2026 学院团体赛"
+          bindinput="onInputTitle"
+        />
+      </view>
+      <view wx:if="{{errors.title}}" class="field-error">{{errors.title}}</view>
+
+      <!-- 小项序列：一场大场打哪几项，勾选式最直观 -->
+      <view class="field-row field-row-top">
+        <view class="field-label">比赛小项</view>
+        <checkbox-group class="leg-group" bindchange="onToggleLegPlan">
+          <label wx:for="{{legOptions}}" wx:key="value" class="leg-option">
+            <checkbox value="{{item.value}}" checked="{{item.checked}}" color="#2f7d4f" />
+            <text class="leg-label">{{item.label}}</text>
+          </label>
+        </checkbox-group>
+      </view>
+      <view wx:if="{{errors.legPlan}}" class="field-error">{{errors.legPlan}}</view>
+      <view class="field-hint">一场大场依次进行这几项，胜负按下方算法判定；至多 20 项</view>
+
+      <view class="field-row">
+        <view class="field-label">兼报多项</view>
+        <switch checked="{{form.allowMultiEntry}}" bindchange="onToggleMultiEntry" color="#2f7d4f" />
+      </view>
+      <view class="field-hint">打开后同一队员可参加本场学院赛的多个小项</view>
+    </view>
+
+    <!-- ========== 人数与判分 ========== -->
+    <view class="card">
+      <view class="card-title">名单与判分</view>
+
+      <view class="field-row">
+        <view class="field-label">最少人数</view>
+        <input
+          class="field-input"
+          type="number"
+          value="{{form.rosterMin}}"
+          placeholder="默认 {{rosterHardMin}} 人"
+          bindinput="onInputRosterMin"
+        />
+      </view>
+      <view wx:if="{{errors.rosterMin}}" class="field-error">{{errors.rosterMin}}</view>
+
+      <view class="field-row">
+        <view class="field-label">最多人数</view>
+        <input
+          class="field-input"
+          type="number"
+          value="{{form.rosterMax}}"
+          placeholder="默认 {{rosterHardMax}} 人"
+          bindinput="onInputRosterMax"
+        />
+      </view>
+      <view wx:if="{{errors.rosterMax}}" class="field-error">{{errors.rosterMax}}</view>
+      <view class="field-hint">每院名单须落在 {{rosterHardMin}}–{{rosterHardMax}} 人之间，且最少不得大于最多</view>
+
+      <view class="field-row">
+        <view class="field-label">胜负算法</view>
+        <picker mode="selector" range="{{tieAlgos}}" value="{{tieAlgoIndex}}" bindchange="onPickTieAlgo">
+          <view class="field-value">{{tieAlgos[tieAlgoIndex]}} ›</view>
+        </picker>
+      </view>
+      <view wx:if="{{errors.tieAlgo}}" class="field-error">{{errors.tieAlgo}}</view>
+
+      <!-- 净胜口径只对「打满比净胜」有意义，选「先到 N 场胜」时不显示 -->
+      <block wx:if="{{form.tieAlgo === 'full_points'}}">
+        <view class="field-row">
+          <view class="field-label">净胜口径</view>
+          <picker mode="selector" range="{{tieNetModes}}" value="{{tieNetModeIndex}}" bindchange="onPickTieNetMode">
+            <view class="field-value">{{tieNetModes[tieNetModeIndex]}} ›</view>
+          </picker>
+        </view>
+        <view wx:if="{{errors.tieNetMode}}" class="field-error">{{errors.tieNetMode}}</view>
+        <view class="field-hint">打满全部小项后：按小场胜场差，或按累计局分净胜分高低定胜负</view>
+      </block>
+      <view wx:else class="field-hint">先赢下指定场数小项的一方获胜，无需再比净胜</view>
+    </view>
+
+    <!-- ========== 时间与场地 ========== -->
+    <view class="card">
+      <view class="card-title">时间与场地</view>
+
+      <view class="field-row">
+        <view class="field-label">日期</view>
+        <picker mode="date" value="{{form.date}}" start="{{today}}" bindchange="onPickDate">
+          <view class="field-value {{form.date ? '' : 'is-placeholder'}}">
+            {{form.date ? form.date : '请选择日期'}} ›
+          </view>
+        </picker>
+      </view>
+
+      <view class="field-row">
+        <view class="field-label">时间</view>
+        <picker mode="time" value="{{form.time}}" bindchange="onPickTime">
+          <view class="field-value {{form.time ? '' : 'is-placeholder'}}">
+            {{form.time ? form.time : '请选择开始时间'}} ›
+          </view>
+        </picker>
+      </view>
+      <view wx:if="{{errors.startTime}}" class="field-error">{{errors.startTime}}</view>
+
+      <view class="field-row">
+        <view class="field-label">场地</view>
+        <input
+          class="field-input"
+          value="{{form.location}}"
+          maxlength="{{locationMax}}"
+          placeholder="例如：体育馆 1 号场"
+          bindinput="onInputLocation"
+        />
+      </view>
+      <view wx:if="{{errors.location}}" class="field-error">{{errors.location}}</view>
+    </view>
+
+    <!-- ========== 说明 ========== -->
+    <view class="card">
+      <view class="card-title">赛事说明</view>
+      <view class="card-subtitle">把报名要求、报到时间写清楚，最多 {{descriptionMax}} 个字</view>
+
+      <textarea
+        class="content-input"
+        value="{{form.description}}"
+        maxlength="{{descriptionMax}}"
+        placeholder="例如：各学院限报一支队伍，大场三局两胜，请提前 15 分钟到场热身。"
+        bindinput="onInputDescription"
+      />
+      <view wx:if="{{errors.description}}" class="field-error">{{errors.description}}</view>
+    </view>
+
+    <view wx:if="{{errorText}}" class="submit-error">{{errorText}}</view>
+
+    <view class="submit-bar">
+      <view class="btn btn-outline submit-btn" bindtap="onCancel">取消</view>
+      <view
+        class="btn btn-primary submit-btn {{submitting ? 'btn-disabled' : ''}}"
+        bindtap="onSubmit"
+      >发布</view>
+    </view>
+
+    <view wx:if="{{isMock}}" class="mock-note">
+      当前为本地模拟数据，发布后只写入内存，重启小程序即清空
+    </view>
+  </block>
+</view>

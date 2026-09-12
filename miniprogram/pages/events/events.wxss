@@ -28,7 +28,7 @@
 
 /* ==================== 赛事列表 ==================== */
 
-/* 发布入口做成描边小按钮，不跟整页的主色抢位置 */
+/* 发布入口做成描边小按钮，不跟整页的主色抢位置；只有管理员才渲染 */
 .event-publish {
   padding: 6rpx 20rpx;
   font-size: var(--font-sm);
@@ -84,6 +84,15 @@
 .event-my-signup {
   font-size: var(--font-xs);
   color: var(--color-primary);
+}
+
+/* 「提交名单 / 审核名单」入口，比纯箭头更显眼 */
+.event-action {
+  font-size: var(--font-xs);
+  color: var(--color-primary);
+  padding: 4rpx 16rpx;
+  border: 2rpx solid var(--color-primary);
+  border-radius: var(--radius-sm);
 }
 
 .event-arrow {

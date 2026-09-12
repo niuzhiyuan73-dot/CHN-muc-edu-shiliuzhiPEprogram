@@ -1,0 +1,153 @@
+/*
+ * 学院名单审核页样式
+ * 卡片（.card）、按钮（.btn）、标签（.tag-*）都在 app.wxss 里，与其它页共用。
+ * 弹层样式与会员审核页的驳回面板同款——页面样式表按页隔离，所以照样写一份。
+ */
+
+/* ==================== 赛事信息 ==================== */
+
+.event-meta {
+  margin-top: var(--space-xs);
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+
+.field-hint {
+  margin-top: var(--space-sm);
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  line-height: 1.5;
+}
+
+.field-error {
+  margin-top: var(--space-xs);
+  font-size: var(--font-xs);
+  color: var(--color-danger);
+  line-height: 1.5;
+}
+
+/* ==================== 一份名单 ==================== */
+
+.entry-row {
+  padding: var(--space-md) 0;
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.entry-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.entry-head {
+  display: flex;
+  align-items: center;
+}
+
+.entry-college {
+  font-size: var(--font-md);
+  font-weight: 600;
+}
+
+/* 状态标签推到最右边 */
+.entry-head .tag {
+  margin-left: auto;
+}
+
+.entry-meta {
+  margin-top: var(--space-xs);
+  font-size: var(--font-xs);
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+}
+
+.entry-members {
+  margin-top: var(--space-xs);
+  font-size: var(--font-sm);
+  line-height: 1.6;
+}
+
+.entry-remark {
+  margin-top: var(--space-xs);
+  font-size: var(--font-xs);
+  color: var(--color-text-secondary);
+  background: var(--color-bg);
+  border-radius: var(--radius-sm);
+  padding: var(--space-xs) var(--space-sm);
+  line-height: 1.5;
+}
+
+.entry-actions {
+  display: flex;
+  margin-top: var(--space-sm);
+}
+
+.entry-btn {
+  flex: 1;
+  height: 68rpx;
+  line-height: 68rpx;
+  padding: 0;
+  font-size: var(--font-sm);
+  text-align: center;
+}
+
+.entry-btn + .entry-btn {
+  margin-left: var(--space-sm);
+}
+
+/* ==================== 退回面板 ==================== */
+
+.panel-mask {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: flex-end;
+  z-index: 100;
+}
+
+.panel {
+  width: 100%;
+  background: var(--color-card);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding: var(--space-lg);
+  padding-bottom: calc(var(--space-lg) + env(safe-area-inset-bottom));
+}
+
+.panel-title {
+  font-size: var(--font-lg);
+  font-weight: 600;
+}
+
+.panel-hint {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  margin-top: var(--space-xs);
+  line-height: 1.5;
+}
+
+.panel-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 160rpx;
+  margin-top: var(--space-md);
+  padding: var(--space-sm);
+  background: var(--color-bg);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+}
+
+.panel-actions {
+  display: flex;
+  margin-top: var(--space-md);
+}
+
+.panel-btn {
+  flex: 1;
+}
+
+.panel-btn + .panel-btn {
+  margin-left: var(--space-sm);
+}

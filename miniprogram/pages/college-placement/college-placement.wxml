@@ -1,0 +1,72 @@
+<!--
+  录入学院名次（M5-1）
+  数据形状见 services/college-view.js 的 loadCollegePlacementView。
+  权限判定在视图模型里算好（canSubmit / blockReason），模板只渲染。
+-->
+<view class="page-container">
+
+  <!-- 加载中。必须排在出错之前，否则首屏会一闪而过地报错 -->
+  <view wx:if="{{loading}}" class="loading">正在加载…</view>
+
+  <view wx:elif="{{error}}" class="empty-state">
+    <view class="empty-state-icon">⚠️</view>
+    <view class="empty-state-text">{{error}}</view>
+  </view>
+
+  <!-- 没有管理权 / 赛事未开始或不在此刻可录时，整页挡住 -->
+  <view wx:elif="{{!view.canSubmit}}" class="empty-state">
+    <view class="empty-state-icon">🔒</view>
+    <view class="empty-state-text">{{view.blockReason}}</view>
+  </view>
+
+  <block wx:else>
+
+    <!-- ========== 这场学院赛 ========== -->
+    <view class="card">
+      <view class="event-title">{{view.title}}</view>
+      <view class="event-meta">{{view.legPlanText}} · {{view.statusLabel}}</view>
+      <view class="event-meta">{{view.startTimeText}}<text wx:if="{{view.location}}"> · {{view.location}}</text></view>
+      <view class="bronze-hint">{{view.hint}}</view>
+    </view>
+
+    <!-- ========== 名次名单 ========== -->
+    <view class="card">
+      <view class="rank-head">
+        <view class="rank-head-title">录入名次</view>
+        <view class="rank-head-count">{{view.rows.length}} 所学院</view>
+      </view>
+      <view class="card-subtitle">没到场的学院空着不填；提交后赛事即结束，名次不可再改</view>
+
+      <view wx:if="{{!view.hasRows}}" class="empty-note">{{view.emptyNote}}</view>
+
+      <view wx:for="{{view.rows}}" wx:key="college" class="place-row">
+        <view class="place-main">
+          <view class="place-name">{{item.college}}</view>
+        </view>
+
+        <input
+          class="place-input"
+          type="number"
+          value="{{item.placementText}}"
+          placeholder="名次"
+          data-index="{{index}}"
+          bindinput="onInputPlacement"
+        />
+      </view>
+    </view>
+
+    <view wx:if="{{errorText}}" class="submit-error">{{errorText}}</view>
+
+    <view class="submit-bar">
+      <view class="btn btn-outline submit-btn" bindtap="onCancel">取消</view>
+      <view
+        class="btn btn-primary submit-btn {{submitting ? 'btn-disabled' : ''}}"
+        bindtap="onSubmit"
+      >{{submitting ? '正在提交…' : '提交并结束赛事'}}</view>
+    </view>
+
+    <view wx:if="{{isMock}}" class="mock-note">
+      当前为本地模拟数据，名次只写入内存，重启小程序即清空
+    </view>
+  </block>
+</view>

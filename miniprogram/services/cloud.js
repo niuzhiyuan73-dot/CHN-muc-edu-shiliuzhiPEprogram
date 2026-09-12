@@ -145,6 +145,40 @@ const signUpEvent = (id, actor) => request('signUpEvent', { id, actor });
 const cancelSignupEvent = (id, actor) => request('cancelSignupEvent', { id, actor });
 const checkInEvent = (id, userId, actor) => request('checkInEvent', { id, userId, actor });
 const finishEvent = (id, results, actor) => request('finishEvent', { id, results, actor });
+// 个人赛弃权：参赛者本人自选，或管理员代记。forfeitBy 是弃权者的会员编号，
+// 胜方由服务端按它站在哪一边推出，前端说了不算（D41）
+const forfeitMatch = (id, forfeitBy, actor) => request('forfeitMatch', { id, forfeitBy, actor });
+
+/*
+ * 学院赛闭环：发布 / 交名单 / 审名单。
+ *
+ * 与赛事闭环同一纪律：actor 只是「谁点的按钮」的线索，发布权、审核权由
+ * 云函数按 OpenID 在服务端判定。名单的队员身份也不被前端信任——服务端会
+ * 拿会员台账回查每个人的学院与在册状态，塞一个别院的人进来会被拒。
+ */
+const getCollegeEvents = () => request('getCollegeEvents');
+const getCollegeEvent = (id) => request('getCollegeEvent', { id });
+const getCollegeEntries = (eventId) => request('getCollegeEntries', { eventId });
+const getCollegeTies = (eventId) => request('getCollegeTies', { eventId });
+const getCollegeLineups = (eventId) => request('getCollegeLineups', { eventId });
+const publishCollegeEvent = (form, actor) => request('publishCollegeEvent', { form, actor });
+// payload 只含 eventId / college / memberIds / remark；提交人与时间由服务端填
+const submitCollegeEntry = (payload, actor) => request('submitCollegeEntry', { ...payload, actor });
+const reviewCollegeEntry = (entryId, action, reason, actor) =>
+  request('reviewCollegeEntry', { entryId, action, reason, actor });
+// 抽签：seedColleges 是有序种子（可空），seedValue 只在测试 / 复核时显式给
+const drawCollegeEvent = (eventId, actor, options) =>
+  request('drawCollegeEvent', { eventId, actor, ...options });
+const startCollegeEvent = (eventId, actor) => request('startCollegeEvent', { eventId, actor });
+// payload 只含 tieId / college / entries；提交人与时间由服务端填
+const submitLineup = (payload, actor) => request('submitLineup', { ...payload, actor });
+const startTie = (tieId, actor) => request('startTie', { tieId, actor });
+// 管理员记弃权：对手直接拿到这一小项，且不计 ELO。forfeitBy 必须是本大场参赛学院
+const recordForfeit = (tieId, legNo, forfeitBy, actor) =>
+  request('recordForfeit', { tieId, legNo, forfeitBy, actor });
+// 录入学院名次并结束赛事：results 形如 [{ college, placement }]，只记给学院（D26）
+const finishCollegeEvent = (id, results, actor) =>
+  request('finishCollegeEvent', { id, results, actor });
 
 module.exports = {
   CLOUD_FUNCTION,
@@ -190,4 +224,19 @@ module.exports = {
   cancelSignupEvent,
   checkInEvent,
   finishEvent,
+  forfeitMatch,
+  getCollegeEvents,
+  getCollegeEvent,
+  getCollegeEntries,
+  getCollegeTies,
+  getCollegeLineups,
+  publishCollegeEvent,
+  submitCollegeEntry,
+  reviewCollegeEntry,
+  drawCollegeEvent,
+  startCollegeEvent,
+  submitLineup,
+  startTie,
+  recordForfeit,
+  finishCollegeEvent,
 };

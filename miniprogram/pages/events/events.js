@@ -159,4 +159,27 @@ Page({
   onOpenPublish() {
     wx.navigateTo({ url: '/pages/event-edit/event-edit' });
   },
+
+  /** 管理员发布学院赛。与发布个人赛同一权限门槛 */
+  onOpenCollegePublish() {
+    wx.navigateTo({ url: '/pages/college-event-edit/college-event-edit' });
+  },
+
+  /**
+   * 点一场学院赛。
+   *
+   * 干事在报名中直接进本学院的名单页——那几天他的全部任务就是交名单，
+   * 少走一步；其余情况一律进详情页，抽签、开赛、大场对阵与名单审核的
+   * 入口都收在那里，普通会员也能看到签表。
+   */
+  onOpenCollegeEvent(event) {
+    const { eventId, canSubmit } = event.currentTarget.dataset;
+    if (!eventId) return;
+
+    if (canSubmit) {
+      wx.navigateTo({ url: `/pages/college-entry/college-entry?eventId=${eventId}` });
+      return;
+    }
+    wx.navigateTo({ url: `/pages/college-event-detail/college-event-detail?eventId=${eventId}` });
+  },
 });

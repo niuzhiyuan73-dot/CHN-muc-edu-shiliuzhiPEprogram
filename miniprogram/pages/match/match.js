@@ -24,7 +24,7 @@
 
 const { loadMatchView } = require('../../services/match-view.js');
 const { resolveAuthState } = require('../../services/auth.js');
-const { confirmMatch, rejectMatch, revokeMatch, isMock } = require('../../services/index.js');
+const { confirmMatch, forfeitMatch, rejectMatch, revokeMatch, isMock } = require('../../services/index.js');
 
 /** 撤销与驳回的面板文案。两者的终态相同，但要说清楚各自是干什么的 */
 const ACTION_TEXT = {
@@ -222,6 +222,47 @@ Page({
     }
 
     this.showToast('已确认，成绩已计入等级分', 'success');
+    return this.refresh();
+  },
+
+  /* ---------- 弃权 ---------- */
+
+  /**
+   * 本人自选弃权（D41）。
+   *
+   * 弃权是不可逆的：对手直接晋级，且这一场不计个人等级分。所以先弹一个
+   * 确认框把后果说清楚，再落库。管理员在场上时由同一入口执行。
+   */
+  async onForfeit(event) {
+    const matchId = event.currentTarget.dataset.matchId;
+    const user = this.currentUser();
+    if (!matchId || this.data.acting) return undefined;
+    if (!user) {
+      this.showToast('请先登录后再弃权');
+      return undefined;
+    }
+    if (typeof wx === 'undefined' || typeof wx.showModal !== 'function') return undefined;
+
+    const confirmed = await new Promise((resolve) => {
+      wx.showModal({
+        title: '确认弃权',
+        content: '弃权后对手直接晋级，且这一场不计个人等级分。确定弃权吗？',
+        success: (res) => resolve(Boolean(res && res.confirm)),
+        fail: () => resolve(false),
+      });
+    });
+    if (!confirmed) return undefined;
+
+    this.setData({ acting: true });
+    const result = await forfeitMatch(matchId, user._id, user._id);
+    this.setData({ acting: false });
+
+    if (!result.ok) {
+      this.showToast(result.message || '弃权失败');
+      return undefined;
+    }
+
+    this.showToast('已弃权，对手晋级', 'success');
     return this.refresh();
   },
 

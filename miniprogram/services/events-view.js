@@ -38,6 +38,7 @@ const {
   RATING_POOL,
   ROLE,
   SIGNUP_STATUS,
+  COLLEGE_EVENT_STATUS,
   isRankable,
 } = require('../utils/constants.js');
 const { computeStandings } = require('../utils/standings.js');
@@ -54,6 +55,9 @@ const {
   signupStateOf,
 } = require('./event.js');
 const { canConfirm, canRecordScore, isParticipant, needsScore } = require('./match-record.js');
+// 学院赛的发布入口与名单入口也摆在赛事页：两套体系虽互不干扰，入口却该在一处
+const { canManageCollegeEvent, buildCollegeEventRow } = require('./college-event.js');
+const { canSubmitCollegeEntry, canReviewCollegeEntry } = require('./college-entry.js');
 const { statusTagOf } = require('./match-view.js');
 // 手工指定种子要凑几位，与真正抽签时同一把尺子（种子数与参赛人数的较小者），
 // 免得界面点名点到一个算法并不接受的数量
@@ -65,6 +69,7 @@ const {
   getEventSignups,
   getMatchRecords,
   getSeasonState,
+  getCollegeEvents,
 } = require('./index.js');
 
 /** 前三名的奖牌样式，其余为空字符串（不额外装饰） */
@@ -304,6 +309,70 @@ function buildEventListRows(events, ctx = {}) {
   return sortEvents(events).map((event) => {
     const signups = signupMap.get(event._id) || [];
     return buildEventRow(event, { actor, signups });
+  });
+}
+
+/**
+ * 学院赛列表排序：报名中 → 待开赛 → 进行中 → 已结束。
+ *
+ * 【为什么不复用 sortEvents】
+ * 学院赛在「报名中」与「进行中」之间多一个「待开赛」，状态号与个人赛
+ * 并不对齐。硬套个人赛的状态号会把「待开赛」当成「进行中」，又把真正的
+ * 「进行中」沉到已结束那一档，两场都排错。这里按学院赛自己的状态排。
+ *
+ * @param {Array<Object>} events
+ * @returns {Array<Object>} 新数组，不改动入参
+ */
+function sortCollegeEvents(events) {
+  const priorityOf = (event) => {
+    const status = event && event.status;
+    if (status === COLLEGE_EVENT_STATUS.SIGNUP) return 0;
+    if (status === COLLEGE_EVENT_STATUS.READY) return 1;
+    if (status === COLLEGE_EVENT_STATUS.ONGOING) return 2;
+    return 3;
+  };
+
+  return asArray(events)
+    .slice()
+    .sort((a, b) => {
+      const diff = priorityOf(a) - priorityOf(b);
+      if (diff !== 0) return diff;
+      return timeValue(a && a.startTime) - timeValue(b && b.startTime);
+    });
+}
+
+/**
+ * 把学院赛列表整形成页面上的行。
+ *
+ * 【一行的入口为什么按人分】
+ * 学院赛的报名不是个人点「报名」，而是学院负责人交名单。所以同一行对
+ * 不同的人指向不同页面：管理员进详情页（抽签、开赛、大场都在那里，审核
+ * 名单在详情页里有入口），干事在报名中直接进本学院的名单页（少走一步），
+ * 其余人进详情页看签表与对阵。入口布尔量与文案在这里算好，模板不写
+ * 业务判断。
+ *
+ * @param {Array<Object>} events
+ * @param {Object} [ctx]
+ * @param {Object|null} [ctx.actor] 当前看页面的人
+ * @returns {Array<Object>}
+ */
+function buildCollegeEventListRows(events, ctx = {}) {
+  const { actor = null } = ctx;
+  // 审核权与具体哪一场无关，算一次即可
+  const canReview = canReviewCollegeEntry(actor);
+
+  return sortCollegeEvents(events).map((event) => {
+    const row = buildCollegeEventRow(event, { actor });
+    // 干事在报名中直接去名单页；管理员与其余人都进详情页，这里只影响文案
+    const canSubmit = !canReview && canSubmitCollegeEntry(event, actor);
+    return {
+      ...row,
+      canReview,
+      canSubmit,
+      actionText: canReview ? '管理' : canSubmit ? '提交名单' : '查看',
+      // 报名中用成功色、进行中用警示色，待开赛与已结束用灰色
+      statusClass: row.isSignup ? 'tag-success' : row.isOngoing ? 'tag-warning' : 'tag-gray',
+    };
   });
 }
 
@@ -666,11 +735,12 @@ function buildStandings(event, records, memberMap, actor = null) {
 async function loadEventsView(options = {}) {
   const usesExplicitUser = Object.prototype.hasOwnProperty.call(options, 'user');
 
-  const [current, members, events, season] = await Promise.all([
+  const [current, members, events, season, collegeEvents] = await Promise.all([
     getCurrentUser(),
     getMembers(),
     getEvents(),
     getSeasonState(),
+    getCollegeEvents(),
   ]);
 
   const actor = usesExplicitUser ? options.user : current;
@@ -685,6 +755,7 @@ async function loadEventsView(options = {}) {
 
   const signupMap = await loadSignupMap(events);
   const eventRows = buildEventListRows(events, { actor, signupMap });
+  const collegeRows = buildCollegeEventListRows(collegeEvents, { actor });
   const canPublish = canManageEvent(actor);
 
   return {
@@ -715,6 +786,12 @@ async function loadEventsView(options = {}) {
     hasEvents: eventRows.length > 0,
     eventsEmptyNote: '还没有赛事，等管理员发布一场吧',
     canPublish,
+    // 学院赛入口：列表按人给出不同去向（管理员审核 / 干事交名单），
+    // 发布入口与个人赛同权限门槛（仅管理员）
+    collegeEvents: collegeRows,
+    hasCollegeEvents: collegeRows.length > 0,
+    collegeEventsEmptyNote: '还没有学院赛，等管理员发布一场吧',
+    canManageCollege: canManageCollegeEvent(actor),
   };
 }
 
@@ -952,6 +1029,8 @@ module.exports = {
   placementLabelOf,
   bronzeHintOf,
   buildEventListRows,
+  sortCollegeEvents,
+  buildCollegeEventListRows,
   loadSignupMap,
   buildSignupRows,
   buildResultRows,

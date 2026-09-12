@@ -101,6 +101,50 @@ function signupNaturalKey(eventId, userId) {
   return `s_${digest([eventId, userId])}`;
 }
 
+/**
+ * 学院赛的自然键：同一位发布者在同一时刻发的同名学院赛只该有一条。
+ * 与 eventNaturalKey 同一思路——弱网重试不该在列表里留下两场一样的赛事。
+ *
+ * @param {Object} record buildCollegeEventRecord 产出的记录
+ * @returns {string} 可直接用作 _id
+ */
+function collegeEventNaturalKey(record) {
+  return `ce_${digest([
+    record.publisherId || '',
+    record.title,
+    new Date(record.startTime).toISOString(),
+  ])}`;
+}
+
+/**
+ * 学院名单的自然键：「这场学院赛里这个学院」压成一个 _id。
+ *
+ * 同一赛事同一学院只该有一份有效名单（D10）。名单可以改后重交，重交会落回
+ * 同一条文档，于是不需要先删后插，也不会长出两份互相矛盾的名单。
+ *
+ * @param {string} eventId
+ * @param {string} college
+ * @returns {string} 可直接用作 _id
+ */
+function collegeEntryNaturalKey(eventId, college) {
+  return `cn_${digest([eventId, college])}`;
+}
+
+/**
+ * 大场排阵的自然键：「这个大场里这个学院」压成一个 _id。
+ *
+ * 同一大场同一学院只该有一份有效排阵；干事改后重交（含换替补，D30）会落回
+ * 同一条文档，于是不需要先删后插，也不会留下两份互相矛盾的排阵。学院名带
+ * 中文，用摘要压成定长十六进制，避免主键里出现非 ASCII 字符。
+ *
+ * @param {string} tieId
+ * @param {string} college
+ * @returns {string} 可直接用作 _id
+ */
+function collegeLineupNaturalKey(tieId, college) {
+  return `ln_${digest([tieId, college])}`;
+}
+
 module.exports = {
   digest,
   matchNaturalKey,
@@ -108,4 +152,7 @@ module.exports = {
   eventNaturalKey,
   memberKey,
   signupNaturalKey,
+  collegeEventNaturalKey,
+  collegeEntryNaturalKey,
+  collegeLineupNaturalKey,
 };

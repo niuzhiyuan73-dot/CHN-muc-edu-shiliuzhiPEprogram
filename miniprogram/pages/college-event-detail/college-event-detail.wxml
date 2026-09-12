@@ -1,0 +1,180 @@
+<!--
+  学院赛详情
+  数据形状见 services/college-view.js 的 loadCollegeEventDetailView。
+  权限布尔量与文案都在视图模型里算好，这里只渲染。
+-->
+<view class="page-container">
+
+  <view wx:if="{{loading}}" class="loading">正在加载…</view>
+
+  <view wx:elif="{{error}}" class="empty-state">
+    <view class="empty-state-icon">⚠️</view>
+    <view class="empty-state-text">{{error}}</view>
+  </view>
+
+  <view wx:elif="{{view.blockReason}}" class="empty-state">
+    <view class="empty-state-icon">🔒</view>
+    <view class="empty-state-text">{{view.blockReason}}</view>
+    <view class="btn btn-outline block-back" bindtap="onBack">返回</view>
+  </view>
+
+  <block wx:else>
+
+    <!-- ========== 赛事信息 ========== -->
+    <view class="card">
+      <view class="rank-head">
+        <view class="rank-head-title">{{view.title}}</view>
+        <text class="tag {{view.isSignup ? 'tag-success' : (view.isOngoing ? 'tag-warning' : 'tag-gray')}}">{{view.statusLabel}}</text>
+      </view>
+      <view class="event-meta">{{view.legPlanText}}</view>
+      <view class="event-meta">名单 {{view.rosterText}} · {{view.startTimeText}}</view>
+      <view wx:if="{{view.location}}" class="event-meta">{{view.location}}</view>
+      <view class="event-meta">大场胜负：{{view.tieAlgoLabel}}<text wx:if="{{view.tieNetModeLabel}}"> · {{view.tieNetModeLabel}}</text></view>
+      <view wx:if="{{view.currentRound}}" class="field-hint">当前第 {{view.currentRound}} 轮</view>
+    </view>
+
+    <!-- ========== 报名中：干事交名单 ========== -->
+    <view wx:if="{{view.isSignup && view.canSubmitEntry}}" class="card">
+      <view class="card-title">本学院名单</view>
+      <view class="card-subtitle">名单锁定在抽签那一刻，抽签前都可以修改重交。</view>
+      <view class="btn btn-primary start-event-btn" bindtap="onOpenEntry">提交名单</view>
+    </view>
+
+    <!-- ========== 报名中：管理员抽签 ========== -->
+    <view wx:if="{{view.isSignup && view.canManage}}" class="card">
+      <view class="rank-head">
+        <view class="rank-head-title">抽签</view>
+        <view class="rank-head-count">已通过 {{view.approvedCount}} 个学院</view>
+      </view>
+
+      <view wx:if="{{!view.hasApprovedColleges}}" class="empty-note">
+        还没有学院通过名单审核，先审核名单再来抽签
+      </view>
+
+      <block wx:else>
+        <view class="card-subtitle">{{view.drawHint}}</view>
+        <view
+          wx:for="{{seedRows}}"
+          wx:key="college"
+          class="seed-row {{item.isSeed ? 'seed-row-on' : ''}}"
+          data-college="{{item.college}}"
+          bindtap="onToggleSeed"
+        >
+          <text class="seed-college">{{item.college}}</text>
+          <text wx:if="{{item.seedOrderText}}" class="tag tag-primary seed-tag">{{item.seedOrderText}}</text>
+        </view>
+        <view class="field-hint">不指定种子也可以直接抽签，种子留空即全部随机落位。</view>
+      </block>
+
+      <view class="entry-actions">
+        <view
+          class="btn btn-primary entry-btn {{acting === 'draw' ? 'btn-disabled' : ''}}"
+          bindtap="onDraw"
+        >{{view.hasDraw ? '重新抽签' : '抽签并锁定名单'}}</view>
+        <view class="btn btn-outline entry-btn" bindtap="onOpenReview">审核名单</view>
+      </view>
+    </view>
+
+    <!-- ========== 签表结果 ========== -->
+    <view wx:if="{{view.hasDraw}}" class="card">
+      <view class="rank-head">
+        <view class="rank-head-title">签表</view>
+      </view>
+      <view class="event-meta">种子：{{view.drawSeedsText}}</view>
+      <view wx:if="{{view.drawByesText}}" class="event-meta">{{view.drawByesText}}</view>
+      <view class="draw-pairs">{{view.drawPairsText}}</view>
+    </view>
+
+    <!-- ========== 待开赛：开始赛事 ========== -->
+    <view wx:if="{{view.canStartEvent}}" class="card">
+      <view class="card-title">开始赛事</view>
+      <view class="card-subtitle">开始后生成第一轮大场，各学院即可提交排阵。</view>
+      <view
+        class="btn btn-primary start-event-btn {{acting === 'startEvent' ? 'btn-disabled' : ''}}"
+        bindtap="onStartEvent"
+      >开始赛事</view>
+    </view>
+
+    <!-- ========== 进行中：录入名次并结束 ========== -->
+    <view wx:if="{{view.canFinish}}" class="card">
+      <view class="card-title">录入名次</view>
+      <view class="card-subtitle">大场打完后来这里填学院名次，提交即结束赛事。名次只记给学院，不产生个人积分。</view>
+      <view class="btn btn-primary start-event-btn" bindtap="onOpenPlacement">录入名次并结束</view>
+    </view>
+
+    <!-- ========== 已结束：学院名次 ========== -->
+    <view wx:if="{{view.hasResults}}" class="card">
+      <view class="rank-head">
+        <view class="rank-head-title">最终名次</view>
+      </view>
+      <view wx:for="{{view.resultRows}}" wx:key="college" class="result-row">
+        <text class="result-place">{{item.placementText}}</text>
+        <text class="result-college">{{item.college}}</text>
+      </view>
+    </view>
+
+    <!-- ========== 大场列表 ========== -->
+    <view class="card">
+      <view class="rank-head">
+        <view class="rank-head-title">大场</view>
+        <view class="rank-head-count">{{view.ties.length}} 场</view>
+      </view>
+
+      <view wx:if="{{!view.hasTies}}" class="empty-note">{{view.tiesEmptyNote}}</view>
+
+      <view wx:for="{{view.ties}}" wx:key="tieId" class="tie-row">
+        <view class="tie-head">
+          <text class="tie-college">{{item.collegeA}}</text>
+          <text class="tie-vs">VS</text>
+          <text class="tie-college">{{item.collegeB}}</text>
+          <text class="tag {{item.isOngoing ? 'tag-warning' : (item.isFinished ? 'tag-gray' : (item.isReady ? 'tag-primary' : 'tag-gray'))}} tie-status">{{item.statusLabel}}</text>
+        </view>
+        <view class="tie-meta">{{item.roundText}} · 第 {{item.slot + 1}} 场</view>
+
+        <!-- 小项清单：有编号的可点进录分页；未录分时只显示项目名 -->
+        <view class="leg-list">
+          <view
+            wx:for="{{item.legRows}}"
+            wx:for-item="leg"
+            wx:key="legNo"
+            class="leg-row"
+            data-match-id="{{leg.matchId}}"
+            bindtap="onOpenMatch"
+          >
+            <text class="leg-no">第 {{leg.legNo}} 场</text>
+            <text class="leg-discipline">{{leg.disciplineLabel}}</text>
+            <text wx:if="{{leg.outcomeText}}" class="leg-outcome">{{leg.outcomeText}}</text>
+            <text wx:elif="{{leg.scoreText}}" class="leg-outcome">{{leg.scoreText}}</text>
+            <text wx:elif="{{!leg.winner}}" class="leg-pending">未录入</text>
+            <text wx:if="{{leg.matchId}}" class="leg-enter">录分 ›</text>
+          </view>
+        </view>
+
+        <view class="lineup-flags">
+          <text class="lineup-flag {{item.lineupASubmitted ? 'lineup-flag-on' : ''}}">A {{item.lineupASubmitted ? '已排阵' : '待排阵'}}</text>
+          <text class="lineup-flag {{item.lineupBSubmitted ? 'lineup-flag-on' : ''}}">B {{item.lineupBSubmitted ? '已排阵' : '待排阵'}}</text>
+        </view>
+
+        <view class="entry-actions">
+          <view
+            wx:if="{{item.canSubmitLineup}}"
+            class="btn btn-outline entry-btn"
+            data-tie-id="{{item.tieId}}"
+            bindtap="onOpenLineup"
+          >{{item.lineupActionText}}</view>
+          <view
+            wx:if="{{item.canStart}}"
+            class="btn btn-primary entry-btn {{acting === item.tieId ? 'btn-disabled' : ''}}"
+            data-tie-id="{{item.tieId}}"
+            bindtap="onStartTie"
+          >开始本大场</view>
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{isMock}}" class="mock-note">
+      当前为本地模拟数据，用于开发预览，并非真实成绩
+    </view>
+
+  </block>
+</view>
