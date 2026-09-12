@@ -24,16 +24,17 @@ const userStore = require('./user-store.js');
 const announcementStore = require('./announcement-store.js');
 const eventStore = require('./event-store.js');
 const profileStore = require('./profile-store.js');
+const roleStore = require('./role-store.js');
 const seasonStore = require('./season-store.js');
 const { register: registerAccount } = require('./auth.js');
 const { DEFAULT_RESET_POLICY, canResetSeason } = require('./season.js');
-const { REVIEW_ACTION, validateReview } = require('./member-review.js');
+const { REVIEW_ACTION, validateReview, validateCollegeLeader } = require('./member-review.js');
 const {
   canConfirm,
   canRevoke,
+  canRecordScore,
   buildMatchRecord,
   fillScheduledMatch,
-  isParticipant,
 } = require('./match-record.js');
 const { canPublish, buildAnnouncementRecord } = require('./announcement.js');
 const {
@@ -235,16 +236,20 @@ function buildCache() {
     (item) => item.status !== ANNOUNCEMENT_STATUS.ARCHIVED
   );
 
-  // 5. 资料补丁：昵称与头像是会员自己改的，盖在回放结果之上。
-  //    种子会员不在 user-store 里，所以补丁必须在这里盖。users 与 members
-  //    必须是盖过补丁的同一份——否则 getCurrentUser（读 users）与
-  //    getMembers（读 members）会在改完昵称后各说各话。分数、场次仍以回放
-  //    结果为准，补丁只覆盖这两个字段（见 profile-store.js）。
-  const patchProfile = (account) => {
-    const patch = profileStore.patchOf(account._id);
-    return patch ? { ...account, ...patch } : account;
+  // 5. 资料补丁 + 角色补丁：昵称头像是会员自己改的，角色是管理员任免的，
+  //    两者都盖在回放结果之上。种子会员不在 user-store 里，所以补丁必须
+  //    在这里盖。users 与 members 必须是盖过补丁的同一份——否则
+  //    getCurrentUser（读 users）与 getMembers（读 members）会在改完角色后
+  //    各说各话（一个还是普通会员，一个已能看到干事入口）。分数、场次仍以
+  //    回放结果为准，补丁只覆盖昵称 / 头像 / 角色这几个字段。
+  //    角色不进回放：等级分怎么算与谁有管理权无关，故盖在回放之后即可。
+  const patchAccount = (account) => {
+    const profile = profileStore.patchOf(account._id);
+    const role = roleStore.patchOf(account._id);
+    if (!profile && !role) return account;
+    return { ...account, ...(profile || {}), ...(role || {}) };
   };
-  const members = replayed.users.map(patchProfile);
+  const members = replayed.users.map(patchAccount);
 
   return {
     ...replayed,
@@ -252,7 +257,7 @@ function buildCache() {
     users: members,
     members,
     // 申请名单同样要盖：审核页要显示申请人改过的昵称头像
-    applications: applications.map(patchProfile),
+    applications: applications.map(patchAccount),
     ledger,
     // 放在 ...replayed 之后，盖掉种子原封不动带来的那份 announcements
     announcements,
@@ -288,6 +293,8 @@ function resetCache() {
   eventStore.reset();
   // 资料补丁同理：改过的昵称头像也是临时写入
   profileStore.reset();
+  // 角色任免同理：管理员把谁设成了干事也是临时写入
+  roleStore.reset();
   // 赛季重置同理：分界点必须一起清，否则下一轮生成的分数还是被压过的
   seasonStore.reset();
 }
@@ -601,11 +608,16 @@ async function submitMatch(params = {}) {
       return { ok: false, match: null, errors: {}, scoreErrors: [], firstError: '找不到这场比赛' };
     }
     const actor = (params.actor) || null;
-    // 抽签比赛的成绩由场上的人补录，或由干事及以上代录——与云端
-    // submitScheduledMatch 一字不差。这里不按数据源放宽：签表上的「录分」
-    // 按钮与之同源（见 events-view.buildBracketRows），两处一旦分叉，
-    // 就会出现「看得见按钮、点下去却被拒」。
-    const mayRecord = isParticipant(target, actor) || roleOf(actor) >= ROLE.STAFF;
+    const actorAccount = accountOf(actor);
+    // 抽签比赛的成绩由场上的人补录，管理员代录任意一场，干事只代录本学院
+    // 有人上场的比赛——判定与云端 submitScheduledMatch、界面上的「录分」
+    // 按钮（events-view.buildBracketRows）同源，三处一旦分叉，就会出现
+    // 「看得见按钮、点下去却被拒」。
+    const mayRecord = canRecordScore(target, actor, {
+      role: roleOf(actor),
+      college: (actorAccount && actorAccount.college) || '',
+      collegeOf: (id) => (users.find((u) => u._id === id) || {}).college || '',
+    });
     if (!mayRecord) {
       return {
         ok: false,
@@ -921,6 +933,34 @@ async function approveMember(applicationId, actor, initialElo) {
  */
 async function rejectMember(applicationId, actor, reason) {
   return reviewMember(applicationId, actor, REVIEW_ACTION.REJECT, reason);
+}
+
+/**
+ * 把某位会员设为 / 撤销为干事（学院负责人）。
+ *
+ * 【为什么与审核分开一条通路】
+ * 审核动的是「账号状态」（待审核 → 正常 / 已禁用），任免动的是「角色」，
+ * 且只改 role 一个字段。硬塞进 reviewMember 会让那条通路的补丁里多出一个
+ * 与入会无关的字段；单独一条，改的是什么、谁有资格，都一目了然。
+ *
+ * 【为什么被任免者要从 load() 里回查】
+ * 干事多半是种子里的老会员（如 u02 张宇轩），不在 user-store 那份申请台账
+ * 里。accountOf 会先查回放后的会员名单，再退回申请名单，两处都能找。
+ *
+ * @param {string} targetId 被任免的会员编号
+ * @param {string} actor 操作者编号
+ * @param {boolean} makeLeader true 设为干事，false 撤销
+ * @returns {Promise<{ok:boolean, account:Object|null, message:string}>}
+ */
+async function setCollegeLeader(targetId, actor, makeLeader) {
+  const target = accountOf(targetId);
+  const verdict = validateCollegeLeader(accountOf(actor), target, makeLeader);
+  if (!verdict.ok) return { ok: false, account: null, message: verdict.message };
+
+  roleStore.setRole(target._id, verdict.role);
+  cache = null;
+  // 重新查一遍，拿到的就是盖过角色补丁的新身份
+  return { ok: true, account: accountOf(target._id), message: '' };
 }
 
 /**
@@ -1278,14 +1318,18 @@ async function cancelSignupEvent(id, actor) {
  * @returns {Promise<{ok:boolean, record:Object|null, message:string}>}
  */
 async function checkInEvent(id, userId, actor) {
+  const { users } = load();
   const account = accountOf(actor);
   const target = findEvent(id);
   if (!target) return { ok: false, record: null, message: '找不到这场赛事' };
 
-  if (!canCheckIn(target, account)) {
+  if (!userId) return { ok: false, record: null, message: '请指定要签到的会员' };
+
+  // 干事只能签本学院的人；管理员通行（见 event.canCheckIn）
+  const member = users.find((u) => u._id === userId) || null;
+  if (!canCheckIn(target, account, { target: member || {} })) {
     return { ok: false, record: null, message: '当前账号不能为会员签到' };
   }
-  if (!userId) return { ok: false, record: null, message: '请指定要签到的会员' };
 
   const signup = eventStore.findSignup(id, userId);
   const built = buildCheckInPatch(signup, account, { now: new Date() });
@@ -1368,6 +1412,7 @@ module.exports = {
   registerMember,
   approveMember,
   rejectMember,
+  setCollegeLeader,
   publishAnnouncement,
   archiveAnnouncement,
   updateProfile,

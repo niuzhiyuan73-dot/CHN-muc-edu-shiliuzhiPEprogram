@@ -15,6 +15,7 @@
  */
 
 const { loadMemberView, DEFAULT_HISTORY_LIMIT } = require('../services/profile-view.js');
+const { setCollegeLeader } = require('../services/index.js');
 const { renderEloChart } = require('../utils/chart-view.js');
 
 /**
@@ -69,6 +70,10 @@ function createMemberPage(options = {}) {
         const view = await loadMemberView(this.userId, {
           project: this.currentProject,
           historyLimit: this.data.historyLimit,
+          // 登录态由页面明确传入：他人主页要靠「我是谁」才能判断能不能任免
+          // 干事。与 loadMatchView 同一约定——问数据源「当前用户是谁」在
+          // mock 下永远答 u06，会让未登录的访客也拿到任免入口。
+          viewer: this.currentUser(),
         });
 
         // 连点几层进来之后，光看内容分不清在看谁，标题里写上名字最省事
@@ -135,6 +140,82 @@ function createMemberPage(options = {}) {
      * 留一个空实现，是为了免去「页面没绑这个方法」的告警。
      */
     onGoProfileDetail() {},
+
+    /**
+     * 读取全局登录态。与「我的」页同一套兜底：app 可能还没初始化好。
+     * @returns {Object|null}
+     */
+    currentUser() {
+      const app = getApp();
+      if (!app) return null;
+      if (typeof app.getUserInfo === 'function') return app.getUserInfo();
+      return app.globalData ? app.globalData.userInfo : null;
+    },
+
+    /** 一句轻提示。Node 测试里没有 wx，静默跳过 */
+    showToast(title, icon = 'none') {
+      if (typeof wx === 'undefined' || typeof wx.showToast !== 'function') return;
+      wx.showToast({ title, icon });
+    },
+
+    /**
+     * 弹一句确认。与公告管理页同一套：Node 测试没有 wx.showModal，
+     * 直接放行，免得用例卡在一个永远等不到的回调上。
+     * @param {string} content
+     * @returns {Promise<boolean>}
+     */
+    confirm(content) {
+      if (typeof wx === 'undefined' || typeof wx.showModal !== 'function') {
+        return Promise.resolve(true);
+      }
+      return new Promise((resolve) => {
+        wx.showModal({
+          title: '任免干事',
+          content,
+          success: (res) => resolve(Boolean(res.confirm)),
+          fail: () => resolve(false),
+        });
+      });
+    },
+
+    /**
+     * 把当前主页的会员设为 / 撤销为干事。
+     *
+     * 【为什么目标编号取自 view 而不是页面参数】页面上渲染的那个人就是
+     * view.user，地址栏里的 userId 可能已被改写；以渲染出来的为准，所见即所改。
+     *
+     * 写入端会重新判一次权限（services/member-review.validateCollegeLeader），
+     * 这里的前置判断只为少弹一个必被拒绝的确认框。
+     *
+     * @returns {Promise<void>|undefined}
+     */
+    async onSetCollegeLeader() {
+      const view = this.data.view;
+      const target = view && view.user;
+      const leader = view && view.leader;
+      if (!target || !leader || !leader.visible) return undefined;
+
+      const user = this.currentUser();
+      if (!user) {
+        this.showToast('请先登录后再操作');
+        return undefined;
+      }
+
+      const confirmed = await this.confirm(
+        leader.makeLeader
+          ? `将 ${target.nickName} 设为干事，他可代签、代录本学院的比赛`
+          : `撤销 ${target.nickName} 的干事身份，他将失去本学院的管理权限`
+      );
+      if (!confirmed) return undefined;
+
+      const result = await setCollegeLeader(target.userId, user._id, leader.makeLeader);
+      if (!result.ok) {
+        this.showToast(result.message || '操作失败');
+        return undefined;
+      }
+      this.showToast(leader.makeLeader ? '已设为干事' : '已撤销干事', 'success');
+      return this.refresh();
+    },
 
     /** 点交锋记录或搭档记录里的人，去看他的主页 */
     onOpenMember(event) {

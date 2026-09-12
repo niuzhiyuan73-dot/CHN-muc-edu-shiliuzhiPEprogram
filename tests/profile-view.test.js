@@ -10,7 +10,7 @@ const {
 } = require('../miniprogram/services/profile-view.js');
 const { PLACEHOLDER } = require('../miniprogram/utils/format.js');
 const { sortProjectsForDisplay } = require('../miniprogram/utils/leaderboard.js');
-const { RANK_PROJECT_CONFIG } = require('../miniprogram/utils/constants.js');
+const { RANK_PROJECT_CONFIG, ROLE, USER_STATUS } = require('../miniprogram/utils/constants.js');
 const { getMatchHistory, getMyProjects } = require('../miniprogram/services/index.js');
 
 /* ============================================================
@@ -397,4 +397,46 @@ test('loadMemberView —— 头卡同时给出昵称与真名，真名另标一�
 test('loadMemberView —— 头像缺省时用昵称首字兜底', async () => {
   const view = await loadMemberView('u06');
   assert.strictEqual(view.user.avatarText, view.user.nickName.slice(0, 1));
+});
+
+/* ============================================================
+ * 任免干事的入口
+ * ============================================================
+ * 种子里 u01 巴特尔是管理员、u02 张宇轩是干事，其余是普通会员。
+ * 按钮只该出现在「管理员看别人的主页」这一种情形里。
+ * ============================================================ */
+
+const ADMIN_VIEWER = { _id: 'u01', role: ROLE.ADMIN, status: USER_STATUS.ACTIVE };
+const STAFF_VIEWER = { _id: 'u02', role: ROLE.STAFF, status: USER_STATUS.ACTIVE };
+
+test('loadMemberView —— 管理员看普通会员，入口是「设为干事」', async () => {
+  const view = await loadMemberView('u06', { viewer: ADMIN_VIEWER });
+  assert.strictEqual(view.leader.visible, true);
+  assert.strictEqual(view.leader.makeLeader, true);
+  assert.strictEqual(view.leader.label, '设为干事');
+  assert.ok(view.leader.hint);
+});
+
+test('loadMemberView —— 管理员看已经是干事的人，入口翻成「撤销干事」', async () => {
+  const view = await loadMemberView('u02', { viewer: ADMIN_VIEWER });
+  assert.strictEqual(view.leader.visible, true);
+  assert.strictEqual(view.leader.makeLeader, false);
+  assert.strictEqual(view.leader.label, '撤销干事');
+});
+
+test('loadMemberView —— 看自己的主页不给入口', async () => {
+  const view = await loadMemberView('u01', { viewer: ADMIN_VIEWER });
+  assert.strictEqual(view.leader.visible, false);
+});
+
+test('loadMemberView —— 干事与普通会员都看不到入口，访客同理', async () => {
+  // 任免只给管理员（见 member-review.canSetCollegeLeader）
+  assert.strictEqual((await loadMemberView('u06', { viewer: STAFF_VIEWER })).leader.visible, false);
+  assert.strictEqual(
+    (await loadMemberView('u06', { viewer: { _id: 'u06', role: ROLE.MEMBER, status: USER_STATUS.ACTIVE } }))
+      .leader.visible,
+    false
+  );
+  // 不传 viewer 时按「没有旁观者」处理，一律不出现
+  assert.strictEqual((await loadMemberView('u06')).leader.visible, false);
 });

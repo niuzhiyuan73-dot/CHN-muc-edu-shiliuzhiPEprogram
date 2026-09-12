@@ -264,12 +264,14 @@ async function checkInEvent(payload = {}, ctx) {
   const event = await ctx.repo.events.getById(payload.id);
   if (!event) return ok({ ok: false, record: null, message: '找不到这场赛事' });
 
-  if (!canCheckIn(event, ctx.actor, { isMock: false })) {
-    return ok({ ok: false, record: null, message: '当前账号不能为会员签到' });
-  }
-
   const userId = payload.userId;
   if (!userId) return ok({ ok: false, record: null, message: '请指定要签到的会员' });
+
+  // 干事只能签本学院的人；管理员通行（见 event.canCheckIn）
+  const target = await ctx.repo.users.getById(userId);
+  if (!canCheckIn(event, ctx.actor, { isMock: false, target: target || {} })) {
+    return ok({ ok: false, record: null, message: '当前账号不能为会员签到' });
+  }
 
   const _id = signupNaturalKey(payload.id, userId);
   const signup = await ctx.repo.eventSignups.getById(_id);

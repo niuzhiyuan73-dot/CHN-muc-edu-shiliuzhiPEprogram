@@ -155,6 +155,39 @@ describe('赛事状态机 —— 开始 / 签到 / 结束', () => {
   });
 });
 
+describe('canCheckIn —— 干事代签只限本学院', () => {
+  const ongoing = () => openEvent({ status: EVENT_STATUS.ONGOING });
+
+  test('管理员可以为任何学院的人签到', () => {
+    const target = member('m9', { college: '美术学院' });
+    assert.equal(canCheckIn(ongoing(), admin(), { target }), true);
+  });
+
+  test('干事只能签本学院的人', () => {
+    const me = staff('s1', { college: '信息工程学院' });
+    assert.equal(canCheckIn(ongoing(), me, { target: member('m1', { college: '信息工程学院' }) }), true);
+    // 替别的学院签会把本院的账记到别人名下，拦住
+    assert.equal(canCheckIn(ongoing(), me, { target: member('m2', { college: '美术学院' }) }), false);
+  });
+
+  test('干事没有学院时，代签一律不放行（宁严勿松）', () => {
+    const noCollege = staff('s1');
+    assert.equal(canCheckIn(ongoing(), noCollege, { target: member('m1', { college: '体育学院' }) }), false);
+  });
+
+  test('传 targetCollege 与传整个 target 等价', () => {
+    const me = staff('s1', { college: '体育学院' });
+    assert.equal(canCheckIn(ongoing(), me, { targetCollege: '体育学院' }), true);
+    assert.equal(canCheckIn(ongoing(), me, { targetCollege: '美术学院' }), false);
+  });
+
+  test('不指定目标时只判「有没有代签资格」，与学院无关', () => {
+    // 写入口总会带上目标；这里保住旧口径，免得上层漏传时被误伤
+    assert.equal(canCheckIn(ongoing(), staff('s1')), true);
+    assert.equal(canCheckIn(ongoing(), admin()), true);
+  });
+});
+
 describe('startBlockedReason —— 单打未抽签不得开赛', () => {
   test('单打没抽签时给出「请先抽签」', () => {
     assert.equal(startBlockedReason(openEvent()), '请先抽签，再开始赛事');

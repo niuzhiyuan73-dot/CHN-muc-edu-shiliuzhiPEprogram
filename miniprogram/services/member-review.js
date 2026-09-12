@@ -33,7 +33,7 @@
  * ============================================================
  */
 
-const { USER_STATUS, USER_STATUS_LABEL, GENDER_LABEL } = require('../utils/constants.js');
+const { ROLE, COLLEGES, USER_STATUS, USER_STATUS_LABEL, GENDER_LABEL } = require('../utils/constants.js');
 const { formatDateTime } = require('../utils/format.js');
 const { canManage } = require('./permission.js');
 
@@ -118,6 +118,63 @@ function canReviewApplication(actor, application, options = {}) {
   if (isSelf(actor, application)) return false;
   // 只有待审核的申请才谈得上处理；已经批过或驳回过的不能再动
   return application.status === USER_STATUS.PENDING;
+}
+
+/**
+ * 有没有任免干事的资格。**仅管理员**。
+ *
+ * 干事是学院负责人，手里握着「代签本学院」与「代录本学院比赛」两项权限，
+ * 等于把一个学院的临场事务交出去。这个决定比审核入会重得多，所以只有
+ * 管理员能做，干事不能互相任命、更不能给别的学院安插人手。
+ *
+ * @param {Object|null} actor
+ * @param {Object} [options]
+ * @returns {boolean}
+ */
+function canSetCollegeLeader(actor, options = {}) {
+  return canManage(actor, { ...options, minRole: ROLE.ADMIN });
+}
+
+/**
+ * 校验一次任免：能不能把 target 设为 / 撤销为干事。
+ *
+ * 【为什么被任命者必须有确定的学院】
+ * 干事的权限全靠 college 划范围（见 permission.managesCollege）。一个
+ * 学院为空的账号当上干事，范围判定永远不成立——他有干事的名分，却什么
+ * 都管不了，界面上还会显示一堆点下去被拒的入口。与其如此，不如在任命这
+ * 一步就挡住，并要求学院取自 constants.COLLEGES（不能是「其他」这类旧值）。
+ *
+ * 【为什么不能动管理员】
+ * 角色是单向的：干事之上是管理员。若允许把管理员「撤销干事」，等于用一次
+ * 任免把会长降级；这不该藏在会员主页的一个按钮里，需要时由云控制台直接改。
+ *
+ * @param {Object|null} actor 操作者
+ * @param {Object|null} target 被任免的会员
+ * @param {boolean} makeLeader true 设为干事，false 撤销干事
+ * @param {Object} [options] 透传给 permission.canManage
+ * @returns {{ok:boolean, message:string, role:number|null}}
+ */
+function validateCollegeLeader(actor, target, makeLeader, options = {}) {
+  if (!canSetCollegeLeader(actor, options)) {
+    return { ok: false, message: '只有管理员可以任免干事', role: null };
+  }
+  if (!target) {
+    return { ok: false, message: '找不到这位会员', role: null };
+  }
+  if (isSelf(actor, target)) {
+    return { ok: false, message: '不能给自己任免角色', role: null };
+  }
+  if (Number(target.role || 0) >= ROLE.ADMIN) {
+    return { ok: false, message: '不能改变管理员的角色', role: null };
+  }
+  if (target.status !== USER_STATUS.ACTIVE) {
+    return { ok: false, message: '只有状态正常的会员才能设为干事', role: null };
+  }
+  if (!COLLEGES.includes(target.college)) {
+    return { ok: false, message: '该会员没有有效的学院，无法确定管理范围', role: null };
+  }
+
+  return { ok: true, message: '', role: makeLeader ? ROLE.STAFF : ROLE.MEMBER };
 }
 
 /**
@@ -250,6 +307,8 @@ module.exports = {
   isSelf,
   canReview,
   canReviewApplication,
+  canSetCollegeLeader,
+  validateCollegeLeader,
   validateReview,
   buildApplicationRow,
 };

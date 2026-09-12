@@ -28,7 +28,7 @@ const {
   canRevoke,
   buildMatchRecord,
   fillScheduledMatch,
-  isParticipant,
+  canRecordScore,
 } = require('../../lib/services/match-record.js');
 const { buildRoundMatches } = require('../../lib/services/draw.js');
 // 赛制阶段派发：单败排下一轮，循环排下一轮，小组赛在全部小组打完后转去排淘汰阶段
@@ -79,13 +79,20 @@ async function submitScheduledMatch(id, scores, { dataset, ctx, now }) {
   if (!target) {
     return ok({ ok: false, match: null, errors: {}, scoreErrors: [], firstError: '找不到这场比赛' });
   }
-  if (!isParticipant(target, ctx.actorId) && Number(ctx.role) < ROLE.STAFF) {
+  // 参赛者本人、管理员，或干事代录本学院有人上场的比赛（见 canRecordScore）。
+  // 干事是学院负责人，权限以学院为界，不能替别的学院录分。
+  const mayRecord = canRecordScore(target, ctx.actorId, {
+    role: Number(ctx.role),
+    college: (ctx.actor && ctx.actor.college) || '',
+    collegeOf: (id) => (dataset.users.find((u) => u._id === id) || {}).college || '',
+  });
+  if (!mayRecord) {
     return ok({
       ok: false,
       match: null,
       errors: {},
       scoreErrors: [],
-      firstError: '只有参赛者或干事以上可以录入这场比赛的成绩',
+      firstError: '只有参赛者、本学院干事或管理员可以录入这场比赛的成绩',
     });
   }
 

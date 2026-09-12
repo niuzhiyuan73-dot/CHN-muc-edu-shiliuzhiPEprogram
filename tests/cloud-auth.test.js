@@ -266,6 +266,62 @@ test('入会审核 —— 找不到的申请有明确文案', async () => {
   assert.equal(res.data.message, '找不到这条入会申请');
 });
 
+/* ---------- 任免干事（学院负责人） ---------- */
+
+test('任免干事 —— 普通会员与干事都没有资格，只有管理员能', async () => {
+  const repo = createFixtureRepo();
+  const asMember = await contextFor(repo, 'openid-u01');
+  const res = await dispatch('setCollegeLeader', { userId: 'u02', makeLeader: true }, asMember);
+
+  assert.equal(res.data.ok, false);
+  assert.match(res.data.message, /管理员/);
+
+  // 干事不能互相任命、更不能给别的学院安插人手
+  await dispatch('setCollegeLeader', { userId: 'u02', makeLeader: true }, await contextFor(repo, 'openid-admin'));
+  const asStaff = await contextFor(repo, 'openid-u02');
+  const denied = await dispatch('setCollegeLeader', { userId: 'u03', makeLeader: true }, asStaff);
+  assert.equal(denied.data.ok, false);
+  assert.match(denied.data.message, /管理员/);
+});
+
+test('任免干事 —— 管理员设置后被设者按本学院获权，可再撤销', async () => {
+  const repo = createFixtureRepo();
+  const admin = await contextFor(repo, 'openid-admin');
+
+  const promoted = await dispatch('setCollegeLeader', { userId: 'u01', makeLeader: true }, admin);
+  assert.equal(promoted.data.ok, true, promoted.data.message);
+  assert.equal(promoted.data.account.role, ROLE.STAFF);
+
+  // 角色变了要失效缓存，否则 getMembers 还答旧身份
+  const members = await dispatch('getMembers', {}, admin);
+  assert.equal(members.data.find((m) => m._id === 'u01').role, ROLE.STAFF);
+
+  const revoked = await dispatch('setCollegeLeader', { userId: 'u01', makeLeader: false }, admin);
+  assert.equal(revoked.data.ok, true, revoked.data.message);
+  assert.equal(revoked.data.account.role, ROLE.MEMBER);
+});
+
+test('任免干事 —— 不能改自己，只有状态正常的会员才能被设为干事', async () => {
+  const repo = createFixtureRepo();
+  const admin = await contextFor(repo, 'openid-admin');
+
+  const myself = await dispatch('setCollegeLeader', { userId: 'u_admin', makeLeader: false }, admin);
+  assert.equal(myself.data.ok, false);
+  assert.match(myself.data.message, /自己/);
+
+  const pending = await dispatch('setCollegeLeader', { userId: 'u_pending', makeLeader: true }, admin);
+  assert.equal(pending.data.ok, false);
+  assert.match(pending.data.message, /正常/);
+});
+
+test('任免干事 —— 未登录时顶层失败', async () => {
+  const ctx = await contextFor(createFixtureRepo(), null);
+  const res = await dispatch('setCollegeLeader', { userId: 'u01', makeLeader: true }, ctx);
+
+  assert.equal(res.ok, false);
+  assert.equal(res.message, '请先登录后再操作');
+});
+
 /* ---------- 入会申请 ---------- */
 
 test('提交入会申请 —— 注册不需要先登录，但身份由服务端盖章', async () => {

@@ -62,7 +62,7 @@ const {
   isRankable,
 } = require('../utils/constants.js');
 const { formatDateTime } = require('../utils/format.js');
-const { canManage, isActive } = require('./permission.js');
+const { canManage, isActive, managesCollege } = require('./permission.js');
 
 /** 标题长度下限与上限 */
 const TITLE_MIN = 2;
@@ -169,14 +169,29 @@ function startBlockedReason(event) {
  * 决策 4：不做会员自助签到。签到是赛事当天「人到了没有」的凭证，
  * 若本人能点，报名与签到就都成了自说自话，名次与积分的公信力也就没了。
  *
+ * 【干事的签到范围为什么是本学院】
+ * 干事即学院负责人，权限以学院为界。传了目标（options.target 或
+ * options.targetCollege）时，干事只能签自己学院的人，管理员不受限；
+ * 不传目标时只判「有没有签到资格」，供列表页先算一个总开关。
+ *
  * @param {Object} event
  * @param {Object|null} actor
  * @param {Object} [options]
+ * @param {Object} [options.target] 被签到的会员档案（取其 college）
+ * @param {string} [options.targetCollege] 直接给学院名
  * @returns {boolean}
  */
 function canCheckIn(event, actor, options = {}) {
   if (!event || event.status !== EVENT_STATUS.ONGOING) return false;
-  return canManage(actor, { ...options, minRole: ROLE.STAFF });
+  if (!canManage(actor, { ...options, minRole: ROLE.STAFF })) return false;
+
+  const { target = null, targetCollege = '' } = options;
+  // 未指定对象：只判资格，供列表页先算一个总开关
+  if (!target && !targetCollege) return true;
+  const college = targetCollege || (target && target.college) || '';
+  // 指定了对象就收口到本学院：管理员通行；干事须同学院；
+  // 对象学院缺失时干事被拒（宁严勿松）
+  return managesCollege(actor, college);
 }
 
 /**

@@ -314,6 +314,19 @@
   <block wx:else>
     <template is="memberHero" data="{{user: user}}" />
 
+    <!--
+      任免干事。只有管理员看别人的主页时才渲染（leader.visible 由
+      profile-view 用 validateCollegeLeader 算出来）。放在战绩之前：
+      需要处理的事该排在浏览数据前面。
+    -->
+    <view wx:if="{{leader.visible}}" class="card entry-card" bindtap="onSetCollegeLeader">
+      <view class="entry-card-main">
+        <view class="entry-card-title">{{leader.label}}</view>
+        <view class="entry-card-hint">{{leader.hint}}</view>
+      </view>
+      <view class="entry-card-arrow">›</view>
+    </view>
+
     <view wx:if="{{!hasProject}}" class="card">
       <template is="memberNoProjectNote" />
     </view>

@@ -53,7 +53,7 @@ const {
   buildSignupRow,
   signupStateOf,
 } = require('./event.js');
-const { canConfirm, isParticipant, needsScore } = require('./match-record.js');
+const { canConfirm, canRecordScore, isParticipant, needsScore } = require('./match-record.js');
 const { statusTagOf } = require('./match-view.js');
 // 手工指定种子要凑几位，与真正抽签时同一把尺子（种子数与参赛人数的较小者），
 // 免得界面点名点到一个算法并不接受的数量
@@ -352,11 +352,14 @@ function buildSignupRows(signups, memberMap, ctx = {}) {
       const stats = member
         ? `等级分 ${getPoolRating(member, pool).elo} · 积分 ${Number(member.points) || 0}`
         : '';
+      // 干事只能代签本学院的人；档案查不到时传个空对象，让干事被挡下、
+      // 管理员仍可通过（见 event.canCheckIn 的三种取值）
+      const mayCheckInThis = mayCheckIn && canCheckIn(event, actor, { target: member || {} });
       return {
         ...row,
         avatarText: avatarOf(row.nickName),
         // 代签按钮只在「进行中 + 已报名未签到」时出现
-        canCheckIn: mayCheckIn && state.signed && !state.checkedIn,
+        canCheckIn: mayCheckInThis && state.signed && !state.checkedIn,
         statText: stats,
       };
     });
@@ -538,11 +541,17 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
   const stageFirst = grouped || doubleElim;
   const nameOf = (id) => (id ? (memberMap.get(id) || {}).nickName || id : '待定');
 
-  // 录分的权限要和真正写入时一致：参赛者本人，或干事及以上的代录
-  // （见 mock.submitMatch 与云端 submitScheduledMatch）。这里不按数据源
-  // 放宽——否则普通会员会在签表上看到一列不属于自己的「录分」入口。
-  const mayRecord = Boolean(actor && Number(actor.role) >= ROLE.STAFF);
+  // 录分的权限要和真正写入时一致：参赛者本人、管理员，或干事代录本学院
+  // 有人上场的比赛（见 match-record.canRecordScore 与 mock.submitMatch）。
+  // 这里不按数据源放宽——否则普通会员会在签表上看到一列不属于自己的
+  // 「录分」入口。collegeOf 从会员档案里取，干事因此只能管到本院。
   const actorId = actor ? actor._id : null;
+  const collegeOf = (id) => (id ? (memberMap.get(id) || {}).college || '' : '');
+  const recordOptions = {
+    role: actor ? actor.role : ROLE.MEMBER,
+    college: (actor && actor.college) || '',
+    collegeOf,
+  };
   // 确认要带上角色：管理员可确认任意一场（见 match-record.canConfirm）
   const confirmOptions = { isMock: mock, role: actor ? actor.role : undefined };
 
@@ -584,7 +593,7 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
         statusClass: tag.className,
         isMine: Boolean(actorId && (isParticipant(record, actorId))),
         // 还没比分的场次先录分，录完才谈得上确认
-        canRecord: Boolean(waiting && actorId && (isParticipant(record, actorId) || mayRecord)),
+        canRecord: Boolean(waiting && actorId && canRecordScore(record, actorId, recordOptions)),
         canConfirm: Boolean(!waiting && canConfirm(record, actorId, confirmOptions)),
       };
     });

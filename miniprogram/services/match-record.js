@@ -73,6 +73,55 @@ function isRecorder(match, userId) {
 }
 
 /**
+ * 这场比赛的参赛者里，有没有人属于某个学院。
+ *
+ * 干事（学院负责人）代录比赛时用它划范围：只有自己学院有人上场的比赛，
+ * 才轮得到他代录。collegeOf 由调用方注入（比赛记录里只有编号，没有学院，
+ * 学院存在会员档案里），本模块因此仍是不碰数据源的纯逻辑。
+ *
+ * @param {Object} match
+ * @param {string} college 学院全名
+ * @param {Function} collegeOf 编号 → 学院
+ * @returns {boolean}
+ */
+function involvesCollege(match, college, collegeOf) {
+  if (!match || !college || typeof collegeOf !== 'function') return false;
+  const ids = [...(match.teamA || []), ...(match.teamB || [])];
+  return ids.some((id) => collegeOf(id) === college);
+}
+
+/**
+ * 有没有资格录入这场比赛的比分。
+ *
+ * 规则与写入端（mock.submitMatch、云端 submitScheduledMatch）同源：
+ *   1. 参赛者本人可以录；
+ *   2. 管理员可以代录任意一场；
+ *   3. 干事只能代录**本学院有人上场**的比赛——干事是学院负责人，
+ *      权限以学院为界，替别的学院录分会把本院的账记到别人名下。
+ *
+ * 判定需要「编号 → 学院」，而比赛记录里只有编号，所以由调用方传入
+ * collegeOf。拿不到学院时，干事的代录一律不放行（宁严勿松）。
+ *
+ * @param {Object} match
+ * @param {string} actorId
+ * @param {Object} [options]
+ * @param {number} [options.role=ROLE.MEMBER] 操作者角色
+ * @param {string} [options.college] 操作者所属学院（干事用）
+ * @param {Function} [options.collegeOf] 编号 → 学院
+ * @returns {boolean}
+ */
+function canRecordScore(match, actorId, options = {}) {
+  const { role = ROLE.MEMBER, college = '', collegeOf = null } = options;
+
+  if (!match || !actorId) return false;
+  if (isParticipant(match, actorId)) return true;
+  if (Number(role) >= ROLE.ADMIN) return true;
+  if (Number(role) < ROLE.STAFF) return false;
+
+  return involvesCollege(match, college, collegeOf);
+}
+
+/**
  * 能否确认这场比赛的比分。
  *
  * 生产口径是「对手确认」：录入方不能给自己盖章，否则一个人就能凭空
@@ -416,6 +465,8 @@ module.exports = {
   sideOf,
   isParticipant,
   isRecorder,
+  involvesCollege,
+  canRecordScore,
   canConfirm,
   canRevoke,
   needsScore,

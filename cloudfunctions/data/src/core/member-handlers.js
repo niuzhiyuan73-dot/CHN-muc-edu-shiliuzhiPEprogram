@@ -25,6 +25,7 @@ const { register: registerAccount } = require('../../lib/services/auth.js');
 const {
   REVIEW_ACTION,
   validateReview,
+  validateCollegeLeader,
 } = require('../../lib/services/member-review.js');
 const { buildProfilePatch } = require('../../lib/services/profile.js');
 const { ROLE, USER_STATUS } = require('../../lib/utils/constants.js');
@@ -149,6 +150,44 @@ async function rejectMember(payload = {}, ctx) {
 }
 
 /**
+ * 把某位会员设为 / 撤销为干事（学院负责人）。
+ *
+ * 【改的是角色，不是状态】
+ * 与审核分开一条通路：审核动 status，任免只动 role。请求体里只认 userId
+ * 与 makeLeader，目标角色（干事还是普通会员）由服务端的 validateCollegeLeader
+ * 算出来，前端塞一个 role:2 也没用。
+ *
+ * 【为什么任免也要动赛季版本号】
+ * 角色与学院虽然不进回放计算，却要经 getDataset 下发（会员主页、权限判定
+ * 都读它）。不 +1 的话容器里还是旧缓存，被设为干事的人刷新后仍是普通会员。
+ *
+ * @param {Object} payload { userId, makeLeader }
+ * @param {Object} ctx
+ * @returns {Promise<Object>} {ok, account, message}
+ */
+async function setCollegeLeader(payload = {}, ctx) {
+  const guard = callerError(ctx);
+  if (guard) return fail(guard);
+
+  const target = await ctx.repo.users.getById(payload.userId);
+  // 严格口径：管理员才能任免，不能改自己，被任免者须有确定的学院且状态正常
+  const verdict = validateCollegeLeader(ctx.actor, target, Boolean(payload.makeLeader));
+  if (!verdict.ok) return ok({ ok: false, account: null, message: verdict.message });
+
+  const patched = await ctx.repo.transaction(async (tx) => {
+    const current = await tx.users.getById(target._id);
+    if (!current) return null;
+    const next = { ...current, role: verdict.role };
+    await tx.users.set(target._id, next);
+    await bumpSeason(tx, { anchorTime: null, now: ctx.now });
+    return next;
+  });
+
+  if (!patched) return ok({ ok: false, account: null, message: '找不到这位会员' });
+  return ok({ ok: true, account: patched, message: '' });
+}
+
+/**
  * 修改自己的昵称与头像。
  *
  * 【改的是谁，我说了不算】
@@ -194,4 +233,10 @@ async function updateProfile(payload = {}, ctx) {
 // reviewMember 是 approve / reject 共用的内部实现，不导出——dispatch 会把
 // 模块的所有导出都当成可调用的 action，导出它就等于多开一个没有参数约定
 // 的路由。
-module.exports = { registerMember, approveMember, rejectMember, updateProfile };
+module.exports = {
+  registerMember,
+  approveMember,
+  rejectMember,
+  setCollegeLeader,
+  updateProfile,
+};

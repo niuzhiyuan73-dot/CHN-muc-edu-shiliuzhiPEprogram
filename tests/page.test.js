@@ -986,6 +986,34 @@ test('他人主页 —— 头卡是共用的，但点头像不会跳走', async 
   assert.deepStrictEqual(calls.navigations, []);
 });
 
+test('他人主页 —— 管理员看到任免入口，点一下把对方设为干事', async () => {
+  // u01 是种子里的管理员；u06 是普通会员、学院确定
+  loginAs({ _id: 'u01', role: 2, college: '体育学院', status: 1 });
+  const page = instantiate(memberConfig);
+  await page.onLoad({ userId: 'u06' });
+
+  assert.strictEqual(page.data.view.leader.visible, true);
+  assert.strictEqual(page.data.view.leader.label, '设为干事');
+
+  calls.toasts.length = 0;
+  await page.onSetCollegeLeader();
+
+  const after = await facade.getMember('u06');
+  assert.strictEqual(after.role, 1, '点击后应当真的写进数据源');
+  assert.ok(calls.toasts.includes('已设为干事'));
+});
+
+test('他人主页 —— 普通会员看不到任免入口，也没有可点的按钮', async () => {
+  loginAs({ _id: 'u06', role: 0 });
+  const page = instantiate(memberConfig);
+  await page.onLoad({ userId: 'u02' });
+
+  assert.strictEqual(page.data.view.leader.visible, false);
+  // 即使误触发也没有副作用
+  await page.onSetCollegeLeader();
+  assert.strictEqual((await facade.getMember('u02')).role, 1, 'u02 种子里就是干事，不该被改动');
+});
+
 /* ============================================================
  * 排行榜
  * ============================================================ */

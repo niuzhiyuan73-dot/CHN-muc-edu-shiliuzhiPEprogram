@@ -52,7 +52,35 @@ function canManage(actor, options = {}) {
   return Number(actor.role || 0) >= minRole;
 }
 
+/**
+ * 有没有资格管理某个学院。
+ *
+ * 干事即「学院负责人」，其权限是有范围的：只能管自己所属的那个学院。
+ * 管理员没有范围限制，全校通行。判定同时在两处成立才放行：
+ *   1. 账号本身可用（已激活）；
+ *   2. 角色够，且——干事的 college 与目标学院一致。
+ *
+ * 【为什么学院名必须精确相等】
+ * 学院全名同时是学院团体赛的对阵主键（见 constants.COLLEGES 的说明）。
+ * 若做成「包含」「前缀」之类的宽松匹配，「体育学院」的干事就可能被放进
+ * 「体育学院附属体校」，这类越权在赛场上没有明显的报错，只会悄悄改错名单。
+ * 所以这里要求两边都取自同一份常量名单后的严格相等。
+ *
+ * @param {Object|null} actor 操作者
+ * @param {string} college 目标学院全名
+ * @returns {boolean}
+ */
+function managesCollege(actor, college) {
+  if (!isActive(actor)) return false;
+
+  const role = Number(actor.role || 0);
+  if (role >= ROLE.ADMIN) return true;
+
+  return role >= ROLE.STAFF && Boolean(college) && actor.college === college;
+}
+
 module.exports = {
   isActive,
   canManage,
+  managesCollege,
 };

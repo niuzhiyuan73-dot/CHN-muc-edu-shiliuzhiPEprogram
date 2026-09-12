@@ -23,7 +23,7 @@
  * ============================================================
  */
 
-const { ROLE_LABEL, USER_STATUS_LABEL, RATING_POOL_LABEL } = require('../utils/constants.js');
+const { ROLE, ROLE_LABEL, USER_STATUS_LABEL, RATING_POOL_LABEL } = require('../utils/constants.js');
 const {
   formatDate,
   formatSigned,
@@ -36,6 +36,7 @@ const {
 const { sortProjectsForDisplay } = require('../utils/leaderboard.js');
 const { formatMatchFormat } = require('../utils/match-format.js');
 const { resolveNameDisplay } = require('./profile.js');
+const { validateCollegeLeader } = require('./member-review.js');
 const {
   getCurrentUser,
   getMember,
@@ -154,10 +155,13 @@ function buildHistoryRow(row) {
  * @param {Object} [options]
  * @param {string} [options.project] 初始选中的项目
  * @param {number} [options.historyLimit] 逐场战绩取多少条
+ * @param {Object|null} [options.viewer] 当前看页面的人（任免干事要判权限）。
+ *        与 loadMatchView 同一约定：由调用方从本地登录态传入，传 null 就是访客；
+ *        不传则视为「没有旁观者」，任免入口一律不出现。
  * @returns {Promise<Object>} 查无此人时返回 { found: false }
  */
 async function loadMemberView(userId, options = {}) {
-  const { project, historyLimit = DEFAULT_HISTORY_LIMIT } = options;
+  const { project, historyLimit = DEFAULT_HISTORY_LIMIT, viewer = null } = options;
 
   const user = userId ? await getMember(userId) : await getCurrentUser();
   if (!user) {
@@ -192,6 +196,13 @@ async function loadMemberView(userId, options = {}) {
   // 昵称与真名一起给：昵称占主位，真名小一号缀在旁边。
   // 两者相同时不重复显示（见 profile.resolveNameDisplay）。
   const nameDisplay = resolveNameDisplay(user);
+
+  // 管理员在别人的主页上可以任免干事。四条边界（是管理员、不是自己、对方
+  // 状态正常且有确定学院、对方不是管理员）全部交给 validateCollegeLeader 判定，
+  // 与写入端一字不差；这里只据结果决定按钮显不显示、写什么字，不另写一套规则。
+  // 当前不是干事时动作为「设为干事」，已经是干事则是「撤销干事」。
+  const makeLeader = Number(user.role || 0) < ROLE.STAFF;
+  const leaderCheck = validateCollegeLeader(viewer, user, makeLeader);
 
   return {
     found: true,
@@ -274,6 +285,13 @@ async function loadMemberView(userId, options = {}) {
       winRateText: formatPercent(row.winRate),
     })),
     history: history.map(buildHistoryRow),
+    // 任免干事的入口。没有权限时整张卡不渲染，而不是给一个点下去被拒的按钮
+    leader: {
+      visible: leaderCheck.ok,
+      makeLeader,
+      label: makeLeader ? '设为干事' : '撤销干事',
+      hint: makeLeader ? '代签、代录本学院的比赛' : '收回本学院的管理权限',
+    },
   };
 }
 

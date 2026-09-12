@@ -27,7 +27,7 @@ const { MATCH_STATUS, MATCH_STATUS_LABEL, MATCH_TYPE_LABEL, ROLE, ROLE_LABEL } =
 const { formatDateTime, formatScore } = require('../utils/format.js');
 const { formatMatchFormat } = require('../utils/match-format.js');
 const { createNameResolver } = require('../utils/stats.js');
-const { canConfirm, canRevoke, needsScore, sideOf } = require('./match-record.js');
+const { canConfirm, canRecordScore, canRevoke, needsScore, sideOf } = require('./match-record.js');
 const { getCurrentUser, getMember, getMembers, getMatchRecords, isMock } = require('./index.js');
 
 /**
@@ -113,12 +113,21 @@ function memberList(ids, nameOf) {
  * @param {Object} [ctx]
  * @param {string} [ctx.userId] 当前看页面的会员
  * @param {number} [ctx.role] 当前会员的角色，决定能不能撤销
+ * @param {string} [ctx.college] 当前会员的学院，干事代录时划范围
+ * @param {Function} [ctx.collegeOf] 编号 → 学院，干事代录时划范围
  * @param {Function} [ctx.nameOf] 编号转昵称
  * @param {boolean} [ctx.isMock] 是否放宽确认权
  * @returns {Object}
  */
 function buildRecordRow(record, ctx = {}) {
-  const { userId = null, role, nameOf = DEFAULT_NAME_OF, isMock: mock = isMock } = ctx;
+  const {
+    userId = null,
+    role,
+    college = '',
+    collegeOf = null,
+    nameOf = DEFAULT_NAME_OF,
+    isMock: mock = isMock,
+  } = ctx;
 
   const tag = statusTagOf(record.status, record.action);
   const side = sideOf(record, userId);
@@ -162,10 +171,10 @@ function buildRecordRow(record, ctx = {}) {
     confirmRelaxed: relaxedConfirm && !strictConfirm,
     // 还没比分的赛事比赛：给「录分」而不是「确认」
     needsScore: waiting,
-    // 录分权与写入端一致：参赛者，或干事及以上代录；演示数据源放宽为登录即可
-    canRecord: Boolean(
-      waiting && userId && (isMine || Number(role) >= ROLE.STAFF || mock)
-    ),
+    // 录分权与写入端一致：参赛者、管理员，或干事代录本学院有人上场的比赛
+    // （见 match-record.canRecordScore）。演示数据源不再放宽，免得看到
+    // 一个点下去会被拒的入口。
+    canRecord: Boolean(waiting && userId && canRecordScore(record, userId, { role, college, collegeOf })),
     canRevoke: canRevoke(record, userId, { role }),
   };
 }
@@ -226,6 +235,9 @@ async function loadMatchView(options = {}) {
 
   const [members, ledger] = await Promise.all([getMembers(), getMatchRecords()]);
   const nameOf = createNameResolver(members);
+  // 干事代录要按学院划范围：这里把「编号 → 学院」一并算出来
+  const collegeByMember = new Map((members || []).map((m) => [m._id, m.college || '']));
+  const collegeOf = (id) => collegeByMember.get(id) || '';
 
   // 访客没有「自己的比赛」可言，两个标签都不下发任何台账，
   // 只给一句登录引导——否则别人未确认、已撤销的成绩会一并漏出去
@@ -236,7 +248,13 @@ async function loadMatchView(options = {}) {
   const records = filtered
     .slice(0, size)
     .map((record) =>
-      buildRecordRow(record, { userId: viewerId, role: user ? user.role : undefined, nameOf })
+      buildRecordRow(record, {
+        userId: viewerId,
+        role: user ? user.role : undefined,
+        college: (user && user.college) || '',
+        collegeOf,
+        nameOf,
+      })
     );
 
   return {

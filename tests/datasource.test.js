@@ -16,6 +16,7 @@ const {
   ALL_RATING_POOLS,
   RANK_PROJECT,
   ALL_RANK_PROJECTS,
+  ROLE,
   MATCH_TYPE,
   MATCH_STATUS,
   USER_STATUS,
@@ -769,6 +770,63 @@ describe('mock 数据源 —— 会员注册与审核', () => {
       assert.equal(result.ok, false);
       assert.match(result.message, /没有审核权限/);
       assert.equal((await mock.getMemberApplications())[0].status, USER_STATUS.PENDING);
+    })
+  );
+});
+
+describe('mock 数据源 —— 任免干事（学院负责人）', () => {
+  function withCleanStore(fn) {
+    return async () => {
+      mock.resetCache();
+      try {
+        await fn();
+      } finally {
+        mock.resetCache();
+      }
+    };
+  }
+
+  test(
+    '管理员设置后，被设者按本学院获权；撤销后收回',
+    withCleanStore(async () => {
+      const admin = await getManager();
+      // u06 赵明宇,普通会员,法学院——种子里学院是确定的一所
+      const before = (await mock.getMember('u06')).role;
+      assert.equal(before, ROLE.MEMBER);
+
+      const promoted = await mock.setCollegeLeader('u06', admin._id, true);
+      assert.equal(promoted.ok, true, promoted.message);
+      assert.equal(promoted.account.role, ROLE.STAFF);
+      // 榜单要重取才算数：角色进了数据集，缓存必须被冲掉
+      assert.equal((await mock.getMember('u06')).role, ROLE.STAFF);
+
+      const revoked = await mock.setCollegeLeader('u06', admin._id, false);
+      assert.equal(revoked.ok, true, revoked.message);
+      assert.equal(revoked.account.role, ROLE.MEMBER);
+    })
+  );
+
+  test(
+    '干事自己不能任免别人，只有管理员能',
+    withCleanStore(async () => {
+      const staff = await mock.getMember('u02');
+      const result = await mock.setCollegeLeader('u06', staff._id, true);
+
+      assert.equal(result.ok, false);
+      assert.match(result.message, /管理员/);
+      // 被拒的调用不许在台账里留下任何痕迹
+      assert.equal((await mock.getMember('u06')).role, ROLE.MEMBER);
+    })
+  );
+
+  test(
+    '管理员也不能给自己任免角色',
+    withCleanStore(async () => {
+      const admin = await getManager();
+
+      const myself = await mock.setCollegeLeader(admin._id, admin._id, false);
+      assert.equal(myself.ok, false);
+      assert.match(myself.message, /自己/);
     })
   );
 });

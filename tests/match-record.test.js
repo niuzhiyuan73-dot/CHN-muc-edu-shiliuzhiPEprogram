@@ -5,6 +5,8 @@ const {
   sideOf,
   isParticipant,
   isRecorder,
+  involvesCollege,
+  canRecordScore,
   canConfirm,
   canRevoke,
   needsScore,
@@ -496,4 +498,52 @@ test('fillScheduledMatch —— 没有记录时报找不到', () => {
   const result = fillScheduledMatch(null, { scoreA: ['11'], scoreB: ['5'] });
   assert.strictEqual(result.ok, false);
   assert.match(result.firstError, /找不到/);
+});
+
+/* ============================================================
+ * 七、录分权（involvesCollege / canRecordScore）
+ * ============================================================
+ * 干事是学院负责人，权限以学院为界：只有本学院有人上场的比赛才轮得到他
+ * 代录。学院不存在比赛记录里（那里只有编号），所以由调用方传入 collegeOf。
+ * ============================================================ */
+
+/** 编号 → 学院，模拟会员档案 */
+const COLLEGE_OF = (id) =>
+  ({ u01: '体育学院', u02: '体育学院', u03: '美术学院', u04: '美术学院' }[id] || '');
+
+test('involvesCollege —— 只要有一人属于该学院就算涉及', () => {
+  assert.strictEqual(involvesCollege(DOUBLES, '体育学院', COLLEGE_OF), true);
+  assert.strictEqual(involvesCollege(DOUBLES, '美术学院', COLLEGE_OF), true);
+  assert.strictEqual(involvesCollege(DOUBLES, '信息工程学院', COLLEGE_OF), false);
+});
+
+test('involvesCollege —— 缺参数时一律为假，不抛错', () => {
+  assert.strictEqual(involvesCollege(DOUBLES, '', COLLEGE_OF), false);
+  assert.strictEqual(involvesCollege(DOUBLES, '体育学院', null), false);
+  assert.strictEqual(involvesCollege(null, '体育学院', COLLEGE_OF), false);
+});
+
+test('canRecordScore —— 参赛者本人可以录自己的比赛', () => {
+  assert.strictEqual(canRecordScore(DOUBLES, 'u02', { role: ROLE.MEMBER }), true);
+});
+
+test('canRecordScore —— 管理员可以代录任意一场', () => {
+  assert.strictEqual(
+    canRecordScore(DOUBLES, 'u99', { role: ROLE.ADMIN, collegeOf: COLLEGE_OF }),
+    true
+  );
+});
+
+test('canRecordScore —— 干事只能代录本学院有人上场的比赛', () => {
+  const options = { role: ROLE.STAFF, college: '体育学院', collegeOf: COLLEGE_OF };
+  assert.strictEqual(canRecordScore(DOUBLES, 's1', options), true);
+
+  const other = { role: ROLE.STAFF, college: '信息工程学院', collegeOf: COLLEGE_OF };
+  assert.strictEqual(canRecordScore(DOUBLES, 's1', other), false);
+});
+
+test('canRecordScore —— 普通会员与访客都不能代录别人的比赛', () => {
+  assert.strictEqual(canRecordScore(DOUBLES, 'u99', { role: ROLE.MEMBER }), false);
+  assert.strictEqual(canRecordScore(DOUBLES, '', { role: ROLE.ADMIN }), false);
+  assert.strictEqual(canRecordScore(null, 'u99', { role: ROLE.ADMIN }), false);
 });
