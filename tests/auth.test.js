@@ -18,9 +18,34 @@ const {
   register,
   login,
 } = require('../miniprogram/services/auth.js');
-const { ROLE, USER_STATUS } = require('../miniprogram/utils/constants.js');
+const { ROLE, USER_STATUS, COLLEGES: COLLEGES_CONST } = require('../miniprogram/utils/constants.js');
+const { MEMBER_SEED } = require('../miniprogram/services/seed.js');
 // 只为下面那条「纯函数」断言：register 写完，数据源里一条申请都不该多出来
 const facade = require('../miniprogram/services/index.js');
+
+describe('COLLEGES —— 学院名单', () => {
+  test('共 26 所，且不含「其他」', () => {
+    assert.equal(COLLEGES.length, 26);
+    assert.equal(COLLEGES_CONST.length, 26);
+    assert.ok(!COLLEGES.includes('其他'), '「其他」必须下线，注册要求选到确定学院');
+    assert.ok(!COLLEGES_CONST.includes('其他'));
+  });
+
+  test('auth 与 constants 引用的是同一份名单', () => {
+    assert.deepEqual(COLLEGES, COLLEGES_CONST);
+  });
+
+  test('名单内没有重复项', () => {
+    assert.equal(new Set(COLLEGES).size, COLLEGES.length);
+  });
+
+  test('模拟数据里的每一所学院都在名单内', () => {
+    const unknown = MEMBER_SEED
+      .map((m) => m.college)
+      .filter((college) => !COLLEGES.includes(college));
+    assert.deepEqual(unknown, [], `这些学院不在名单里：${unknown.join('、')}`);
+  });
+});
 
 /** 一份合法的表单，各用例在它基础上改一个字段 */
 function validForm(overrides = {}) {

@@ -200,7 +200,7 @@ const MEMBER_SEED = [
   { nickName: '阿依古丽', realName: '阿依古丽·买买提', gender: 'F', college: '音乐学院', trueSkill: 1425 },
   { nickName: '雨桐', realName: '周雨桐', gender: 'F', college: '经济学院', trueSkill: 1385 },
   { nickName: '孙悦', realName: '孙悦', gender: 'F', college: '法学院', trueSkill: 1350 },
-  { nickName: '林清', realName: '林清', gender: 'F', college: '哲学与宗教学学院', trueSkill: 1300 },
+  { nickName: '林清', realName: '林清', gender: 'F', college: '哲学与宗教学院', trueSkill: 1300 },
   { nickName: '梦琪', realName: '徐梦琪', gender: 'F', college: '管理学院', trueSkill: 1255 },
   { nickName: '静怡', realName: '何静怡', gender: 'F', college: '教育学院', trueSkill: 1225 },
   // 以下会员在中途加入俱乐部。
