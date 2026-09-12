@@ -107,6 +107,12 @@ Page({
   /**
    * 把已填的名次收成 [{ userId, placement }]。
    * 空着的人不录入——他可能报了名却没到场，不该被硬塞一个名次。
+   *
+   * 【双打为什么一行摊成两条】
+   * 名次页在双打下按队伍给行（一人填一次就够），但名次最终要记在每个人
+   * 头上（两人的名次相同），后续积分才按人结算。所以这里把一行的名次
+   * 摊到该队两名成员，页面看到的是一行，落库的是两条。
+   *
    * @returns {{error:string, results:Array<Object>}}
    */
   collectResults() {
@@ -122,7 +128,12 @@ Page({
       if (!Number.isInteger(placement) || placement < 1) {
         return { error: '名次必须是不小于 1 的整数', results: [] };
       }
-      results.push({ userId: row.userId, placement });
+      // 单打的行只有 userId；双打的行带 userIds（两人），逐人落下同名次
+      const members =
+        Array.isArray(row.userIds) && row.userIds.length > 0 ? row.userIds : [row.userId];
+      for (const userId of members) {
+        results.push({ userId, placement });
+      }
     }
 
     if (results.length === 0) {

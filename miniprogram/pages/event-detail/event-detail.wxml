@@ -79,7 +79,7 @@
 
       <!-- 手工指定种子：说清要点几位，免得点开了面板不知道点几个 -->
       <view wx:if="{{view.event.isManualSeed}}" class="empty-note">
-        本场手工指定种子：抽签前按顺序点名 {{view.manualSeedNeeded}} 位，先点的排 1 号
+        本场手工指定种子：抽签前按顺序点名 {{view.manualSeedNeeded}} {{view.seedUnit}}，先点的排 1 号
       </view>
 
       <view
@@ -250,8 +250,9 @@
     <view class="sheet" catchtap="noop">
       <view class="sheet-title">指定种子顺序</view>
       <view class="sheet-hint">
-        按顺序点选 {{view.manualSeedNeeded}} 位种子，先点的排 1 号；再点一次可取消。
+        按顺序点选 {{view.manualSeedNeeded}} {{view.seedUnit}}，先点的排 1 号；再点一次可取消。
         已选 {{seedPicked.length}}/{{view.manualSeedNeeded}}
+        <block wx:if="{{view.event.isDoubles}}">（相邻两人自动组成一队）</block>
       </view>
 
       <scroll-view scroll-y class="seed-list">

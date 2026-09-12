@@ -29,18 +29,34 @@
       </view>
       <view wx:if="{{errors.title}}" class="field-error">{{errors.title}}</view>
 
-      <!-- 小项序列：一场大场打哪几项，勾选式最直观 -->
+      <!-- 小项序列：默认一项，管理员点「+」逐项加，行号即出场顺序 -->
       <view class="field-row field-row-top">
         <view class="field-label">比赛小项</view>
-        <checkbox-group class="leg-group" bindchange="onToggleLegPlan">
-          <label wx:for="{{legOptions}}" wx:key="value" class="leg-option">
-            <checkbox value="{{item.value}}" checked="{{item.checked}}" color="#2f7d4f" />
-            <text class="leg-label">{{item.label}}</text>
-          </label>
-        </checkbox-group>
+        <view class="leg-list">
+          <view wx:for="{{legRows}}" wx:key="row" class="leg-row">
+            <view class="leg-order">{{index + 1}}</view>
+            <picker
+              class="leg-picker"
+              mode="selector"
+              range="{{legLabels}}"
+              value="{{item.valueIndex}}"
+              data-row="{{index}}"
+              bindchange="onPickLeg"
+            >
+              <view class="leg-value">{{item.label}} ›</view>
+            </picker>
+            <view class="leg-remove" data-row="{{index}}" bindtap="onRemoveLeg">删除</view>
+          </view>
+
+          <view
+            wx:if="{{legRows.length < legMax}}"
+            class="btn btn-outline leg-add"
+            bindtap="onAddLeg"
+          >＋ 添加小项</view>
+        </view>
       </view>
       <view wx:if="{{errors.legPlan}}" class="field-error">{{errors.legPlan}}</view>
-      <view class="field-hint">一场大场依次进行这几项，胜负按下方算法判定；至多 20 项</view>
+      <view class="field-hint">一场大场按此顺序依次进行这几项，胜负按下方算法判定；至多 20 项，至少 1 项</view>
 
       <view class="field-row">
         <view class="field-label">兼报多项</view>

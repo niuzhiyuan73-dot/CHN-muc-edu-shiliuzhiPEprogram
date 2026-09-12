@@ -41,23 +41,52 @@
   font-size: var(--font-md);
 }
 
-/* ==================== 小项多选 ==================== */
+/* ==================== 小项序列（逐项添加） ==================== */
 
-.leg-group {
+.leg-list {
   flex: 1;
-  display: flex;
-  flex-wrap: wrap;
+  min-width: 0;
   padding-bottom: var(--space-sm);
 }
 
-.leg-option {
+/* 一行 = 一个出场顺序上的小项：序号 + 项目下拉 + 删除 */
+.leg-row {
   display: flex;
   align-items: center;
-  margin-right: var(--space-md);
-  min-height: 56rpx;
+  min-height: 64rpx;
+  margin-bottom: var(--space-xs);
 }
 
-.leg-label {
+.leg-order {
+  width: 40rpx;
+  flex-shrink: 0;
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+  text-align: center;
+}
+
+.leg-picker {
+  flex: 1;
+  min-width: 0;
+}
+
+.leg-value {
+  font-size: var(--font-md);
+}
+
+.leg-remove {
+  flex-shrink: 0;
+  padding: 0 var(--space-sm);
+  font-size: var(--font-xs);
+  color: var(--color-danger);
+}
+
+.leg-add {
+  display: inline-block;
+  margin-top: var(--space-xs);
+  padding: 0 var(--space-lg);
+  min-height: 64rpx;
+  line-height: 64rpx;
   font-size: var(--font-sm);
 }
 

@@ -102,7 +102,6 @@ const {
   ALL_RANK_PROJECTS,
   RANK_PROJECT_CONFIG,
   MATCH_STATUS,
-  MATCH_TYPE,
   USER_STATUS,
   ANNOUNCEMENT_STATUS,
   EVENT_STATUS,
@@ -1315,10 +1314,8 @@ async function drawEvent(id, actor, options = {}) {
   }
 
   if (!canDrawEvent(target, account)) {
-    // 逐条说清是哪一样不满足，别把「已经开赛」混进「没有权限」
-    if (target.matchType !== MATCH_TYPE.SINGLES) {
-      return { ok: false, record: null, draw: null, matches: [], message: '双打赛事暂不支持抽签' };
-    }
+    // 逐条说清是哪一样不满足，别把「已经开赛」混进「没有权限」。
+    // 单打双打都可抽签，双打由抽签把报名的个人编成队伍（见 draw.js）
     if (target.status !== EVENT_STATUS.SIGNUP) {
       return { ok: false, record: null, draw: null, matches: [], message: '只能在报名阶段抽签' };
     }
@@ -1483,6 +1480,8 @@ async function finishEvent(id, results, actor) {
     bronzeMode: target.bronzeMode,
     entryCount,
     format: target.format,
+    // 名次单位随项目变：单打一位 1 人，双打一位 2 人（两人名次相同）
+    matchType: target.matchType,
   });
   if (!checked.ok) {
     return { ok: false, record: null, errors: checked.errors, firstError: checked.firstError };

@@ -48,7 +48,7 @@ const {
 } = require('../../lib/services/draw.js');
 // 首轮（或循环赛第一轮）由赛制决定：单败摆签表，分组摆各组第一轮
 const { buildInitialMatches } = require('../../lib/services/format-plan.js');
-const { EVENT_STATUS, SIGNUP_STATUS, MATCH_STATUS, MATCH_TYPE } = require('../../lib/utils/constants.js');
+const { EVENT_STATUS, SIGNUP_STATUS, MATCH_STATUS } = require('../../lib/utils/constants.js');
 
 /* ============================================================
  * 读接口
@@ -326,6 +326,8 @@ async function finishEvent(payload = {}, ctx) {
     bronzeMode: event.bronzeMode,
     entryCount,
     format: event.format,
+    // 名次单位随项目变：单打一位 1 人，双打一位 2 人（两人名次相同）
+    matchType: event.matchType,
   });
   if (!checked.ok) {
     return ok({ ok: false, record: null, errors: checked.errors, firstError: checked.firstError });
@@ -379,10 +381,8 @@ async function drawEvent(payload = {}, ctx) {
   }
 
   if (!canDrawEvent(event, ctx.actor, { isMock: false })) {
-    // 逐条说清是哪一样不满足，别把「已经开赛」混进「没有权限」
-    if (event.matchType !== MATCH_TYPE.SINGLES) {
-      return ok({ ok: false, record: null, draw: null, matches: [], message: '双打赛事暂不支持抽签' });
-    }
+    // 逐条说清是哪一样不满足，别把「已经开赛」混进「没有权限」。
+    // 单打双打都可抽签，双打由抽签把报名的个人编成队伍（见 services/draw.js）
     if (event.status !== EVENT_STATUS.SIGNUP) {
       return ok({ ok: false, record: null, draw: null, matches: [], message: '只能在报名阶段抽签' });
     }

@@ -34,6 +34,8 @@ const {
   SEED_MODE,
   SEED_COUNTS,
   DEFAULT_SEED_COUNT,
+  DOUBLES_SEED_MODES,
+  TEAM_ID_SEPARATOR,
   SIGNUP_STATUS,
   RATING_POOL,
   EVENT_FORMAT,
@@ -78,20 +80,160 @@ function entryIdsOf(signups) {
 /**
  * 一个人的种子排序依据。
  *
- * elo 取单打池的等级分——抽签只对单打开放（决策 1），用双打分排序毫无
- * 意义；points 取当前赛季积分，与排行榜同一口径。
+ * points 取当前赛季积分，与排行榜同一口径；elo 取指定池的等级分——单打
+ * 用单打池，双打用双打池（由调用方传 pool 指明）。
  *
  * @param {Object} [member]
  * @param {'elo'|'points'} mode
+ * @param {string} [pool] elo 模式取哪个池，缺省单打池
  * @returns {number}
  */
-function seedRankOf(member, mode) {
+function seedRankOf(member, mode, pool = RATING_POOL.SINGLES) {
   if (!member) return mode === 'points' ? 0 : -Infinity;
   if (mode === SEED_MODE.POINTS) {
     const value = Number(member.points);
     return Number.isFinite(value) ? value : 0;
   }
-  return getPoolRating(member, RATING_POOL.SINGLES).elo;
+  return getPoolRating(member, pool).elo;
+}
+
+/**
+ * 一支双打队伍的编号：两人编号用分隔符拼成一个串。
+ * 签表算法只认字符串，拼成一个串后分组、落位、逐轮推进都不必为双打改动。
+ *
+ * @param {string[]} ids
+ * @returns {string}
+ */
+function teamIdOf(ids) {
+  const list = (Array.isArray(ids) ? ids : []).filter((id) => typeof id === 'string' && id);
+  return list.join(TEAM_ID_SEPARATOR);
+}
+
+/**
+ * 把签表里的一个编号拆回成员编号。单打编号拆出一个人，双打编号拆出两人。
+ * @param {string} id
+ * @returns {string[]}
+ */
+function splitTeamId(id) {
+  if (typeof id !== 'string' || !id) return [];
+  return id.split(TEAM_ID_SEPARATOR).filter(Boolean);
+}
+
+/**
+ * 一支队伍的种子排序依据：两人双打等级分之和。
+ *
+ * 【为什么是「和」而不是「平均」】
+ * 抽签的种子是「这一队整体有多强」，双打一场四个人，两人分越高这队越硬。
+ * 用求和不改变队与队之间的先后（两人都加同一个常数时平均与和同序），
+ * 但读数更直白：1500 + 1600 就是 3100 分的一队。
+ *
+ * @param {string[]} ids 队伍成员编号
+ * @param {Map<string, Object>} memberMap
+ * @returns {number}
+ */
+function teamSeedRankOf(ids, memberMap) {
+  const list = Array.isArray(ids) ? ids : [];
+  return list.reduce((sum, id) => {
+    const rank = seedRankOf(memberMap.get(id), SEED_MODE.ELO, RATING_POOL.DOUBLES);
+    return Number.isFinite(rank) ? sum + rank : sum;
+  }, 0);
+}
+
+/**
+ * 手工指定种子时，管理员需要点多少位参赛者。
+ *
+ * 单打点一位就是一位种子；双打每组两人，人数是种子组数的两倍。
+ * 界面与校验必须用同一个数，否则会出现「界面让点 4 位、抽签却要 8 位」。
+ *
+ * @param {number} seedCount 选定种子数（双打下即种子组数）
+ * @param {number} playerCount 参赛人数
+ * @returns {number}
+ */
+function manualPlayersNeeded(seedCount, playerCount) {
+  const players = Math.floor(Number(playerCount));
+  if (!Number.isFinite(players) || players <= 0) return 0;
+  return 2 * actualSeedCount(seedCount, Math.floor(players / 2));
+}
+
+/**
+ * 把报名的个人编成双打队伍，并排出种子。
+ *
+ * 【队伍怎么来】
+ * 报名是个人报名，没有「搭档」字段，所以队伍由抽签这一层确定地编成：
+ *   - 按等级分：全体按双打等级分从高到低排，相邻两人一队（1+2、3+4…），
+ *     于是队伍的分数之和天然从高到低，最前面的就是种子组；
+ *   - 手工指定：管理员按 1 号、2 号… 顺序点人，每两人一队，前若干队为种子。
+ * 不做「随机配对再排种子」：那样管理员在手工模式下点的人就与他心里的
+ * 队伍对不上，且种子的含义会变得难以解释。
+ *
+ * 队伍编号是两人编号拼成的串（teamIdOf），单打那套签表算法照搬即可。
+ *
+ * @param {Object} params
+ * @param {string[]} params.entries 参赛者编号
+ * @param {Array<Object>} params.members 全量会员名单
+ * @param {string} params.mode 种子来源（双打只认 manual / elo）
+ * @param {number} params.seedCount 选定种子组数
+ * @param {string[]} [params.manualOrder] 手工指定时管理员点选的顺序
+ * @param {number} params.seedValue 随机种子值（手工模式下给非种子洗牌）
+ * @returns {{ok:boolean, entries:string[], seeds:string[], errors:Object, firstError:string}}
+ */
+function planDoublesEntries({ entries, members, mode, seedCount, manualOrder, seedValue } = {}) {
+  const players = Array.isArray(entries) ? entries : [];
+  const reject = (message) => ({
+    ok: false,
+    entries: [],
+    seeds: [],
+    errors: { entries: message },
+    firstError: message,
+  });
+
+  if (players.length < 4) {
+    return reject('双打至少需要 4 名参赛者（2 组）');
+  }
+  if (players.length % 2 !== 0) {
+    return reject(`双打需要偶数名参赛者（当前 ${players.length} 人）`);
+  }
+  if (!DOUBLES_SEED_MODES.includes(mode)) {
+    return reject('双打没有赛季积分，种子来源只能选手工指定或按等级分');
+  }
+
+  const teamCount = players.length / 2;
+  const wanted = actualSeedCount(seedCount, teamCount);
+  const memberMap = new Map(
+    (Array.isArray(members) ? members : []).map((member) => [member._id, member])
+  );
+
+  let ordered;
+  if (mode === SEED_MODE.MANUAL) {
+    const unique = Array.from(new Set(Array.isArray(manualOrder) ? manualOrder : []));
+    if (unique.some((id) => !players.includes(id))) {
+      return reject('种子必须是参赛者之一');
+    }
+    if (unique.length < wanted * 2) {
+      return reject(
+        `请指定 ${wanted * 2} 位参赛者（每组 2 人，共 ${wanted} 组；已指定 ${unique.length} 位）`
+      );
+    }
+    const picked = unique.slice(0, wanted * 2);
+    const pickedSet = new Set(picked);
+    const value = Number(seedValue);
+    const rest = players.filter((id) => !pickedSet.has(id));
+    const shuffled = Number.isFinite(value) ? shuffle(createSeededRandom(value), rest) : rest;
+    ordered = picked.concat(shuffled);
+  } else {
+    ordered = players
+      .map((id) => ({ id, rank: teamSeedRankOf([id], memberMap) }))
+      // 同分按编号定序，保证抽签随机性只来自 seedValue
+      .sort((a, b) => (b.rank - a.rank) || (a.id < b.id ? -1 : 1))
+      .map((item) => item.id);
+  }
+
+  const teams = [];
+  for (let i = 0; i < ordered.length; i += 2) {
+    teams.push(teamIdOf([ordered[i], ordered[i + 1]]));
+  }
+
+  return { ok: true, entries: teams, seeds: teams.slice(0, wanted), errors: {}, firstError: '' };
 }
 
 /**
@@ -266,28 +408,11 @@ function planDraw({ event, signups, members, seedValue, manualOrder } = {}) {
   if (!event) {
     return fail('赛事不存在');
   }
-  // 决策 1：本期只做单打抽签，双打赛事连入口都不该有
-  if (event.matchType !== MATCH_TYPE.SINGLES) {
-    return fail('双打赛事暂不支持抽签');
-  }
+  const matchType =
+    event.matchType === MATCH_TYPE.DOUBLES ? MATCH_TYPE.DOUBLES : MATCH_TYPE.SINGLES;
   // 决策 7：只有报名阶段（尚未开赛）可以抽签
   if (event.status !== EVENT_STATUS.SIGNUP) {
     return fail('只能在报名阶段抽签');
-  }
-
-  const entries = entryIdsOf(signups);
-  if (entries.length < 2) {
-    return fail('参赛人数不足 2 人，无法抽签');
-  }
-
-  const mode = event.seedMode;
-  const seedCount = Number.isFinite(Number(event.seedCount))
-    ? Number(event.seedCount)
-    : DEFAULT_SEED_COUNT;
-
-  const resolved = resolveSeeds({ entries, members, mode, seedCount, manualOrder });
-  if (resolved.firstError) {
-    return fail(resolved.firstError);
   }
 
   const value = Number(seedValue);
@@ -295,11 +420,46 @@ function planDraw({ event, signups, members, seedValue, manualOrder } = {}) {
     return fail('缺少随机种子值，无法抽签');
   }
 
+  const players = entryIdsOf(signups);
+  const mode = event.seedMode;
+  const seedCount = Number.isFinite(Number(event.seedCount))
+    ? Number(event.seedCount)
+    : DEFAULT_SEED_COUNT;
+
+  // 单打的参赛者即本人；双打把报名的个人编成两人一队，再按队伍抽签
+  let entries;
+  let seeds;
+  if (matchType === MATCH_TYPE.DOUBLES) {
+    const paired = planDoublesEntries({
+      entries: players,
+      members,
+      mode,
+      seedCount,
+      manualOrder,
+      seedValue: value,
+    });
+    if (!paired.ok) {
+      return fail(paired.firstError);
+    }
+    entries = paired.entries;
+    seeds = paired.seeds;
+  } else {
+    if (players.length < 2) {
+      return fail('参赛人数不足 2 人，无法抽签');
+    }
+    const resolved = resolveSeeds({ entries: players, members, mode, seedCount, manualOrder });
+    if (resolved.firstError) {
+      return fail(resolved.firstError);
+    }
+    entries = players;
+    seeds = resolved.seeds;
+  }
+
   const format = formatOf(event);
 
-  // 双败至少要 4 人：2 人双败排不出败者组，会退化成一个奇怪的单败
+  // 双败至少要 4 组（单人即 4 人）：2 组双败排不出败者组，会退化成一个奇怪的单败
   if (DOUBLE_ELIM_FORMATS.includes(format) && entries.length < 4) {
-    return fail('双败淘汰至少需要 4 名参赛者');
+    return fail(matchType === MATCH_TYPE.DOUBLES ? '双败淘汰至少需要 4 组参赛队伍' : '双败淘汰至少需要 4 名参赛者');
   }
 
   // 循环 / 小组赛不摆签表，改成分组 + 圆桌排期
@@ -308,7 +468,7 @@ function planDraw({ event, signups, members, seedValue, manualOrder } = {}) {
     const groupCount = GROUP_COUNT_FORMATS.includes(format)
       ? normalizeGroupCount(event.groupCount)
       : 1;
-    const grouped = planGroupDraw({ entries, seeds: resolved.seeds, groupCount, seedValue: value });
+    const grouped = planGroupDraw({ entries, seeds, groupCount, seedValue: value });
     if (!grouped.ok) {
       return fail(grouped.firstError);
     }
@@ -333,7 +493,7 @@ function planDraw({ event, signups, members, seedValue, manualOrder } = {}) {
       seedCount,
       size: 0,
       slots: [],
-      seeds: resolved.seeds,
+      seeds,
       byes: [],
       pairs: [],
       groups: grouped.groups,
@@ -343,7 +503,7 @@ function planDraw({ event, signups, members, seedValue, manualOrder } = {}) {
 
   const bracket = drawBracket({
     entries,
-    seeds: resolved.seeds,
+    seeds,
     random: createSeededRandom(value),
   });
   if (!bracket.ok) {
@@ -648,21 +808,29 @@ function chunkPairs(list) {
   return pairs;
 }
 
-/** 由一堆对阵生成比赛草稿；一方为空的签位（轮空）跳过 */
+/**
+ * 由一堆对阵生成比赛草稿；一方为空的签位（轮空）跳过。
+ *
+ * 对阵里的每一方是「签表编号」：单打是一个人，双打是两人拼成的队号。
+ * 这里按赛事的项目把它拆成成员数组落进 teamA / teamB，比赛记录本身
+ * 与单打完全同形（teamA / teamB 都是数组），积分与展示都无需另立分支。
+ */
 function draftsFromPairs(event, pairs, { round, stage, format, group } = {}) {
   const drafts = [];
   const hasGroup = group !== undefined && group !== null && group !== '';
+  const matchType =
+    event && event.matchType === MATCH_TYPE.DOUBLES ? MATCH_TYPE.DOUBLES : MATCH_TYPE.SINGLES;
   (Array.isArray(pairs) ? pairs : []).forEach((pair, slot) => {
-    const teamA = pair && pair[0];
-    const teamB = pair && pair[1];
-    if (!teamA || !teamB) return;
+    const entryA = pair && pair[0];
+    const entryB = pair && pair[1];
+    if (!entryA || !entryB) return;
     const draft = {
       _id: eventMatchKey(event._id, round, stage, slot, group),
-      matchType: MATCH_TYPE.SINGLES,
+      matchType,
       // 池必须跟着记录写死，否则按池过滤时会被静默漏掉
-      pool: MATCH_TYPE_TO_POOL[MATCH_TYPE.SINGLES],
-      teamA: [teamA],
-      teamB: [teamB],
+      pool: MATCH_TYPE_TO_POOL[matchType],
+      teamA: splitTeamId(entryA),
+      teamB: splitTeamId(entryB),
       // 还没开打：比分留空，胜方未知，录入人待赛后补
       scoreA: [],
       scoreB: [],
@@ -737,6 +905,11 @@ module.exports = {
   VALID_SEED_MODES,
   entryIdsOf,
   seedRankOf,
+  teamIdOf,
+  splitTeamId,
+  teamSeedRankOf,
+  manualPlayersNeeded,
+  planDoublesEntries,
   actualSeedCount,
   resolveSeeds,
   planGroupDraw,

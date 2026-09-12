@@ -20,8 +20,22 @@
  * ============================================================
  */
 
-const { MATCH_STATUS } = require('./constants.js');
+const { MATCH_STATUS, TEAM_ID_SEPARATOR } = require('./constants.js');
 const { gameWinners } = require('./match-format.js');
+
+/**
+ * 比赛记录里一方的「签位编号」。
+ *
+ * 单打一方是一个人，编号即本人；双打一方是两人，编号是两人拼成的队号
+ * （与 draw.teamIdOf 同一拼法）。积分表的 entries 正是签位编号，两者必须
+ * 同形才能对上；若只取 teamA[0]，双打每一场都会因对不上而被静默漏掉。
+ *
+ * @param {Array<string>} team
+ * @returns {string}
+ */
+function entryIdOf(team) {
+  return (Array.isArray(team) ? team : []).filter(Boolean).join(TEAM_ID_SEPARATOR);
+}
 
 /**
  * 蛇形（snake）把有序名单分进各组。
@@ -111,8 +125,8 @@ function roundRobinRounds(entryIds) {
  */
 function tallyOf(match) {
   if (!match || match.status !== MATCH_STATUS.ACTIVE || !match.winner) return null;
-  const a = Array.isArray(match.teamA) ? match.teamA[0] : null;
-  const b = Array.isArray(match.teamB) ? match.teamB[0] : null;
+  const a = entryIdOf(match.teamA);
+  const b = entryIdOf(match.teamB);
   if (!a || !b) return null;
 
   const scoreA = Array.isArray(match.scoreA) ? match.scoreA : [];

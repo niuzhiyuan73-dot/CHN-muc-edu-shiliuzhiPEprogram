@@ -40,6 +40,7 @@ const {
   SEED_MODE,
   SEED_MODE_LABEL,
   SEED_COUNTS,
+  DOUBLES_SEED_MODES,
   SIGNUP_STATUS,
   SIGNUP_STATUS_LABEL,
   EVENT_FORMAT,
@@ -94,9 +95,11 @@ const FIELD_ORDER = [
 const VALID_LEVELS = Object.values(EVENT_LEVEL);
 /** 合法的三四名赛方式集合 */
 const VALID_BRONZE_MODES = Object.values(EVENT_BRONZE_MODE);
-/** 合法的种子来源集合（仅单打赛事需要） */
+/** 合法的种子来源集合（单打：手工 / 等级分 / 赛季积分） */
 const VALID_SEED_MODES = Object.values(SEED_MODE);
-/** 合法的种子数量集合（仅单打赛事需要） */
+/** 双打合法的种子来源（无赛季积分，见 constants.DOUBLES_SEED_MODES） */
+const VALID_DOUBLES_SEED_MODES = DOUBLES_SEED_MODES;
+/** 合法的种子数量集合（单打为人数，双打为组数） */
 const VALID_SEED_COUNTS = SEED_COUNTS;
 /** 合法的赛制集合 */
 const VALID_FORMATS = Object.values(EVENT_FORMAT);
@@ -142,17 +145,17 @@ function canStartEvent(event, actor, options = {}) {
 /**
  * 开始赛事还差什么。返回空串表示可以开始，否则是要展示给管理员的提示。
  *
- * 【为什么单打必须先抽签】
- * 单打的赛程完全由签表决定，不抽签就没有任何一场比赛可打；先把赛事推到
+ * 【为什么必须先抽签】
+ * 赛程完全由签表决定，不抽签就没有任何一场比赛可打；先把赛事推到
  * 「进行中」，抽签入口又会随之关闭（只能报名阶段抽签），整场赛事就此卡死。
- * 双打不支持抽签，故不受此限。
+ * 单打如此，双打亦然——双打同样要抽签把报名者编成队伍并落签位。
  *
  * @param {Object} event
  * @returns {string}
  */
 function startBlockedReason(event) {
   if (!event) return '找不到这场赛事';
-  if (event.matchType === MATCH_TYPE.SINGLES && !event.draw) {
+  if (!event.draw) {
     return '请先抽签，再开始赛事';
   }
   return '';
@@ -209,10 +212,11 @@ function canFinishEvent(event, actor, options = {}) {
 /**
  * 能不能对这场赛事抽签 / 重抽。
  *
- * 【为什么资格、状态、项目三样都要判】
+ * 【为什么资格与状态都要判】
  * 抽签会定下整张签表并连带生成比赛，只有管理端能做；且只在「报名中」
- * 阶段（决策：仅管理员、仅开赛前可抽签与重抽）；项目必须是单打（决策 1）。
- * 人数下限（≥2）要数报名记录，属于数据层，故不在这里判。
+ * 阶段（决策：仅管理员、仅开赛前可抽签与重抽）。单打双打都开放抽签，
+ * 双打由抽签把报名的个人编成队伍。人数下限（单打 ≥2、双打 ≥4）要数
+ * 报名记录，属于数据层，故不在这里判。
  *
  * @param {Object} event
  * @param {Object|null} actor
@@ -221,7 +225,6 @@ function canFinishEvent(event, actor, options = {}) {
  */
 function canDrawEvent(event, actor, options = {}) {
   if (!event || event.status !== EVENT_STATUS.SIGNUP) return false;
-  if (event.matchType !== MATCH_TYPE.SINGLES) return false;
   return canManageEvent(actor, options);
 }
 
@@ -440,7 +443,8 @@ function normalizeDraft(form) {
     gfReset: bool(source.gfReset, DEFAULT_GF_RESET),
     level: int(source.level),
     bronzeMode: text(source.bronzeMode),
-    // 种子来源与数量只对单打有意义；双打留空即可，校验时也不要求
+    // 种子来源与数量单打双打都要：单打算到人，双打算到组（两人一组）。留空
+    // 交给校验去说「请选择」，不在这里补默认
     seedMode: text(source.seedMode),
     seedCount: int(source.seedCount),
     location: text(source.location),
@@ -516,14 +520,18 @@ function validateEvent(form = {}) {
     errors.bronzeMode = '请选择三四名赛方式';
   }
 
-  // 抽签只对单打开放（决策 1），种子来源与数量因此也只有单打必须选
-  if (draft.matchType === MATCH_TYPE.SINGLES) {
-    if (!VALID_SEED_MODES.includes(draft.seedMode)) {
-      errors.seedMode = '请选择种子来源';
-    }
-    if (!VALID_SEED_COUNTS.includes(draft.seedCount)) {
-      errors.seedCount = '请选择种子数量';
-    }
+  // 单打双打都要抽签，故种子来源与数量一律必须显式选。双打没有赛季积分，
+  // 可选来源收窄为「手工指定 / 按等级分」，并给一句说明为什么不给积分。
+  const allowedSeedModes =
+    draft.matchType === MATCH_TYPE.DOUBLES ? VALID_DOUBLES_SEED_MODES : VALID_SEED_MODES;
+  if (!allowedSeedModes.includes(draft.seedMode)) {
+    errors.seedMode =
+      draft.matchType === MATCH_TYPE.DOUBLES && draft.seedMode === SEED_MODE.POINTS
+        ? '双打没有赛季积分，请选择手工指定或按等级分'
+        : '请选择种子来源';
+  }
+  if (!VALID_SEED_COUNTS.includes(draft.seedCount)) {
+    errors.seedCount = '请选择种子数量';
   }
 
   if (draft.description.length > DESCRIPTION_MAX) {
@@ -594,9 +602,9 @@ function buildEventRecord(form, ctx = {}) {
       bronzeMode: KNOCKOUT_FORMATS.includes(draft.format) ? draft.bronzeMode : null,
       // 总决赛重赛只在双败赛制下有概念，其余留 null
       gfReset: DOUBLE_ELIM_FORMATS.includes(draft.format) ? draft.gfReset : null,
-      // 种子设置只跟单打走；双打赛事不抽签，两项留 null 表明「本场无此概念」
-      seedMode: draft.matchType === MATCH_TYPE.SINGLES ? draft.seedMode : null,
-      seedCount: draft.matchType === MATCH_TYPE.SINGLES ? draft.seedCount : null,
+      // 种子设置单打双打都要：单打算到人，双打算到组（两人一组的分数之和）
+      seedMode: draft.seedMode,
+      seedCount: draft.seedCount,
       location: draft.location,
       startTime: draft.startTime,
       quota: draft.quota,
@@ -643,6 +651,23 @@ function canPlayBronzeMatch(entryCount) {
 }
 
 /**
+ * 一个名次单位占几个人：单打 1，双打（一队）2。
+ *
+ * 【为什么名次校验要看它】
+ * 双打名次记在每个人头上（两人的名次相同），所以「一位冠军」在双打下
+ * 是两位得同一个人数。按 1 去卡，双打赛事永远结不了；按人数放行，又
+ * 要知道一位名次该有几个人。调用方给 matchType，或直接给 teamSize。
+ *
+ * @param {Object} [options]
+ * @returns {number}
+ */
+function teamSizeOf(options = {}) {
+  const explicit = Math.floor(Number(options.teamSize));
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  return options.matchType === MATCH_TYPE.DOUBLES ? 2 : 1;
+}
+
+/**
  * 校验并整形成一个赛事的名次表。
  *
  * 【为什么在这里判成对而不是在积分里判】
@@ -650,27 +675,31 @@ function canPlayBronzeMatch(entryCount) {
  * 并列」。若不在录入时挡一道，就会出现「并列模式却有人拿了第 4 名」
  * 这种记录——分数照算，但名次表自相矛盾，事后无法解释。
  *
- * 规则：
+ * 规则（「位」在双打下指「一组」，即 teamSize 人）：
  *   - 名次必须是正整数，且每人只出现一次；
- *   - 一场赛事有且只有一位冠军，亚军至多一位；
+ *   - 一场赛事有且只有一组冠军，亚军至多一组；
  *   - 循环赛 / 小组赛按「阶梯」口径：名次是积分表 1..N 排出来的，
  *     必然包含第 4 名，不再套用三四名成对规则；
  *   - 淘汰赛并列季军：不出现第 4 名；
- *   - 淘汰赛打三四名：第 3 名与第 4 名成对出现，且各至多一位——
- *     但参赛人数不足 4 人时打不出三四名赛（见 canPlayBronzeMatch），
- *     此时只可能出现一位季军，不能再要求成对。
+ *   - 淘汰赛打三四名：第 3 名与第 4 名成对出现，且各至多一组——
+ *     但参赛队伍不足 4 组时打不出三四名赛（见 canPlayBronzeMatch），
+ *     此时只可能出现一组季军，不能再要求成对。
  *
  * @param {Array<Object>} results [{ userId, placement }]
  * @param {Object} [options]
  * @param {string} [options.bronzeMode] 取值见 constants.EVENT_BRONZE_MODE
  * @param {string} [options.format] 赛制，取值见 constants.EVENT_FORMAT
- * @param {number} [options.entryCount] 实际参赛人数；不传则按「打得出来」处理
+ * @param {number} [options.entryCount] 实际参赛队伍数；不传则按「打得出来」处理
+ * @param {number} [options.matchType] 项目；据此推出 teamSize（单打 1 / 双打 2）
+ * @param {number} [options.teamSize] 直接指定一个名次单位的人数，优先于 matchType
  * @returns {{ok:boolean, results:Array<Object>, errors:Object, firstError:string}}
  */
 function validatePlacements(results, options = {}) {
   const bronzeMode = VALID_BRONZE_MODES.includes(options.bronzeMode)
     ? options.bronzeMode
     : DEFAULT_BRONZE_MODE;
+  const teamSize = teamSizeOf(options);
+  const unit = teamSize > 1 ? `一组（${teamSize} 人）` : '一位';
 
   const list = asArray(results);
   if (list.length === 0) {
@@ -697,8 +726,8 @@ function validatePlacements(results, options = {}) {
   // 必然出现第 4 名，也谈不上季军成对。套用淘汰赛的三四名规则会把正常名次表
   // 判成非法，赛事永远结不了。这里只守住「每人一次、正整数、恰有一位冠军」。
   if (LADDER_FORMATS.includes(options.format)) {
-    if (countOf(1) !== 1) {
-      const message = '一场赛事有且只有一位冠军';
+    if (countOf(1) !== teamSize) {
+      const message = `一场赛事有且只有${unit}冠军`;
       return { ok: false, results: [], errors: { results: message }, firstError: message };
     }
     return { ok: true, results: normalized, errors: {}, firstError: '' };
@@ -709,15 +738,15 @@ function validatePlacements(results, options = {}) {
   const bronzePlayable = canPlayBronzeMatch(options.entryCount);
 
   let message = '';
-  if (countOf(1) !== 1) {
-    message = '一场赛事有且只有一位冠军';
-  } else if (countOf(2) > 1) {
-    message = '亚军只能有一位';
+  if (countOf(1) !== teamSize) {
+    message = `一场赛事有且只有${unit}冠军`;
+  } else if (countOf(2) > teamSize) {
+    message = `亚军只能有${unit}`;
   } else if (bronzeMode === EVENT_BRONZE_MODE.TIED && countOf(4) > 0) {
     message = '并列季军模式下不应出现第 4 名';
-  } else if (bronzeMode === EVENT_BRONZE_MODE.PLAYOFF && countOf(3) > 1) {
+  } else if (bronzeMode === EVENT_BRONZE_MODE.PLAYOFF && countOf(3) > teamSize) {
     message = '打三四名模式下第 3 名只能有一位';
-  } else if (bronzeMode === EVENT_BRONZE_MODE.PLAYOFF && countOf(4) > 1) {
+  } else if (bronzeMode === EVENT_BRONZE_MODE.PLAYOFF && countOf(4) > teamSize) {
     message = '打三四名模式下第 4 名只能有一位';
   } else if (bronzeMode === EVENT_BRONZE_MODE.PLAYOFF && !bronzePlayable && countOf(4) > 0) {
     message = '本场参赛人数不足 4 人，打不出三四名赛，不应出现第 4 名';
@@ -827,7 +856,7 @@ function buildEventRow(event, ctx = {}) {
     isFinished: event.status === EVENT_STATUS.FINISHED,
     timeText: formatDateTime(event.startTime),
     location: event.location || '',
-    // 抽签参数：仅单打赛事有，双打为 null
+    // 抽签参数：单打双打都有（双打的种子是「两人一组」，seedCount 指组数）
     seedModeLabel: SEED_MODE_LABEL[event.seedMode] || '',
     seedMode: event.seedMode || '',
     // 手工指定种子的赛事，抽签前必须先在界面上点名排位（决策 9.4）；
@@ -849,7 +878,7 @@ function buildEventRow(event, ctx = {}) {
     canStart: canStartEvent(event, actor),
     canCheckIn: canCheckIn(event, actor),
     canFinish: canFinishEvent(event, actor),
-    // 抽签入口：仅单打、报名中、有管理权。已抽过签后仍为 true，
+    // 抽签入口：报名中、有管理权（单打双打都可）。已抽过签后仍为 true，
     // 好让管理员在开赛前重抽；已开赛 / 已有比赛生效由服务端最终把关
     canDraw: canDrawEvent(event, actor),
   };

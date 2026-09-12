@@ -294,7 +294,7 @@ Page({
 
     const needed = this.data.view.manualSeedNeeded || 0;
     if (picked.length >= needed) {
-      this.setData({ seedError: `一共只需指定 ${needed} 位种子` });
+      this.setData({ seedError: `一共只需指定 ${needed} ${this.data.view.seedUnit || '位种子'}` });
       return undefined;
     }
 
@@ -320,7 +320,7 @@ Page({
     const picked = this.data.seedPicked;
     if (picked.length !== needed) {
       const short = needed - picked.length;
-      this.setData({ seedError: `还需指定 ${short} 位种子` });
+      this.setData({ seedError: `还需指定 ${short} ${this.data.view.seedUnit || '位种子'}` });
       return undefined;
     }
 

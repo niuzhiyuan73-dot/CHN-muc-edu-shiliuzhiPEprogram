@@ -188,7 +188,7 @@ describe('canCheckIn —— 干事代签只限本学院', () => {
   });
 });
 
-describe('startBlockedReason —— 单打未抽签不得开赛', () => {
+describe('startBlockedReason —— 未抽签不得开赛', () => {
   test('单打没抽签时给出「请先抽签」', () => {
     assert.equal(startBlockedReason(openEvent()), '请先抽签，再开始赛事');
   });
@@ -197,8 +197,15 @@ describe('startBlockedReason —— 单打未抽签不得开赛', () => {
     assert.equal(startBlockedReason(openEvent({ draw: { seedValue: 1 } })), '');
   });
 
-  test('双打不支持抽签，不受此限', () => {
-    assert.equal(startBlockedReason(openEvent({ matchType: MATCH_TYPE.DOUBLES })), '');
+  test('双打同样要先抽签才能开始', () => {
+    assert.equal(
+      startBlockedReason(openEvent({ matchType: MATCH_TYPE.DOUBLES })),
+      '请先抽签，再开始赛事'
+    );
+    assert.equal(
+      startBlockedReason(openEvent({ matchType: MATCH_TYPE.DOUBLES, draw: { seedValue: 1 } })),
+      ''
+    );
   });
 
   test('赛事不存在时给出提示', () => {
@@ -220,8 +227,8 @@ describe('canDrawEvent —— 抽签资格（仅管理员）', () => {
     assert.equal(canDrawEvent(openEvent({ status: EVENT_STATUS.FINISHED }), admin()), false);
   });
 
-  test('双打赛事不出现抽签（决策 1）', () => {
-    assert.equal(canDrawEvent(openEvent({ matchType: MATCH_TYPE.DOUBLES }), admin()), false);
+  test('双打赛事同样可抽签，与单打同步', () => {
+    assert.equal(canDrawEvent(openEvent({ matchType: MATCH_TYPE.DOUBLES }), admin()), true);
   });
 
   test('普通会员与访客都不行', () => {
@@ -437,13 +444,36 @@ describe('validateEvent —— 发布校验', () => {
     assert.equal(validateEvent(validForm({ seedCount: 4 })).ok, true);
   });
 
-  test('双打不需要种子来源与数量', () => {
-    const result = validateEvent(
-      validForm({ matchType: MATCH_TYPE.DOUBLES, seedMode: '', seedCount: '' })
+  test('双打与单打同步：也要显式选种子来源与数量', () => {
+    const noMode = validateEvent(
+      validForm({ matchType: MATCH_TYPE.DOUBLES, seedMode: '', seedCount: 8 })
     );
-    assert.equal(result.ok, true);
-    assert.equal(result.draft.seedMode, '');
-    assert.equal(result.draft.seedCount, null);
+    assert.equal(noMode.ok, false);
+    assert.match(noMode.errors.seedMode, /种子来源/);
+
+    const noCount = validateEvent(
+      validForm({ matchType: MATCH_TYPE.DOUBLES, seedMode: SEED_MODE.ELO, seedCount: '' })
+    );
+    assert.equal(noCount.ok, false);
+    assert.match(noCount.errors.seedCount, /种子数量/);
+  });
+
+  test('双打没有赛季积分，按积分定种子被拒并说明原因', () => {
+    const result = validateEvent(
+      validForm({ matchType: MATCH_TYPE.DOUBLES, seedMode: SEED_MODE.POINTS, seedCount: 8 })
+    );
+    assert.equal(result.ok, false);
+    assert.match(result.errors.seedMode, /没有赛季积分/);
+
+    // 手工指定 / 按等级分都能通过
+    assert.equal(
+      validateEvent(validForm({ matchType: MATCH_TYPE.DOUBLES, seedMode: SEED_MODE.MANUAL })).ok,
+      true
+    );
+    assert.equal(
+      validateEvent(validForm({ matchType: MATCH_TYPE.DOUBLES, seedMode: SEED_MODE.ELO })).ok,
+      true
+    );
   });
 
   test('必须选择单打或双打', () => {
@@ -493,12 +523,14 @@ describe('buildEventRecord —— 组装赛事记录', () => {
     assert.equal(result.record.draw, null, '创建时还没抽签');
   });
 
-  test('双打不写种子字段——抽签只对单打开放', () => {
-    const result = buildEventRecord(validForm({ matchType: MATCH_TYPE.DOUBLES }), {
-      actor: staff('s1'),
-    });
-    assert.equal(result.record.seedMode, null);
-    assert.equal(result.record.seedCount, null);
+  test('双打同样落种子字段——双打也要抽签，种子是「两人一组」', () => {
+    const result = buildEventRecord(
+      validForm({ matchType: MATCH_TYPE.DOUBLES, seedMode: SEED_MODE.MANUAL, seedCount: 4 }),
+      { actor: staff('s1') }
+    );
+    assert.equal(result.ok, true);
+    assert.equal(result.record.seedMode, SEED_MODE.MANUAL);
+    assert.equal(result.record.seedCount, 4);
   });
 
   test('记下发布人，昵称缺失时逐层兜底', () => {

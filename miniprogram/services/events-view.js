@@ -59,9 +59,9 @@ const { canConfirm, canRecordScore, isParticipant, needsScore } = require('./mat
 const { canManageCollegeEvent, buildCollegeEventRow } = require('./college-event.js');
 const { canSubmitCollegeEntry, canReviewCollegeEntry } = require('./college-entry.js');
 const { statusTagOf } = require('./match-view.js');
-// 手工指定种子要凑几位，与真正抽签时同一把尺子（种子数与参赛人数的较小者），
-// 免得界面点名点到一个算法并不接受的数量
-const { actualSeedCount } = require('./draw.js');
+// 手工指定种子要凑几位，与真正抽签时同一把尺子（种子数与参赛人数的较小者）；
+// 双打每两位参赛者编成一队，人数是组数的两倍，见 manualPlayersNeeded
+const { actualSeedCount, manualPlayersNeeded, splitTeamId } = require('./draw.js');
 const {
   getCurrentUser,
   getMembers,
@@ -286,13 +286,19 @@ function placementLabelOf(placement) {
   return Number.isFinite(rank) ? `第 ${rank} 名` : '';
 }
 
-/** 三四名赛口径的说明文案，录入名次时要照着填 */
+/**
+ * 三四名赛口径的说明文案，录入名次时要照着填。
+ * 双打一个名次对应一整支队伍（两人），量词与人数都要跟着换。
+ */
 function bronzeHintOf(event) {
   const mode = (event && event.bronzeMode) || DEFAULT_BRONZE_MODE;
+  const doubles = Boolean(event && event.matchType === MATCH_TYPE.DOUBLES);
+  const unit = doubles ? '一组（2 人）' : '一位';
+  const pairWord = doubles ? '两组' : '两位';
   if (mode === EVENT_BRONZE_MODE.PLAYOFF) {
-    return '本场为「打三四名」：第 3 名与第 4 名各一位，成对出现';
+    return `本场为「打三四名」：第 3 名与第 4 名各${unit}，成对出现`;
   }
-  return '本场为「并列季军」：两位半决赛负者都填第 3 名，不要出现第 4 名';
+  return `本场为「并列季军」：${pairWord}半决赛负者都填第 3 名，不要出现第 4 名`;
 }
 
 /**
@@ -568,8 +574,36 @@ function describeDraw(draw) {
 }
 
 /**
+ * 一方的显示名：把该方成员的名字用顿号连起来。
+ *
+ * 单打一方只有一人，得到的就是昵称；双打一方两人，会显示「甲、乙」。
+ * 查不到档案时退回编号——宁可露出一个编号，也不能显示空白。
+ *
+ * @param {Array<string>} members 该方成员编号（单打一人、双打两人）
+ * @param {Map<string, Object>} memberMap
+ * @returns {string}
+ */
+function teamTextOf(members, memberMap) {
+  const ids = asArray(members).filter(Boolean);
+  if (ids.length === 0) return '待定';
+  return ids.map((id) => (memberMap.get(id) || {}).nickName || id).join('、');
+}
+
+/**
+ * 一个签位编号的显示名。签位编号单打是人、双打是两人拼成的队号
+ * （见 draw.teamIdOf），拆开后再交给 teamTextOf。
+ *
+ * @param {string} id
+ * @param {Map<string, Object>} memberMap
+ * @returns {string}
+ */
+function entryTextOf(id, memberMap) {
+  return teamTextOf(splitTeamId(id), memberMap);
+}
+
+/**
  * 轮空名单的文案。轮空的人不动手就进下一轮，但必须让人看得见，
- * 否则名单上少了两个人会以为抽签漏了。
+ * 否则名单上少了两个人会以为抽签漏了。双打轮空的是整支队伍，两人一起显示。
  *
  * @param {Object} draw
  * @param {Map<string, Object>} memberMap
@@ -578,7 +612,7 @@ function describeDraw(draw) {
 function byeTextOf(draw, memberMap) {
   const byes = asArray(draw && draw.byes);
   if (byes.length === 0) return '';
-  const names = byes.map((id) => (memberMap.get(id) || {}).nickName || id);
+  const names = byes.map((id) => entryTextOf(id, memberMap));
   return `轮空直接晋级：${names.join('、')}`;
 }
 
@@ -608,7 +642,6 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
   // 多阶段赛制（分组、双败）要按「阶段优先」排：否则双败的总决赛轮次是 1，
   // 会排到第 2 轮的胜者组之前；小组赛的各组也会和淘汰赛同轮号交错
   const stageFirst = grouped || doubleElim;
-  const nameOf = (id) => (id ? (memberMap.get(id) || {}).nickName || id : '待定');
 
   // 录分的权限要和真正写入时一致：参赛者本人、管理员，或干事代录本学院
   // 有人上场的比赛（见 match-record.canRecordScore 与 mock.submitMatch）。
@@ -653,8 +686,9 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
         roundText: roundLabelOf(record.round, totalRounds, record.stage),
         // 小组赛的比赛带 group 段，界面上要标出是哪一组；0 号组也要标
         groupText: hasGroup(record.group) ? groupLabelOf(record.group, format) : '',
-        teamAText: nameOf(record.teamA && record.teamA[0]),
-        teamBText: nameOf(record.teamB && record.teamB[0]),
+        // 双打两边各两人：两名成员的名字一起显示，不再只露第一人
+        teamAText: teamTextOf(record.teamA, memberMap),
+        teamBText: teamTextOf(record.teamB, memberMap),
         timeText: record.matchTime ? formatDateTime(record.matchTime) : '',
         scoreText: hasScore ? formatScore(record.scoreA, record.scoreB) : '',
         winnerSide: record.winner || '',
@@ -691,7 +725,6 @@ function buildStandings(event, records, memberMap, actor = null) {
   const eventId = event && event._id;
   const format = formatOf(event);
   const actorId = actor ? actor._id : null;
-  const nameOf = (id) => (memberMap.get(id) || {}).nickName || id;
 
   return groups.map((item) => {
     const groupMatches = asArray(records).filter(
@@ -702,20 +735,26 @@ function buildStandings(event, records, memberMap, actor = null) {
     return {
       group: item.group,
       groupLabel: groupLabelOf(item.group, format),
-      rows: rows.map((row) => ({
-        userId: row.id,
-        rank: row.rank,
-        rankText: row.rank === 1 ? '1' : String(row.rank),
-        nickName: nameOf(row.id),
-        avatarText: avatarOf(nameOf(row.id)),
-        avatarUrl: (memberMap.get(row.id) || {}).avatarUrl || '',
-        played: row.played,
-        wins: row.wins,
-        losses: row.losses,
-        gameDiffText: signedText(row.gameDiff),
-        pointDiffText: signedText(row.pointDiff),
-        isMe: row.id === actorId,
-      })),
+      rows: rows.map((row) => {
+        // 双打的积分表一行是一支队伍，编号拆开是两名成员；单打拆出本人
+        const ids = splitTeamId(row.id);
+        const first = memberMap.get(ids[0]) || {};
+        return {
+          userId: row.id,
+          rank: row.rank,
+          rankText: row.rank === 1 ? '1' : String(row.rank),
+          nickName: teamTextOf(ids, memberMap),
+          avatarText: avatarOf(first.nickName || row.id),
+          avatarUrl: first.avatarUrl || '',
+          played: row.played,
+          wins: row.wins,
+          losses: row.losses,
+          gameDiffText: signedText(row.gameDiff),
+          pointDiffText: signedText(row.pointDiff),
+          // 双打里「我」是队里的一员：任一人是我就高亮整行
+          isMe: Boolean(actorId && ids.includes(actorId)),
+        };
+      }),
     };
   });
 }
@@ -832,6 +871,7 @@ async function loadEventDetailView(eventId, options = {}) {
       byeText: '',
       seedCandidates: [],
       manualSeedNeeded: 0,
+      seedUnit: '位种子',
       resultRows: [],
       hasResults: false,
     };
@@ -873,12 +913,64 @@ async function loadEventDetailView(eventId, options = {}) {
     hasStandings: standings.some((group) => group.rows.length > 0),
     drawText: describeDraw(event.draw),
     byeText: byeTextOf(event.draw, memberMap),
-    // 手工指定种子要凑几位：参赛人数不够种子数时，人人都是种子
+    // 手工指定种子要凑几位：参赛人数不够种子数时，人人都是种子。
+    // 双打每两位参赛者编成一队，管理员要点的人数是一样两倍（每组 2 人）
     seedCandidates,
-    manualSeedNeeded: actualSeedCount(row.seedCount, seedCandidates.length),
+    manualSeedNeeded: row.isDoubles
+      ? manualPlayersNeeded(row.seedCount, seedCandidates.length)
+      : actualSeedCount(row.seedCount, seedCandidates.length),
+    // 点名单位：单打点的是种子本人，双打点的是参赛者（每 2 人合成 1 组种子）。
+    // 放在视图模型里，界面文案与页面提示就同一份口径，不必各自判断项目
+    seedUnit: row.isDoubles ? '位参赛者' : '位种子',
     resultRows,
     hasResults: resultRows.length > 0,
   };
+}
+
+/**
+ * 抽签结果里出现过的队伍编号（去重、保序）。
+ * 单败淘汰看签位 slots，循环 / 小组看各组名单；两处都空时返回空数组。
+ *
+ * @param {Object} draw
+ * @returns {string[]}
+ */
+function drawnTeamIds(draw) {
+  const groups = asArray(draw && draw.groups);
+  const source =
+    groups.length > 0 ? groups.flatMap((item) => asArray(item.entries)) : asArray(draw && draw.slots);
+  return Array.from(new Set(source.filter(Boolean)));
+}
+
+/**
+ * 双打名次录入的名单行：一行一支队伍，两人一起显示。
+ *
+ * 【为什么按队而不按人】
+ * 名次记在个人头上，但双打的名次天然属于一支队伍——两人同一次考核。
+ * 让人各填一遍既容易填出不一样的数，也会被成对校验挡下。这里按队给行，
+ * 提交时再由页面把一行的名次摊到两名成员身上。
+ *
+ * @param {string[]} teamIds
+ * @param {Map<string, Object>} memberMap
+ * @returns {Array<Object>}
+ */
+function buildTeamRows(teamIds, memberMap) {
+  return asArray(teamIds).map((teamId) => {
+    const ids = splitTeamId(teamId);
+    const first = memberMap.get(ids[0]) || {};
+    return {
+      userId: teamId,
+      // 提交时要据它把一行的名次摊到两名成员头上
+      userIds: ids,
+      nickName: teamTextOf(ids, memberMap),
+      avatarText: avatarOf(first.nickName || teamId),
+      avatarUrl: first.avatarUrl || '',
+      statusLabel: '',
+      checkedIn: false,
+      isMe: false,
+      canCheckIn: false,
+      statText: '',
+    };
+  });
 }
 
 /**
@@ -945,7 +1037,13 @@ async function loadEventPlacementView(eventId, options = {}) {
   ]);
   const row = buildEventRow(event, { actor, signups });
   const memberMap = new Map(asArray(members).map((member) => [member._id, member]));
-  const rows = buildSignupRows(signups, memberMap, { actor, event });
+  // 双打按队伍录入名次（一行两人），单打按人。双打一旦抽过签，队伍就由
+  // 签表定了；极端情况下没有签表时退回按人，至少不挡住录入
+  const teamIds = row.isDoubles ? drawnTeamIds(event.draw) : [];
+  const rows =
+    teamIds.length > 0
+      ? buildTeamRows(teamIds, memberMap)
+      : buildSignupRows(signups, memberMap, { actor, event });
   const canEdit = canFinishEvent(event, actor);
 
   let statusNote = '';
@@ -1039,9 +1137,13 @@ module.exports = {
   totalRoundsOf,
   maxRoundOf,
   describeDraw,
+  teamTextOf,
+  entryTextOf,
   byeTextOf,
   buildBracketRows,
   buildStandings,
+  drawnTeamIds,
+  buildTeamRows,
   loadEventsView,
   loadEventDetailView,
   loadEventPlacementView,

@@ -1475,9 +1475,11 @@ test('赛事详情 —— 找不到的赛事给出提示而不是白屏', async 
 
 test('赛事详情 —— 开始赛事之后可以给报名者代签', async () => {
   loginAs(ADMIN);
-  // 双打无需抽签即可开赛，专测「开赛后代签」这一段
-  const created = await publishTestEvent({ matchType: MATCH_TYPE.DOUBLES });
+  // 单打双打都要先抽签才能开赛，路线与真人一致：发布 → 两人报名 → 抽签 → 开赛
+  const created = await publishTestEvent({ seedCount: 2 });
   await facade.signUpEvent(created._id, 'u06');
+  await facade.signUpEvent(created._id, 'u01');
+  await facade.drawEvent(created._id, ADMIN._id, { seedValue: 11 });
 
   const page = instantiate(eventDetailConfig);
   await page.onLoad({ eventId: created._id });
@@ -1486,11 +1488,12 @@ test('赛事详情 —— 开始赛事之后可以给报名者代签', async () 
   await page.onStart();
   assert.strictEqual(page.data.view.event.isOngoing, true);
 
-  assert.strictEqual(page.data.view.signupRows[0].canCheckIn, true);
+  const rowOf = (userId) => page.data.view.signupRows.find((row) => row.userId === userId);
+  assert.strictEqual(rowOf('u06').canCheckIn, true);
   await page.onCheckIn({ currentTarget: { dataset: { userId: 'u06' } } });
 
-  assert.strictEqual(page.data.view.signupRows[0].checkedIn, true);
-  assert.strictEqual(page.data.view.signupRows[0].canCheckIn, false);
+  assert.strictEqual(rowOf('u06').checkedIn, true);
+  assert.strictEqual(rowOf('u06').canCheckIn, false);
 });
 
 test('赛事详情 —— 单打没抽签就点开始赛事：不生效并提示先抽签', async () => {
@@ -1697,7 +1700,7 @@ test('发布赛事 —— 小组赛可选出线人数，组数与出线人数一
   assert.strictEqual(created.advancePerGroup, 2);
 });
 
-test('发布赛事 —— 切到双打会把赛制收回单败淘汰', () => {
+test('发布赛事 —— 切到双打：赛制保留，种子来源去掉「按赛季积分」', () => {
   loginAs(ADMIN);
   const page = instantiate(eventEditConfig);
   page.onLoad();
@@ -1705,13 +1708,20 @@ test('发布赛事 —— 切到双打会把赛制收回单败淘汰', () => {
   page.onPickFormat({ detail: { value: '2' } });
   assert.strictEqual(page.data.form.format, EVENT_FORMAT.GROUP_KNOCKOUT);
 
+  // 单打下先选一个双打没有的来源，验证切换时会被清掉
+  page.onPickSeedMode({ detail: { value: '2' } });
+  assert.strictEqual(page.data.form.seedMode, SEED_MODE.POINTS);
+
   page.onPickMatchType({ detail: { value: '1' } }); // 双打
-  assert.strictEqual(
-    page.data.form.format,
-    EVENT_FORMAT.SINGLE_ELIM,
-    '双打不支持新赛制，必须收回单败，免得提交了抽签却被拦'
-  );
-  assert.strictEqual(page.data.formatIndex, 0);
+
+  // 双打与单打同步：赛制照常可选，不再被一刀收回单败
+  assert.strictEqual(page.data.form.format, EVENT_FORMAT.GROUP_KNOCKOUT);
+  assert.strictEqual(page.data.formatIndex, 2);
+
+  // 来源只剩手工 / 等级分两项，「按赛季积分」不再出现
+  assert.deepStrictEqual(page.data.seedModes, ['手工指定', '按等级分']);
+  assert.strictEqual(page.data.seedModeIndex, 0);
+  assert.strictEqual(page.data.form.seedMode, '', '原先选的按积分在双打下不合法，要清掉重选');
 });
 
 test('发布赛事 —— 选双败淘汰：可关掉总决赛重赛，组数与三四名留空', async () => {
@@ -1800,9 +1810,11 @@ test('录入名次 —— 未登录时整页挡住，不给名单', async () => 
 
 test('录入名次 —— 一个名次都没填就提交，给出提示', async () => {
   loginAs(ADMIN);
-  // 双打无需抽签即可开赛，专注名次录入这一段
-  const created = await publishTestEvent({ matchType: MATCH_TYPE.DOUBLES });
+  // 单打双打都要先抽签，路线与真人一致：发布 → 两人报名 → 抽签 → 开赛
+  const created = await publishTestEvent({ seedCount: 2 });
   await facade.signUpEvent(created._id, 'u06');
+  await facade.signUpEvent(created._id, 'u01');
+  await facade.drawEvent(created._id, ADMIN._id, { seedValue: 11 });
   await facade.startEvent(created._id, ADMIN._id);
 
   const page = instantiate(eventPlacementConfig);
@@ -1815,16 +1827,19 @@ test('录入名次 —— 一个名次都没填就提交，给出提示', async 
 
 test('录入名次 —— 提交后赛事结束、名次落定', async () => {
   loginAs(ADMIN);
-  // 双打无需抽签即可开赛，专注名次录入这一段
-  const created = await publishTestEvent({ matchType: MATCH_TYPE.DOUBLES });
+  // 单打双打都要先抽签，路线与真人一致：发布 → 两人报名 → 抽签 → 开赛
+  const created = await publishTestEvent({ seedCount: 2 });
   await facade.signUpEvent(created._id, 'u06');
+  await facade.signUpEvent(created._id, 'u01');
+  await facade.drawEvent(created._id, ADMIN._id, { seedValue: 11 });
   await facade.startEvent(created._id, ADMIN._id);
 
   const page = instantiate(eventPlacementConfig);
   await page.onLoad({ eventId: created._id });
-  assert.strictEqual(page.data.view.rows.length, 1);
+  assert.strictEqual(page.data.view.rows.length, 2);
 
   page.onInputPlacement({ currentTarget: { dataset: { index: 0 } }, detail: { value: '1' } });
+  page.onInputPlacement({ currentTarget: { dataset: { index: 1 } }, detail: { value: '2' } });
 
   const before = calls.backCount;
   await page.onSubmit();
@@ -1833,7 +1848,42 @@ test('录入名次 —— 提交后赛事结束、名次落定', async () => {
   const events = await facade.getEvents();
   const finished = events.find((item) => item._id === created._id);
   assert.strictEqual(finished.status, EVENT_STATUS.FINISHED);
-  assert.deepStrictEqual(finished.results, [{ userId: 'u06', placement: 1 }]);
+  assert.deepStrictEqual(finished.results, [
+    { userId: 'u06', placement: 1 },
+    { userId: 'u01', placement: 2 },
+  ]);
+});
+
+test('录入名次 —— 双打按队给行（两人一起显示），一行名次摊到两名成员', async () => {
+  loginAs(ADMIN);
+  // 双打与单打同步：4 人组成 2 队，路线为 发布 → 报名 → 抽签 → 开赛
+  const created = await publishTestEvent({ matchType: MATCH_TYPE.DOUBLES, seedCount: 2 });
+  const players = ['u01', 'u02', 'u03', 'u04'];
+  for (const userId of players) await facade.signUpEvent(created._id, userId);
+  await facade.drawEvent(created._id, ADMIN._id, { seedValue: 11 });
+  await facade.startEvent(created._id, ADMIN._id);
+
+  const page = instantiate(eventPlacementConfig);
+  await page.onLoad({ eventId: created._id });
+
+  // 一行一支队，名字是两人用顿号连起来；userId 是队号，userIds 是两名成员
+  assert.strictEqual(page.data.view.rows.length, 2, '两队两行，不是四人四行');
+  const champion = page.data.view.rows[0];
+  assert.strictEqual(champion.userIds.length, 2);
+  assert.ok(champion.nickName.includes('、'), `双打一行要显示两人：${champion.nickName}`);
+
+  // 只给冠军队那行填 1，提交即结束（双打冠军恰为队里两人）
+  page.onInputPlacement({ currentTarget: { dataset: { index: 0 } }, detail: { value: '1' } });
+  await page.onSubmit();
+
+  const finished = (await facade.getEvents()).find((item) => item._id === created._id);
+  assert.strictEqual(finished.status, EVENT_STATUS.FINISHED);
+  assert.deepStrictEqual(
+    finished.results.map((row) => row.userId).sort(),
+    champion.userIds.slice().sort(),
+    '一行名次摊到两名成员'
+  );
+  assert.ok(finished.results.every((row) => row.placement === 1), '两人名次相同');
 });
 
 /* ============================================================
@@ -3232,9 +3282,18 @@ test('发布学院赛 —— 填齐配置可发布，落库即报名中', async 
   page.onPickDate({ detail: { value: '2026-10-01' } });
   page.onPickTime({ detail: { value: '09:00' } });
   page.onInputLocation({ detail: { value: '体育馆' } });
-  // 勾选三个小项，勾选状态也跟着回写
-  page.onToggleLegPlan({ detail: { value: ['MS', 'WS', 'XD'] } });
-  assert.strictEqual(page.data.legOptions.find((item) => item.value === 'WS').checked, true);
+
+  // 默认先摆一项男单，点两次「+」依次补齐女单与男双，行号即出场顺序
+  assert.deepStrictEqual(page.data.form.legPlan, ['MS']);
+  page.onAddLeg();
+  page.onAddLeg();
+  assert.deepStrictEqual(page.data.form.legPlan, ['MS', 'WS', 'MD']);
+  assert.strictEqual(page.data.legRows.length, 3);
+
+  // 把第 3 项改成混双，验证按行改项目
+  page.onPickLeg({ currentTarget: { dataset: { row: 2 } }, detail: { value: '4' } });
+  assert.strictEqual(page.data.legRows[2].label, '混双');
+  assert.deepStrictEqual(page.data.form.legPlan, ['MS', 'WS', 'XD']);
 
   calls.backCount = 0;
   await page.onSubmit();
@@ -3254,7 +3313,7 @@ test('发布学院赛 —— 填齐配置可发布，落库即报名中', async 
   assert.strictEqual(list[0].tieNetMode, 'win_diff');
 });
 
-test('发布学院赛 —— 没选小项被拒，且不落库', async () => {
+test('发布学院赛 —— 至少留一个小项：最后一个删不掉，空序列也进不了库', async () => {
   loginAs(ADMIN);
   const page = instantiate(collegeEventEditConfig);
   page.onLoad();
@@ -3262,8 +3321,22 @@ test('发布学院赛 —— 没选小项被拒，且不落库', async () => {
   page.onInputTitle({ detail: { value: '学院团体赛' } });
   page.onPickDate({ detail: { value: '2026-10-01' } });
   page.onPickTime({ detail: { value: '09:00' } });
-  await page.onSubmit();
 
+  // 默认就一项，删不动
+  assert.deepStrictEqual(page.data.form.legPlan, ['MS']);
+  page.onRemoveLeg({ currentTarget: { dataset: { row: 0 } } });
+  assert.deepStrictEqual(page.data.form.legPlan, ['MS'], '最后一个小项删不掉');
+  assert.strictEqual(page.data.legRows.length, 1);
+
+  // 加一项后可以删回去，但仍旧留一项
+  page.onAddLeg();
+  assert.deepStrictEqual(page.data.form.legPlan, ['MS', 'WS']);
+  page.onRemoveLeg({ currentTarget: { dataset: { row: 1 } } });
+  assert.deepStrictEqual(page.data.form.legPlan, ['MS']);
+
+  // 序列若被清空（例如从别处塞进来），服务端仍拦下且不落库
+  page.setData({ form: { ...page.data.form, legPlan: [] } });
+  await page.onSubmit();
   assert.match(page.data.errors.legPlan, /至少安排一个小项/);
   assert.strictEqual((await facade.getCollegeEvents()).length, 0, '校验不过不落库');
 });
@@ -3276,7 +3349,6 @@ test('发布学院赛 —— 先到 N 场胜时不校验净胜口径', async () 
   page.onInputTitle({ detail: { value: '学院团体赛' } });
   page.onPickDate({ detail: { value: '2026-10-01' } });
   page.onPickTime({ detail: { value: '09:00' } });
-  page.onToggleLegPlan({ detail: { value: ['MS'] } });
   page.onPickTieAlgo({ detail: { value: '1' } });
   await page.onSubmit();
 

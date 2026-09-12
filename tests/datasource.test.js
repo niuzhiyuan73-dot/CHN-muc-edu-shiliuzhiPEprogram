@@ -1221,14 +1221,19 @@ describe('mock 数据源 —— 赛事闭环', () => {
     '录入名次 —— 没报名的人拿不到名次',
     withCleanStore(async () => {
       const me = await getManager();
-      // 双打不需要抽签，可直接开赛，专测「没报名的人拿不到名次」
-      const { record } = await mock.publishEvent(
-        eventDraft({ matchType: MATCH_TYPE.DOUBLES }),
-        me._id
-      );
+      const players = (await mock.getMembers())
+        .filter((m) => m._id !== me._id)
+        .slice(0, 2)
+        .map((m) => m._id);
+
+      // 单打双打都要先抽签才能开赛，这里按真人路线走一遍；管理员本人不报名
+      const { record } = await mock.publishEvent(eventDraft({ seedCount: 2 }), me._id);
+      for (const userId of players) await mock.signUpEvent(record._id, userId);
+      const drawn = await mock.drawEvent(record._id, me._id, { seedValue: 9 });
+      assert.equal(drawn.ok, true, drawn.message);
       await mock.startEvent(record._id, me._id);
 
-      const result = await mock.finishEvent(record._id, [{ userId: 'u01', placement: 1 }], me._id);
+      const result = await mock.finishEvent(record._id, [{ userId: me._id, placement: 1 }], me._id);
       assert.equal(result.ok, false);
       assert.match(result.firstError, /没有报名/);
       assert.equal((await mock.getEvents()).find((e) => e._id === record._id).status, EVENT_STATUS.ONGOING);
@@ -1417,11 +1422,16 @@ describe('mock 数据源 —— 赛事闭环', () => {
     '报名 —— 赛事开始后就截止了',
     withCleanStore(async () => {
       const me = await getManager();
-      // 双打不需要抽签，可直接开赛，专测「开赛后报名截止」
-      const { record } = await mock.publishEvent(
-        eventDraft({ matchType: MATCH_TYPE.DOUBLES }),
-        me._id
-      );
+      const players = (await mock.getMembers())
+        .filter((m) => m._id !== me._id)
+        .slice(0, 2)
+        .map((m) => m._id);
+
+      // 单打双打都要先抽签才能开赛；管理员本人留着不报名，用来试开赛后补报
+      const { record } = await mock.publishEvent(eventDraft({ seedCount: 2 }), me._id);
+      for (const userId of players) await mock.signUpEvent(record._id, userId);
+      const drawn = await mock.drawEvent(record._id, me._id, { seedValue: 9 });
+      assert.equal(drawn.ok, true, drawn.message);
       await mock.startEvent(record._id, me._id);
 
       const result = await mock.signUpEvent(record._id, me._id);

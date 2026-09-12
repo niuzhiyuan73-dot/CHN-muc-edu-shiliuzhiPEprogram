@@ -3,9 +3,14 @@
  * ============================================================
  * utils/bracket.js 保证「签位怎么摆」；这一层保证「摆谁进去」不出错：
  *   1. 谁参赛——未取消的报名者，不看签到，退赛的人不许再进签表；
- *   2. 谁是种子、什么顺序——三种来源各按各的规矩；
+ *   2. 谁是种子、什么顺序——三种来源各按各的规矩（双打只有手工 / 等级分）；
  *   3. 结果可复核——同一个 seedValue 必得同一张签表。
- * 再钉住几个「不该抽签」的场景（双打、非报名阶段、人不够）。
+ * 再钉住几个「不该抽签」的场景（非报名阶段、人不够、双打人不够）。
+ *
+ * 【双打为什么也在这里】
+ * 双打与单打共用同一张签表算法，差别只在「谁算一个签位」：单打是一人，
+ * 双打是两人拼成的一支队伍。配对发生在 planDraw 内部（见 planDoublesEntries），
+ * 所以配对规则也必须在这一层钉死，否则管理员点的人与他心里的队伍对不上。
  * ============================================================
  */
 
@@ -16,6 +21,11 @@ const {
   entryIdsOf,
   actualSeedCount,
   seedRankOf,
+  teamIdOf,
+  splitTeamId,
+  teamSeedRankOf,
+  manualPlayersNeeded,
+  planDoublesEntries,
   resolveSeeds,
   planDraw,
   buildDrawRecord,
@@ -38,6 +48,7 @@ const {
   RATING_POOL,
   SIGNUP_STATUS,
   EVENT_FORMAT,
+  TEAM_ID_SEPARATOR,
 } = require('../miniprogram/utils/constants.js');
 const { DEFAULT_FORMAT } = require('../miniprogram/utils/match-format.js');
 
@@ -65,6 +76,31 @@ function singlesEvent(overrides = {}) {
     seedCount: 8,
     ...overrides,
   };
+}
+
+/**
+ * 一位带双打等级分的会员。
+ * 双打的种子只看双打池（决策 1），所以这里不写 ratings.singles。
+ */
+function doublesMember(id, { elo = 1450 } = {}) {
+  return { _id: id, ratings: { [RATING_POOL.DOUBLES]: { elo } } };
+}
+
+/** 一场双打赛事，报名中 */
+function doublesEvent(overrides = {}) {
+  return {
+    _id: 'e2',
+    matchType: MATCH_TYPE.DOUBLES,
+    status: EVENT_STATUS.SIGNUP,
+    seedMode: SEED_MODE.ELO,
+    seedCount: 2,
+    ...overrides,
+  };
+}
+
+/** 两人编号拼成的队号，与 draw.teamIdOf 同形 */
+function teamOf(a, b) {
+  return [a, b].join(TEAM_ID_SEPARATOR);
 }
 
 describe('entryIdsOf —— 参赛者口径', () => {
@@ -245,13 +281,6 @@ describe('planDraw —— 整体与拒绝条件', () => {
     assert.notEqual(top, second);
   });
 
-  test('双打赛事拒绝抽签', () => {
-    const event = singlesEvent({ matchType: MATCH_TYPE.DOUBLES });
-    const plan = planDraw({ event, signups, members, seedValue: 1 });
-    assert.equal(plan.ok, false);
-    assert.match(plan.message, /双打/);
-  });
-
   test('已开赛或已结束都不许抽签', () => {
     for (const status of [EVENT_STATUS.ONGOING, EVENT_STATUS.FINISHED]) {
       const plan = planDraw({ event: singlesEvent({ status }), signups, members, seedValue: 1 });
@@ -281,6 +310,208 @@ describe('planDraw —— 整体与拒绝条件', () => {
     const plan = planDraw({ event: null, signups, members, seedValue: 1 });
     assert.equal(plan.ok, false);
     assert.match(plan.message, /不存在/);
+  });
+});
+
+describe('双打 —— 队号、配对与抽签', () => {
+  /** 6 人，双打等级分两两成档，正好编成 3 队 */
+  const sixMembers = [
+    doublesMember('u1', { elo: 1600 }),
+    doublesMember('u2', { elo: 1580 }),
+    doublesMember('u3', { elo: 1450 }),
+    doublesMember('u4', { elo: 1440 }),
+    doublesMember('u5', { elo: 1300 }),
+    doublesMember('u6', { elo: 1290 }),
+  ];
+  const sixSignups = sixMembers.map((m) => signup(m._id));
+
+  test('队号是两人编号拼成的串，拆得回来', () => {
+    assert.equal(teamIdOf(['u1', 'u2']), teamOf('u1', 'u2'));
+    assert.deepEqual(splitTeamId(teamOf('u1', 'u2')), ['u1', 'u2']);
+    // 单打编号拆出来还是一个人，两种项目共用同一套签表算法
+    assert.deepEqual(splitTeamId('u1'), ['u1']);
+    assert.deepEqual(splitTeamId(''), []);
+  });
+
+  test('teamSeedRankOf —— 一队的排位依据是两人双打等级分之和', () => {
+    const map = new Map(sixMembers.map((m) => [m._id, m]));
+    assert.equal(teamSeedRankOf(['u1', 'u2'], map), 3180);
+    assert.equal(teamSeedRankOf(['u5', 'u6'], map), 2590);
+  });
+
+  test('teamSeedRankOf —— 查无此人不硬凑默认分', () => {
+    const map = new Map(sixMembers.map((m) => [m._id, m]));
+    assert.equal(teamSeedRankOf(['u1', 'nobody'], map), 1600);
+  });
+
+  test('按等级分：双打池高分两两成队，队伍分从高到低即种子顺序', () => {
+    const plan = planDraw({
+      event: doublesEvent({ seedCount: 2 }),
+      signups: sixSignups,
+      members: sixMembers,
+      seedValue: 9,
+    });
+
+    assert.equal(plan.ok, true);
+    assert.deepEqual(
+      plan.entries.slice(0, 2),
+      [teamOf('u1', 'u2'), teamOf('u3', 'u4')],
+      '最强的两人先成一队，次强的两人成第二队'
+    );
+    assert.deepEqual(plan.seeds, [teamOf('u1', 'u2'), teamOf('u3', 'u4')]);
+    assert.equal(plan.entries.length, 3, '6 人编 3 队');
+    assert.equal(plan.size, 4, '3 队补到 4 个签位');
+    // 3 队 4 签，多出的一个签位是轮空，只能落在 1 号种子队上
+    assert.deepEqual(plan.byes, [teamOf('u1', 'u2')]);
+  });
+
+  test('按等级分：取的确实是双打池，不是单打池', () => {
+    // 单打分与双打分刻意相反：只有按双打池排，才会是 u3/u4 先成一队
+    const members = [
+      { _id: 'u1', ratings: { singles: { elo: 1900 }, doubles: { elo: 1200 } } },
+      { _id: 'u2', ratings: { singles: { elo: 1850 }, doubles: { elo: 1210 } } },
+      { _id: 'u3', ratings: { singles: { elo: 1300 }, doubles: { elo: 1600 } } },
+      { _id: 'u4', ratings: { singles: { elo: 1250 }, doubles: { elo: 1650 } } },
+    ];
+    const plan = planDraw({
+      event: doublesEvent({ seedCount: 2 }),
+      signups: members.map((m) => signup(m._id)),
+      members,
+      seedValue: 1,
+    });
+
+    assert.equal(plan.ok, true);
+    assert.deepEqual(plan.entries, [teamOf('u4', 'u3'), teamOf('u2', 'u1')], '双打分高的两人先成一队');
+  });
+
+  test('手工指定：先点的人两两成队，前若干队为种子', () => {
+    const plan = planDraw({
+      event: doublesEvent({ seedMode: SEED_MODE.MANUAL, seedCount: 2 }),
+      signups: sixSignups,
+      members: sixMembers,
+      seedValue: 3,
+      manualOrder: ['u6', 'u1', 'u5', 'u2'],
+    });
+
+    assert.equal(plan.ok, true);
+    assert.deepEqual(
+      plan.seeds,
+      [teamOf('u6', 'u1'), teamOf('u5', 'u2')],
+      '1、2 号种子队 = 管理员点选的第 1–4 位，两人一队'
+    );
+    assert.deepEqual(plan.entries.slice(0, 2), plan.seeds);
+    // 剩下两位（u3、u4）由 seedValue 决定谁在前
+    assert.deepEqual(plan.entries.slice(2), [teamOf('u3', 'u4')]);
+  });
+
+  test('手工指定的点数必须是种子组数 × 2', () => {
+    const plan = planDraw({
+      event: doublesEvent({ seedMode: SEED_MODE.MANUAL, seedCount: 2 }),
+      signups: sixSignups,
+      members: sixMembers,
+      seedValue: 3,
+      manualOrder: ['u1', 'u2', 'u3'],
+    });
+
+    assert.equal(plan.ok, false);
+    assert.match(plan.message, /4 位参赛者/);
+  });
+
+  test('手工指定的种子必须在参赛者之中', () => {
+    const plan = planDraw({
+      event: doublesEvent({ seedMode: SEED_MODE.MANUAL, seedCount: 2 }),
+      signups: sixSignups,
+      members: sixMembers,
+      seedValue: 3,
+      manualOrder: ['u9', 'u1', 'u2', 'u3'],
+    });
+
+    assert.equal(plan.ok, false);
+    assert.match(plan.message, /参赛者/);
+  });
+
+  test('双打没有赛季积分，按积分定种子被拒', () => {
+    const plan = planDraw({
+      event: doublesEvent({ seedMode: SEED_MODE.POINTS }),
+      signups: sixSignups,
+      members: sixMembers.map((m) => ({ ...m, points: 30 })),
+      seedValue: 1,
+    });
+
+    assert.equal(plan.ok, false);
+    assert.match(plan.message, /没有赛季积分/);
+  });
+
+  test('人不够 4 名、或人数不是偶数时拒绝抽签', () => {
+    const two = planDraw({
+      event: doublesEvent(),
+      signups: ['u1', 'u2'].map((id) => signup(id)),
+      members: sixMembers.slice(0, 2),
+      seedValue: 1,
+    });
+    assert.equal(two.ok, false);
+    assert.match(two.message, /至少需要 4 名/);
+
+    const odd = planDraw({
+      event: doublesEvent(),
+      signups: ['u1', 'u2', 'u3', 'u4', 'u5'].map((id) => signup(id)),
+      members: sixMembers.slice(0, 5),
+      seedValue: 1,
+    });
+    assert.equal(odd.ok, false);
+    assert.match(odd.message, /偶数/);
+  });
+
+  test('生成的比赛两侧各两人，项目与池都按双打写死', () => {
+    const plan = planDraw({
+      event: doublesEvent({ seedCount: 2 }),
+      signups: sixSignups,
+      members: sixMembers,
+      seedValue: 9,
+    });
+    const drafts = buildBracketMatches(plan, {
+      event: { _id: 'e2', matchType: MATCH_TYPE.DOUBLES, location: '馆', startTime: null },
+    });
+
+    assert.ok(drafts.length > 0, '3 队 4 签，首轮应有一场');
+    for (const draft of drafts) {
+      assert.equal(draft.matchType, MATCH_TYPE.DOUBLES);
+      assert.equal(draft.pool, MATCH_TYPE_TO_POOL[MATCH_TYPE.DOUBLES]);
+      assert.equal(draft.teamA.length, 2, '双打一方是两个人');
+      assert.equal(draft.teamB.length, 2);
+    }
+  });
+
+  test('双败至少 4 队：2 队时报错', () => {
+    const plan = planDraw({
+      event: doublesEvent({ format: EVENT_FORMAT.DOUBLE_ELIM, seedCount: 2 }),
+      signups: ['u1', 'u2', 'u3', 'u4'].map((id) => signup(id)),
+      members: sixMembers.slice(0, 4),
+      seedValue: 1,
+    });
+
+    assert.equal(plan.ok, false);
+    assert.match(plan.message, /4 组参赛队伍/);
+  });
+
+  test('planDoublesEntries —— 手动调用与 planDraw 同一口径', () => {
+    const res = planDoublesEntries({
+      entries: ['u1', 'u2', 'u3', 'u4'],
+      members: sixMembers.slice(0, 4),
+      mode: SEED_MODE.ELO,
+      seedCount: 2,
+      seedValue: 1,
+    });
+
+    assert.equal(res.ok, true);
+    assert.deepEqual(res.entries, [teamOf('u1', 'u2'), teamOf('u3', 'u4')]);
+    assert.deepEqual(res.seeds, res.entries, '2 队配 2 组种子，人人都是种子');
+  });
+
+  test('manualPlayersNeeded —— 双打点的人数 = 种子组数 × 2，封顶参赛人数', () => {
+    assert.equal(manualPlayersNeeded(8, 6), 6, '3 队，种子组数最多 3');
+    assert.equal(manualPlayersNeeded(2, 8), 4, '2 组种子 = 4 位参赛者');
+    assert.equal(manualPlayersNeeded(8, 0), 0);
   });
 });
 

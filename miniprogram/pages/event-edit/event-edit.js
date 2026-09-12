@@ -37,6 +37,7 @@ const {
   SEED_MODE_LABEL,
   SEED_COUNTS,
   DEFAULT_SEED_COUNT,
+  DOUBLES_SEED_MODES,
 } = require('../../utils/constants.js');
 const {
   TITLE_MAX,
@@ -59,7 +60,7 @@ const MATCH_TYPES = [MATCH_TYPE.SINGLES, MATCH_TYPE.DOUBLES];
 const MATCH_TYPE_LABELS = ['单打', '双打'];
 
 /**
- * 赛制下拉。仅单打赛事显示（决策 5：新赛制只做单打）。
+ * 赛制下拉。单打双打都显示——双打同样要抽签定赛程，可选赛制与单打一致。
  * 顺序按「由简到繁」：单败 → 循环 → 小组 → 各复合形态；前两项的下标
  * 与旧版一致，老表单行为不受影响。
  */
@@ -83,13 +84,18 @@ const ADVANCE_OPTIONS = GROUP_CONFIG.ADVANCE_OPTIONS;
 const ADVANCE_LABELS = ADVANCE_OPTIONS.map((count) => `每组出线 ${count} 人`);
 const DEFAULT_ADVANCE_INDEX = ADVANCE_OPTIONS.indexOf(DEFAULT_ADVANCE_PER_GROUP);
 
-/** 种子来源下拉。仅单打赛事显示（决策 1） */
-const SEED_MODES = [SEED_MODE.MANUAL, SEED_MODE.ELO, SEED_MODE.POINTS];
-const SEED_MODE_LABELS = SEED_MODES.map((mode) => SEED_MODE_LABEL[mode]);
+/** 单打的种子来源下拉：手工 / 等级分 / 赛季积分 */
+const SINGLES_SEED_MODES = [SEED_MODE.MANUAL, SEED_MODE.ELO, SEED_MODE.POINTS];
+const SINGLES_SEED_MODE_LABELS = SINGLES_SEED_MODES.map((mode) => SEED_MODE_LABEL[mode]);
 
-/** 种子数量下拉。只认 2 / 4 / 8（决策 3），默认 8 */
+/** 双打的种子来源下拉：没有赛季积分，只认手工指定 / 按等级分（决策 1、3） */
+const DOUBLES_SEED_MODE_OPTIONS = DOUBLES_SEED_MODES;
+const DOUBLES_SEED_MODE_LABELS = DOUBLES_SEED_MODE_OPTIONS.map((mode) => SEED_MODE_LABEL[mode]);
+
+/** 种子数量下拉。只认 2 / 4 / 8（决策 3），默认 8。双打下数量指种子组数 */
 const SEED_COUNT_OPTIONS = SEED_COUNTS;
 const SEED_COUNT_LABELS = SEED_COUNTS.map((count) => `${count} 位`);
+const SEED_COUNT_TEAM_LABELS = SEED_COUNTS.map((count) => `${count} 组`);
 const DEFAULT_SEED_COUNT_INDEX = SEED_COUNTS.indexOf(DEFAULT_SEED_COUNT);
 
 /** 日期选择器的下界：今天。赛事不该往过去发 */
@@ -121,7 +127,8 @@ Page({
     levelIndex: 0,
     bronzeModes: BRONZE_LABELS,
     bronzeIndex: 0,
-    seedModes: SEED_MODE_LABELS,
+    // 种子来源的可选项随项目变：切到双打会去掉「按积分」（见 onPickMatchType）
+    seedModes: SINGLES_SEED_MODE_LABELS,
     seedModeIndex: 0,
     seedCounts: SEED_COUNT_LABELS,
     // 数量按决策 3 预填 8，来源仍需管理员显式选定
@@ -224,14 +231,20 @@ Page({
     const index = Number(event.detail.value);
     const type = MATCH_TYPES[index];
     if (type === undefined) return;
-    this.setData({ matchTypeIndex: index });
+    const doubles = type === MATCH_TYPE.DOUBLES;
+    // 种子来源与数量随项目换一档：双打没有赛季积分（来源只剩手工 / 等级分），
+    // 数量也从「几位」变成「几组」。若此前在单打下选了「按积分」，切到双打要
+    // 把它清掉，否则会带着一个双打不合法的来源提交，白白吃一条校验错误
+    const allowed = doubles ? DOUBLES_SEED_MODE_OPTIONS : SINGLES_SEED_MODES;
+    const resetMode = doubles && !allowed.includes(this.data.form.seedMode);
+    this.setData({
+      matchTypeIndex: index,
+      seedModes: doubles ? DOUBLES_SEED_MODE_LABELS : SINGLES_SEED_MODE_LABELS,
+      seedCounts: doubles ? SEED_COUNT_TEAM_LABELS : SEED_COUNT_LABELS,
+      seedModeIndex: resetMode ? 0 : this.data.seedModeIndex,
+    });
     this.setField('matchType', type);
-    // 新赛制只做单打（决策 5）：切到双打就把赛制收回单败淘汰，
-    // 免得带着分组赛制提交、抽签时却被「双打不支持抽签」挡下
-    if (type === MATCH_TYPE.DOUBLES && this.data.form.format !== DEFAULT_EVENT_FORMAT) {
-      this.setData({ formatIndex: FORMATS.indexOf(DEFAULT_EVENT_FORMAT) });
-      this.setField('format', DEFAULT_EVENT_FORMAT);
-    }
+    if (resetMode) this.setField('seedMode', '');
   },
 
   onPickFormat(event) {
@@ -289,7 +302,10 @@ Page({
 
   onPickSeedMode(event) {
     const index = Number(event.detail.value);
-    const mode = SEED_MODES[index];
+    // 取哪一张表要与界面显示的 seedModes 一致，否则双打下会错位取到「按积分」
+    const modes =
+      this.data.form.matchType === MATCH_TYPE.DOUBLES ? DOUBLES_SEED_MODE_OPTIONS : SINGLES_SEED_MODES;
+    const mode = modes[index];
     if (mode === undefined) return;
     this.setData({ seedModeIndex: index });
     this.setField('seedMode', mode);

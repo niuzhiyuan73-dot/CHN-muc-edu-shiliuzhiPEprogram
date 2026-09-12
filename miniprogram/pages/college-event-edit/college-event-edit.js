@@ -8,9 +8,10 @@
  * 小项序列、人数上下限、胜负算法、净胜口径、时间、场地、说明七项，
  * 说明还要一大块输入区，弹层里挤不下；带参数的独立页也更好扩展。
  *
- * 【为什么小项用多选而不是单选的赛制下拉】
- * 一场学院赛的大场由若干小项组成（例如男单 + 女单 + 混双），打哪几项
- * 由管理员一次配好。用勾选最直观，也避免「选了又换」时丢已选项。
+ * 【为什么小项要逐项添加而不是勾选】
+ * 一场学院赛的大场由若干小项按顺序组成（例如男单 → 女单 → 混双），
+ * 「打哪几项」与「第几项打什么」都是规则的一部分。勾选只是一个集合，
+ * 定不了先后；改成默认一项、点「+」逐项添加，录入顺序就是出场顺序。
  *
  * 【胜负算法为什么必选、净胜口径为什么按条件显示】
  * 「打满比净胜」与「先到 N 场胜」是两种完全不同的判分口径，留空取默认
@@ -39,6 +40,7 @@ const {
   TITLE_MAX,
   DESCRIPTION_MAX,
   LOCATION_MAX,
+  LEG_PLAN_MAX,
   canManageCollegeEvent,
 } = require('../../services/college-event.js');
 const { publishCollegeEvent, isMock } = require('../../services/index.js');
@@ -51,12 +53,41 @@ const TIE_ALGO_LABELS = TIE_ALGOS.map((algo) => TIE_ALGO_LABEL[algo]);
 const TIE_NET_MODES = [TIE_NET_MODE.WIN_DIFF, TIE_NET_MODE.POINT_DIFF];
 const TIE_NET_MODE_LABELS = TIE_NET_MODES.map((mode) => TIE_NET_MODE_LABEL[mode]);
 
-/** 小项勾选项。初值全不勾，由管理员显式挑 */
-const LEG_OPTIONS = ALL_LEG_DISCIPLINES.map((value) => ({
-  value,
-  label: LEG_DISCIPLINE_LABEL[value],
-  checked: false,
-}));
+/** 小项下拉的取值与文案：男单 / 女单 / 男双 / 女双 / 混双 */
+const LEG_VALUES = ALL_LEG_DISCIPLINES;
+const LEG_LABELS = LEG_VALUES.map((value) => LEG_DISCIPLINE_LABEL[value]);
+
+/** 新建表单默认先摆一项（男单），其余由管理员点「+」逐项加 */
+const DEFAULT_LEG_VALUE = LEG_VALUES[0];
+
+/**
+ * 小项序列 → 页面上的行。每行带 picker 的下标与展示文案。
+ * 行号即出场顺序：第 1 行打第 1 项。
+ *
+ * @param {string[]} legPlan
+ * @returns {Array<{row:number, value:string, valueIndex:number, label:string}>}
+ */
+function buildLegRows(legPlan) {
+  return (Array.isArray(legPlan) ? legPlan : []).map((value, row) => ({
+    row,
+    value,
+    // 取值不在池内时下标退回 0，至少让 picker 有个合法位置
+    valueIndex: Math.max(0, LEG_VALUES.indexOf(value)),
+    label: LEG_DISCIPLINE_LABEL[value] || value,
+  }));
+}
+
+/**
+ * 加一项时先挑还没出现过的项目，省得每次都要再改一下；
+ * 五项都出现过后就从男单再来一个（小项允许重复）。
+ *
+ * @param {string[]} legPlan
+ * @returns {string}
+ */
+function nextLegValue(legPlan) {
+  const used = new Set(Array.isArray(legPlan) ? legPlan : []);
+  return LEG_VALUES.find((value) => !used.has(value)) || LEG_VALUES[0];
+}
 
 /** 日期选择器的下界：今天。赛事不该往过去发 */
 function todayText(now = new Date()) {
@@ -73,8 +104,10 @@ Page({
     /** 没有发布权时的原因，非空就在页面上顶掉整张表单 */
     blockReason: '',
 
-    /** 小项勾选项与各下拉的数据源、当前下标 */
-    legOptions: LEG_OPTIONS.map((item) => ({ ...item })),
+    /** 小项行与下拉，以及各下拉的数据源、当前下标 */
+    legLabels: LEG_LABELS,
+    legRows: buildLegRows([DEFAULT_LEG_VALUE]),
+    legMax: LEG_PLAN_MAX,
     tieAlgos: TIE_ALGO_LABELS,
     tieAlgoIndex: TIE_ALGOS.indexOf(DEFAULT_TIE_ALGO),
     tieNetModes: TIE_NET_MODE_LABELS,
@@ -96,7 +129,8 @@ Page({
     form: {
       title: '',
       description: '',
-      legPlan: [],
+      // 默认摆一项（男单）：大场至少有得打，管理员再按需加
+      legPlan: [DEFAULT_LEG_VALUE],
       allowMultiEntry: DEFAULT_ALLOW_MULTI_ENTRY,
       rosterMin: ROSTER_LIMITS.DEFAULT_MIN,
       rosterMax: ROSTER_LIMITS.DEFAULT_MAX,
@@ -173,17 +207,54 @@ Page({
     this.setField('rosterMax', event.detail.value);
   },
 
-  /** 勾选 / 取消一个小项。checked 的取值就是 LEG_DISCIPLINE 的代码 */
-  onToggleLegPlan(event) {
-    const legPlan = Array.isArray(event.detail.value) ? [...event.detail.value] : [];
-    const picked = new Set(legPlan);
+  /**
+   * 写入小项序列：整块替换 form.legPlan 与界面上的行，并清掉旧错误。
+   * 一律走这里，免得某次改动只更新了一边（序列与行对不上）。
+   */
+  applyLegPlan(legPlan) {
     this.setData({
-      legOptions: this.data.legOptions.map((item) => ({
-        ...item,
-        checked: picked.has(item.value),
-      })),
+      form: { ...this.data.form, legPlan },
+      errors: { ...this.data.errors, legPlan: '' },
+      errorText: '',
+      legRows: buildLegRows(legPlan),
     });
-    this.setField('legPlan', legPlan);
+  },
+
+  /** 改某一行的项目 */
+  onPickLeg(event) {
+    const row = Number(event.currentTarget.dataset.row);
+    const value = LEG_VALUES[Number(event.detail.value)];
+    if (value === undefined) return;
+    const legPlan = (this.data.form.legPlan || []).slice();
+    if (!(row >= 0 && row < legPlan.length)) return;
+    legPlan[row] = value;
+    this.applyLegPlan(legPlan);
+  },
+
+  /** 加一个小项：默认挑还没出现过的项目，省得每次都要再改一下 */
+  onAddLeg() {
+    const legPlan = (this.data.form.legPlan || []).slice();
+    if (legPlan.length >= this.data.legMax) {
+      this.showToast(`一场大场最多 ${this.data.legMax} 个小项`);
+      return undefined;
+    }
+    legPlan.push(nextLegValue(legPlan));
+    this.applyLegPlan(legPlan);
+    return undefined;
+  },
+
+  /** 删掉某一行。至少保留一项——没有小项的大场排不出来 */
+  onRemoveLeg(event) {
+    const legPlan = (this.data.form.legPlan || []).slice();
+    if (legPlan.length <= 1) {
+      this.showToast('一场大场至少要有一个小项');
+      return undefined;
+    }
+    const row = Number(event.currentTarget.dataset.row);
+    if (!(row >= 0 && row < legPlan.length)) return undefined;
+    legPlan.splice(row, 1);
+    this.applyLegPlan(legPlan);
+    return undefined;
   },
 
   /** 是否允许多项兼报 */

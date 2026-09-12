@@ -22,6 +22,8 @@ const {
   maxRoundOf,
   describeDraw,
   byeTextOf,
+  teamTextOf,
+  entryTextOf,
   buildBracketRows,
   buildSignupRows,
   formatOf,
@@ -30,6 +32,9 @@ const {
   hasAutoPlacements,
   groupLabelOf,
   buildStandings,
+  drawnTeamIds,
+  buildTeamRows,
+  loadEventPlacementView,
 } = require('../miniprogram/services/events-view.js');
 // 积分榜的搜索与排行榜页是同一套逻辑，页面复用它的纯函数
 const { describeSearch } = require('../miniprogram/services/rank-view.js');
@@ -46,6 +51,7 @@ const {
   ROLE,
   SIGNUP_STATUS,
   EVENT_FORMAT,
+  TEAM_ID_SEPARATOR,
 } = require('../miniprogram/utils/constants.js');
 
 /* ============================================================
@@ -608,6 +614,104 @@ test('buildStandings —— 还没抽签（没有分组）时不硬造一张空�
     buildStandings({ _id: 'e1', draw: { groups: [] } }, [], BRACKET_MEMBERS),
     []
   );
+});
+
+/* ---------- 双打：一方的两人要一起显示 ---------- */
+
+/** 队号 = 两名成员编号用分隔符拼起来，与 draw.teamIdOf 同一拼法 */
+const teamId = (a, b) => [a, b].join(TEAM_ID_SEPARATOR);
+
+const DOUBLES_MEMBERS = new Map([
+  ['a', { _id: 'a', nickName: '甲' }],
+  ['b', { _id: 'b', nickName: '乙' }],
+  ['c', { _id: 'c', nickName: '丙' }],
+  ['d', { _id: 'd', nickName: '丁' }],
+]);
+
+test('teamTextOf / entryTextOf / byeTextOf —— 双打一方两人一起显示', () => {
+  assert.strictEqual(teamTextOf(['a'], DOUBLES_MEMBERS), '甲', '单打仍是一人一名');
+  assert.strictEqual(teamTextOf(['a', 'b'], DOUBLES_MEMBERS), '甲、乙');
+  assert.strictEqual(teamTextOf([], DOUBLES_MEMBERS), '待定');
+  // 双打签位编号是队号，拆开后交给 teamTextOf
+  assert.strictEqual(entryTextOf(teamId('a', 'b'), DOUBLES_MEMBERS), '甲、乙');
+  // 查不到档案时退回编号，不留空白
+  assert.strictEqual(entryTextOf(teamId('a', 'ghost'), DOUBLES_MEMBERS), '甲、ghost');
+  assert.strictEqual(
+    byeTextOf({ byes: [teamId('a', 'b'), 'c'] }, DOUBLES_MEMBERS),
+    '轮空直接晋级：甲、乙、丙'
+  );
+});
+
+test('buildBracketRows —— 双打两边各显两人，不再只露第一人', () => {
+  const event = { _id: 'e1', matchType: MATCH_TYPE.DOUBLES, draw: { size: 4, slots: [] } };
+  const rows = buildBracketRows(
+    [
+      scheduledRecord({
+        matchType: MATCH_TYPE.DOUBLES,
+        teamA: ['a', 'b'],
+        teamB: ['c', 'd'],
+      }),
+    ],
+    event,
+    DOUBLES_MEMBERS,
+    { actor: null }
+  );
+
+  assert.strictEqual(rows[0].teamAText, '甲、乙');
+  assert.strictEqual(rows[0].teamBText, '丙、丁');
+});
+
+test('buildStandings —— 双打一行是一队，任一成员是我即高亮整行', () => {
+  const event = {
+    _id: 'e1',
+    matchType: MATCH_TYPE.DOUBLES,
+    format: EVENT_FORMAT.ROUND_ROBIN,
+    draw: { groups: [{ group: 0, entries: [teamId('a', 'b'), teamId('c', 'd')] }] },
+  };
+  const standings = buildStandings(
+    event,
+    [
+      scheduledRecord({
+        matchType: MATCH_TYPE.DOUBLES,
+        group: 0,
+        stage: BRACKET_STAGE.GROUP,
+        teamA: ['a', 'b'],
+        teamB: ['c', 'd'],
+        status: MATCH_STATUS.ACTIVE,
+        scoreA: [11],
+        scoreB: [7],
+        winner: 'A',
+      }),
+    ],
+    DOUBLES_MEMBERS,
+    { _id: 'b' }
+  );
+
+  const rows = standings[0].rows;
+  assert.strictEqual(rows[0].nickName, '甲、乙');
+  assert.strictEqual(rows[1].nickName, '丙、丁');
+  assert.strictEqual(rows[0].isMe, true, '乙是队里一员，整行都该高亮');
+  assert.strictEqual(rows[1].isMe, false);
+});
+
+test('drawnTeamIds / buildTeamRows —— 双打名次页一行一支队，带两名成员编号', () => {
+  assert.deepStrictEqual(
+    drawnTeamIds({ slots: [teamId('a', 'b'), teamId('c', 'd'), teamId('a', 'b')] }),
+    [teamId('a', 'b'), teamId('c', 'd')],
+    '去重且保序'
+  );
+  // 循环 / 小组看各组名单
+  assert.deepStrictEqual(
+    drawnTeamIds({ groups: [{ entries: [teamId('a', 'b')] }, { entries: [teamId('c', 'd')] }] }),
+    [teamId('a', 'b'), teamId('c', 'd')]
+  );
+  assert.deepStrictEqual(drawnTeamIds(null), []);
+
+  const rows = buildTeamRows([teamId('a', 'b'), teamId('c', 'd')], DOUBLES_MEMBERS);
+  assert.strictEqual(rows[0].userId, teamId('a', 'b'));
+  assert.deepStrictEqual(rows[0].userIds, ['a', 'b'], '提交时要据它把名次摊到两人');
+  assert.strictEqual(rows[0].nickName, '甲、乙');
+  assert.strictEqual(rows[0].avatarText, '甲');
 });
 
 /* ============================================================

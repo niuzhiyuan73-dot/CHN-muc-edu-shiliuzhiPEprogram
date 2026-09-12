@@ -524,6 +524,26 @@ const SEED_COUNTS = [2, 4, 8];
 /** 默认种子数量（决策 3） */
 const DEFAULT_SEED_COUNT = 8;
 
+/**
+ * 双打可用的种子来源。
+ *
+ * 【为什么没有 points】
+ * 「按赛季积分」排的是个人赛季积分，双打赛事本身不计分（决策 3），
+ * 拿一个与双打无关的数去排双打种子毫无意义。双打只按等级分（两人
+ * 双打分之和）或手工指定。
+ */
+const DOUBLES_SEED_MODES = [SEED_MODE.MANUAL, SEED_MODE.ELO];
+
+/**
+ * 双打队伍在签表里的编号分隔符。
+ *
+ * 签表算法只把「参赛者」当成不透明的字符串，单打是一位选手的编号，
+ * 双打则把同队两人的编号拼成一个串（如 `u1|u2`）。这样 bracket.js、
+ * 分组与逐轮推进全都不用为双打改一行——它们照旧搬字符串即可。
+ * 编号本身由服务端生成，不含 `|`，因此这个分隔符不会误伤。
+ */
+const TEAM_ID_SEPARATOR = '|';
+
 /** 参赛队伍标识 */
 const TEAM = {
   A: 'A',
@@ -867,6 +887,8 @@ module.exports = {
   SEED_MODE_LABEL,
   SEED_COUNTS,
   DEFAULT_SEED_COUNT,
+  DOUBLES_SEED_MODES,
+  TEAM_ID_SEPARATOR,
   EVENT_FORMAT,
   EVENT_FORMAT_LABEL,
   DEFAULT_EVENT_FORMAT,

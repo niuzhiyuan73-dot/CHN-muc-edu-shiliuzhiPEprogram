@@ -299,13 +299,8 @@ describe('云函数 —— 赛事闭环', () => {
     const repo = createFixtureRepo();
     const admin = 'openid-admin';
 
-    // 双打不支持抽签，可越过「单打必须先抽签才能开赛」的闸门
-    const { data: published } = await on(
-      repo,
-      'publishEvent',
-      { form: { ...draft, matchType: MATCH_TYPE.DOUBLES } },
-      admin
-    );
+    // 单打双打都要先抽签才能开赛，链路按真人路线走：发布 → 报名 → 抽签 → 开赛
+    const { data: published } = await on(repo, 'publishEvent', { form: draft }, admin);
     const id = published.record._id;
 
     // 报名：报名人由 OpenID 决定，不接受前端传的 userId
@@ -315,6 +310,12 @@ describe('云函数 —— 赛事闭环', () => {
 
     const mine = await on(repo, 'getEventSignups', { eventId: id }, 'openid-u01');
     assert.equal(mine.data.length, 1);
+
+    // 再来一位，签表才排得出来
+    await on(repo, 'signUpEvent', { id }, 'openid-u02');
+
+    const drawn = await on(repo, 'drawEvent', { id, seedValue: 7 }, admin);
+    assert.equal(drawn.data.ok, true, drawn.data.message);
 
     const started = await on(repo, 'startEvent', { id }, admin);
     assert.equal(started.data.record.status, EVENT_STATUS.ONGOING);
@@ -338,17 +339,17 @@ describe('云函数 —— 赛事闭环', () => {
   test('录入名次 —— 没报名的人拿不到名次', async () => {
     const repo = createFixtureRepo();
     const admin = 'openid-admin';
-    // 双打不需要抽签，可直接开赛，专测「没报名的人拿不到名次」
-    const { data: published } = await on(
-      repo,
-      'publishEvent',
-      { form: { ...draft, matchType: MATCH_TYPE.DOUBLES } },
-      admin
-    );
+    // 双打也要先抽签，链路统一按单打走：发布 → 两人报名 → 抽签 → 开赛
+    const { data: published } = await on(repo, 'publishEvent', { form: { ...draft, seedCount: 2 } }, admin);
     const id = published.record._id;
+    await on(repo, 'signUpEvent', { id }, 'openid-u01');
+    await on(repo, 'signUpEvent', { id }, 'openid-u02');
+    const drawn = await on(repo, 'drawEvent', { id, seedValue: 7 }, admin);
+    assert.equal(drawn.data.ok, true, drawn.data.message);
     await on(repo, 'startEvent', { id }, admin);
 
-    const res = await on(repo, 'finishEvent', { id, results: [{ userId: 'u02', placement: 1 }] }, admin);
+    // u03 从没报名，名次给不进去
+    const res = await on(repo, 'finishEvent', { id, results: [{ userId: 'u03', placement: 1 }] }, admin);
     assert.equal(res.data.ok, false);
     assert.match(res.data.firstError, /没有报名/);
   });
@@ -470,19 +471,21 @@ describe('云函数 —— 赛事闭环', () => {
     assert.match(again.data.message, /不能再重抽/);
   });
 
-  test('抽签 —— 双打赛事、开赛后、普通会员三种拒绝各说清原因', async () => {
+  test('抽签 —— 双打可抽、开赛后与普通会员两种拒绝各说清原因', async () => {
     const admin = 'openid-admin';
 
+    // 双打与单打同步：凑够 4 人（两对）就能正常抽签，不再被一刀切拒绝
     const doublesRepo = createFixtureRepo();
     const { data: doubles } = await on(
       doublesRepo,
       'publishEvent',
-      { form: { ...draft, matchType: MATCH_TYPE.DOUBLES } },
+      { form: { ...draft, matchType: MATCH_TYPE.DOUBLES, seedCount: 2 } },
       admin
     );
-    const doublesRes = await on(doublesRepo, 'drawEvent', { id: doubles.record._id }, admin);
-    assert.equal(doublesRes.data.ok, false);
-    assert.match(doublesRes.data.message, /双打/);
+    const doublesId = doubles.record._id;
+    await signUpAll(doublesRepo, doublesId, ['openid-u01', 'openid-u02', 'openid-u03', 'openid-u04']);
+    const doublesRes = await on(doublesRepo, 'drawEvent', { id: doublesId, seedValue: 7 }, admin);
+    assert.equal(doublesRes.data.ok, true, doublesRes.data.message);
 
     // 单打要先抽签才开得了赛，于是「开赛后不能再抽」就落在重抽这一步
     const startedRepo = createFixtureRepo();
