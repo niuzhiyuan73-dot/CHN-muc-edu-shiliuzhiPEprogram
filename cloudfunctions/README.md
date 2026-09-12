@@ -30,6 +30,15 @@
 
 ## 二、部署云函数
 
+> **改了代码就一定要重新部署。** 云函数不跟着小程序编译自动更新——只改
+> `miniprogram/` 或 `cloudfunctions/` 却没点「上传并部署」，线上跑的还是旧包。
+> 典型症状是新增的接口报 **`未知的操作：xxx`**：前端在调一个新 action，云端
+> 的处理器表里却没有它。本项目全部接口都挤在这一个 `data` 函数里，它不更新，
+> 新增的功能（学院赛的 `getCollegeEvents`、`publishCollegeEvent` 等）一律不生效。
+>
+> 判断依据：控制台 → 云函数 → `data` 的「更新时间」；改了代码没重新部署，
+> 这个时间就不会变。
+
 1. 在开发者工具里右键 `cloudfunctions/data` → **在终端中打开**，安装依赖：
 
    ```
@@ -43,23 +52,40 @@
 
    > 选「云端安装依赖」而非「所有文件」，这样 `node_modules` 不必上传。
 
-3. 上传前若改过 `miniprogram/` 下的共享纯逻辑（详见第五节），先跑一次
-   `npm run sync:cloud`，否则云端跑的还是旧算法。
+3. 上传前若改过 `miniprogram/` 下的共享纯逻辑（详见第六节），先跑一次
+   `npm run sync:cloud`，否则云端跑的还是旧算法；`npm run check:cloud-sync`
+   可确认镜像没有漂移。
+4. 部署要选对环境：必须是 `miniprogram/config.js` 里 `CLOUD_ENV_ID` 指向的
+   那个环境（当前为 `cloud1-d7g9o5ift32b465d7`）。账号下有多个环境时传错环境，
+   小程序连的仍是旧的。
 
 ## 三、建集合与索引
 
-在云开发控制台 → 数据库里建以下集合（名称须完全一致）：
+在云开发控制台 → 数据库里建 **11 个**集合（名称须完全一致）：个人赛 7 个，
+学院赛 4 个。学院赛独立成体系，不与个人赛共用集合。
+
+个人赛：
 
 | 集合 | 用途 |
 |---|---|
-| `users` | 会员档案（含 `openId`、等级分本身不存这里） |
-| `matches` | 比赛流水，等级分的唯一来源 |
-| `events` | 赛事 |
+| `users` | 会员档案与入会申请（含 `openId`、`college`；等级分本身不存这里） |
+| `matches` | 比赛流水，等级分的唯一来源（学院赛小场也写在这里） |
+| `events` | 个人赛事 |
+| `event_signups` | 赛事报名与签到 |
 | `announcements` | 公告 |
 | `seasons` | 赛季锚点与版本号，只会有 `_id = 'current'` 一条 |
-| `audit_logs` | 写操作留痕 |
+| `audit_logs` | 写操作留痕（当前不写入，可选） |
 
-索引（**权限选「仅创建者可读写」或「所有用户不可读写」，见第四节**）：
+学院赛：
+
+| 集合 | 用途 |
+|---|---|
+| `college_events` | 学院团体赛本体，与 `events` 平行 |
+| `college_entries` | 各学院参赛名单，键为「赛事 + 学院」 |
+| `ties` | 大场：两院之间的一轮对抗 |
+| `lineups` | 大场排阵，键为「大场 + 学院」 |
+
+索引（**权限选「仅创建者可读写」或「所有用户不可读写」，见第五节**）：
 
 | 集合 | 字段 | 唯一 | 为什么 |
 |---|---|---|---|
@@ -67,11 +93,20 @@
 | `matches` | `_id` | 主键 | 自然键当 `_id`，重复导入同一场比赛会撞主键而不是产生第二条 |
 | `matches` | `status` + `matchTime` | — | 回放要按「已生效 + 时间」扫流水 |
 | `matches` | `eventId` | — | 按赛事取比赛 |
+| `event_signups` | `eventId` + `userId` | — | 查某场赛事某人是否报名 |
+| `events` | `status` | — | 按状态筛选赛事 |
 | `announcements` | `status` | — | 首页只取已发布的 |
+| `college_entries` | `eventId` | — | 按学院赛查名单 |
+| `ties` | `eventId` + `round` | — | 按赛事与轮次查大场 |
+| `lineups` | `eventId` + `tieId` | — | 按赛事或大场查排阵 |
 
-> `rankings`、`event_signups` 两个集合名已在代码里预留（`utils/constants.js`
-> 的 `COLLECTION`），当前版本不写入，**不必建**。将来流水超过约 5000 场、
-> 需要把等级分改成快照时才用得上 `rankings`。
+> 只有 `rankings` 不必建：它在 `utils/constants.js` 的 `COLLECTION` 里预留了
+> 名字，但没有任何映射与读写。将来流水超过约 5000 场、需要把等级分改成快照时
+> 才用得上。
+>
+> `event_signups` 与 4 个学院赛集合都是**必建**的：报名 / 签到会写
+> `event_signups`；学院赛的名单、大场、排阵分别写另外 4 个。少建任何一个，
+> 对应步骤会直接报错。
 
 ## 四、创建第一个管理员（首次部署必做）
 
@@ -125,7 +160,7 @@
 ## 五、数据库安全规则
 
 **等级分只允许云函数写**——靠的是客户端根本没有写入口，而不是靠规则。
-但为了挡住绕过小程序直接调 SDK 的写，请把每个集合的权限设为
+但为了挡住绕过小程序直接调 SDK 的写，请把 **11 个业务集合全部** 的权限设为
 **「所有用户不可读写」**（云函数以管理员身份运行，不受该规则限制）。
 
 不要设成「所有用户可读」：那样任何人都能直接拉走全量会员与比赛数据。
@@ -150,8 +185,10 @@ npm run check:cloud-sync    # 只校验不写入，漂移时退出码 1
 测试立刻变红。
 
 清单在 `tools/sync-cloud-lib.js` 的 `MANIFEST`，只收「纯模块」（不碰 `wx`、不碰
-Node API、不做 I/O）。`seed.js`、`random.js`、`mock.js`、`*-store.js`、`*-view.js`
-都不上云。
+Node API、不做 I/O）。当前共 27 个文件，学院赛的纯逻辑（`college-event.js`、
+`college-entry.js`、`college-draw.js`、`college-tie.js`、`college-lineup.js`）
+与 `standings.js`、`permission.js` 都在其中。`seed.js`、`mock.js`、`*-store.js`、
+`*-view.js`（含 `college-store.js`、`college-view.js`）都不上云。
 
 ## 七、赛季初始化
 
