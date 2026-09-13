@@ -33,6 +33,8 @@ const {
   tieStatusOf,
   canStartTie,
   tieStatusLabelOf,
+  canAssignTieReferee,
+  legMatchIdsOf,
   summarizeTie,
   canFinishTie,
   entrantsForRound,
@@ -601,4 +603,110 @@ test('nextRoundPairsOf —— 轮空直接进下一轮，冠军决出后没有�
   const round2 = [{ round: 2, slot: 0, winner: 'A', status: TIE_STATUS.FINISHED }];
   assert.deepStrictEqual(entrantsForRound({ draw, ties: round2, round: 3 }), ['A']);
   assert.deepStrictEqual(nextRoundPairsOf({ draw, ties: round2, round: 2 }), []);
+});
+
+/* ============================================================
+ * 九、大场裁判（M6）
+ * ============================================================
+ * 大场是临场指挥的最小单位：一个裁判盯着这一整场（底下几个小项），
+ * 派一个人比逐个小项派更贴近实际。裁判存在大场上，开赛时下发给小场。
+ * ============================================================ */
+
+test('canAssignTieReferee —— 未结束的大场都能指派或改派', () => {
+  assert.strictEqual(canAssignTieReferee(tie()), true, '待排阵时就能先定人');
+  assert.strictEqual(
+    canAssignTieReferee(tie({ lineupA: true, lineupB: true })),
+    true,
+    '待开赛也能派'
+  );
+  assert.strictEqual(
+    canAssignTieReferee(tie({ status: TIE_STATUS.ONGOING })),
+    true,
+    '开打后临时换人也要允许，不然裁判迟到整场就废了'
+  );
+  assert.strictEqual(canAssignTieReferee(tie({ status: TIE_STATUS.FINISHED })), false);
+  assert.strictEqual(canAssignTieReferee(null), false);
+});
+
+test('legMatchIdsOf —— 抽出已生成的小场编号，没生成的不占位', () => {
+  const target = tie({
+    legs: [
+      { legNo: 1, discipline: 'MS', matchId: 'l_ce01_t_ce01_1_main_0_1' },
+      { legNo: 2, discipline: 'MD', matchId: '' },
+      { legNo: 3, discipline: 'XD', matchId: 'l_ce01_t_ce01_1_main_0_3' },
+    ],
+  });
+  assert.deepStrictEqual(legMatchIdsOf(target), [
+    'l_ce01_t_ce01_1_main_0_1',
+    'l_ce01_t_ce01_1_main_0_3',
+  ]);
+  assert.deepStrictEqual(legMatchIdsOf(tie({ legs: [] })), []);
+  assert.deepStrictEqual(legMatchIdsOf(null), []);
+});
+
+test('buildTiesForRound —— 新生成的大场裁判字段留空占位', () => {
+  const built = buildTiesForRound({
+    event: event(),
+    round: 1,
+    pairs: [['体育学院', '信息工程学院']],
+  })[0];
+  assert.strictEqual(built.referee, '');
+  assert.strictEqual(built.refereeAt, null);
+  assert.strictEqual(built.refereeBy, '');
+});
+
+test('buildLegMatchDrafts —— 大场裁判下发给每个小场', () => {
+  const lineups = [
+    { tieId: 't_ce01_1_main_0', college: '体育学院', entries: [{ legNo: 1, players: ['u01'] }] },
+    { tieId: 't_ce01_1_main_0', college: '信息工程学院', entries: [{ legNo: 1, players: ['u03'] }] },
+  ];
+  const at = new Date('2026-06-01T08:00:00');
+  const target = tie({
+    referee: 'u09',
+    refereeAt: at,
+    refereeBy: 'u01',
+    legs: [{ legNo: 1, discipline: 'MS', matchId: '', winner: null, outcome: null }],
+  });
+  const built = buildLegMatchDrafts({ event: event(), tie: target, lineups });
+  assert.strictEqual(built.ok, true);
+  assert.strictEqual(built.drafts[0].referee, 'u09');
+  assert.strictEqual(built.drafts[0].refereeBy, 'u01');
+  assert.strictEqual(built.drafts[0].refereeAt, at);
+});
+
+test('buildLegMatchDrafts —— 大场没派裁判时，小场也不带裁判（零回归）', () => {
+  const lineups = [
+    { tieId: 't_ce01_1_main_0', college: '体育学院', entries: [{ legNo: 1, players: ['u01'] }] },
+    { tieId: 't_ce01_1_main_0', college: '信息工程学院', entries: [{ legNo: 1, players: ['u03'] }] },
+  ];
+  const target = tie({
+    legs: [{ legNo: 1, discipline: 'MS', matchId: '', winner: null, outcome: null }],
+  });
+  const built = buildLegMatchDrafts({ event: event(), tie: target, lineups });
+  assert.strictEqual(built.drafts[0].referee, '');
+});
+
+test('buildTieRow —— 裁判姓名与改派权一并算好，模板不再判断', () => {
+  const row = buildTieRow(tie({ referee: 'u09' }), {
+    actor: ADMIN,
+    refereeName: '王裁判',
+  });
+  assert.strictEqual(row.referee, 'u09');
+  assert.strictEqual(row.refereeName, '王裁判');
+  assert.strictEqual(row.canAssignReferee, true);
+
+  // 普通会员看得到人，但没有改派权
+  const memberRow = buildTieRow(tie({ referee: 'u09' }), { actor: MEMBER, refereeName: '王裁判' });
+  assert.strictEqual(memberRow.refereeName, '王裁判');
+  assert.strictEqual(memberRow.canAssignReferee, true, 'canAssignReferee 只反映大场状态，权限由页面判');
+
+  // 已结束的大场不能再改派
+  const done = buildTieRow(tie({ referee: 'u09', status: TIE_STATUS.FINISHED }), { actor: ADMIN });
+  assert.strictEqual(done.canAssignReferee, false);
+});
+
+test('buildTieRow —— 没派裁判时字段兜底为空，不渲染 undefined', () => {
+  const row = buildTieRow(tie(), { actor: ADMIN });
+  assert.strictEqual(row.referee, '');
+  assert.strictEqual(row.refereeName, '');
 });

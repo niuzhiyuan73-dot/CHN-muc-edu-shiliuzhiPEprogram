@@ -201,6 +201,14 @@ function buildCollections(scope, inTx) {
       update: (id, patch) => col('lineups').doc(id).update({ data: withoutId(patch) }),
     },
 
+    // 实时比分：一场一条，_id = 'ls_' + matchId。轮询按编号逐条读，
+    // 因此不需要整表读——也就不提供 list（事务内外都用不着）。
+    liveScores: {
+      getById: (id) => readDoc(scope, COLLECTIONS.liveScores, id),
+      insert: (doc) => col('liveScores').doc(doc._id).set({ data: withoutId(doc) }),
+      update: (id, patch) => col('liveScores').doc(id).update({ data: withoutId(patch) }),
+    },
+
     announcements: {
       list: () => list('announcements'),
       getById: (id) => readDoc(scope, COLLECTIONS.announcements, id),

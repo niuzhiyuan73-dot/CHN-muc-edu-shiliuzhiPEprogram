@@ -53,6 +53,7 @@ const MANIFEST = [
   // 纯逻辑服务
   'services/replay.js',
   'services/match-record.js',
+  'services/live-score.js',
   'services/member-review.js',
   'services/announcement.js',
   'services/event.js',

@@ -37,6 +37,7 @@ const {
   getCollegeTies,
   getCollegeLineups,
   getMatchRecords,
+  getLiveScores,
   isMockNow,
 } = require('./index.js');
 const {
@@ -62,8 +63,9 @@ const {
   firstRoundPairsOf,
   isDoublesDiscipline,
 } = require('./college-tie.js');
-const { canConfirm, canRecordScore, canRevoke, needsScore } = require('./match-record.js');
+const { canConfirm, canRecordScore, canRevoke, hasReferee, needsScore } = require('./match-record.js');
 const { statusTagOf } = require('./match-view.js');
+const { describeLive } = require('./live-view.js');
 const {
   canSubmitLineup,
   defaultLineupEntries,
@@ -302,19 +304,50 @@ async function loadCollegeEventDetailView(eventId, options = {}) {
   const canSubmitEntry = canSubmitCollegeEntry(event, actor);
 
   // 大场行：在共用的 buildTieRow 之上补「我能不能排阵 / 该显示什么按钮」
-  const tieRows = ties.map((tie) => {
-    const row = buildTieRow(tie, { actor });
+  const memberById = new Map((members || []).map((member) => [member._id, member]));
+  // 指派大场裁判只给管理员，且只在大场未结束时开。这里用不带状态门槛的
+  // canManageCollegeEvent：开赛后仍要能改派（见 canAssignTieReferee）
+  const mayAssignReferee = canManageCollegeEvent(actor);
+
+  // 大场行先出底座：每行的 legRows 已经带 matchId，实时比分的对齐靠它
+  const baseTieRows = ties.map((tie) => {
+    const refereeName = tie.referee ? nameOf(memberById.get(tie.referee)) || tie.referee : '';
+    const row = buildTieRow(tie, { actor, refereeName });
     const myLineup = actor
       ? lineups.find((item) => item.tieId === tie._id && item.college === actor.college)
       : null;
     const canLineup = canSubmitLineup(tie, actor, { college: actor && actor.college, event });
     return {
       ...row,
+      // buildTieRow 只判「这一场还能不能改派」，管理员与否在这里合上
+      canAssignReferee: Boolean(row.canAssignReferee && mayAssignReferee),
       canSubmitLineup: canLineup,
       lineupActionText: canLineup ? (myLineup ? '修改排阵' : '提交排阵') : '',
       myLineupSubmitted: Boolean(myLineup),
     };
   });
+
+  // 小场的实时比分：小场的 matches 把 eventId 留空（个人赛事读路径不认它们），
+  // 所以不能按 eventId 查台账。改为把这一场所有小场的 matchId 收齐，一次批量
+  // 取实时比分——与轮询适配器同一个读接口，首屏与增量同源。
+  const legIds = [];
+  for (const row of baseTieRows) {
+    for (const leg of row.legRows) {
+      if (leg.matchId) legIds.push(leg.matchId);
+    }
+  }
+  const liveViews = legIds.length > 0 ? await getLiveScores(legIds) : [];
+  const liveByMatch = new Map(
+    (Array.isArray(liveViews) ? liveViews : []).map((view) => [view.matchId, view])
+  );
+  const tieRows = baseTieRows.map((row) => ({
+    ...row,
+    // 每个小项各自贴实时比分（按 matchId 对齐）；没有的保持原引用
+    legRows: row.legRows.map((leg) => {
+      const live = describeLive(liveByMatch.get(leg.matchId));
+      return live ? { ...leg, live, liveActive: true } : leg;
+    }),
+  }));
 
   const draw = event && event.draw ? event.draw : null;
   const resultRows = buildCollegeResultRows(event);
@@ -654,6 +687,13 @@ async function loadCollegeMatchView(matchId, options = {}) {
       record.status !== MATCH_STATUS.ACTIVE
   );
 
+  // 大场指派的裁判会随开赛铺到小场（见 college-tie.buildLegMatchDrafts），
+  // 权限判定只看小场自己，所以这里能直接把「谁执法」摊平给页面
+  const officiated = hasReferee(record);
+  const refereeName = officiated ? nameOfId(record.referee) : '';
+  const isRefereeSelf = Boolean(officiated && actor && actor._id === record.referee);
+  const refereeRestricted = Boolean(officiated && !isRefereeSelf && !canManageCollegeEvent(actor));
+
   const doubles = isDoublesDiscipline(record.discipline);
   const winnerSide = record.winner || null;
   // 只有 mock 放宽才能确认、严格口径却不行时，才需要提示「这是演示口径」
@@ -712,6 +752,13 @@ async function loadCollegeMatchView(matchId, options = {}) {
     canRevoke: canRevokeNow,
     canForfeit,
     isDoubles: doubles,
+    // 裁判：本小场由谁执法；不是他本人、又不是管理员时，录入被收口，得说清
+    hasReferee: officiated,
+    refereeName,
+    refereeRestricted,
+    refereeNotice: refereeRestricted
+      ? `本场由 ${refereeName} 裁判执法，仅裁判与管理员可录入比分`
+      : '',
     // 单打小场立刻计个人 ELO（一级 K）；双打小场只汇总大场，不动个人分
     eloHint: doubles
       ? '双打小场只决定大场胜负，不改变任何人的个人等级分'

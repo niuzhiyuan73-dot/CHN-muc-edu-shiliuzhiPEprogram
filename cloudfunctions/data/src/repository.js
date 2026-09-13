@@ -43,6 +43,9 @@
  *   repo.lineups.getById(id)            → Promise<Object|null>
  *   repo.lineups.insert(doc)            → Promise<Object>  doc 必须自带 _id
  *   repo.lineups.update(id, patch)      → Promise<void>
+ *   repo.liveScores.getById(id)         → Promise<Object|null>  实时比分，_id = 'ls_' + matchId
+ *   repo.liveScores.insert(doc)         → Promise<Object>  doc 必须自带 _id
+ *   repo.liveScores.update(id, patch)   → Promise<void>
  *   repo.announcements.list()           → Promise<Array<Object>>
  *   repo.announcements.getById(id)      → Promise<Object|null>
  *   repo.announcements.insert(doc)      → Promise<Object>
@@ -73,6 +76,7 @@ const COLLECTIONS = {
   collegeEntries: COLLECTION.COLLEGE_ENTRIES,
   ties: COLLECTION.TIES,
   lineups: COLLECTION.COLLEGE_LINEUPS,
+  liveScores: COLLECTION.LIVE_SCORES,
   announcements: COLLECTION.ANNOUNCEMENTS,
   seasons: COLLECTION.SEASONS,
   rankings: COLLECTION.RANKINGS,

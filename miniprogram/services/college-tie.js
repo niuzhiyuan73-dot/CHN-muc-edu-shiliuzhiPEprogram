@@ -155,6 +155,11 @@ function buildTiesForRound({ event, round, pairs, stage = BRACKET_STAGE.MAIN } =
       })),
       winner: null,
       status: DEFAULT_TIE_STATUS,
+      // 大场裁判：指派的界面锚点，也是生成小场时的带入来源（§6.1）。
+      // 空串 = 未指定，行为与没有这个字段完全一致
+      referee: '',
+      refereeAt: null,
+      refereeBy: '',
       // 双方是否已提交本大场的出场安排（记录本身落 lineups 集合）
       lineupA: false,
       lineupB: false,
@@ -294,6 +299,10 @@ function buildLegMatchDrafts({ event = null, tie = null, lineups = [], now = nul
       outcome: MATCH_OUTCOME.NORMAL,
       forfeitBy: '',
       status: MATCH_STATUS.PENDING,
+      // 大场已指派裁判时带给小场：指派的界面在大场，权限判定在小场
+      referee: (tie && tie.referee) || '',
+      refereeAt: (tie && tie.refereeAt) || null,
+      refereeBy: (tie && tie.refereeBy) || '',
     });
   }
 
@@ -410,6 +419,35 @@ function canStartTie(tie, actor, options = {}) {
 /** 大场状态文案；未知取值给「未知状态」而不是空白 */
 function tieStatusLabelOf(tie) {
   return TIE_STATUS_LABEL[tieStatusOf(tie)] || '未知状态';
+}
+
+/**
+ * 这个大场能不能指派 / 改派 / 取消裁判。
+ *
+ * 与比赛层不同，大场「进行中」仍可指派：小项比赛要到 startTie 才生成，
+ * 而裁判本就是「录分之前」才指派（需求原文）。若把进行中也禁掉，学院赛
+ * 就永远指派不了裁判。只有已结束（胜负已定）才锁死，不给「改历史」留口子。
+ *
+ * @param {Object|null} tie
+ * @returns {boolean}
+ */
+function canAssignTieReferee(tie) {
+  return Boolean(tie) && tie.status !== TIE_STATUS.FINISHED;
+}
+
+/**
+ * 该大场已生成的小项比赛编号。
+ *
+ * 管理员在大场一次指派，要落到下面每一场小场（§6.1）——权限判定只读
+ * 比赛记录自己的 `referee`，所以必须逐个写上。没生成比赛的小项跳过，
+ * 等 startTie 时再从 tie.referee 带入。
+ *
+ * @param {Object|null} tie
+ * @returns {Array<string>}
+ */
+function legMatchIdsOf(tie) {
+  const legs = tie && Array.isArray(tie.legs) ? tie.legs : [];
+  return legs.map((leg) => leg && leg.matchId).filter(Boolean);
 }
 
 /* ============================================================
@@ -663,6 +701,9 @@ function buildTieRow(tie, ctx = {}) {
     isFinished: status === TIE_STATUS.FINISHED,
     lineupASubmitted: Boolean(source.lineupA),
     lineupBSubmitted: Boolean(source.lineupB),
+    referee: source.referee || '',
+    refereeName: ctx.refereeName || '',
+    canAssignReferee: canAssignTieReferee(source),
     winner: source.winner || null,
     legCount: legs.length,
     legRows: legs.map((leg) => ({
@@ -695,6 +736,8 @@ module.exports = {
   tieStatusOf,
   canStartTie,
   tieStatusLabelOf,
+  canAssignTieReferee,
+  legMatchIdsOf,
   summarizeTie,
   canFinishTie,
   tiesOfRound,

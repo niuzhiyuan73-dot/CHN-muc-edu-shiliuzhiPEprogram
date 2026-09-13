@@ -47,7 +47,13 @@ const {
   buildLegMatchDrafts,
   canStartCollegeEvent,
   canStartTie,
+  canAssignTieReferee,
+  legMatchIdsOf,
 } = require('../../lib/services/college-tie.js');
+const {
+  canAssignReferee,
+  buildRefereePatch,
+} = require('../../lib/services/match-record.js');
 const { advanceCollegeAfterLeg } = require('./college-advance.js');
 const { buildLineupRecord } = require('../../lib/services/college-lineup.js');
 const { REVIEW_ACTION } = require('../../lib/services/member-review.js');
@@ -58,6 +64,7 @@ const {
   MATCH_STATUS,
   MATCH_OUTCOME,
   TEAM,
+  USER_STATUS,
 } = require('../../lib/utils/constants.js');
 
 /* ============================================================
@@ -641,12 +648,83 @@ async function finishCollegeEvent(payload = {}, ctx) {
   return ok({ ok: true, record, message: '' });
 }
 
+/**
+ * 指派 / 改派 / 取消一个大场的裁判。**仅管理员**（Q3），且大场尚未结束。
+ *
+ * 【为什么要逐个写进小场】
+ * 权限判定只读比赛记录自己的 `referee`（见 match-record.canRecordScore），
+ * 录分时不必回查大场。所以一次指派 = 写大场 + 写它下面所有能改派的小场。
+ * 已生效 / 已作废的小项跳过，避免改历史。
+ *
+ * 【为什么大场「进行中」仍可指派】
+ * 小项比赛要到 startTie 才生成，而裁判本就是「录分之前」才指派。若进行中
+ * 也禁掉，学院赛就永远指派不了裁判。只有已结束（胜负已定）才锁死。
+ *
+ * 【为什么不 bumpSeason】
+ * 与个人赛同一理由：裁判不影响回放输入，不必让整季重放。
+ *
+ * @param {Object} payload { tieId, refereeId }
+ * @param {Object} ctx
+ * @returns {Promise<Object>} {ok, record, matches, message}
+ */
+async function assignTieReferee(payload = {}, ctx) {
+  const guard = callerError(ctx);
+  if (guard) return fail(guard);
+
+  if (!canManageCollegeEvent(ctx.actor, { isMock: false })) {
+    return ok({ ok: false, record: null, matches: [], message: '只有管理员可以指派裁判' });
+  }
+
+  const tie = await ctx.repo.ties.getById(payload.tieId);
+  if (!tie) return ok({ ok: false, record: null, matches: [], message: '找不到这个大场' });
+  if (!canAssignTieReferee(tie)) {
+    return ok({ ok: false, record: null, matches: [], message: '这个大场已经结束，不能再改派裁判' });
+  }
+
+  const refereeId = String(payload.refereeId || '').trim();
+  if (refereeId) {
+    // 在册会员与待审核申请分在两个数组里，一起查才能把「编号填错了」与
+    // 「这人还没转正」分开报（与 mock.refereeRejection 同一口径）
+    const dataset = await getDataset(ctx);
+    const accounts = [...(dataset.members || []), ...(dataset.applications || [])];
+    const referee = accounts.find((user) => user._id === refereeId);
+    if (!referee) return ok({ ok: false, record: null, matches: [], message: '找不到这位会员' });
+    if (referee.status !== USER_STATUS.ACTIVE) {
+      return ok({ ok: false, record: null, matches: [], message: '该会员不是正常在册状态，不能担任裁判' });
+    }
+  }
+
+  const patch = buildRefereePatch(refereeId, { actorId: ctx.actorId, now: ctx.now });
+  const legIds = legMatchIdsOf(tie);
+
+  const result = await ctx.repo.transaction(async (tx) => {
+    const currentTie = await tx.ties.getById(payload.tieId);
+    if (!currentTie || !canAssignTieReferee(currentTie)) return null;
+
+    const matches = [];
+    for (const legId of legIds) {
+      const leg = await tx.matches.getById(legId);
+      if (!leg || !canAssignReferee(leg)) continue;
+      await tx.matches.update(legId, patch);
+      matches.push({ ...leg, ...patch });
+    }
+    await tx.ties.update(payload.tieId, patch);
+    return { record: { ...currentTie, ...patch }, matches };
+  });
+
+  if (!result) {
+    return ok({ ok: false, record: null, matches: [], message: '这个大场已经结束，不能再改派裁判' });
+  }
+  return ok({ ok: true, record: result.record, matches: result.matches, message: '' });
+}
+
 module.exports = {
   getCollegeEvents,
   getCollegeEvent,
   getCollegeEntries,
   getCollegeTies,
   getCollegeLineups,
+  assignTieReferee,
   publishCollegeEvent,
   submitCollegeEntry,
   reviewCollegeEntry,

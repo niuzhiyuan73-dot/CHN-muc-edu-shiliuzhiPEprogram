@@ -29,15 +29,18 @@ const {
   canConfirm,
   canRevoke,
   canForfeit,
+  canAssignReferee,
   buildMatchRecord,
   buildForfeitPatch,
+  buildRefereePatch,
   fillScheduledMatch,
   canRecordScore,
 } = require('../../lib/services/match-record.js');
+const { canManage } = require('../../lib/services/permission.js');
 const { buildRoundMatches } = require('../../lib/services/draw.js');
 // 赛制阶段派发：单败排下一轮，循环排下一轮，小组赛在全部小组打完后转去排淘汰阶段
 const { planStageMatches } = require('../../lib/services/format-plan.js');
-const { MATCH_STATUS, ROLE, MATCH_COMPETITION } = require('../../lib/utils/constants.js');
+const { MATCH_STATUS, ROLE, MATCH_COMPETITION, USER_STATUS } = require('../../lib/utils/constants.js');
 
 /**
  * 在台账里找一场比赛（含待确认与已撤销）。
@@ -505,4 +508,69 @@ async function revokeMatch(payload = {}, ctx) {
   return ok({ ok: true, match: patched, message: '' });
 }
 
-module.exports = { submitMatch, confirmMatch, rejectMatch, revokeMatch, forfeitMatch };
+/**
+ * 指派 / 改派 / 取消一场比赛的裁判。**仅管理员**（Q3），且比赛尚未生效。
+ *
+ * 【为什么不 bumpSeason】
+ * 裁判只影响「谁能录分、谁能确认」，与回放输入（比分、胜方）无关。让它
+ * 失效整季缓存，等于每派一次裁判就白跑一遍全场重放。
+ *
+ * 【为什么在事务内复查】
+ * 与确认 / 撤销同一手法：指派与「确认」并发时，只有一次能落地——否则会
+ * 出现「成绩已生效，裁判却是事后补的」。
+ *
+ * @param {Object} payload { matchId, refereeId }
+ * @param {Object} ctx
+ * @returns {Promise<Object>} {ok, match, message}
+ */
+async function assignMatchReferee(payload = {}, ctx) {
+  const guard = callerError(ctx);
+  if (guard) return fail(guard);
+
+  if (!canManage(ctx.actor, { minRole: ROLE.ADMIN })) {
+    return ok({ ok: false, match: null, message: '只有管理员可以指派裁判' });
+  }
+
+  const refereeId = String(payload.refereeId || '').trim();
+  const dataset = await getDataset(ctx);
+  const match = findRecord(dataset, payload.matchId);
+  if (!match) return ok({ ok: false, match: null, message: '找不到这场比赛' });
+  if (!canAssignReferee(match)) {
+    return ok({ ok: false, match: null, message: '这场比赛已生效或已作废，不能再改派裁判' });
+  }
+  // 裁判必须是一位正常在册的会员（Q3）：待审核的还没转正，已禁用 / 已离校
+  // 的不该再执法。空串表示取消裁判，不需要校验。
+  if (refereeId) {
+    // 在册会员与待审核申请分在两个数组里，一起查才能把「编号填错了」与
+    // 「这人还没转正」分开报（与 mock.refereeRejection 同一口径）
+    const accounts = [...(dataset.members || []), ...(dataset.applications || [])];
+    const referee = accounts.find((user) => user._id === refereeId);
+    if (!referee) return ok({ ok: false, match: null, message: '找不到这位会员' });
+    if (referee.status !== USER_STATUS.ACTIVE) {
+      return ok({ ok: false, match: null, message: '该会员不是正常在册状态，不能担任裁判' });
+    }
+  }
+
+  const patch = buildRefereePatch(refereeId, { actorId: ctx.actorId, now: ctx.now });
+
+  const updated = await ctx.repo.transaction(async (tx) => {
+    const current = await tx.matches.getById(payload.matchId);
+    if (!current || !canAssignReferee(current)) return null;
+    await tx.matches.update(payload.matchId, patch);
+    return { ...current, ...patch };
+  });
+
+  if (!updated) {
+    return ok({ ok: false, match: null, message: '这场比赛已生效或已作废，不能再改派裁判' });
+  }
+  return ok({ ok: true, match: updated, message: '' });
+}
+
+module.exports = {
+  submitMatch,
+  confirmMatch,
+  rejectMatch,
+  revokeMatch,
+  forfeitMatch,
+  assignMatchReferee,
+};

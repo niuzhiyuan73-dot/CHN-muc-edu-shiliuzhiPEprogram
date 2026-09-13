@@ -9,6 +9,9 @@ const {
   canRecordScore,
   canConfirm,
   canRevoke,
+  hasReferee,
+  canAssignReferee,
+  buildRefereePatch,
   needsScore,
   normalizeScores,
   buildMatchRecord,
@@ -546,4 +549,115 @@ test('canRecordScore —— 普通会员与访客都不能代录别人的比赛'
   assert.strictEqual(canRecordScore(DOUBLES, 'u99', { role: ROLE.MEMBER }), false);
   assert.strictEqual(canRecordScore(DOUBLES, '', { role: ROLE.ADMIN }), false);
   assert.strictEqual(canRecordScore(null, 'u99', { role: ROLE.ADMIN }), false);
+});
+
+/* ============================================================
+ * 八、裁判（referee）
+ * ============================================================
+ * 指定裁判后，录分权与确认权都收口到裁判本人 + 管理员。没指定时一切照旧，
+ * 这是零回归的底线：现有比赛记录里根本没有 referee 字段。
+ * ============================================================ */
+
+test('hasReferee —— 没指定或空白串都算「没有裁判」', () => {
+  assert.strictEqual(hasReferee(DOUBLES), false, '缺字段就是没裁判');
+  assert.strictEqual(hasReferee({ ...DOUBLES, referee: '' }), false);
+  assert.strictEqual(hasReferee({ ...DOUBLES, referee: '   ' }), false);
+  assert.strictEqual(hasReferee({ ...DOUBLES, referee: null }), false);
+  assert.strictEqual(hasReferee(null), false);
+  assert.strictEqual(hasReferee({ ...DOUBLES, referee: 'u05' }), true);
+});
+
+test('裁判未指定时录分权与今天完全一致（零回归）', () => {
+  // 参赛者照录，管理员照代录，干事照按学院代录，旁人照挡
+  assert.strictEqual(canRecordScore(DOUBLES, 'u02', { role: ROLE.MEMBER }), true);
+  assert.strictEqual(canRecordScore(DOUBLES, 'u99', { role: ROLE.ADMIN }), true);
+  assert.strictEqual(
+    canRecordScore(DOUBLES, 's1', { role: ROLE.STAFF, college: '体育学院', collegeOf: COLLEGE_OF }),
+    true
+  );
+  assert.strictEqual(canRecordScore(DOUBLES, 'u99', { role: ROLE.MEMBER }), false);
+});
+
+test('裁判未指定时确认权与今天完全一致（零回归）', () => {
+  // 对手方确认、录入方不能自证、管理员兜底，全部不变
+  assert.strictEqual(canConfirm(DOUBLES, 'u03'), true);
+  assert.strictEqual(canConfirm(DOUBLES, 'u01'), false);
+  assert.strictEqual(canConfirm(DOUBLES, 'u99', { role: ROLE.ADMIN }), true);
+  assert.strictEqual(canConfirm(DOUBLES, 'u02', { isMock: true }), true);
+});
+
+test('指定裁判后，录分权只认裁判与管理员', () => {
+  const judged = { ...DOUBLES, referee: 'u05' };
+  // 裁判本人可以录
+  assert.strictEqual(canRecordScore(judged, 'u05', { role: ROLE.MEMBER }), true);
+  // 管理员兜底不变
+  assert.strictEqual(canRecordScore(judged, 'u99', { role: ROLE.ADMIN }), true);
+  // 参赛者本人反而录不了——这是「交给他执法」的题中之义
+  assert.strictEqual(canRecordScore(judged, 'u01', { role: ROLE.MEMBER }), false);
+  assert.strictEqual(canRecordScore(judged, 'u03', { role: ROLE.MEMBER }), false);
+  // 干事也不越过裁判代录
+  assert.strictEqual(
+    canRecordScore(judged, 's1', { role: ROLE.STAFF, college: '体育学院', collegeOf: COLLEGE_OF }),
+    false
+  );
+});
+
+test('指定裁判后，确认权只认裁判与管理员', () => {
+  const judged = { ...DOUBLES, referee: 'u05' };
+  // 裁判录完自己盖章，不必再等对手——他本来就是双方请来的见证人
+  assert.strictEqual(canConfirm(judged, 'u05', { role: ROLE.MEMBER }), true);
+  assert.strictEqual(canConfirm(judged, 'u99', { role: ROLE.ADMIN }), true);
+  // 对手方不再自行确认
+  assert.strictEqual(canConfirm(judged, 'u03'), false);
+  // 录入方自证的老闸门在裁判场景下同样失效（裁判就是那个「录入方」）
+  assert.strictEqual(canConfirm(judged, 'u01'), false);
+});
+
+test('指定裁判后仍只限「待确认」，已生效的要改先撤销', () => {
+  const judged = {
+    ...DOUBLES,
+    referee: 'u05',
+    status: MATCH_STATUS.ACTIVE,
+  };
+  assert.strictEqual(canConfirm(judged, 'u05'), false);
+  assert.strictEqual(canConfirm(judged, 'u99', { role: ROLE.ADMIN }), false);
+  // mock 放宽也不越过「已生效」这道墙
+  assert.strictEqual(canConfirm(judged, 'u05', { isMock: true }), false);
+});
+
+test('canAssignReferee —— 只有待确认的比赛能指派或改派裁判', () => {
+  assert.strictEqual(canAssignReferee(DOUBLES), true);
+  assert.strictEqual(canAssignReferee({ ...DOUBLES, referee: 'u05' }), true, '改派也允许');
+  assert.strictEqual(
+    canAssignReferee({ ...DOUBLES, status: MATCH_STATUS.ACTIVE }),
+    false,
+    '已生效的比赛比分已入账，改裁判等于改口径'
+  );
+  assert.strictEqual(canAssignReferee({ ...DOUBLES, status: MATCH_STATUS.REVOKED }), false);
+  assert.strictEqual(canAssignReferee(null), false);
+});
+
+test('buildRefereePatch —— 落库三个字段，指派人来自 ctx', () => {
+  const at = new Date('2026-05-10T12:00:00');
+  const patch = buildRefereePatch('u05', { actorId: 'a01', now: at });
+
+  assert.strictEqual(patch.referee, 'u05');
+  assert.strictEqual(patch.refereeBy, 'a01');
+  assert.strictEqual(patch.refereeAt, at);
+});
+
+test('buildRefereePatch —— 传空串即撤下裁判，其余字段留痕', () => {
+  // 撤下后 canRecordScore / canConfirm 立刻退回「人人照旧」的口径
+  const patch = buildRefereePatch('', { actorId: 'a01' });
+  assert.strictEqual(patch.referee, '');
+  assert.strictEqual(hasReferee({ ...DOUBLES, ...patch }), false);
+  assert.strictEqual(canRecordScore({ ...DOUBLES, ...patch }, 'u02'), true);
+});
+
+test('buildRefereePatch —— 编号两端空白被清掉，不留「看起来有裁判」的空壳', () => {
+  const patch = buildRefereePatch('  u05  ', { actorId: 'a01' });
+  assert.strictEqual(patch.referee, 'u05');
+  // 缺省 ctx 时不抛错，落一个空指派人
+  const bare = buildRefereePatch('u05');
+  assert.strictEqual(bare.refereeBy, '');
 });

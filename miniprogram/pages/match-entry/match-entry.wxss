@@ -328,3 +328,26 @@
   font-size: var(--font-sm);
   color: var(--color-text-tertiary);
 }
+
+/* ---------- 裁判 ---------- */
+
+/* 补录签表比赛时，顶部标出这一场由谁执法 */
+.referee-bar {
+  display: flex;
+  align-items: center;
+  margin: 0 var(--space-md) var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-light);
+  font-size: var(--font-sm);
+}
+
+.referee-bar-label {
+  margin-right: var(--space-xs);
+  color: var(--color-text-tertiary);
+}
+
+.referee-bar-name {
+  color: var(--color-primary);
+  font-weight: 600;
+}

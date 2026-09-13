@@ -587,6 +587,9 @@ const COLLECTION = {
   COLLEGE_ENTRIES: 'college_entries',
   TIES: 'ties',
   COLLEGE_LINEUPS: 'lineups',
+  // 实时比分一场一条（_id = 'ls_' + matchId），重启不堆记录。
+  // 只存「正在逐球计分」的过程态，定稿后转成 matches 里的正式比分
+  LIVE_SCORES: 'live_scores',
 };
 
 /** 本地缓存键名 */

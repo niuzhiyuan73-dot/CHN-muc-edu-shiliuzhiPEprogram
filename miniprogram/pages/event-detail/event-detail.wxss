@@ -161,6 +161,44 @@
   color: var(--color-text-secondary);
 }
 
+/* ---------- 实时比分 ---------- */
+
+/* 进行中：比分前挂一个「进行中」标签，与比赛页同一副面孔 */
+.bracket-live {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  margin-top: var(--space-xs);
+}
+
+.live-tag {
+  margin-right: var(--space-xs);
+  padding: 0 var(--space-xs);
+  font-size: var(--font-xs);
+  font-weight: 500;
+  line-height: 1.8;
+  color: #ffffff;
+  background: #e8912a;
+  border-radius: var(--radius-sm);
+}
+
+.live-tag.is-done {
+  background: var(--color-text-tertiary);
+}
+
+.live-score {
+  font-size: var(--font-md);
+  font-weight: 600;
+  letter-spacing: 1rpx;
+  font-variant-numeric: tabular-nums;
+}
+
+.live-games {
+  margin-left: var(--space-sm);
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+}
+
 /* 与「比赛」页的小按钮同款：这里不 import 那张样式表，只抄这一小块 */
 .mini-btn {
   flex-shrink: 0;
@@ -314,6 +352,18 @@
   color: var(--color-danger);
 }
 
+/* 指派裁判面板里的搜索框（与比赛页同款） */
+.sheet-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 160rpx;
+  margin-top: var(--space-md);
+  padding: var(--space-sm);
+  background: var(--color-bg);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+}
+
 .sheet-actions {
   display: flex;
   margin-top: var(--space-md);
@@ -400,5 +450,101 @@
 }
 
 .seed-row.is-picked .seed-mark {
+  color: var(--color-primary);
+}
+
+/* ==================== 裁判 ==================== */
+
+/* 与比赛页同款：这里有裁判就标出是谁执法 */
+.bracket-referee {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 4rpx;
+  font-size: var(--font-xs);
+}
+
+.bracket-referee .referee-label {
+  color: var(--color-text-tertiary);
+  margin-right: var(--space-xs);
+}
+
+.bracket-referee .referee-name {
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+/* 裁判本人也在场上（Q5 允许，但要说清），给一个中性小标记 */
+.referee-flag {
+  margin-left: var(--space-xs);
+  padding: 0 8rpx;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+}
+
+/* 「仅裁判与管理员可录分」这层限制，看的人得知道，不然会以为自己点错了 */
+.bracket-referee-notice {
+  margin-top: 4rpx;
+  font-size: var(--font-xs);
+  color: #b45309;
+  background: #fef3c7;
+  border-radius: var(--radius-sm);
+  padding: var(--space-xs) var(--space-sm);
+  line-height: 1.5;
+}
+
+/* ---------- 指派裁判面板 ---------- */
+
+.sheet-input.referee-search {
+  height: 76rpx;
+}
+
+.referee-clear {
+  margin-top: var(--space-sm);
+}
+
+.referee-list {
+  max-height: 52vh;
+  margin-top: var(--space-sm);
+}
+
+.referee-row {
+  display: flex;
+  align-items: center;
+  height: 96rpx;
+  padding: 0 var(--space-sm);
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.referee-row.is-selected {
+  background: var(--color-primary-light);
+  border-radius: var(--radius-sm);
+  border-bottom-color: transparent;
+}
+
+.referee-avatar {
+  width: 64rpx;
+  height: 64rpx;
+  flex-shrink: 0;
+  margin-right: var(--space-sm);
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: #ffffff;
+  font-size: var(--font-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.referee-row-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-md);
+}
+
+.referee-check {
+  flex-shrink: 0;
+  font-size: var(--font-sm);
   color: var(--color-primary);
 }

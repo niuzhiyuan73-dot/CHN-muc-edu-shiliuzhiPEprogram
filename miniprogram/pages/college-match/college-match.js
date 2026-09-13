@@ -250,4 +250,10 @@ Page({
   onBack() {
     wx.navigateBack();
   },
+
+  /** 改用横屏计分台逐球计分。小项已有比赛编号，直接带过去 */
+  onGoLiveScore() {
+    if (!this.matchId) return;
+    wx.navigateTo({ url: `/pages/live-score/live-score?matchId=${this.matchId}` });
+  },
 });

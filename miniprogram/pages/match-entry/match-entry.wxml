@@ -21,6 +21,12 @@
 
   <block wx:else>
 
+    <!-- 补录签表比赛时把裁判亮出来：这一场交给了他执法 -->
+    <view wx:if="{{referee.hasReferee}}" class="referee-bar">
+      <text class="referee-bar-label">裁判</text>
+      <text class="referee-bar-name">{{referee.name}}</text>
+    </view>
+
     <!-- ========== 项目 ========== -->
     <!-- 签表里的比赛项目由抽签定死，不给改 -->
     <view wx:if="{{!scheduled}}" class="card">
@@ -198,6 +204,12 @@
 
     <view class="submit-bar">
       <view class="btn btn-outline submit-btn" bindtap="onCancel">取消</view>
+      <!-- 给签表里排定的比赛补录时，可改用横屏计分台逐球计分（有录分权才出现） -->
+      <view
+        wx:if="{{scheduled && !blockReason}}"
+        class="btn btn-outline submit-btn"
+        bindtap="onGoLiveScore"
+      >实时计分</view>
       <view
         class="btn btn-primary submit-btn {{submitting ? 'btn-disabled' : ''}}"
         bindtap="onSubmit"

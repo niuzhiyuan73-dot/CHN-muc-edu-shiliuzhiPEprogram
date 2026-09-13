@@ -27,11 +27,14 @@ const { MATCH_STATUS, MATCH_STATUS_LABEL, MATCH_TYPE_LABEL, ROLE, ROLE_LABEL } =
 const { formatDateTime, formatScore } = require('../utils/format.js');
 const { formatMatchFormat } = require('../utils/match-format.js');
 const { createNameResolver } = require('../utils/stats.js');
+const { describeLive } = require('./live-view.js');
 const {
+  canAssignReferee,
   canConfirm,
   canForfeit,
   canRecordScore,
   canRevoke,
+  hasReferee,
   needsScore,
   sideOf,
 } = require('./match-record.js');
@@ -154,6 +157,17 @@ function buildRecordRow(record, ctx = {}) {
   const relaxedConfirm = !waiting && canConfirm(record, userId, { isMock: mock, role });
   const strictConfirm = !waiting && canConfirm(record, userId, { isMock: false, role });
 
+  // ---------- 裁判 ----------
+  const isAdmin = Number(role) >= ROLE.ADMIN;
+  const officiated = hasReferee(record);
+  const refereeId = officiated ? String(record.referee) : '';
+  const refereeName = officiated ? nameOf(refereeId) : '';
+  // 被裁判接管后，只有裁判与管理员能录分 / 确认。这里提前算好一句提示，
+  // 免得页面自己去拼「我是不是裁判」——模板里写权限判断正是要避免的事。
+  const refereeTakesOver = officiated && userId !== refereeId && !isAdmin;
+  // Q5：裁判也可以是本场参赛者，界面给个提示，不禁止
+  const refereeIsParticipant = officiated && sideOf(record, refereeId) !== null;
+
   return {
     matchId: record._id,
     typeLabel: MATCH_TYPE_LABEL[record.matchType] || '',
@@ -167,6 +181,10 @@ function buildRecordRow(record, ctx = {}) {
     teamBList: memberList(record.teamB, nameOf),
     winnerSide: winner,
     scoreText: formatScore(record.scoreA, record.scoreB),
+    // 正在逐球计分的那一场：把当前比分顶到终局比分的位置上显示（进行中 / 已结束）。
+    // 首屏的 live 由读接口带上（见 read-handlers.attachLive 与 mock.attachLive）
+    live: describeLive(record.live),
+    liveActive: Boolean(record.live),
     isMine,
     isWin,
     resultText: isMine && winner ? (isWin ? '胜' : '负') : '',
@@ -189,6 +207,15 @@ function buildRecordRow(record, ctx = {}) {
     // 本人自选弃权（D41）：只有赛事的待确认比赛可以，约球不行；本人弃自己那场，
     // 管理员若也在场上同样成立。弃权后对手直接晋级，且不计个人等级分。
     canForfeit: canForfeit(record, userId, userId, { role }),
+    // 裁判：指派入口只给管理员，且只在「还没生效」的场次上开
+    hasReferee: officiated,
+    referee: refereeId,
+    refereeName,
+    refereeIsParticipant,
+    refereeNotice: refereeTakesOver
+      ? `本场由 ${refereeName} 裁判执法，仅裁判与管理员可录分`
+      : '',
+    canAssignReferee: Boolean(isAdmin && canAssignReferee(record)),
   };
 }
 

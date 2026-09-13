@@ -154,6 +154,14 @@ const finishEvent = (id, results, actor) => request('finishEvent', { id, results
 const forfeitMatch = (id, forfeitBy, actor) => request('forfeitMatch', { id, forfeitBy, actor });
 
 /*
+ * 裁判指派。指派权仅管理员（Q3），服务端按 OpenID 判定，前端说了不算。
+ * refereeId 传空串即取消裁判——「裁判临时来不了」由管理员取消裁判收口，
+ * 不必另设一套「拒绝指派」的邀请流。
+ */
+const assignMatchReferee = (matchId, refereeId, actor) =>
+  request('assignMatchReferee', { matchId, refereeId, actor });
+
+/*
  * 学院赛闭环：发布 / 交名单 / 审名单。
  *
  * 与赛事闭环同一纪律：actor 只是「谁点的按钮」的线索，发布权、审核权由
@@ -179,12 +187,30 @@ const setCollegeEventPinned = (eventId, pinned, actor) =>
 // payload 只含 tieId / college / entries；提交人与时间由服务端填
 const submitLineup = (payload, actor) => request('submitLineup', { ...payload, actor });
 const startTie = (tieId, actor) => request('startTie', { tieId, actor });
+// 大场裁判：一次指派写进该大场下面所有能改派的小项（refereeId 空串 = 取消）
+const assignTieReferee = (tieId, refereeId, actor) =>
+  request('assignTieReferee', { tieId, refereeId, actor });
 // 管理员记弃权：对手直接拿到这一小项，且不计 ELO。forfeitBy 必须是本大场参赛学院
 const recordForfeit = (tieId, legNo, forfeitBy, actor) =>
   request('recordForfeit', { tieId, legNo, forfeitBy, actor });
 // 录入学院名次并结束赛事：results 形如 [{ college, placement }]，只记给学院（D26）
 const finishCollegeEvent = (id, results, actor) =>
   request('finishCollegeEvent', { id, results, actor });
+
+/*
+ * 实时比分：逐球计分的四个写接口 + 一个轮询读接口。
+ *
+ * 权限与录分同源——服务端按 OpenID 判定「这个人能不能录这一场」，前端
+ * 说了不算。rallyId 由客户端生成，服务端据此去重：断线重发 / 连点不会把
+ * 同一球计两次（§八.3）。每判一球不动赛季版本号，只有定稿
+ * finishLiveScore 走 submitMatch 时才让整季重放（§八.5）。
+ */
+const startLiveScore = (matchId, actor) => request('startLiveScore', { matchId, actor });
+const recordRally = (matchId, side, actor, options) =>
+  request('recordRally', { matchId, side, actor, ...(options || {}) });
+const undoRally = (matchId, actor) => request('undoRally', { matchId, actor });
+const finishLiveScore = (matchId, actor) => request('finishLiveScore', { matchId, actor });
+const getLiveScores = (matchIds) => request('getLiveScores', { matchIds });
 
 module.exports = {
   CLOUD_FUNCTION,
@@ -232,6 +258,13 @@ module.exports = {
   checkInEvent,
   finishEvent,
   forfeitMatch,
+  assignMatchReferee,
+  assignTieReferee,
+  startLiveScore,
+  recordRally,
+  undoRally,
+  finishLiveScore,
+  getLiveScores,
   getCollegeEvents,
   getCollegeEvent,
   getCollegeEntries,

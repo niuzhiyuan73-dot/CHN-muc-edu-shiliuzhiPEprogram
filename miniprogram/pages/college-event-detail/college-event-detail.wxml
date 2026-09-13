@@ -131,6 +131,12 @@
         </view>
         <view class="tie-meta">{{item.roundText}} · 第 {{item.slot + 1}} 场</view>
 
+        <!-- 大场裁判：指派后铺到本大场还没开打的各小场，各小场录分随之收口 -->
+        <view wx:if="{{item.referee}}" class="tie-referee">
+          <text class="referee-label">裁判</text>
+          <text class="referee-name">{{item.refereeName || item.referee}}</text>
+        </view>
+
         <!-- 小项清单：有编号的可点进录分页；未录分时只显示项目名 -->
         <view class="leg-list">
           <view
@@ -143,9 +149,12 @@
           >
             <text class="leg-no">第 {{leg.legNo}} 场</text>
             <text class="leg-discipline">{{leg.disciplineLabel}}</text>
-            <text wx:if="{{leg.outcomeText}}" class="leg-outcome">{{leg.outcomeText}}</text>
-            <text wx:elif="{{leg.scoreText}}" class="leg-outcome">{{leg.scoreText}}</text>
-            <text wx:elif="{{!leg.winner}}" class="leg-pending">未录入</text>
+            <!-- 正在逐球计分：当前比分顶替「未录入 / 终局比分」，并标进行中 -->
+            <text wx:if="{{leg.liveActive}}" class="leg-live-tag {{leg.live.finished ? 'is-done' : ''}}">{{leg.live.statusLabel}}</text>
+            <text wx:if="{{leg.liveActive}}" class="leg-live-score">{{leg.live.scoreText}}</text>
+            <text wx:if="{{!leg.liveActive && leg.outcomeText}}" class="leg-outcome">{{leg.outcomeText}}</text>
+            <text wx:elif="{{!leg.liveActive && leg.scoreText}}" class="leg-outcome">{{leg.scoreText}}</text>
+            <text wx:elif="{{!leg.liveActive && !leg.winner}}" class="leg-pending">未录入</text>
             <text wx:if="{{leg.matchId}}" class="leg-enter">录分 ›</text>
           </view>
         </view>
@@ -168,6 +177,13 @@
             data-tie-id="{{item.tieId}}"
             bindtap="onStartTie"
           >开始本大场</view>
+          <!-- 指派裁判只给管理员；大场结束后不再给入口 -->
+          <view
+            wx:if="{{item.canAssignReferee}}"
+            class="btn btn-outline entry-btn {{refereeActing ? 'btn-disabled' : ''}}"
+            data-tie-id="{{item.tieId}}"
+            bindtap="onOpenReferee"
+          >{{item.referee ? '改派裁判' : '指派裁判'}}</view>
         </view>
       </view>
     </view>
@@ -177,4 +193,42 @@
     </view>
 
   </block>
+
+  <!-- ========== 指派大场裁判面板 ========== -->
+  <!-- 与赛事详情页的小场面板同一套，管理员在两处用起来一致 -->
+  <view wx:if="{{referee.open}}" class="sheet-mask" bindtap="onCancelReferee">
+    <view class="sheet" catchtap="noop">
+      <view class="sheet-title">{{referee.hasReferee ? '改派裁判' : '指派裁判'}}</view>
+      <view class="sheet-hint">指定后，本大场还没开打的各小场都由该裁判与管理员录分</view>
+      <input
+        class="sheet-input referee-search"
+        value="{{referee.keyword}}"
+        placeholder="搜索昵称或真实姓名"
+        bindinput="onInputRefereeKeyword"
+      />
+      <!-- 已经指派过才给「撤下」；没指派时摆一个空按钮只会让人误点 -->
+      <view
+        wx:if="{{referee.hasReferee}}"
+        class="btn btn-outline btn-block referee-clear {{refereeActing ? 'btn-disabled' : ''}}"
+        bindtap="onClearReferee"
+      >撤下裁判</view>
+      <scroll-view scroll-y class="referee-list">
+        <view wx:if="{{referee.rows.length === 0}}" class="empty-note">{{referee.emptyText}}</view>
+        <view
+          wx:for="{{referee.rows}}"
+          wx:key="id"
+          class="referee-row {{item.selected ? 'is-selected' : ''}}"
+          data-user-id="{{item.id}}"
+          bindtap="onPickReferee"
+        >
+          <view class="referee-avatar">{{item.avatarText}}</view>
+          <view class="referee-row-name">{{item.name}}</view>
+          <text wx:if="{{item.selected}}" class="referee-check">当前</text>
+        </view>
+      </scroll-view>
+      <view class="sheet-actions">
+        <view class="btn btn-outline sheet-btn" bindtap="onCancelReferee">关闭</view>
+      </view>
+    </view>
+  </view>
 </view>

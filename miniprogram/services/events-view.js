@@ -54,11 +54,19 @@ const {
   buildSignupRow,
   signupStateOf,
 } = require('./event.js');
-const { canConfirm, canRecordScore, isParticipant, needsScore } = require('./match-record.js');
+const {
+  canAssignReferee,
+  canConfirm,
+  canRecordScore,
+  hasReferee,
+  isParticipant,
+  needsScore,
+} = require('./match-record.js');
 // 学院赛的发布入口与名单入口也摆在赛事页：两套体系虽互不干扰，入口却该在一处
 const { canManageCollegeEvent, buildCollegeEventRow } = require('./college-event.js');
 const { canSubmitCollegeEntry, canReviewCollegeEntry } = require('./college-entry.js');
 const { statusTagOf } = require('./match-view.js');
+const { describeLive } = require('./live-view.js');
 // 手工指定种子要凑几位，与真正抽签时同一把尺子（种子数与参赛人数的较小者）；
 // 双打每两位参赛者编成一队，人数是组数的两倍，见 manualPlayersNeeded
 const { actualSeedCount, manualPlayersNeeded, splitTeamId } = require('./draw.js');
@@ -678,6 +686,8 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
   };
   // 确认要带上角色：管理员可确认任意一场（见 match-record.canConfirm）
   const confirmOptions = { isMock: mock, role: actor ? actor.role : undefined };
+  // 指派裁判只有管理员能做，且只能改还没生效的场次（与 match-view 同一把尺子）
+  const isAdmin = Boolean(actor && Number(actor.role) >= ROLE.ADMIN);
 
   return eventRecords
     .slice()
@@ -703,6 +713,17 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
       // 还没比分的场次不渲染比分占位符——那会和「0:0」混在一起
       const hasScore = asArray(record.scoreA).length > 0;
       const waiting = needsScore(record);
+
+      // ---------- 裁判 ----------
+      const officiated = hasReferee(record);
+      const refereeId = officiated ? String(record.referee) : '';
+      const refereeName = officiated
+        ? (memberMap.get(refereeId) || {}).nickName || refereeId
+        : '';
+      const refereeTakesOver = officiated && actorId !== refereeId && !isAdmin;
+      // Q5：裁判也可以是本场参赛者，界面给个提示，不禁止
+      const refereeIsParticipant = officiated && isParticipant(record, refereeId);
+
       return {
         matchId: record._id,
         roundText: roundLabelOf(record.round, totalRounds, record.stage),
@@ -713,6 +734,9 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
         teamBText: teamTextOf(record.teamB, memberMap),
         timeText: record.matchTime ? formatDateTime(record.matchTime) : '',
         scoreText: hasScore ? formatScore(record.scoreA, record.scoreB) : '',
+        // 正在逐球计分的那一场：当前比分顶在终局比分的位置上（进行中 / 已结束）
+        live: describeLive(record.live),
+        liveActive: Boolean(record.live),
         winnerSide: record.winner || '',
         statusLabel: tag.label,
         statusClass: tag.className,
@@ -720,6 +744,14 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
         // 还没比分的场次先录分，录完才谈得上确认
         canRecord: Boolean(waiting && actorId && canRecordScore(record, actorId, recordOptions)),
         canConfirm: Boolean(!waiting && canConfirm(record, actorId, confirmOptions)),
+        // 裁判：有就显示是谁执法；被接管且自己不是裁判时说明为何录不了
+        hasReferee: officiated,
+        refereeName,
+        refereeIsParticipant,
+        refereeNotice: refereeTakesOver
+          ? `本场由 ${refereeName} 裁判执法，仅裁判与管理员可录分`
+          : '',
+        canAssignReferee: Boolean(isAdmin && canAssignReferee(record)),
       };
     });
 }

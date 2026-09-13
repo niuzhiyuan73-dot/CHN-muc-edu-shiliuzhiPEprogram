@@ -20,6 +20,7 @@ const announcementHandlers = require('./announcement-handlers.js');
 const seasonHandlers = require('./season-handlers.js');
 const eventHandlers = require('./event-handlers.js');
 const collegeHandlers = require('./college-handlers.js');
+const liveHandlers = require('./live-handlers.js');
 
 /** action → 处理器 */
 const HANDLERS = {
@@ -30,6 +31,7 @@ const HANDLERS = {
   ...seasonHandlers,
   ...eventHandlers,
   ...collegeHandlers,
+  ...liveHandlers,
 };
 
 /**

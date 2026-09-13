@@ -10,7 +10,7 @@
  * ============================================================
  */
 
-/** 只读接口（27 个） */
+/** 只读接口（28 个） */
 const READ_ACTIONS = [
   'getCurrentUser',
   'getMembers',
@@ -39,15 +39,18 @@ const READ_ACTIONS = [
   'getCollegeEntries',
   'getCollegeTies',
   'getCollegeLineups',
+  'getLiveScores',
 ];
 
-/** 写接口（29 个）。这些要走事务，权限一律在服务端判定。 */
+/** 写接口（35 个）。这些要走事务，权限一律在服务端判定。 */
 const WRITE_ACTIONS = [
   'submitMatch',
   'confirmMatch',
   'rejectMatch',
   'revokeMatch',
   'forfeitMatch',
+  'assignMatchReferee',
+  'assignTieReferee',
   'registerMember',
   'approveMember',
   'rejectMember',
@@ -74,9 +77,14 @@ const WRITE_ACTIONS = [
   'startTie',
   'recordForfeit',
   'finishCollegeEvent',
+  // 实时比分：开台 / 判球 / 撤销 / 定稿
+  'startLiveScore',
+  'recordRally',
+  'undoRally',
+  'finishLiveScore',
 ];
 
-/** 全部 56 个操作 */
+/** 全部 63 个操作 */
 const ALL_ACTIONS = [...READ_ACTIONS, ...WRITE_ACTIONS];
 
 module.exports = { READ_ACTIONS, WRITE_ACTIONS, ALL_ACTIONS };

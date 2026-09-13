@@ -1,0 +1,189 @@
+/**
+ * 实时比分同步适配器（全仓唯一的轮询出口）
+ * ============================================================
+ * 页面只认这一个出口，不认轮询。`setInterval` 只允许出现在这里——
+ * 页面绝不自建定时器，这样「多久刷一次、什么时候不刷」是可被单测覆盖的
+ * （假定时器 + 断言「值没变不回调」），而不是散在各页里靠自觉。
+ *
+ * 【当前实现 = 短轮询】
+ * Q2 已拍板用短轮询，不做长连接。将来若要换成 WebSocket，只改这个文件，
+ * 页面一行不用动——这正是把它单独拎出来的理由。
+ *
+ * 【为什么不频繁刷新】
+ * 1. matchIds 为空 ⇒ 完全不启表，连一次请求都不发；
+ * 2. 有比赛时每 2 秒调一次 getLiveScores（批量，只回比分字段）；
+ * 3. 拿到结果先与上一次逐场比对，只有值真的变了才 onUpdate——
+ *    比赛进行中但比分没动时，一个字节都不 setData；
+ * 4. 页面 onHide ⇒ pause() 停表；onShow ⇒ resume() 立即补一次再续表；
+ * 5. 单次请求失败静默跳过这一拍，不弹错、不重试堆积，下一拍照常。
+ *
+ * 【首屏为什么不会「先 0:0 再跳」】
+ * 既有读接口（getMatchRecords 等）已经带上实时比分，页面首次渲染就是实时值；
+ * 适配器只负责此后的增量。
+ * ============================================================
+ */
+
+const facade = require('./index.js');
+
+/** 轮询间隔（毫秒）。要调频率只动这一处。 */
+const POLL_INTERVAL = 2000;
+
+/**
+ * 当前订阅。同一时刻只允许一个页面在轮询——小程序同一时刻只有一个页面
+ * 可见，用单例既省定时器，也天然做到「重新订阅即停旧表」。
+ */
+let session = null;
+
+/**
+ * 比分指纹：只取与「看比分」有关的字段。
+ * updatedAt 每写一次就变，但它不改变观众看到的东西；把它排除掉，
+ * 才能在「有人改了什么却与比分无关」时不惊动页面。
+ *
+ * @param {Object} view liveScoreOf 的返回值
+ * @returns {string}
+ */
+function fingerprint(view) {
+  if (!view) return '';
+  return [
+    view.pointsA,
+    view.pointsB,
+    view.gamesA,
+    view.gamesB,
+    view.gameIndex,
+    view.status,
+  ].join(':');
+}
+
+/**
+ * 与上一拍的指纹比一比，完全相同就返回 true（无需回调）。
+ * @param {Map<string,string>} prev
+ * @param {Array<Object>} views
+ * @returns {boolean}
+ */
+function sameAsLast(prev, views) {
+  if (!prev) return false;
+  if (prev.size !== views.length) return false;
+  for (const view of views) {
+    if (!view || prev.get(view.matchId) !== fingerprint(view)) return false;
+  }
+  return true;
+}
+
+/** 把这一拍的结果摊成 matchId → 指纹 */
+function toMap(views) {
+  const map = new Map();
+  for (const view of views || []) {
+    if (view && view.matchId) map.set(view.matchId, fingerprint(view));
+  }
+  return map;
+}
+
+/** 停掉某个订阅的定时器（不动订阅本身） */
+function clearTimer(target) {
+  if (target && target.timer !== null) {
+    clearInterval(target.timer);
+    target.timer = null;
+  }
+}
+
+/**
+ * 拉一次并比对。失败静默跳过，绝不抛出——轮询失败不该震到页面。
+ * @param {Object} target
+ */
+async function poll(target) {
+  if (!target || target.stopped || target.paused) return;
+
+  let views;
+  try {
+    views = await facade.getLiveScores(target.ids);
+  } catch (err) {
+    return undefined; // 这一拍失败：不回调、不重试，下一拍照常
+  }
+  // 等待期间页面可能已经取消订阅或隐藏了
+  if (!target || target.stopped || target.paused) return undefined;
+
+  const list = Array.isArray(views) ? views : [];
+  if (sameAsLast(target.last, list)) return undefined;
+
+  target.last = toMap(list);
+  target.onUpdate(list);
+  return undefined;
+}
+
+/** 起表（为空名单时什么也不做） */
+function schedule(target) {
+  clearTimer(target);
+  if (target.ids.length === 0) return;
+  target.timer = setInterval(() => {
+    poll(target);
+  }, POLL_INTERVAL);
+}
+
+/** 停掉当前订阅 */
+function stopSession() {
+  if (!session) return;
+  session.stopped = true;
+  clearTimer(session);
+  session = null;
+}
+
+/**
+ * 给订阅一个可取消、可暂停的句柄。
+ * 句柄本身是函数（`off()` 即取消订阅），另挂 pause / resume 供页面
+ * 的 onHide / onShow 使用。已失效的句柄调用 pause/resume 一律是空操作。
+ *
+ * @param {Object} target
+ * @returns {Function & {pause:Function, resume:Function}}
+ */
+function handleFor(target) {
+  const off = () => {
+    if (session === target) stopSession();
+    else target.stopped = true;
+  };
+  off.pause = () => {
+    if (session !== target) return;
+    target.paused = true;
+    clearTimer(target);
+  };
+  off.resume = () => {
+    if (session !== target) return;
+    target.paused = false;
+    poll(target); // 立即补一次，消掉回前台的空窗
+    schedule(target);
+  };
+  return off;
+}
+
+/**
+ * 订阅一组比赛的实时比分。
+ *
+ * matchIds 变化时直接再调一次即可——旧的会先被停掉，天然完成重订阅。
+ * 返回的句柄在页面 onUnload 必须调用；onHide / onShow 调 pause / resume。
+ *
+ * @param {string[]} matchIds 关心的比赛编号；空数组 ⇒ 完全不启表
+ * @param {Function} onUpdate 比分真的变了才被调用，参数是实时视图数组
+ * @returns {Function & {pause:Function, resume:Function}} 取消订阅
+ */
+function watchLiveScores(matchIds, onUpdate) {
+  stopSession();
+
+  const ids = [...new Set((Array.isArray(matchIds) ? matchIds : []).filter(Boolean))];
+  const target = {
+    ids,
+    onUpdate: typeof onUpdate === 'function' ? onUpdate : () => {},
+    last: null,
+    timer: null,
+    paused: false,
+    stopped: false,
+  };
+  session = target;
+
+  // 没有进行中的比赛：不启表，也不发请求
+  if (ids.length === 0) return handleFor(target);
+
+  poll(target); // 订阅时立即补一次
+  schedule(target);
+  return handleFor(target);
+}
+
+module.exports = { watchLiveScores, POLL_INTERVAL };

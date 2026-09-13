@@ -488,6 +488,76 @@ test('buildBracketRows —— 录完分换成对手确认，且不再出现「�
   assert.strictEqual(row.canConfirm, true, '站在录入者对面的 b 可以确认');
 });
 
+test('buildBracketRows —— 没指派裁判时，签表这一行与今天完全一致（零回归）', () => {
+  const rows = buildBracketRows([scheduledRecord()], BRACKET_EVENT, BRACKET_MEMBERS, {
+    actor: { _id: 'z', role: ROLE.ADMIN, status: USER_STATUS.ACTIVE },
+  });
+  const row = rows[0];
+
+  assert.strictEqual(row.hasReferee, false);
+  assert.strictEqual(row.refereeName, '');
+  assert.strictEqual(row.refereeNotice, '');
+  assert.strictEqual(row.refereeIsParticipant, false);
+  // 管理员能录分靠的是原有规则，不是裁判这条线
+  assert.strictEqual(row.canRecord, true);
+});
+
+test('buildBracketRows —— 指派裁判的入口只开给管理员，且只在未生效的场次上', () => {
+  const asAdmin = buildBracketRows([scheduledRecord()], BRACKET_EVENT, BRACKET_MEMBERS, {
+    actor: { _id: 'z', role: ROLE.ADMIN, status: USER_STATUS.ACTIVE },
+  });
+  assert.strictEqual(asAdmin[0].canAssignReferee, true);
+
+  // 普通会员（哪怕自己就是参赛者）看不到这个入口
+  const asPlayer = buildBracketRows([scheduledRecord()], BRACKET_EVENT, BRACKET_MEMBERS, {
+    actor: { _id: 'a', role: ROLE.MEMBER, status: USER_STATUS.ACTIVE },
+  });
+  assert.strictEqual(asPlayer[0].canAssignReferee, false);
+
+  // 已经打完生效的场次不再改派，避免「改历史」
+  const active = scheduledRecord({
+    scoreA: [11, 11],
+    scoreB: [5, 7],
+    winner: 'A',
+    status: MATCH_STATUS.ACTIVE,
+  });
+  const rows = buildBracketRows([active], BRACKET_EVENT, BRACKET_MEMBERS, {
+    actor: { _id: 'z', role: ROLE.ADMIN, status: USER_STATUS.ACTIVE },
+  });
+  assert.strictEqual(rows[0].canAssignReferee, false);
+});
+
+test('buildBracketRows —— 指派裁判后签表标出是谁执法，旁人录分被收口', () => {
+  const record = scheduledRecord({ referee: 'z' });
+  const rows = buildBracketRows([record], BRACKET_EVENT, BRACKET_MEMBERS, {
+    actor: { _id: 'a', role: ROLE.MEMBER, status: USER_STATUS.ACTIVE },
+  });
+  const row = rows[0];
+
+  assert.strictEqual(row.hasReferee, true);
+  assert.strictEqual(row.refereeName, '客');
+  assert.strictEqual(row.canRecord, false, '裁判接管后参赛者也不能自己录分');
+  assert.match(row.refereeNotice, /仅裁判与管理员可录分/);
+  // 裁判不在场上，「兼参赛」不亮
+  assert.strictEqual(row.refereeIsParticipant, false);
+});
+
+test('buildBracketRows —— 裁判本人就是参赛者时给「兼参赛」提示（Q5）', () => {
+  // a 既是 teamA 的选手又被指派为裁判：允许，但界面要说明
+  const record = scheduledRecord({ referee: 'a' });
+  const rows = buildBracketRows([record], BRACKET_EVENT, BRACKET_MEMBERS, {
+    actor: { _id: 'z', role: ROLE.ADMIN, status: USER_STATUS.ACTIVE },
+  });
+
+  assert.strictEqual(rows[0].refereeIsParticipant, true);
+  // 裁判自己看这一行时不该看到「仅裁判与管理员可录分」的警告
+  const asReferee = buildBracketRows([record], BRACKET_EVENT, BRACKET_MEMBERS, {
+    actor: { _id: 'a', role: ROLE.MEMBER, status: USER_STATUS.ACTIVE },
+  });
+  assert.strictEqual(asReferee[0].refereeNotice, '');
+  assert.strictEqual(asReferee[0].canRecord, true, '裁判本人可以录分');
+});
+
 test('buildBracketRows —— 小组赛整体排在淘汰赛前，0 号组也标出组名', () => {
   const event = {
     _id: 'e1',

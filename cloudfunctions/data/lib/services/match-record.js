@@ -94,13 +94,28 @@ function involvesCollege(match, college, collegeOf) {
 }
 
 /**
+ * 这场比赛指不指定了裁判。
+ *
+ * `referee` 是后加的字段：历史比赛没有它，读到 undefined。统一在这里归一，
+ * 免得每个调用方各写一遍 `!== '' && !== null` 这种判断，漏一处就是一个越权口子。
+ *
+ * @param {Object} match
+ * @returns {boolean}
+ */
+function hasReferee(match) {
+  return Boolean(match) && Boolean(String(match.referee || '').trim());
+}
+
+/**
  * 有没有资格录入这场比赛的比分。
  *
  * 规则与写入端（mock.submitMatch、云端 submitScheduledMatch）同源：
- *   1. 参赛者本人可以录；
- *   2. 管理员可以代录任意一场；
- *   3. 干事只能代录**本学院有人上场**的比赛——干事是学院负责人，
- *      权限以学院为界，替别的学院录分会把本院的账记到别人名下。
+ *   1. 指定了裁判的场次，只有裁判本人与管理员能录；
+ *   2. 没指定裁判时（含历史数据）：
+ *      a. 参赛者本人可以录；
+ *      b. 管理员可以代录任意一场；
+ *      c. 干事只能代录**本学院有人上场**的比赛——干事是学院负责人，
+ *         权限以学院为界，替别的学院录分会把本院的账记到别人名下。
  *
  * 判定需要「编号 → 学院」，而比赛记录里只有编号，所以由调用方传入
  * collegeOf。拿不到学院时，干事的代录一律不放行（宁严勿松）。
@@ -117,6 +132,11 @@ function canRecordScore(match, actorId, options = {}) {
   const { role = ROLE.MEMBER, college = '', collegeOf = null } = options;
 
   if (!match || !actorId) return false;
+  // 指定裁判后录分口收窄：裁判与管理员之外一律不放行。管理员兜底永远在——
+  // 裁判临时来不了，管理员取消裁判即回到下面那套普通口径（§5.2 第 3 条）。
+  if (hasReferee(match)) {
+    return actorId === match.referee || Number(role) >= ROLE.ADMIN;
+  }
   if (isParticipant(match, actorId)) return true;
   if (Number(role) >= ROLE.ADMIN) return true;
   if (Number(role) < ROLE.STAFF) return false;
@@ -141,6 +161,12 @@ function canRecordScore(match, actorId, options = {}) {
  * 界面必须把这一点明示出来（见 match-view 的 demoNotice），
  * 免得把演示口径当成真实规则。放宽只影响 mock，云端仍走严格口径。
  *
+ * 【指定裁判后为什么也收窄】
+ * 需求口径：指定裁判的场次，「录分」与「确认」都只有裁判与管理员能做
+ * （§二 第 4 条）。确认是给成绩盖章，与录分同属一次执法，交给同一个人。
+ * 这里不放宽 mock —— 放宽只针对「对手确认」那套口径，裁判闸是显式的指派
+ * 结果，本地演示也应当按真实规则走。
+ *
  * @param {Object} match
  * @param {string} userId
  * @param {Object} [options]
@@ -152,6 +178,10 @@ function canConfirm(match, userId, options = {}) {
   const { isMock = false, role = ROLE.MEMBER } = options;
 
   if (!match || match.status !== MATCH_STATUS.PENDING) return false;
+  // 指定裁判后确认口与录分口同宽：只有裁判与管理员
+  if (hasReferee(match)) {
+    return userId === match.referee || Number(role) >= ROLE.ADMIN;
+  }
   // 管理员可确认任意一场（含不是自己打的），但仍只限「待确认」状态：
   // 已生效的成绩要改，得先撤销。
   if (role === ROLE.ADMIN) return true;
@@ -184,6 +214,44 @@ function canRevoke(match, userId, options = {}) {
   if (!match || !userId) return false;
   if (role === ROLE.ADMIN) return true;
   return isRecorder(match, userId);
+}
+
+/**
+ * 这场比赛现在还轮不轮得到指派 / 改派 / 取消裁判。
+ *
+ * 只在「待确认」期间可动：已生效（ACTIVE）的成绩要改先撤销，已作废
+ * （REVOKED）的场次本就不该再执法。这样不会出现「改历史」——已经打完
+ * 并盖章的成绩，不能事后换一个裁判来背书（§5.2 第 4 条）。
+ *
+ * @param {Object} match
+ * @returns {boolean}
+ */
+function canAssignReferee(match) {
+  return Boolean(match) && match.status === MATCH_STATUS.PENDING;
+}
+
+/**
+ * 指派 / 改派 / 取消裁判要写进比赛记录的字段。
+ *
+ * refereeId 传空串即取消裁判。refereeAt / refereeBy 是审计字段：取消时
+ * 同样记下「谁在什么时候取消的」，事后追责才追得到人。
+ *
+ * 与录入比分同一纪律：这个纯函数只负责组装字段，不校验权限——「谁能指派」
+ * 由调用方（服务端 / mock）按 canManage 判，界面说了不算。
+ *
+ * @param {string} refereeId 裁判会员编号；空串 = 取消
+ * @param {Object} [ctx]
+ * @param {string} [ctx.actorId] 操作人编号（审计）
+ * @param {Date} [ctx.now] 操作时间
+ * @returns {Object}
+ */
+function buildRefereePatch(refereeId, ctx = {}) {
+  const { actorId = '', now = new Date() } = ctx;
+  return {
+    referee: String(refereeId || '').trim(),
+    refereeAt: now,
+    refereeBy: actorId,
+  };
 }
 
 /**
@@ -548,9 +616,12 @@ module.exports = {
   isParticipant,
   isRecorder,
   involvesCollege,
+  hasReferee,
   canRecordScore,
   canConfirm,
   canRevoke,
+  canAssignReferee,
+  buildRefereePatch,
   needsScore,
   canForfeit,
   buildForfeitPatch,

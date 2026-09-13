@@ -160,6 +160,29 @@
   color: var(--color-danger);
 }
 
+/* ---------- 实时比分 ---------- */
+
+/* 进行中的小场：比分局里缀「进行中」并给出当前局分，与个人赛页同一口径 */
+.leg-live-tag {
+  margin-left: var(--space-xs);
+  padding: 0 var(--space-xs);
+  font-size: var(--font-xs);
+  line-height: 1.8;
+  color: #ffffff;
+  background: #e8912a;
+  border-radius: var(--radius-sm);
+}
+
+.leg-live-tag.is-done {
+  background: var(--color-text-tertiary);
+}
+
+.leg-live-score {
+  margin-left: var(--space-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 .leg-enter {
   margin-left: var(--space-sm);
   color: var(--color-primary);
@@ -202,5 +225,131 @@
 }
 
 .entry-btn + .entry-btn {
+  margin-left: var(--space-sm);
+}
+
+/* 大场裁判：指派后铺到本大场还没开打的各小场 */
+.tie-referee {
+  display: flex;
+  align-items: center;
+  margin-top: var(--space-xs);
+  font-size: var(--font-xs);
+}
+
+.tie-referee .referee-label {
+  color: var(--color-text-tertiary);
+  margin-right: var(--space-xs);
+}
+
+.tie-referee .referee-name {
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+/* ==================== 指派裁判面板 ==================== */
+/* 与赛事详情页的小场面板同一套：遮罩 + 底部抽屉 + 可搜索名单 */
+
+.sheet-mask {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: flex-end;
+  z-index: 100;
+}
+
+.sheet {
+  width: 100%;
+  background: var(--color-card);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding: var(--space-lg);
+  padding-bottom: calc(var(--space-lg) + env(safe-area-inset-bottom));
+}
+
+.sheet-title {
+  font-size: var(--font-lg);
+  font-weight: 600;
+}
+
+.sheet-hint {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  margin-top: var(--space-xs);
+  line-height: 1.5;
+}
+
+.sheet-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 76rpx;
+  margin-top: var(--space-md);
+  padding: var(--space-sm);
+  background: var(--color-bg);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+}
+
+.referee-clear {
+  margin-top: var(--space-sm);
+}
+
+.referee-list {
+  max-height: 52vh;
+  margin-top: var(--space-sm);
+}
+
+.referee-row {
+  display: flex;
+  align-items: center;
+  height: 96rpx;
+  padding: 0 var(--space-sm);
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.referee-row.is-selected {
+  background: var(--color-primary-light);
+  border-radius: var(--radius-sm);
+  border-bottom-color: transparent;
+}
+
+.referee-avatar {
+  width: 64rpx;
+  height: 64rpx;
+  flex-shrink: 0;
+  margin-right: var(--space-sm);
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: #ffffff;
+  font-size: var(--font-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.referee-row-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-md);
+}
+
+.referee-check {
+  flex-shrink: 0;
+  font-size: var(--font-sm);
+  color: var(--color-primary);
+}
+
+.sheet-actions {
+  display: flex;
+  margin-top: var(--space-md);
+}
+
+.sheet-btn {
+  flex: 1;
+}
+
+.sheet-btn + .sheet-btn {
   margin-left: var(--space-sm);
 }

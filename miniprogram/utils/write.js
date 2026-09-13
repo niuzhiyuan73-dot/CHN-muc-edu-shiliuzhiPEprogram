@@ -35,6 +35,9 @@ const WRITE_ACTIONS = [
   'rejectMatch',
   'revokeMatch',
   'forfeitMatch',
+  // 裁判指派（仅管理员）
+  'assignMatchReferee',
+  'assignTieReferee',
   // 会员注册与审核、干事任免
   'registerMember',
   'approveMember',
@@ -66,6 +69,11 @@ const WRITE_ACTIONS = [
   'startTie',
   'recordForfeit',
   'finishCollegeEvent',
+  // 实时比分：开台 / 判球 / 撤销 / 定稿（每球不动赛季版本号，定稿才重放）
+  'startLiveScore',
+  'recordRally',
+  'undoRally',
+  'finishLiveScore',
 ];
 
 const WRITE_ACTION_SET = new Set(WRITE_ACTIONS);

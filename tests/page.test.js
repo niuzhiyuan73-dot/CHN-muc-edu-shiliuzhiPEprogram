@@ -178,6 +178,7 @@ require('../miniprogram/pages/college-lineup/college-lineup.js');
 require('../miniprogram/pages/college-match/college-match.js');
 require('../miniprogram/pages/college-placement/college-placement.js');
 require('../miniprogram/pages/event-list/event-list.js');
+require('../miniprogram/pages/live-score/live-score.js');
 
 /**
  * 深拷贝页面初值。
@@ -263,6 +264,8 @@ const collegeMatchConfig = registered[22];
 const collegePlacementConfig = registered[23];
 // 「查看全部」列表页，最后注册，下标自然接在末尾
 const eventListConfig = registered[24];
+// 实时计分台（唯一的横屏页），注册顺序在最后
+const liveScoreConfig = registered[25];
 
 // 写接口（确认 / 撤销 / 录入）只改内存，跑完一条用例就得把内存退回种子状态，
 // 否则上一条确认过的比赛会让下一条拿到的榜单与台账都不一样
@@ -1554,6 +1557,57 @@ test('赛事详情 —— 开始赛事之后可以给报名者代签', async () 
   assert.strictEqual(rowOf('u06').canCheckIn, false);
 });
 
+test('赛事详情 —— 管理员在签表上指派裁判，行上随即显示是谁执法', async () => {
+  loginAs(ADMIN);
+  // 2 人单打抽签后签表有一场待确认的比赛，正是可以指派裁判的场次
+  const created = await publishTestEvent({ seedCount: 2 });
+  await facade.signUpEvent(created._id, 'u06');
+  await facade.signUpEvent(created._id, 'u01');
+  await facade.drawEvent(created._id, ADMIN._id, { seedValue: 11 });
+
+  const page = instantiate(eventDetailConfig);
+  await page.onLoad({ eventId: created._id });
+
+  const row = page.data.view.bracketRows[0];
+  assert.ok(row, '抽签后应当有一场签表比赛');
+  assert.strictEqual(row.hasReferee, false);
+  assert.strictEqual(row.canAssignReferee, true, '管理员在未生效的场次上可以指派');
+
+  await page.onOpenReferee({ currentTarget: { dataset: { matchId: row.matchId } } });
+  assert.strictEqual(page.data.referee.open, true);
+  assert.ok(page.data.referee.rows.length > 0);
+
+  calls.toasts.length = 0;
+  await page.onPickReferee({ currentTarget: { dataset: { userId: RIVAL } } });
+
+  const ledgerRow = (await facade.getMatchRecords()).find((item) => item._id === row.matchId);
+  assert.strictEqual(ledgerRow.referee, RIVAL, '指派已经落库');
+  assert.strictEqual(ledgerRow.refereeBy, ADMIN._id);
+
+  assert.strictEqual(page.data.referee.open, false, '选完即关面板');
+  const after = page.data.view.bracketRows[0];
+  assert.strictEqual(after.hasReferee, true);
+  assert.ok(after.refereeName, '签表行上要显示裁判名字');
+  assert.ok(calls.toasts.some((text) => /已指派裁判/.test(text)));
+});
+
+test('赛事详情 —— 普通会员在签表上看不到指派入口', async () => {
+  loginAs(ADMIN);
+  const created = await publishTestEvent({ seedCount: 2 });
+  await facade.signUpEvent(created._id, 'u06');
+  await facade.signUpEvent(created._id, 'u01');
+  await facade.drawEvent(created._id, ADMIN._id, { seedValue: 11 });
+
+  // 以参赛者身份登录：能录分，但没有指派权
+  loginAs();
+  const page = instantiate(eventDetailConfig);
+  await page.onLoad({ eventId: created._id });
+
+  const row = page.data.view.bracketRows[0];
+  assert.ok(row);
+  assert.strictEqual(row.canAssignReferee, false);
+});
+
 test('赛事详情 —— 单打没抽签就点开始赛事：不生效并提示先抽签', async () => {
   loginAs(ADMIN);
   const created = await publishTestEvent();
@@ -2422,6 +2476,102 @@ test('比赛页 —— 驳回与撤销共用终态，但文案要分得清', asy
   assert.strictEqual(row.statusLabel, '已驳回');
 });
 
+test('比赛页 —— 普通会员看不到指派裁判的入口', async () => {
+  resetSession();
+  app.globalData.userInfo = activeMember();
+
+  const { match } = await facade.submitMatch(pendingParams());
+
+  const page = instantiate(matchConfig);
+  await page.onLoad();
+
+  const row = page.data.view.records.find((item) => item.matchId === match._id);
+  assert.ok(row);
+  // 指派权只给管理员，页面这一层压根不该出现入口
+  assert.strictEqual(row.canAssignReferee, false);
+  assert.strictEqual(row.hasReferee, false);
+});
+
+test('比赛页 —— 管理员在面板里指派裁判，落库并显示在那一行上', async () => {
+  resetSession();
+  app.globalData.userInfo = activeMember(ADMIN);
+
+  // 管理员自己也在场上，这场比赛才会出现在「我的比赛」里
+  const { match } = await facade.submitMatch({
+    ...pendingParams(),
+    teamA: [ADMIN._id],
+    actor: ADMIN._id,
+  });
+
+  const page = instantiate(matchConfig);
+  await page.onLoad();
+
+  const row = page.data.view.records.find((item) => item.matchId === match._id);
+  assert.ok(row, '管理员作为参赛者应当看得到这场');
+  assert.strictEqual(row.canAssignReferee, true, '还没生效的比赛才开指派入口');
+
+  await page.onOpenReferee({ currentTarget: { dataset: { matchId: match._id } } });
+  assert.strictEqual(page.data.referee.open, true);
+  assert.ok(page.data.referee.rows.length > 0, '面板里应当有可选会员');
+
+  calls.toasts.length = 0;
+  await page.onPickReferee({ currentTarget: { dataset: { userId: RIVAL } } });
+
+  const ledgerRow = (await facade.getMatchRecords()).find((item) => item._id === match._id);
+  assert.strictEqual(ledgerRow.referee, RIVAL, '指派已经落库');
+  assert.strictEqual(ledgerRow.refereeBy, ADMIN._id, '谁派的要留痕');
+
+  assert.strictEqual(page.data.referee.open, false, '选完即关面板');
+  const after = page.data.view.records.find((item) => item.matchId === match._id);
+  assert.strictEqual(after.hasReferee, true);
+  assert.ok(after.refereeName, '行上要显示裁判名字');
+  // 比赛还没生效，改派入口仍然开着
+  assert.strictEqual(after.canAssignReferee, true);
+  assert.ok(calls.toasts.some((text) => /已指派裁判/.test(text)));
+});
+
+test('比赛页 —— 管理员可以撤下裁判，比赛回到「人人照旧」', async () => {
+  resetSession();
+  app.globalData.userInfo = activeMember(ADMIN);
+
+  const { match } = await facade.submitMatch({
+    ...pendingParams(),
+    teamA: [ADMIN._id],
+    actor: ADMIN._id,
+  });
+  await facade.assignMatchReferee(match._id, RIVAL, ADMIN._id);
+
+  const page = instantiate(matchConfig);
+  await page.onLoad();
+  await page.onOpenReferee({ currentTarget: { dataset: { matchId: match._id } } });
+  assert.strictEqual(page.data.referee.hasReferee, true);
+
+  calls.toasts.length = 0;
+  await page.onClearReferee();
+
+  const ledgerRow = (await facade.getMatchRecords()).find((item) => item._id === match._id);
+  assert.strictEqual(ledgerRow.referee, '', '撤下即写空串');
+  assert.ok(calls.toasts.some((text) => /已撤下裁判/.test(text)));
+});
+
+test('比赛页 —— 裁判接管后，参赛者看到收口提示且确认按钮消失', async () => {
+  resetSession();
+  app.globalData.userInfo = activeMember();
+
+  const { match } = await facade.submitMatch(pendingParams());
+  await facade.assignMatchReferee(match._id, RIVAL, ADMIN._id);
+
+  const page = instantiate(matchConfig);
+  await page.onLoad();
+
+  const row = page.data.view.records.find((item) => item.matchId === match._id);
+  assert.ok(row);
+  assert.strictEqual(row.hasReferee, true);
+  assert.match(row.refereeNotice, /仅裁判与管理员可录分/);
+  // 即便是参赛者本人，裁判接管后也不再能确认——这道闸门要一路传到视图模型
+  assert.strictEqual(row.canConfirm, false);
+});
+
 test('比赛页 —— 下拉刷新会收起刷新动画', async () => {
   resetSession();
   const page = instantiate(matchConfig);
@@ -2743,6 +2893,51 @@ test('录入页 —— 取消直接返回，同样不写台账', async () => {
 
   assert.strictEqual(calls.backCount, 1);
   assert.strictEqual((await facade.getMatchRecords()).length, before);
+});
+
+test('录入页 —— 裁判接管后，参赛者整页被挡住且写明是谁执法', async () => {
+  resetSession();
+  app.globalData.userInfo = activeMember();
+
+  // 一场还没确认的比赛，被指派给 u02 执法；u06 是参赛者，管不着这一场
+  const { match } = await facade.submitMatch(pendingParams());
+  await facade.assignMatchReferee(match._id, RIVAL, ADMIN._id);
+
+  const page = instantiate(matchEntryConfig);
+  await page.onLoad({ matchId: match._id });
+
+  assert.strictEqual(page.data.loading, false);
+  assert.strictEqual(page.data.referee.hasReferee, true);
+  assert.ok(page.data.referee.name, '要把裁判的名字亮出来');
+  assert.match(page.data.blockReason, /裁判执法/);
+  // 挡住就不能提交，不能靠按钮拦
+  calls.backCount = 0;
+  await page.onSubmit();
+  assert.strictEqual(calls.backCount, 0, '被挡住时不该有提交动作');
+});
+
+test('录入页 —— 裁判本人与管理员仍可照常录入', async () => {
+  resetSession();
+  app.globalData.userInfo = activeMember();
+
+  const { match } = await facade.submitMatch(pendingParams());
+  await facade.assignMatchReferee(match._id, RIVAL, ADMIN._id);
+
+  // 裁判本人
+  resetSession();
+  app.globalData.userInfo = activeMember({ _id: RIVAL, role: 1, nickName: '张宇轩' });
+  const asReferee = instantiate(matchEntryConfig);
+  await asReferee.onLoad({ matchId: match._id });
+  assert.strictEqual(asReferee.data.referee.hasReferee, true);
+  assert.strictEqual(asReferee.data.blockReason, '', '裁判本人当然能录');
+  assert.strictEqual(asReferee.data.scheduled, true);
+
+  // 管理员兜底
+  resetSession();
+  app.globalData.userInfo = activeMember(ADMIN);
+  const asAdmin = instantiate(matchEntryConfig);
+  await asAdmin.onLoad({ matchId: match._id });
+  assert.strictEqual(asAdmin.data.blockReason, '');
 });
 
 /* ============================================================
@@ -4006,6 +4201,147 @@ test('大场开始 —— 双方排阵齐后管理员才能点开始', async () 
   assert.match(partial.data.view.ties[0].statusLabel, /进行中/);
 });
 
+test('学院赛详情 —— 管理员在大场上指派裁判，铺到还没开打的小场', async () => {
+  const { event, ties } = await startTestCollegeEvent();
+  const tie = ties[0];
+
+  const referee = (await facade.getMembers()).find((member) => member._id === STAFF_ID);
+  assert.ok(referee, '拿一位在册会员当裁判');
+
+  loginAs(ADMIN);
+  const page = instantiate(collegeEventDetailConfig);
+  await page.onLoad({ eventId: event._id });
+
+  const before = page.data.view.ties[0];
+  assert.strictEqual(before.referee, '', '还没指派');
+  assert.strictEqual(before.canAssignReferee, true, '管理员在未结束的大场上可以指派');
+
+  calls.toasts.length = 0;
+  await page.onOpenReferee({ currentTarget: { dataset: { tieId: tie._id } } });
+  assert.strictEqual(page.data.referee.open, true);
+  assert.strictEqual(page.data.referee.tieId, tie._id);
+  assert.ok(page.data.referee.rows.length > 0, '面板里摆出在册会员');
+
+  await page.onPickReferee({ currentTarget: { dataset: { userId: STAFF_ID } } });
+
+  assert.strictEqual(page.data.referee.open, false, '指派后收起面板');
+  assert.match(calls.toasts.join('|'), /已指派裁判/);
+
+  const after = page.data.view.ties[0];
+  assert.strictEqual(after.referee, STAFF_ID, '指派已落库并回到页面上');
+  assert.strictEqual(after.refereeName, referee.nickName, '页面显示裁判的名字而不是编号');
+
+  const saved = (await facade.getCollegeTies(event._id)).find((item) => item._id === tie._id);
+  assert.strictEqual(saved.referee, STAFF_ID, '大场这一层记下了裁判');
+
+  // 开打后生成的小场要带上大场的裁判：权限判定在小场，不能等到录分时再回头问大场
+  const staffIds = await memberIdsOf(STAFF_COLLEGE);
+  await facade.submitLineup(
+    {
+      tieId: tie._id,
+      college: STAFF_COLLEGE,
+      entries: [
+        { legNo: 1, players: [staffIds[0]] },
+        { legNo: 2, players: [staffIds[1]] },
+      ],
+    },
+    STAFF_ID
+  );
+  const otherIds = await memberIdsOf(OTHER_COLLEGE);
+  await facade.submitLineup(
+    {
+      tieId: tie._id,
+      college: OTHER_COLLEGE,
+      entries: [
+        { legNo: 1, players: [otherIds[0]] },
+        { legNo: 2, players: [otherIds[1]] },
+      ],
+    },
+    ADMIN._id
+  );
+  await facade.startTie(tie._id, ADMIN._id);
+
+  const started = (await facade.getCollegeTies(event._id)).find((item) => item._id === tie._id);
+  const ledger = await facade.getMatchRecords();
+  for (const leg of started.legs) {
+    const match = ledger.find((item) => item._id === leg.matchId);
+    assert.ok(match, '小场已经生成');
+    assert.strictEqual(match.referee, STAFF_ID, '小场跟着大场指派到了裁判');
+  }
+});
+
+test('学院赛详情 —— 只有管理员看得到指派裁判入口', async () => {
+  const { event } = await startTestCollegeEvent();
+
+  // 干事：管得了本学院名单，但派不了裁判
+  loginAs({ role: 1, _id: STAFF_ID, college: STAFF_COLLEGE });
+  const staff = instantiate(collegeEventDetailConfig);
+  await staff.onLoad({ eventId: event._id });
+  assert.strictEqual(staff.data.view.ties[0].canAssignReferee, false);
+
+  // 普通会员：同样不给入口
+  loginAs(activeMember());
+  const member = instantiate(collegeEventDetailConfig);
+  await member.onLoad({ eventId: event._id });
+  assert.strictEqual(member.data.view.ties[0].canAssignReferee, false);
+});
+
+test('学院赛小场录分 —— 大场指派的裁判亮在小场页上，别人的录入随之收口', async () => {
+  const { event, ties } = await startTestCollegeEvent();
+  const tie = ties[0];
+
+  const staffIds = await memberIdsOf(STAFF_COLLEGE);
+  await facade.submitLineup(
+    {
+      tieId: tie._id,
+      college: STAFF_COLLEGE,
+      entries: [
+        { legNo: 1, players: [staffIds[0]] },
+        { legNo: 2, players: [staffIds[1]] },
+      ],
+    },
+    STAFF_ID
+  );
+  const otherIds = await memberIdsOf(OTHER_COLLEGE);
+  await facade.submitLineup(
+    {
+      tieId: tie._id,
+      college: OTHER_COLLEGE,
+      entries: [
+        { legNo: 1, players: [otherIds[0]] },
+        { legNo: 2, players: [otherIds[1]] },
+      ],
+    },
+    ADMIN._id
+  );
+  await facade.startTie(tie._id, ADMIN._id);
+
+  const started = (await facade.getCollegeTies(event._id)).find((item) => item._id === tie._id);
+  const matchId = started.legs[0].matchId;
+  assert.ok(matchId, '大场开打后小场才生成');
+
+  const assigned = await facade.assignTieReferee(tie._id, STAFF_ID, ADMIN._id);
+  assert.strictEqual(assigned.ok, true, assigned.message);
+  const referee = (await facade.getMembers()).find((member) => member._id === STAFF_ID);
+
+  // 场上别的人：看得到谁执法，录不了分
+  loginAs(activeMember());
+  const outsider = instantiate(collegeMatchConfig);
+  await outsider.onLoad({ matchId });
+  assert.strictEqual(outsider.data.view.hasReferee, true);
+  assert.strictEqual(outsider.data.view.refereeName, referee.nickName);
+  assert.strictEqual(outsider.data.view.canRecord, false, '裁判接管后旁人不能录分');
+  assert.match(outsider.data.view.refereeNotice, /仅裁判与管理员可录入比分/);
+
+  // 裁判本人：照常录入，不必再对自己重复一遍限制
+  loginAs({ role: 1, _id: STAFF_ID, college: STAFF_COLLEGE });
+  const self = instantiate(collegeMatchConfig);
+  await self.onLoad({ matchId });
+  assert.strictEqual(self.data.view.canRecord, true);
+  assert.strictEqual(self.data.view.refereeRestricted, false);
+  assert.strictEqual(self.data.view.refereeNotice, '');
+});
+
 /* ============================================================
  * 个人赛弃权（M5-3）入口
  * ============================================================ */
@@ -4262,6 +4598,90 @@ test('全部赛事页 —— type=college 走学院赛口径，点行进对应�
   assert.deepStrictEqual(calls.navigations, [
     `/pages/college-event-detail/college-event-detail?eventId=${event._id}`,
   ]);
+});
+
+/* ============================================================
+ * 实时计分台（横屏）
+ * ============================================================
+ * 页面的职责是把「点一下」变成一次判球，再把实时态画出来；算分与判权
+ * 都不在这里。用例重点看三件事：没身份 / 没权限时挡住、点一下加一分、
+ * 打满两局能定稿并退回。种子里的 x_e07_r2_main_0 是 u01 对 u04 的待确认
+ * 个人赛，u06 既非参赛者也无职务，正好用来验「无权计分」。
+ * ============================================================ */
+
+/** 推一球并把这一球发完（页面把请求排在串行队列里） */
+async function tap(page, side) {
+  page.onScore({ currentTarget: { dataset: { side } } });
+  await page.queue;
+}
+
+test('实时计分台 —— 未登录不开台', async () => {
+  resetSession();
+  const page = instantiate(liveScoreConfig);
+  await page.onLoad({ matchId: 'x_e07_r2_main_0' });
+
+  assert.strictEqual(page.data.loading, false);
+  assert.strictEqual(page.data.error, '');
+  assert.strictEqual(page.data.blockReason, '请先登录后再计分');
+});
+
+test('实时计分台 —— 非参赛者且无职务，挡在计分台外', async () => {
+  loginAs({ _id: 'u06', nickName: '赵明宇', role: 0 });
+  const page = instantiate(liveScoreConfig);
+  await page.onLoad({ matchId: 'x_e07_r2_main_0' });
+
+  assert.strictEqual(page.data.error, '');
+  assert.strictEqual(page.data.blockReason, '你无权为这场比赛计分');
+});
+
+test('实时计分台 —— 管理员开台，逐球计分与撤销', async () => {
+  loginAs(ADMIN);
+  const page = instantiate(liveScoreConfig);
+  await page.onLoad({ matchId: 'x_e07_r2_main_0' });
+
+  assert.strictEqual(page.data.error, '');
+  assert.strictEqual(page.data.blockReason, '');
+  assert.strictEqual(page.data.view.pointsA, 0, '开台从 0:0 起');
+  assert.strictEqual(page.data.canUndo, false, '还没判球，没什么可撤');
+
+  await tap(page, 'A');
+  await tap(page, 'A');
+  await tap(page, 'B');
+  assert.strictEqual(page.data.view.pointsA, 2);
+  assert.strictEqual(page.data.view.pointsB, 1);
+  assert.strictEqual(page.data.view.leading, 'A', '领先方要能高亮出来');
+  assert.strictEqual(page.data.canUndo, true);
+
+  page.onUndo();
+  await page.queue;
+  assert.strictEqual(page.data.view.pointsB, 0, '撤销弹掉最后一球');
+  assert.strictEqual(page.data.view.pointsA, 2);
+});
+
+test('实时计分台 —— 打满两局可定稿，定稿后退回上一页', async () => {
+  loginAs(ADMIN);
+  const page = instantiate(liveScoreConfig);
+  await page.onLoad({ matchId: 'x_e07_r2_main_0' });
+
+  // 11 分制三局两胜：连拿两局（各 11:0）即分出胜负
+  for (let i = 0; i < 22; i += 1) {
+    page.onScore({ currentTarget: { dataset: { side: 'A' } } });
+  }
+  await page.queue;
+
+  assert.strictEqual(page.data.view.gamesA, 2);
+  assert.strictEqual(page.data.view.finished, true);
+  assert.strictEqual(page.data.canFinish, true);
+
+  const backBefore = calls.backCount;
+  page.onFinish();
+  await page.queue;
+
+  assert.strictEqual(calls.backCount, backBefore + 1, '定稿后退回上一页等确认');
+  const [record] = await facade.getMatchRecords({ id: 'x_e07_r2_main_0' });
+  assert.deepStrictEqual(record.scoreA, [11, 11], '定稿把打完的局写成正式比分');
+  assert.deepStrictEqual(record.scoreB, [0, 0]);
+  assert.strictEqual(record.status, MATCH_STATUS.PENDING, '定稿只到待确认，确认权仍在裁判 / 对手手上');
 });
 
 /* ============================================================

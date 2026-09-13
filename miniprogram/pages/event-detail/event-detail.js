@@ -18,6 +18,9 @@
  */
 
 const { loadEventDetailView } = require('../../services/events-view.js');
+const { buildPickerRows, pickerEmptyText } = require('../../services/match-entry-view.js');
+const { watchLiveScores } = require('../../services/live-watch.js');
+const { applyLiveRows } = require('../../services/live-view.js');
 const {
   signUpEvent,
   cancelSignupEvent,
@@ -25,6 +28,8 @@ const {
   checkInEvent,
   drawEvent,
   confirmMatch,
+  assignMatchReferee,
+  getMembers,
   isMock,
 } = require('../../services/index.js');
 
@@ -49,6 +54,22 @@ Page({
     seedRows: [],
     /** 点选过程中的提示（选满了、还差几位） */
     seedError: '',
+
+    /**
+     * 指派裁判面板。入口由视图模型的 canAssignReferee 控制，页面不自己判角色。
+     * 与比赛页同一套面板，管理员在两处用起来一致。
+     */
+    referee: {
+      open: false,
+      matchId: '',
+      hasReferee: false,
+      selectedId: '',
+      keyword: '',
+      rows: [],
+      emptyText: '',
+    },
+    /** 指派提交中，防止连点 */
+    refereeActing: false,
   },
 
   /** 返回 Promise 让测试能等待首屏加载完 */
@@ -61,6 +82,18 @@ Page({
   onShow() {
     if (!this.loaded) return undefined;
     return this.refresh();
+  },
+
+  /** 离开本页就停表，不再空转；回到前台时 onShow 会重新订阅 */
+  onHide() {
+    if (this.liveHandle) this.liveHandle.pause();
+  },
+
+  onUnload() {
+    if (this.liveHandle) {
+      this.liveHandle();
+      this.liveHandle = null;
+    }
   },
 
   /** 下拉刷新 */
@@ -120,11 +153,37 @@ Page({
       const view = await loadEventDetailView(this.eventId, { user, isMock });
       this.loaded = true;
       this.setData({ loading: false, error: '', view });
+      // 首屏若已有正在计分的场次（读接口已带上 live），才挂轮询取增量
+      this.syncLiveWatch();
     } catch (err) {
       console.error('[event-detail] 赛事详情加载失败', err);
       this.loaded = true;
       this.setData({ loading: false, error: '赛事详情加载失败，请下拉重试' });
     }
+  },
+
+  /* ---------- 实时比分 ---------- */
+
+  /**
+   * 值得轮询的比赛编号：只有正在逐球计分、且还没结束的那几场。
+   * 空数组交给适配器 = 一张表都不启，也就一次请求都不发。
+   */
+  liveIds() {
+    const rows = (this.data.view && this.data.view.bracketRows) || [];
+    return rows
+      .filter((row) => row.liveActive && !(row.live && row.live.finished))
+      .map((row) => row.matchId);
+  },
+
+  /**
+   * 重新订阅实时比分。签表随刷新而变，每次刷新都重订一次即可
+   * ——适配器会先停旧表，天然完成重订阅。
+   */
+  syncLiveWatch() {
+    if (this.liveHandle) this.liveHandle();
+    this.liveHandle = watchLiveScores(this.liveIds(), (views) => {
+      this.setData({ 'view.bracketRows': applyLiveRows(this.data.view.bracketRows || [], views) });
+    });
   },
 
   /**
@@ -341,6 +400,112 @@ Page({
     const matchId = event.currentTarget.dataset.matchId;
     if (!matchId) return undefined;
     return this.runWrite((actorId) => confirmMatch(matchId, actorId), '已确认，成绩已计入等级分');
+  },
+
+  /* ---------- 指派裁判 ---------- */
+
+  /**
+   * 取会员名单，供面板筛选。
+   * 只取一次并缓存在实例上：面板可能被反复打开，名单在一次会话里不会变。
+   */
+  async pickerMembers() {
+    if (!this.members) {
+      const members = await getMembers();
+      this.members = (members || []).map((member) => ({
+        id: member._id,
+        name: member.nickName || member.realName || member._id,
+        realName: member.realName || '',
+      }));
+    }
+    return this.members;
+  },
+
+  /** 按关键字刷新面板列表 */
+  async applyRefereeKeyword(keyword) {
+    const members = await this.pickerMembers();
+    this.setData({
+      'referee.keyword': keyword,
+      'referee.rows': buildPickerRows(members, keyword, this.data.referee.selectedId),
+      'referee.emptyText': pickerEmptyText(keyword),
+    });
+  },
+
+  /** 打开指派面板。当前是谁当头一版勾出来 */
+  async onOpenReferee(event) {
+    const matchId = event.currentTarget.dataset.matchId;
+    if (!matchId) return undefined;
+
+    const record = (this.data.view.bracketRows || []).find((item) => item.matchId === matchId);
+    const selectedId = (record && record.referee) || '';
+    const members = await this.pickerMembers();
+    const rows = buildPickerRows(members, '', selectedId);
+
+    this.setData({
+      referee: {
+        open: true,
+        matchId,
+        hasReferee: Boolean(record && record.hasReferee),
+        selectedId,
+        keyword: '',
+        rows,
+        emptyText: pickerEmptyText(''),
+      },
+    });
+    return undefined;
+  },
+
+  onInputRefereeKeyword(event) {
+    return this.applyRefereeKeyword(event.detail.value);
+  },
+
+  onCancelReferee() {
+    if (this.data.refereeActing) return;
+    this.setData({ referee: { ...this.data.referee, open: false } });
+  },
+
+  /** 撤下裁判：传空串，比赛随即回到「人人照旧」的口径 */
+  onClearReferee() {
+    return this.assignReferee('');
+  },
+
+  /** 选中某位会员当裁判。点「当前」那位等于不改派，直接关掉面板 */
+  onPickReferee(event) {
+    const userId = event.currentTarget.dataset.userId;
+    if (!userId || userId === this.data.referee.selectedId) {
+      this.setData({ referee: { ...this.data.referee, open: false } });
+      return undefined;
+    }
+    return this.assignReferee(userId);
+  },
+
+  /**
+   * 落库一次指派。
+   * 写入端会再校验一遍（仅管理员、比赛未生效、此人正常在册），这里的
+   * 校验只为了少跑一趟：点错了当场就能看到原因。
+   */
+  async assignReferee(refereeId) {
+    if (this.data.refereeActing) return undefined;
+
+    const { matchId } = this.data.referee;
+    const user = this.currentUser();
+    if (!matchId) return undefined;
+    if (!user) {
+      this.showToast('请先登录后再指派裁判');
+      return undefined;
+    }
+
+    this.setData({ refereeActing: true });
+    const result = await assignMatchReferee(matchId, refereeId, user._id);
+    this.setData({ refereeActing: false });
+
+    if (!result.ok) {
+      this.showToast(result.message || '指派失败');
+      return undefined;
+    }
+
+    this.setData({ referee: { ...this.data.referee, open: false } });
+    this.showToast(refereeId ? '已指派裁判' : '已撤下裁判', 'success');
+    return this.refresh();
   },
 
   /** 进名次录入页 */

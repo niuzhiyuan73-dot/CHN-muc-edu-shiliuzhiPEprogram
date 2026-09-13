@@ -38,6 +38,7 @@ function emptyStore() {
     collegeEntries: new Map(),
     ties: new Map(),
     lineups: new Map(),
+    liveScores: new Map(),
     announcements: new Map(),
     seasons: new Map(),
     rankings: new Map(),
@@ -212,6 +213,20 @@ function createMemoryRepo(seed = {}) {
           const current = target.lineups.get(id);
           if (!current) throw new Error(`更新失败：找不到排阵 ${id}`);
           target.lineups.set(id, { ...current, ...patch });
+        },
+      },
+
+      // 实时比分：一场一条，_id = 'ls_' + matchId。与 cloud-repo 一样不提供
+      // list / listByEvent——写入与轮询都按编号定位，事务内外都够用。
+      liveScores: {
+        getById: (id) => read('liveScores', id),
+        insert: async (doc) => {
+          target.liveScores.set(doc._id, clone(doc));
+        },
+        update: async (id, patch) => {
+          const current = target.liveScores.get(id);
+          if (!current) throw new Error(`更新失败：找不到实时比分 ${id}`);
+          target.liveScores.set(id, { ...current, ...patch });
         },
       },
 

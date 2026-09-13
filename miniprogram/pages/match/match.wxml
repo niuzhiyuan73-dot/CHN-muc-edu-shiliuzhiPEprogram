@@ -92,17 +92,31 @@
           </view>
         </view>
 
-        <view class="match-score">{{item.scoreText}}</view>
+        <!-- 正在逐球计分的场次：当前比分顶在终局比分的位置上，并标「进行中 / 已结束」 -->
+        <view wx:if="{{item.liveActive}}" class="match-score is-live">
+          <text class="live-tag {{item.live.finished ? 'is-done' : ''}}">{{item.live.statusLabel}}</text>
+          <text class="live-score">{{item.live.scoreText}}</text>
+          <text class="live-games">局分 {{item.live.gamesText}} · {{item.live.gameIndexText}}</text>
+        </view>
+        <view wx:else class="match-score">{{item.scoreText}}</view>
 
         <view class="match-meta">
           {{item.dateText}}
           <text wx:if="{{item.locationText}}"> · {{item.locationText}}</text>
         </view>
 
+        <!-- 裁判：指派的场次标出是谁执法；他自己也在场上时给个提示（Q5） -->
+        <view wx:if="{{item.hasReferee}}" class="match-referee">
+          <text class="referee-label">裁判</text>
+          <text class="referee-name">{{item.refereeName}}</text>
+          <text wx:if="{{item.refereeIsParticipant}}" class="referee-flag">兼参赛</text>
+        </view>
+        <view wx:if="{{item.refereeNotice}}" class="match-referee-notice">{{item.refereeNotice}}</view>
+
         <!-- 作废的比赛把理由亮出来，否则看到「已撤销」会一头雾水 -->
         <view wx:if="{{item.statusReason}}" class="match-reason">理由：{{item.statusReason}}</view>
 
-        <view wx:if="{{item.canRecord || item.canConfirm || item.canRevoke || item.canForfeit}}" class="match-actions">
+        <view wx:if="{{item.canRecord || item.canConfirm || item.canRevoke || item.canForfeit || item.canAssignReferee}}" class="match-actions">
           <!-- 抽签排出的比赛还没有比分：先录分，之后才有「确认」可谈 -->
           <view
             wx:if="{{item.canRecord}}"
@@ -137,6 +151,13 @@
             data-kind="revoke"
             bindtap="onOpenAction"
           >撤销</view>
+          <!-- 指派裁判：仅管理员，且只在还没生效的场次上开 -->
+          <view
+            wx:if="{{item.canAssignReferee}}"
+            class="mini-btn"
+            data-match-id="{{item.matchId}}"
+            bindtap="onOpenReferee"
+          >{{item.hasReferee ? '改派裁判' : '指派裁判'}}</view>
         </view>
       </view>
     </view>
@@ -166,6 +187,44 @@
           class="btn btn-primary sheet-btn {{acting ? 'btn-disabled' : ''}}"
           bindtap="onSubmitAction"
         >确定</view>
+      </view>
+    </view>
+  </view>
+
+  <!-- ========== 指派裁判面板 ========== -->
+  <!-- 一个人名一个圆牌，与录分页找搭档 / 对手的面板同款，管理员照着习惯用 -->
+  <view wx:if="{{referee.open}}" class="sheet-mask" bindtap="onCancelReferee">
+    <view class="sheet" catchtap="noop">
+      <view class="sheet-title">{{referee.hasReferee ? '改派裁判' : '指派裁判'}}</view>
+      <view class="sheet-hint">指定后，这一场的录分与确认都只由该裁判与管理员处理</view>
+      <input
+        class="sheet-input referee-search"
+        value="{{referee.keyword}}"
+        placeholder="搜索昵称或真实姓名"
+        bindinput="onInputRefereeKeyword"
+      />
+      <!-- 已经指派过才给「撤下」；没指派时摆一个空按钮只会让人误点 -->
+      <view
+        wx:if="{{referee.hasReferee}}"
+        class="btn btn-outline btn-block referee-clear {{refereeActing ? 'btn-disabled' : ''}}"
+        bindtap="onClearReferee"
+      >撤下裁判</view>
+      <scroll-view scroll-y class="referee-list">
+        <view wx:if="{{referee.rows.length === 0}}" class="empty-note">{{referee.emptyText}}</view>
+        <view
+          wx:for="{{referee.rows}}"
+          wx:key="id"
+          class="referee-row {{item.selected ? 'is-selected' : ''}}"
+          data-user-id="{{item.id}}"
+          bindtap="onPickReferee"
+        >
+          <view class="referee-avatar">{{item.avatarText}}</view>
+          <view class="referee-row-name">{{item.name}}</view>
+          <text wx:if="{{item.selected}}" class="referee-check">当前</text>
+        </view>
+      </scroll-view>
+      <view class="sheet-actions">
+        <view class="btn btn-outline sheet-btn" bindtap="onCancelReferee">关闭</view>
       </view>
     </view>
   </view>

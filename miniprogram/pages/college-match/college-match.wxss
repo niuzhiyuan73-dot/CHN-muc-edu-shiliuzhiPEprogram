@@ -171,3 +171,36 @@
   color: var(--color-text-tertiary);
   line-height: 1.5;
 }
+
+/* ==================== 裁判 ==================== */
+
+.referee-bar {
+  display: flex;
+  align-items: center;
+  margin-top: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-light);
+  font-size: var(--font-sm);
+}
+
+.referee-bar-label {
+  margin-right: var(--space-xs);
+  color: var(--color-text-tertiary);
+}
+
+.referee-bar-name {
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+/* 「仅裁判与管理员可录入」这层限制，看的人得知道，不然会以为自己点错了 */
+.referee-notice {
+  margin-top: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  background: #fef3c7;
+  color: #b45309;
+  font-size: var(--font-xs);
+  line-height: 1.5;
+}

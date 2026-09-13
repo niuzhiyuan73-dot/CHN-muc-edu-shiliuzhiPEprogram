@@ -27,8 +27,10 @@ const collegeStore = require('./college-store.js');
 const profileStore = require('./profile-store.js');
 const roleStore = require('./role-store.js');
 const seasonStore = require('./season-store.js');
+const liveStore = require('./live-store.js');
 const { installCollegeDemo } = require('./college-demo.js');
 const { register: registerAccount } = require('./auth.js');
+const { canManage } = require('./permission.js');
 const { DEFAULT_RESET_POLICY, canResetSeason } = require('./season.js');
 const { REVIEW_ACTION, validateReview, validateCollegeLeader } = require('./member-review.js');
 const {
@@ -36,10 +38,24 @@ const {
   canRevoke,
   canRecordScore,
   canForfeit,
+  canAssignReferee,
   buildMatchRecord,
   buildForfeitPatch,
+  buildRefereePatch,
   fillScheduledMatch,
 } = require('./match-record.js');
+// 实时比分：逐球状态机与本地实时台账（与云端共用同一份纯逻辑）
+const {
+  LIVE_STATUS,
+  SIDE,
+  createLive,
+  applyRally,
+  // 与下面 mock 的同名写接口撞名，导入时改个前缀
+  undoRally: undoLiveRally,
+  hasRally,
+  liveScoreOf,
+  toOfficialScores,
+} = require('./live-score.js');
 const { canPublish, buildAnnouncementRecord } = require('./announcement.js');
 const {
   canManageEvent,
@@ -77,6 +93,8 @@ const {
   isEloEligibleMatch,
   canStartCollegeEvent,
   canStartTie,
+  canAssignTieReferee,
+  legMatchIdsOf,
 } = require('./college-tie.js');
 const { buildLineupRecord } = require('./college-lineup.js');
 const {
@@ -394,6 +412,8 @@ function resetCache() {
   roleStore.reset();
   // 赛季重置同理：分界点必须一起清，否则下一轮生成的分数还是被压过的
   seasonStore.reset();
+  // 实时比分同理：逐球流水是临时写入，复位后不该再看到上一轮的比分
+  liveStore.reset();
   // 学院赛演示场景也一并关掉：复位是测试专用动作，之后各用例要的是干净
   // 基线（24 位会员、0 场学院赛），而不是再把演示数据装回来。
   collegeDemoEnabled = false;
@@ -698,6 +718,30 @@ async function getHomeSummary() {
    服务端完成；这里只是把同一套规则在本地跑通，好让界面先做完。 */
 
 /**
+ * 给台账里的比赛附上「进行中」的实时比分。
+ *
+ * 【为什么在读接口现挂，而不是进 buildCache】
+ * 实时态不参与回放，也不该因为每判一球就让整季缓存失效（§八.5）。
+ * 现挂只是一次 map 查找，代价远小于维护一份要与写入同步失效的缓存。
+ *
+ * 【为什么没有实时态就原样返回】
+ * 不产生新对象：既省一次分配，也让「没有实时比分的比赛」与今天逐字节
+ * 一致——既有的台账断言不受影响。
+ *
+ * @param {Array<Object>} records
+ * @returns {Array<Object>}
+ */
+function attachLive(records) {
+  const live = liveStore.list();
+  if (live.length === 0) return records;
+  const byMatch = new Map(live.map((state) => [state.matchId, state]));
+  return records.map((record) => {
+    const state = byMatch.get(record._id);
+    return state ? { ...record, live: liveScoreOf(state) } : record;
+  });
+}
+
+/**
  * 查询比赛台账（含待确认与已撤销的那些）。
  *
  * 与 getMatches 的区别：getMatches 只给「已生效、已回放」的比赛，是面向
@@ -722,7 +766,8 @@ async function getMatchRecords(options = {}) {
   if (typeof status === 'number') list = list.filter((m) => m.status === status);
 
   list = [...list].sort((a, b) => new Date(b.matchTime) - new Date(a.matchTime));
-  return typeof limit === 'number' && limit >= 0 ? list.slice(0, limit) : list;
+  if (typeof limit === 'number' && limit >= 0) list = list.slice(0, limit);
+  return attachLive(list);
 }
 
 /**
@@ -1035,6 +1080,280 @@ async function forfeitMatch(id, forfeitBy, actor) {
   const patched = { ...match, ...patch };
   advanceEvent(patched.eventId);
   return { ok: true, match: patched, message: '' };
+}
+
+/* ---------- 裁判指派 ---------- */
+/* 与云端 assignMatchReferee / assignTieReferee 同一套规则。指派权仅管理员
+   （Q3）：裁判握有录分与确认权，指派权与「定盘子」同级，不下放给参赛方。 */
+
+/**
+ * 找一位可以当裁判的会员。
+ *
+ * 只认「正常在册」的账号（Q3 的兜底校验）：待审核的还没转正，已禁用 /
+ * 已离校的不该再出现在赛场上执法。查不到与状态不对分开报，管理员才知道
+ * 是编号填错了还是这个人不能用。
+ *
+ * @param {string} userId
+ * @param {Object} dataset load() 的结果：在册会员与申请名单分开装着
+ * @returns {string} 出错文案；通过时为空串
+ */
+function refereeRejection(userId, dataset) {
+  // 两张名单一起查：待审核的人不在「会员」里，只查会员会把他报成「查无此人」，
+  // 管理员分不清是编号填错还是这人还没转正
+  const accounts = [...((dataset && dataset.members) || []), ...((dataset && dataset.applications) || [])];
+  const referee = accounts.find((item) => item._id === userId);
+  if (!referee) return '找不到这位会员';
+  if (referee.status !== USER_STATUS.ACTIVE) return '该会员不是正常在册状态，不能担任裁判';
+  return '';
+}
+
+/**
+ * 指派 / 改派 / 取消一场比赛的裁判。**仅管理员**，且比赛尚未生效。
+ *
+ * @param {string} matchId
+ * @param {string} refereeId 裁判会员编号；空串 = 取消
+ * @param {string} actor 操作人编号
+ * @returns {Promise<{ok:boolean, match:Object|null, message:string}>}
+ */
+async function assignMatchReferee(matchId, refereeId, actor) {
+  const account = accountOf(actor);
+  if (!canManage(account, { minRole: ROLE.ADMIN })) {
+    return { ok: false, match: null, message: '只有管理员可以指派裁判' };
+  }
+
+  const match = findRecord(matchId);
+  if (!match) return { ok: false, match: null, message: '找不到这场比赛' };
+  if (!canAssignReferee(match)) {
+    return { ok: false, match: null, message: '这场比赛已生效或已作废，不能再改派裁判' };
+  }
+
+  const id = String(refereeId || '').trim();
+  if (id) {
+    const refusal = refereeRejection(id, load());
+    if (refusal) return { ok: false, match: null, message: refusal };
+  }
+
+  const patch = buildRefereePatch(id, { actorId: actor, now: new Date() });
+  matchStore.setStatus(matchId, patch);
+  cache = null;
+  return { ok: true, match: { ...match, ...patch }, message: '' };
+}
+
+/**
+ * 指派 / 改派 / 取消一个大场的裁判。**仅管理员**，且大场尚未结束。
+ *
+ * 【为什么要逐个写进小场】
+ * 权限判定只看「这一场比赛自己」的 referee（见 match-record.canRecordScore），
+ * 录分时不必回查大场。所以指派一次 = 写大场 + 写它下面所有能改派的小场。
+ * 已生效 / 已作废的小项不动，避免改历史。
+ *
+ * @param {string} tieId
+ * @param {string} refereeId 裁判会员编号；空串 = 取消
+ * @param {string} actor 操作人编号
+ * @returns {Promise<{ok:boolean, record:Object|null, matches:Array<Object>, message:string}>}
+ */
+async function assignTieReferee(tieId, refereeId, actor) {
+  const account = accountOf(actor);
+  if (!canManage(account, { minRole: ROLE.ADMIN })) {
+    return { ok: false, record: null, matches: [], message: '只有管理员可以指派裁判' };
+  }
+
+  const tie = collegeStore.findTie(tieId);
+  if (!tie) return { ok: false, record: null, matches: [], message: '找不到这个大场' };
+  if (!canAssignTieReferee(tie)) {
+    return { ok: false, record: null, matches: [], message: '这个大场已经结束，不能再改派裁判' };
+  }
+
+  const id = String(refereeId || '').trim();
+  if (id) {
+    const refusal = refereeRejection(id, load());
+    if (refusal) return { ok: false, record: null, matches: [], message: refusal };
+  }
+
+  const patch = buildRefereePatch(id, { actorId: actor, now: new Date() });
+  const matches = [];
+  for (const legId of legMatchIdsOf(tie)) {
+    const leg = findRecord(legId);
+    if (!leg || !canAssignReferee(leg)) continue;
+    matchStore.setStatus(legId, patch);
+    matches.push({ ...leg, ...patch });
+  }
+
+  const record = collegeStore.updateTie(tieId, patch);
+  cache = null;
+  return { ok: true, record, matches, message: '' };
+}
+
+/* ---------- 实时比分 ---------- */
+/* 逐球计分的四个写接口 + 一个读接口，与云端 live-handlers 同一套纯逻辑。
+   权限与录分同源（canRecordScore）：能录这一场的人（裁判 / 管理员 /
+   参赛者 / 本学院干事）才能开台、判球、撤销、定稿。每判一球只写实时
+   台账，不动赛季缓存；只有定稿走 submitMatch 时才 bumpSeason（§八.5）。 */
+
+/**
+ * 这位操作者能不能给这场比赛计分。
+ * 判定与 submitMatch 的录分权一字不差，三处一旦分叉就会出现
+ * 「看得见计分台、点下去却被拒」。
+ *
+ * @param {Object} match
+ * @param {string} actor
+ * @param {Array<Object>} users 用于解析学院（干事代录的边界）
+ * @returns {boolean}
+ */
+function liveMayRecord(match, actor, users) {
+  const account = accountOf(actor);
+  return canRecordScore(match, actor, {
+    role: roleOf(actor),
+    college: (account && account.college) || '',
+    collegeOf: (id) => (users.find((u) => u._id === id) || {}).college || '',
+  });
+}
+
+/**
+ * 找一场比赛并校验计分权，供四个写接口共用。
+ * @param {string} matchId
+ * @param {string} actor
+ * @returns {{match:Object}|{error:string}}
+ */
+function liveTarget(matchId, actor) {
+  const { users } = load();
+  const match = findRecord(matchId);
+  if (!match) return { error: '找不到这场比赛' };
+  // 已生效 / 已作废的比赛不再开实时台：改历史要走撤销，重录要走录分页
+  if (match.status !== MATCH_STATUS.PENDING) {
+    return { error: '这场比赛已生效或已作废，不能再计分' };
+  }
+  if (!liveMayRecord(match, actor, users)) return { error: '你无权为这场比赛计分' };
+  return { match };
+}
+
+/**
+ * 开实时计分台。建 / 取实时态；已存在就原样返回（重开不重置比分）。
+ *
+ * @param {string} matchId
+ * @param {string} actor
+ * @returns {Promise<{ok:boolean, live:Object|null, message:string}>}
+ */
+async function startLiveScore(matchId, actor) {
+  const target = liveTarget(matchId, actor);
+  if (target.error) return { ok: false, live: null, message: target.error };
+
+  const existing = liveStore.get(matchId);
+  if (existing) return { ok: true, live: existing, message: '' };
+
+  const state = liveStore.set(createLive(target.match, { actorId: actor, now: new Date() }));
+  return { ok: true, live: state, message: '' };
+}
+
+/**
+ * 判一球。
+ *
+ * @param {string} matchId
+ * @param {'A'|'B'} side 这一球判给谁
+ * @param {string} actor
+ * @param {Object} [options]
+ * @param {string} [options.rallyId] 客户端生成的一球编号；重发同一个编号不再计一次
+ * @returns {Promise<{ok:boolean, live:Object|null, message:string}>}
+ */
+async function recordRally(matchId, side, actor, options = {}) {
+  const target = liveTarget(matchId, actor);
+  if (target.error) return { ok: false, live: null, message: target.error };
+
+  const state = liveStore.get(matchId);
+  if (!state) return { ok: false, live: null, message: '这场比赛还没开实时计分台' };
+  if (state.status !== LIVE_STATUS.LIVE) {
+    return { ok: false, live: state, message: '比赛已经结束，不能再判球' };
+  }
+  if (side !== SIDE.A && side !== SIDE.B) {
+    return { ok: false, live: state, message: '判球方不合法' };
+  }
+
+  const rallyId = String(options.rallyId || '');
+  // 幂等：同一个 rallyId 重发（断线重试 / 连点）不再计一次
+  if (hasRally(state, rallyId)) return { ok: true, live: state, message: '' };
+
+  const next = liveStore.set({
+    ...applyRally(state, side, { rallyId }),
+    updatedBy: actor,
+    updatedAt: new Date(),
+  });
+  return { ok: true, live: next, message: '' };
+}
+
+/**
+ * 撤销最后一球。若撤的是决定性的那一球，整场退回「进行中」。
+ *
+ * @param {string} matchId
+ * @param {string} actor
+ * @returns {Promise<{ok:boolean, live:Object|null, message:string}>}
+ */
+async function undoRally(matchId, actor) {
+  const target = liveTarget(matchId, actor);
+  if (target.error) return { ok: false, live: null, message: target.error };
+
+  const state = liveStore.get(matchId);
+  if (!state) return { ok: false, live: null, message: '这场比赛还没开实时计分台' };
+  if (!state.rallies || state.rallies.length === 0) {
+    return { ok: false, live: state, message: '没有可撤销的判球' };
+  }
+
+  const next = liveStore.set({
+    ...undoLiveRally(state),
+    updatedBy: actor,
+    updatedAt: new Date(),
+  });
+  return { ok: true, live: next, message: '' };
+}
+
+/**
+ * 定稿：把逐球流水转成正式比分，回到现有的录分链路。
+ *
+ * 定稿只把「打完的局」交出去（见 live-score.toOfficialScores），得到的
+ * 仍是一条**待确认**的比赛——确认权照旧落在裁判 / 管理员手上，实时比分
+ * 不新开一条计分链路。
+ *
+ * @param {string} matchId
+ * @param {string} actor
+ * @returns {Promise<{ok:boolean, live:Object|null, match:Object|null, message:string}>}
+ */
+async function finishLiveScore(matchId, actor) {
+  const target = liveTarget(matchId, actor);
+  if (target.error) return { ok: false, live: null, match: null, message: target.error };
+
+  const state = liveStore.get(matchId);
+  if (!state) return { ok: false, live: null, match: null, message: '这场比赛还没开实时计分台' };
+  // 只有分出胜负才能定稿：半局比分（比如 5:2）不是一场合法比赛
+  if (state.status !== LIVE_STATUS.FINISHED) {
+    return { ok: false, live: state, match: null, message: '比赛还没打完，不能定稿' };
+  }
+
+  const { scoreA, scoreB } = toOfficialScores(state);
+  if (scoreA.length === 0) {
+    return { ok: false, live: state, match: null, message: '还没有可提交的比分' };
+  }
+
+  const submitted = await submitMatch({ id: matchId, scoreA, scoreB, actor });
+  if (!submitted.ok) {
+    return { ok: false, live: state, match: null, message: submitted.firstError || '提交失败' };
+  }
+
+  // 实时态留在台账里（status=finished），查看端据此显示终局；
+  // 正式比分已经写进 matches，回放与积分都由那条走。
+  const done = liveStore.set({ ...state, updatedBy: actor, updatedAt: new Date() });
+  return { ok: true, live: done, match: submitted.match, message: '' };
+}
+
+/**
+ * 批量取实时比分，供查看端轮询。只返回比分相关字段，尽量小。
+ * matchIds 为空直接返回空数组——没开赛就不该产生任何读取。
+ *
+ * @param {string[]} matchIds
+ * @returns {Promise<Array<Object>>}
+ */
+async function getLiveScores(matchIds) {
+  const ids = Array.isArray(matchIds) ? matchIds : [];
+  if (ids.length === 0) return [];
+  return liveStore.byIds(ids).map(liveScoreOf);
 }
 
 /* ---------- 会员注册与审核 ---------- */
@@ -2068,6 +2387,13 @@ module.exports = {
   rejectMatch,
   revokeMatch,
   forfeitMatch,
+  assignMatchReferee,
+  assignTieReferee,
+  startLiveScore,
+  recordRally,
+  undoRally,
+  finishLiveScore,
+  getLiveScores,
   registerMember,
   approveMember,
   rejectMember,

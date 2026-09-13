@@ -1,0 +1,172 @@
+/* 实时计分台：横屏铺满，两块大按钮各占半边 */
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  box-sizing: border-box;
+  background: #10161d;
+  color: #ffffff;
+}
+
+.hint {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40rpx;
+  font-size: 30rpx;
+  color: #c9d1d9;
+  text-align: center;
+}
+
+/* ---------- 顶栏 ---------- */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16rpx 28rpx;
+  background: #182029;
+}
+
+.scoreline {
+  display: flex;
+  align-items: baseline;
+}
+
+.games {
+  font-size: 44rpx;
+  font-weight: 700;
+  letter-spacing: 4rpx;
+}
+
+.game-index {
+  margin-left: 24rpx;
+  font-size: 26rpx;
+  color: #8b98a6;
+}
+
+.format {
+  margin-left: 16rpx;
+  font-size: 24rpx;
+  color: #8b98a6;
+}
+
+.referee {
+  margin-left: 20rpx;
+  font-size: 24rpx;
+  color: #f0c674;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+}
+
+.btn {
+  margin: 0 0 0 16rpx;
+  padding: 0 26rpx;
+  height: 60rpx;
+  line-height: 60rpx;
+  font-size: 26rpx;
+  border-radius: 30rpx;
+  color: #ffffff;
+  background: #2a3542;
+}
+
+.btn::after {
+  border: none;
+}
+
+.btn[disabled] {
+  opacity: 0.4;
+  color: #ffffff;
+}
+
+.btn-undo {
+  background: #2a3542;
+}
+
+.btn-finish {
+  background: #1e7a55;
+}
+
+.btn-exit {
+  background: transparent;
+  border: 1rpx solid #3a4655;
+  color: #c9d1d9;
+}
+
+/* ---------- 球场 ---------- */
+.court {
+  flex: 1;
+  display: flex;
+}
+
+.side {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  transition: background 0.15s;
+}
+
+.side-a {
+  background: #16222e;
+  border-right: 2rpx solid #22303f;
+}
+
+.side-b {
+  background: #1a1a26;
+}
+
+/* 领先一方整块点亮，扫一眼就知道谁在前 */
+.side.is-leading {
+  background: #143d2c;
+}
+
+.side.is-finished {
+  opacity: 0.72;
+}
+
+.team-name {
+  font-size: 32rpx;
+  color: #c9d1d9;
+  max-width: 80%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.points {
+  margin: 10rpx 0;
+  font-size: 200rpx;
+  font-weight: 700;
+  line-height: 1.05;
+}
+
+.side.is-leading .points {
+  color: #4ade80;
+}
+
+.tap-hint {
+  font-size: 24rpx;
+  color: #6b7785;
+}
+
+/* ---------- 底部提示 ---------- */
+.notice {
+  padding: 12rpx 28rpx;
+  font-size: 26rpx;
+  color: #ffb4a2;
+  background: #2a1a1a;
+}
+
+.finished-tip {
+  padding: 12rpx 28rpx;
+  font-size: 26rpx;
+  color: #8ff0b5;
+  background: #10251b;
+  text-align: center;
+}

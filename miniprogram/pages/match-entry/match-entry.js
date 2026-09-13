@@ -45,6 +45,8 @@ const {
   pickerEmptyText,
 } = require('../../services/match-entry-view.js');
 const { GAME_POINTS_OPTIONS, BEST_OF_OPTIONS } = require('../../utils/match-format.js');
+const { hasReferee } = require('../../services/match-record.js');
+const { ROLE } = require('../../utils/constants.js');
 
 /** 把 Date 变成 picker 要的 2026-05-01 */
 function toDateText(date) {
@@ -72,6 +74,14 @@ Page({
 
     /** 不能录入时的原因，非空就在页面上顶掉整张表单 */
     blockReason: '',
+
+    /**
+     * 这一场的裁判情况。补录签表比赛时才有意义：
+     *   hasReferee 有指定裁判就标出是谁；
+     *   restricted 表示「本场已交给裁判，而你既不是裁判也不是管理员」，
+     *   此时录分入口会被写入端拒下，页面上提前说清楚，别让人填完才被拒。
+     */
+    referee: { hasReferee: false, name: '', restricted: false },
 
     /**
      * 是否为「给签表里排定的比赛补录比分」。
@@ -159,6 +169,7 @@ Page({
       // 带着 matchId 进来 = 给签表里排定的比赛补录比分。
       // 对阵与赛制取自那条记录，页面不给改（见 match-entry-view.scheduledForm）。
       let form;
+      let referee = { hasReferee: false, name: '', restricted: false };
       if (this.matchId) {
         const records = await getMatchRecords({ id: this.matchId });
         const record = records && records[0];
@@ -167,6 +178,7 @@ Page({
           return;
         }
         form = scheduledForm(record);
+        referee = this.describeReferee(record, user);
       } else {
         // 默认填今天与此刻：绝大多数比赛是刚打完就来录的
         const now = new Date();
@@ -189,7 +201,8 @@ Page({
             realName: item.realName || '',
           })),
           seasonStart,
-          blockReason: this.describeBlock(auth),
+          referee,
+          blockReason: this.describeBlock(auth) || this.refereeBlock(referee),
         },
         () => this.applyForm(form)
       );
@@ -204,6 +217,26 @@ Page({
     if (auth.canRecord) return '';
     if (auth.loggedIn) return auth.notice || '当前账号暂时不能录入比赛成绩';
     return '请先登录后再录入比赛成绩';
+  },
+
+  /**
+   * 这一场的裁判情况。
+   * 判定只看「有没有指定裁判」与「我是不是裁判 / 管理员」，与写入端同一口径
+   * （见 match-record.canRecordScore 的裁判闸）：指定裁判后旁人一律录不了。
+   */
+  describeReferee(record, user) {
+    if (!hasReferee(record)) return { hasReferee: false, name: '', restricted: false };
+
+    const name = this.nameOf(record.referee) || String(record.referee);
+    const isAdmin = Boolean(user && Number(user.role) >= ROLE.ADMIN);
+    const isReferee = Boolean(user && user._id === record.referee);
+    return { hasReferee: true, name, restricted: !isReferee && !isAdmin };
+  },
+
+  /** 被裁判接管时的拦截文案。没被挡下就返回空串 */
+  refereeBlock(referee) {
+    if (!referee || !referee.restricted) return '';
+    return `本场由 ${referee.name} 裁判执法，仅裁判与管理员可录入比分`;
   },
 
   /** 编号 → 昵称 */
@@ -427,5 +460,15 @@ Page({
 
   onCancel() {
     wx.navigateBack();
+  },
+
+  /**
+   * 改用横屏计分台逐球计分。
+   * 只有「给签表里排定的比赛补录」才有编号可带——日常约球还没生成比赛，
+   * 没有实时台可开，所以入口在非 scheduled 时根本不出现。
+   */
+  onGoLiveScore() {
+    if (!this.matchId) return;
+    wx.navigateTo({ url: `/pages/live-score/live-score?matchId=${this.matchId}` });
   },
 });

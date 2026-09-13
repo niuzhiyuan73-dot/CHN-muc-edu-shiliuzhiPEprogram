@@ -1,0 +1,50 @@
+<!-- 实时计分台：横屏，左右两块大按钮。布局以「点得到、看得清」为准 -->
+<view class="page">
+  <view wx:if="{{loading}}" class="hint">加载中…</view>
+  <view wx:elif="{{error}}" class="hint">{{error}}</view>
+  <view wx:elif="{{blockReason}}" class="hint">{{blockReason}}</view>
+
+  <block wx:else>
+    <!-- 顶栏：局数、赛制与三个操作 -->
+    <view class="topbar">
+      <view class="scoreline">
+        <text class="games">{{view.gamesA}} : {{view.gamesB}}</text>
+        <text class="game-index">第 {{view.gameIndex + 1}} 局</text>
+        <text class="format">{{formatText}}</text>
+        <text wx:if="{{refereeNotice}}" class="referee">{{refereeNotice}}</text>
+      </view>
+      <view class="actions">
+        <button class="btn btn-undo" bindtap="onUndo" disabled="{{!canUndo}}">撤销一球</button>
+        <button class="btn btn-finish" bindtap="onFinish" disabled="{{!canFinish || finishing}}">
+          {{finishing ? '定稿中…' : '结束比赛'}}
+        </button>
+        <button class="btn btn-exit" bindtap="onExit">退出</button>
+      </view>
+    </view>
+
+    <!-- 球场：左 A 右 B，各占一半，整块可点 -->
+    <view class="court">
+      <view
+        class="side side-a {{view.leading === 'A' ? 'is-leading' : ''}} {{view.finished ? 'is-finished' : ''}}"
+        data-side="A"
+        bindtap="onScore"
+      >
+        <text class="team-name">{{labelA}}</text>
+        <text class="points">{{view.pointsA}}</text>
+        <text class="tap-hint">判 A 得分</text>
+      </view>
+      <view
+        class="side side-b {{view.leading === 'B' ? 'is-leading' : ''}} {{view.finished ? 'is-finished' : ''}}"
+        data-side="B"
+        bindtap="onScore"
+      >
+        <text class="team-name">{{labelB}}</text>
+        <text class="points">{{view.pointsB}}</text>
+        <text class="tap-hint">判 B 得分</text>
+      </view>
+    </view>
+
+    <view wx:if="{{notice}}" class="notice">{{notice}}</view>
+    <view wx:if="{{view.finished}}" class="finished-tip">本场已分出胜负，点「结束比赛」定稿</view>
+  </block>
+</view>

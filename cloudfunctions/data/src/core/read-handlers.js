@@ -12,11 +12,13 @@
 const { ok } = require('../envelope.js');
 const { getDataset } = require('./derive.js');
 const { canManage } = require('../../lib/services/permission.js');
+const { liveKey, liveScoreOf } = require('../../lib/services/live-score.js');
 const { getPoolRating } = require('../../lib/utils/rating.js');
 const {
   RANK_PROJECT_LABEL,
   ALL_RANK_PROJECTS,
   RANK_PROJECT_CONFIG,
+  MATCH_STATUS,
 } = require('../../lib/utils/constants.js');
 const {
   buildProjectLeaderboard,
@@ -302,6 +304,39 @@ async function getHomeSummary(payload, ctx) {
 /* ---------- 比赛台账 ---------- */
 
 /**
+ * 给台账记录并入实时比分（正在逐球计分的那一场）。
+ *
+ * 与 mock.js 的 attachLive 同一形状：没有实时态就原样返回，不凭空多出
+ * 字段——既有的台账断言逐字节不受影响。
+ *
+ * 【为什么只查待确认的那些】
+ * 实时台只在待确认的比赛上开（见 live-handlers.liveTarget），已生效 /
+ * 已作废的根本不会有实时态。于是按状态先筛一遍，读取次数就跟着「正在
+ * 打的那几场」走，而不是跟着整份台账的长度走。
+ *
+ * @param {Array<Object>} records
+ * @param {Object} ctx
+ * @returns {Promise<Array<Object>>}
+ */
+async function attachLive(records, ctx) {
+  const candidates = records.filter((record) => record.status === MATCH_STATUS.PENDING);
+  if (candidates.length === 0) return records;
+
+  const states = await Promise.all(
+    candidates.map((record) => ctx.repo.liveScores.getById(liveKey(record._id)))
+  );
+  if (!states.some(Boolean)) return records;
+
+  const byMatch = new Map(
+    states.filter(Boolean).map((state) => [state.matchId, state])
+  );
+  return records.map((record) => {
+    const state = byMatch.get(record._id);
+    return state ? { ...record, live: liveScoreOf(state) } : record;
+  });
+}
+
+/**
  * 比赛台账，含待确认与已撤销的那些，专供比赛页做流转。
  * 抽签生成的待确认比赛只在这里出现——getMatches 是成绩公示，不收未生效的。
  *
@@ -321,7 +356,8 @@ async function getMatchRecords(payload = {}, ctx) {
   if (typeof status === 'number') list = list.filter((m) => m.status === status);
 
   list = [...list].sort((a, b) => new Date(b.matchTime) - new Date(a.matchTime));
-  return ok(typeof limit === 'number' && limit >= 0 ? list.slice(0, limit) : list);
+  if (typeof limit === 'number' && limit >= 0) list = list.slice(0, limit);
+  return ok(await attachLive(list, ctx));
 }
 
 module.exports = {
