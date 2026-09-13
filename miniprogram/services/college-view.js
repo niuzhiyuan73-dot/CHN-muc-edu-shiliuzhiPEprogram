@@ -19,11 +19,13 @@ const {
   COLLEGE_EVENT_STATUS,
   COLLEGE_EVENT_STATUS_LABEL,
   COLLEGE_ENTRY_STATUS,
+  GENDER_LABEL,
   LEG_DISCIPLINE_LABEL,
   MATCH_STATUS,
   MATCH_OUTCOME,
   MATCH_TYPE_LABEL,
   TIE_STATUS,
+  requiredGendersOf,
 } = require('../utils/constants.js');
 const { formatDate, formatDateTime, formatScore, formatPlacement } = require('../utils/format.js');
 const { formatMatchFormat } = require('../utils/match-format.js');
@@ -80,6 +82,19 @@ function avatarTextOf(name) {
 }
 
 /**
+ * 小项的性别提示：男单 / 男双 → 「限男」；女单 / 女双 → 「限女」；
+ * 混双 → 「一男一女」。未知小项返回空串。与校验同源（requiredGendersOf），
+ * 页面上写「限男」而校验按别的规则拦人这种事不会发生。
+ */
+function genderHintOf(discipline) {
+  const required = requiredGendersOf(discipline);
+  if (!required || required.length === 0) return '';
+  const kinds = Array.from(new Set(required));
+  if (kinds.length > 1) return '一男一女';
+  return `限${GENDER_LABEL[kinds[0]] || ''}`;
+}
+
+/**
  * 名单提交页的视图模型。
  *
  * @param {string} eventId
@@ -123,6 +138,8 @@ async function loadCollegeEntryView(eventId, options = {}) {
         nickName: name,
         avatarUrl: member.avatarUrl || '',
         avatarText: avatarTextOf(name),
+        gender: member.gender || '',
+        genderLabel: GENDER_LABEL[member.gender] || '',
         checked: picked.has(member._id),
       };
     });
@@ -490,18 +507,34 @@ async function loadCollegeLineupView(tieId, options = {}) {
   const legs = (tie && Array.isArray(tie.legs) ? tie.legs : []).map((leg) => {
     const picked = defaultMap.get(Number(leg.legNo)) || [];
     const need = playersPerLeg(leg.discipline);
+    // 候选按小项性别过滤：男单只列男队员、混双列男女；不符合的人压根不出现，
+    // 用户点不出一个必被校验拒绝的组合（校验仍在数据层兜底）
+    const allowed = requiredGendersOf(leg.discipline);
+    const optionsOf = roster
+      .filter((id) => {
+        if (!allowed) return true;
+        const member = byId.get(id);
+        return Boolean(member) && allowed.includes(member.gender);
+      })
+      .map((id) => {
+        const member = byId.get(id);
+        return {
+          memberId: id,
+          name: nameOf(member) || id,
+          gender: (member && member.gender) || '',
+          genderLabel: (member && GENDER_LABEL[member.gender]) || '',
+          checked: picked.includes(String(id)),
+        };
+      });
     return {
       legNo: leg.legNo,
       discipline: leg.discipline,
       disciplineLabel: LEG_DISCIPLINE_LABEL[leg.discipline] || leg.discipline || '',
+      genderHint: genderHintOf(leg.discipline),
       need,
       needText: `${need} 人`,
       pickedText: picked.length > 0 ? picked.map((id) => nameOf(byId.get(id))).join('、') : '未排人',
-      options: roster.map((id) => ({
-        memberId: id,
-        name: nameOf(byId.get(id)) || id,
-        checked: picked.includes(String(id)),
-      })),
+      options: optionsOf,
     };
   });
 

@@ -38,6 +38,7 @@ const {
   SEED_COUNTS,
   DEFAULT_SEED_COUNT,
   DOUBLES_SEED_MODES,
+  disciplineOptionsFor,
 } = require('../../utils/constants.js');
 const {
   TITLE_MAX,
@@ -58,6 +59,21 @@ const BRONZE_LABELS = BRONZE_MODES.map((mode) => EVENT_BRONZE_MODE_LABEL[mode]);
 /** 项目下拉。默认单打——双打赛事不计积分，别让人一进来就踩坑 */
 const MATCH_TYPES = [MATCH_TYPE.SINGLES, MATCH_TYPE.DOUBLES];
 const MATCH_TYPE_LABELS = ['单打', '双打'];
+
+/**
+ * 「组别」下拉：单打为 不限 / 男单 / 女单，双打为 不限 / 男双 / 女双 / 混双。
+ * 选项由 constants 的真相源生成，与报名校验、学院赛排阵同一份定义。
+ * 首项恒为「不限」（value 为空串），缺省即不按性别限制。
+ */
+const SINGLES_DISCIPLINES = disciplineOptionsFor(MATCH_TYPE.SINGLES);
+const DOUBLES_DISCIPLINES = disciplineOptionsFor(MATCH_TYPE.DOUBLES);
+const SINGLES_DISCIPLINE_LABELS = SINGLES_DISCIPLINES.map((item) => item.label);
+const DOUBLES_DISCIPLINE_LABELS = DOUBLES_DISCIPLINES.map((item) => item.label);
+
+/** 某个项目（单打 / 双打）下的组别选项，取值与文案各取一份 */
+function disciplinesOf(matchType) {
+  return matchType === MATCH_TYPE.DOUBLES ? DOUBLES_DISCIPLINES : SINGLES_DISCIPLINES;
+}
 
 /**
  * 赛制下拉。单打双打都显示——双打同样要抽签定赛程，可选赛制与单打一致。
@@ -116,6 +132,9 @@ Page({
     /** 各下拉的数据源与当前下标 */
     matchTypes: MATCH_TYPE_LABELS,
     matchTypeIndex: 0,
+    // 组别随项目切换：单打列 不限/男单/女单，双打列 不限/男双/女双/混双
+    disciplines: SINGLES_DISCIPLINE_LABELS,
+    disciplineIndex: 0,
     formats: FORMAT_LABELS,
     formatIndex: FORMATS.indexOf(DEFAULT_EVENT_FORMAT),
     groupCounts: GROUP_COUNT_LABELS,
@@ -147,6 +166,8 @@ Page({
       title: '',
       description: '',
       matchType: MATCH_TYPES[0],
+      // 组别留空即「不限」：不选就不会按性别拦人，与旧赛事行为一致
+      discipline: '',
       // 赛制预填单败淘汰：不选就是旧行为，老流程无感
       format: DEFAULT_EVENT_FORMAT,
       groupCount: DEFAULT_GROUP_COUNT,
@@ -239,12 +260,27 @@ Page({
     const resetMode = doubles && !allowed.includes(this.data.form.seedMode);
     this.setData({
       matchTypeIndex: index,
+      // 组别选项随项目换一套，且一并复位到「不限」——单打选过「男单」再切双打，
+      // 男单不是双打的合法组别，留着会带着一个必被校验拒绝的值提交
+      disciplines: doubles ? DOUBLES_DISCIPLINE_LABELS : SINGLES_DISCIPLINE_LABELS,
+      disciplineIndex: 0,
       seedModes: doubles ? DOUBLES_SEED_MODE_LABELS : SINGLES_SEED_MODE_LABELS,
       seedCounts: doubles ? SEED_COUNT_TEAM_LABELS : SEED_COUNT_LABELS,
       seedModeIndex: resetMode ? 0 : this.data.seedModeIndex,
     });
     this.setField('matchType', type);
+    this.setField('discipline', '');
     if (resetMode) this.setField('seedMode', '');
+  },
+
+  /** 组别：不限 / 男单 / 女单（单打），不限 / 男双 / 女双 / 混双（双打） */
+  onPickDiscipline(event) {
+    const index = Number(event.detail.value);
+    const options = disciplinesOf(this.data.form.matchType);
+    const option = options[index];
+    if (!option) return;
+    this.setData({ disciplineIndex: index });
+    this.setField('discipline', option.value);
   },
 
   onPickFormat(event) {

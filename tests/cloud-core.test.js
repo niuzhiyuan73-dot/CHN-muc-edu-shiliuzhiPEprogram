@@ -856,15 +856,17 @@ describe('云函数 —— 赛事闭环', () => {
 describe('云函数 —— 学院赛闭环', () => {
   /**
    * 学院赛要两所学院才测得出跨院权限，夹具默认全在体育学院，这里把
-   * u02 提成信息工程学院的干事、u03/u04 划过去，于是：
-   *   体育学院 —— 管理员兜底名单，u01 是普通会员
-   *   信息工程学院 —— u02 是干事，u03/u04 是名单里的队员
+   * u02 提成信息工程学院的干事、u04 划到体育学院，于是两所学院各有
+   * 一男一女（一个小项是男单、一个是女单，单性别学院排不出阵）：
+   *   体育学院 —— u01（男）、u04（女），管理员兜底名单
+   *   信息工程学院 —— u02（男，干事）、u03（女）
    */
   const collegeFixtureRepo = () =>
     createFixtureRepo({
       users: USERS.map((user) => {
         if (user._id === 'u02') return { ...user, role: ROLE.STAFF, college: '信息工程学院' };
-        if (user._id === 'u03' || user._id === 'u04') return { ...user, college: '信息工程学院' };
+        if (user._id === 'u03') return { ...user, college: '信息工程学院' };
+        if (user._id === 'u04') return { ...user, college: '体育学院' };
         return user;
       }),
     });
@@ -876,8 +878,9 @@ describe('云函数 —— 学院赛闭环', () => {
   const admin = 'openid-admin';
   const COLLEGE_SPORTS = '体育学院';
   const COLLEGE_INFO = '信息工程学院';
-  const ROSTER_SPORTS = ['u01'];
-  const ROSTER_INFO = ['u03', 'u04'];
+  /** 名单按 [男, 女] 排，正好对上 [男单, 女单] 两个小项 */
+  const ROSTER_SPORTS = ['u01', 'u04'];
+  const ROSTER_INFO = ['u02', 'u03'];
 
   /** 一份合法的学院赛表单：两个单打小项，每院 1–10 人 */
   const collegeDraft = {
@@ -933,9 +936,23 @@ describe('云函数 —— 学院赛闭环', () => {
   /** 一个小项需要几个人：双打 2 人，单打 1 人 */
   const legNeed = (discipline) => (DOUBLES_DISCIPLINES.includes(discipline) ? 2 : 1);
 
-  /** 按名单顺序给每个小项派够人（默认允许兼项，人手不够可以重复上） */
-  const lineupFrom = (tie, roster) =>
-    tie.legs.map((leg) => ({ legNo: leg.legNo, players: roster.slice(0, legNeed(leg.discipline)) }));
+  /**
+   * 按名单顺序给每个小项派够人（默认允许兼项，人手不够可以重复上）。
+   * 逐个小项往后取人——两个单打小项就会分别拿到名单里的男、女队员，
+   * 与 [男单, 女单] 的性别要求对上；全都取下标 0 的话女单会排到男队员上。
+   */
+  const lineupFrom = (tie, roster) => {
+    let cursor = 0;
+    return tie.legs.map((leg) => {
+      const need = legNeed(leg.discipline);
+      const players = [];
+      for (let i = 0; i < need; i += 1) {
+        players.push(roster[cursor] || roster[roster.length - 1]);
+        cursor += 1;
+      }
+      return { legNo: leg.legNo, players };
+    });
+  };
 
   test('发布学院赛 —— 仅管理员，落库即报名中', async () => {
     const repo = collegeFixtureRepo();
@@ -1138,14 +1155,14 @@ describe('云函数 —— 学院赛闭环', () => {
     assert.equal(short.data.ok, false);
     assert.match(short.data.message, /第 2 场还没排满/);
 
-    // 名单外的人不给上（D37）
+    // 名单外的人不给上（D37）：u03 是信息工程学院的人，塞不进体育学院
     const outsider = await on(
       repo,
       'submitLineup',
       {
         tieId,
         college: COLLEGE_SPORTS,
-        entries: [{ legNo: 1, players: ['u03'] }, { legNo: 2, players: ROSTER_SPORTS }],
+        entries: [{ legNo: 1, players: ['u03'] }, { legNo: 2, players: [ROSTER_SPORTS[1]] }],
       },
       admin
     );

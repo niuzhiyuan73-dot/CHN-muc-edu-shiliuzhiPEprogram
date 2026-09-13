@@ -32,6 +32,7 @@ const {
 const {
   ROLE,
   USER_STATUS,
+  GENDER,
   MATCH_TYPE,
   EVENT_STATUS,
   EVENT_LEVEL,
@@ -39,6 +40,7 @@ const {
   SEED_MODE,
   SIGNUP_STATUS,
   EVENT_FORMAT,
+  LEG_DISCIPLINE,
 } = require('../miniprogram/utils/constants.js');
 
 /** 一位正常在册的普通会员 */
@@ -298,6 +300,36 @@ describe('canSignUp —— 报名判定', () => {
     assert.equal(drawn.status, EVENT_STATUS.SIGNUP);
     assert.equal(canSignUp(drawn, member('m1')), false);
   });
+
+  test('项目不限 —— 男女都能报名，合池单打不禁男女对打', () => {
+    // 没声明项目的赛事（历史数据 / 表单留空）一律按「不限」处理
+    assert.equal(canSignUp(openEvent({ discipline: '' }), member('m1', { gender: GENDER.MALE })), true);
+    assert.equal(canSignUp(openEvent({ discipline: '' }), member('m2', { gender: GENDER.FEMALE })), true);
+  });
+
+  test('单性别项目 —— 男单只收男会员，女单只收女会员', () => {
+    const ms = openEvent({ discipline: LEG_DISCIPLINE.MS });
+    assert.equal(canSignUp(ms, member('m1', { gender: GENDER.MALE })), true);
+    assert.equal(canSignUp(ms, member('m2', { gender: GENDER.FEMALE })), false);
+
+    const ws = openEvent({ discipline: LEG_DISCIPLINE.WS });
+    assert.equal(canSignUp(ws, member('m1', { gender: GENDER.MALE })), false);
+    assert.equal(canSignUp(ws, member('m2', { gender: GENDER.FEMALE })), true);
+  });
+
+  test('双打项目 —— 男双限男、女双限女，混双不限（配对留给抽签）', () => {
+    const md = openEvent({ matchType: MATCH_TYPE.DOUBLES, discipline: LEG_DISCIPLINE.MD });
+    assert.equal(canSignUp(md, member('m1', { gender: GENDER.MALE })), true);
+    assert.equal(canSignUp(md, member('m2', { gender: GENDER.FEMALE })), false);
+
+    const wd = openEvent({ matchType: MATCH_TYPE.DOUBLES, discipline: LEG_DISCIPLINE.WD });
+    assert.equal(canSignUp(wd, member('m2', { gender: GENDER.FEMALE })), true);
+    assert.equal(canSignUp(wd, member('m1', { gender: GENDER.MALE })), false);
+
+    const xd = openEvent({ matchType: MATCH_TYPE.DOUBLES, discipline: LEG_DISCIPLINE.XD });
+    assert.equal(canSignUp(xd, member('m1', { gender: GENDER.MALE })), true);
+    assert.equal(canSignUp(xd, member('m2', { gender: GENDER.FEMALE })), true);
+  });
 });
 
 describe('canCancelSignup —— 退赛判定', () => {
@@ -375,6 +407,17 @@ describe('buildSignupRecord —— 组装报名记录', () => {
   test('报名截止后报名被拒', () => {
     const result = buildSignupRecord(openEvent({ status: EVENT_STATUS.ONGOING }), member('m1'));
     assert.equal(result.ok, false);
+  });
+
+  test('性别不符的报名被拒，文案点明是哪一项、限什么性别', () => {
+    const result = buildSignupRecord(
+      openEvent({ discipline: LEG_DISCIPLINE.WS }),
+      member('m1', { gender: GENDER.MALE })
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.record, null);
+    assert.match(result.message, /女单/);
+    assert.match(result.message, /女会员/);
   });
 
   test('赛事或会员缺失时不抛错，只返回失败', () => {
@@ -500,6 +543,34 @@ describe('validateEvent —— 发布校验', () => {
     assert.equal(validateEvent(validForm({ quota: -1 })).ok, false);
     assert.equal(validateEvent(validForm({ quota: 0 })).ok, true);
   });
+
+  test('项目可选：留空 = 不限，向后兼容没有这个字段的老赛事', () => {
+    assert.equal(validateEvent(validForm({ discipline: '' })).ok, true);
+    assert.equal(validateEvent(validForm()).ok, true);
+  });
+
+  test('项目必须与单打 / 双打对得上：双打赛事选男单被拒', () => {
+    const mismatch = validateEvent(
+      validForm({ matchType: MATCH_TYPE.DOUBLES, discipline: LEG_DISCIPLINE.MS })
+    );
+    assert.equal(mismatch.ok, false);
+    assert.match(mismatch.errors.discipline, /不匹配/);
+
+    assert.equal(
+      validateEvent(validForm({ matchType: MATCH_TYPE.DOUBLES, discipline: LEG_DISCIPLINE.XD })).ok,
+      true
+    );
+    assert.equal(
+      validateEvent(validForm({ matchType: MATCH_TYPE.SINGLES, discipline: LEG_DISCIPLINE.MS })).ok,
+      true
+    );
+  });
+
+  test('项目不在小项池里被拒', () => {
+    const result = validateEvent(validForm({ discipline: 'XX' }));
+    assert.equal(result.ok, false);
+    assert.match(result.errors.discipline, /项目/);
+  });
 });
 
 describe('buildEventRecord —— 组装赛事记录', () => {
@@ -539,6 +610,16 @@ describe('buildEventRecord —— 组装赛事记录', () => {
     });
     assert.equal(result.record.publisherId, 's9');
     assert.equal(result.record.publisherName, '张干事');
+  });
+
+  test('项目落库：选了写下来，留空存 null（当作不限）', () => {
+    const picked = buildEventRecord(validForm({ discipline: LEG_DISCIPLINE.MS }), {
+      actor: staff('s1'),
+    });
+    assert.equal(picked.record.discipline, LEG_DISCIPLINE.MS);
+
+    const blank = buildEventRecord(validForm({ discipline: '' }), { actor: staff('s1') });
+    assert.equal(blank.record.discipline, null);
   });
 
   test('校验不过时不产出记录', () => {

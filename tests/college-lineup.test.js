@@ -257,6 +257,120 @@ test('validateLineup —— 同一小项里重复点同一个人会被去重', (
   assert.match(result.message, /第 2 场还没排满 2 名队员/);
 });
 
+/* ------------------------------------------------------------
+ * 性别校验：名单里的人必须与小项的性别要求吻合
+ * 真机 / 云端两个写入端都会把全量会员档案传进来；纯逻辑测试不传就跳过，
+ * 所以老用例不受影响，性别规则单独立几条钉死。
+ * ------------------------------------------------------------ */
+
+/** 名单里五个人的性别：m1–m3 男、m4–m5 女 */
+const ROSTER_MEMBERS = [
+  { _id: 'm1', gender: 'M' },
+  { _id: 'm2', gender: 'M' },
+  { _id: 'm3', gender: 'M' },
+  { _id: 'm4', gender: 'F' },
+  { _id: 'm5', gender: 'F' },
+];
+
+test('validateLineup —— 传了会员档案后，合法排阵的性别也对得上', () => {
+  const result = validateLineup(payload(), {
+    tie: tie(),
+    event: event(),
+    actor: STAFF,
+    entry: ENTRY,
+    members: ROSTER_MEMBERS,
+  });
+  assert.strictEqual(result.ok, true);
+});
+
+test('validateLineup —— 没传会员档案时跳过性别校验（人数与名单仍然照查）', () => {
+  // 男单里放一名女会员：不传档案无从判性别，放行
+  const result = validateLineup(
+    payload({ entries: [{ legNo: 1, players: ['m4'] }, { legNo: 2, players: ['m1', 'm2'] }, { legNo: 3, players: ['m3', 'm4'] }] }),
+    { tie: tie(), event: event(), actor: STAFF, entry: ENTRY }
+  );
+  assert.strictEqual(result.ok, true);
+});
+
+test('validateLineup —— 男单排了女会员被拒，文案点明限什么性别', () => {
+  const result = validateLineup(
+    payload({ entries: [{ legNo: 1, players: ['m4'] }, { legNo: 2, players: ['m1', 'm2'] }, { legNo: 3, players: ['m3', 'm4'] }] }),
+    { tie: tie(), event: event(), actor: STAFF, entry: ENTRY, members: ROSTER_MEMBERS }
+  );
+  assert.strictEqual(result.ok, false);
+  assert.match(result.message, /「男单」需要 1 名男队员/);
+});
+
+test('validateLineup —— 女双排了一男一女被拒', () => {
+  const result = validateLineup(
+    payload({
+      college: '体育学院',
+      entries: [
+        { legNo: 1, players: ['m1'] },
+        { legNo: 2, players: ['m4', 'm5'] },
+        { legNo: 3, players: ['m3', 'm4'] },
+      ],
+    }),
+    {
+      tie: tie({ legs: [{ legNo: 1, discipline: LEG_DISCIPLINE.MS }, { legNo: 2, discipline: LEG_DISCIPLINE.WD }, { legNo: 3, discipline: LEG_DISCIPLINE.XD }] }),
+      event: event(),
+      actor: STAFF,
+      entry: ENTRY,
+      members: ROSTER_MEMBERS,
+    }
+  );
+  // 这一条本身合法（女双两女），先确认放行，再改一个人验证被拒
+  assert.strictEqual(result.ok, true);
+
+  const mixed = validateLineup(
+    payload({
+      entries: [
+        { legNo: 1, players: ['m1'] },
+        { legNo: 2, players: ['m1', 'm4'] },
+        { legNo: 3, players: ['m3', 'm4'] },
+      ],
+    }),
+    {
+      tie: tie({ legs: [{ legNo: 1, discipline: LEG_DISCIPLINE.MS }, { legNo: 2, discipline: LEG_DISCIPLINE.WD }, { legNo: 3, discipline: LEG_DISCIPLINE.XD }] }),
+      event: event(),
+      actor: STAFF,
+      entry: ENTRY,
+      members: ROSTER_MEMBERS,
+    }
+  );
+  assert.strictEqual(mixed.ok, false);
+  assert.match(mixed.message, /「女双」需要 2 名女队员/);
+});
+
+test('validateLineup —— 混双必须一男一女，两男 / 两女都被拒', () => {
+  const ctx = () => ({ tie: tie(), event: event(), actor: STAFF, entry: ENTRY, members: ROSTER_MEMBERS });
+
+  const twoMales = validateLineup(
+    payload({ entries: [{ legNo: 1, players: ['m1'] }, { legNo: 2, players: ['m1', 'm2'] }, { legNo: 3, players: ['m1', 'm2'] }] }),
+    ctx()
+  );
+  assert.strictEqual(twoMales.ok, false);
+  assert.match(twoMales.message, /「混双」需要 1 名男队员 \+ 1 名女队员/);
+
+  const twoFemales = validateLineup(
+    payload({ entries: [{ legNo: 1, players: ['m1'] }, { legNo: 2, players: ['m1', 'm2'] }, { legNo: 3, players: ['m4', 'm5'] }] }),
+    ctx()
+  );
+  assert.strictEqual(twoFemales.ok, false);
+  assert.match(twoFemales.message, /「混双」需要 1 名男队员 \+ 1 名女队员/);
+});
+
+test('validateLineup —— 同一小项里人数不足先于性别报错，先说清缺几个人', () => {
+  // 第 2 场是男双（要 2 男），只排了 1 名男队员：既是人数不足也是性别不齐，
+  // 但先报人数——干事更该先知道「还差一个人」，而不是「性别不对」。
+  const result = validateLineup(
+    payload({ entries: [{ legNo: 1, players: ['m1'] }, { legNo: 2, players: ['m1'] }, { legNo: 3, players: ['m3', 'm4'] }] }),
+    { tie: tie(), event: event(), actor: STAFF, entry: ENTRY, members: ROSTER_MEMBERS }
+  );
+  assert.strictEqual(result.ok, false);
+  assert.match(result.message, /第 2 场还没排满 2 名队员/);
+});
+
 test('validateLineup —— 大场没有小项 / 找不到大场都有明确说法', () => {
   const noLegs = validateLineup(payload(), {
     tie: tie({ legs: [] }),

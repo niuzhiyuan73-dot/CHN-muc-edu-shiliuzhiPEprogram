@@ -29,18 +29,37 @@ const {
   COLLEGE_EVENT_STATUS,
   TIE_STATUS,
   COLLEGE_ENTRY_STATUS,
-  LEG_DISCIPLINE,
-  DOUBLES_DISCIPLINES,
+  LEG_DISCIPLINE_LABEL,
+  GENDER,
+  GENDER_LABEL,
+  SINGLES_DISCIPLINES,
+  requiredGendersOf,
 } = require('../utils/constants.js');
 const { managesCollege } = require('./permission.js');
 
-/** 一个小项需要几个人：单打 1 人，双打 2 人 */
+/** 一个小项需要几个人：单打 1 人，双打 2 人（真相源里按位置列出性别，长度即人数） */
 function playersPerLeg(discipline) {
-  return DOUBLES_DISCIPLINES.includes(discipline) ? 2 : 1;
+  const required = requiredGendersOf(discipline);
+  return required ? required.length : 1;
 }
 
-/** 单打项目池，供页面分组或提示用 */
-const SINGLES_DISCIPLINES = [LEG_DISCIPLINE.MS, LEG_DISCIPLINE.WS];
+/**
+ * 把一个小项的性别要求说成一句人话，用于拒绝时给出具体原因。
+ * 例：男单 → 「男单」需要 1 名男队员；混双 → 「混双」需要 1 名男队员 + 1 名女队员。
+ *
+ * @param {string} discipline
+ * @returns {string}
+ */
+function genderRequirementText(discipline) {
+  const required = requiredGendersOf(discipline);
+  if (!required) return '';
+  const label = LEG_DISCIPLINE_LABEL[discipline] || discipline || '';
+  const countOf = (gender) => required.filter((item) => item === gender).length;
+  const parts = [GENDER.MALE, GENDER.FEMALE]
+    .filter((gender) => countOf(gender) > 0)
+    .map((gender) => `${countOf(gender)} 名${GENDER_LABEL[gender]}队员`);
+  return `「${label}」需要 ${parts.join(' + ')}`;
+}
 
 /* ============================================================
  * 权限
@@ -91,10 +110,12 @@ function canSubmitLineup(tie, actor, options = {}) {
  * @param {Object|null} ctx.event 学院赛
  * @param {Object|null} ctx.actor 提交人
  * @param {Object|null} [ctx.entry] 该学院已通过审核的名单
+ * @param {Array<Object>|Map<string,Object>} [ctx.members] 全量会员档案，用于查性别。
+ *        真机 / 云端的两个写入端都会传；纯逻辑测试不传时则跳过性别校验。
  * @returns {{ok:boolean, message:string, entries:Array<Object>, college:string}}
  */
 function validateLineup(payload = {}, ctx = {}) {
-  const { tie = null, event = null, actor = null, entry = null } = ctx;
+  const { tie = null, event = null, actor = null, entry = null, members = null } = ctx;
   const college = String(payload.college || '').trim();
   const raw = Array.isArray(payload.entries) ? payload.entries : [];
   const failed = (message) => ({ ok: false, message, entries: [], college });
@@ -117,6 +138,11 @@ function validateLineup(payload = {}, ctx = {}) {
   const roster = new Set(
     (Array.isArray(entry.members) ? entry.members : []).map((id) => String(id || ''))
   );
+  // 会员编号 → 会员档案。写入端一定给；给了才做性别校验（没有档案就无从判性别）
+  const memberMap = members instanceof Map
+    ? members
+    : new Map((Array.isArray(members) ? members : []).map((member) => [member._id, member]));
+  const canCheckGender = Boolean(members);
   const legs = Array.isArray(tie.legs) ? tie.legs : [];
   if (legs.length === 0) return failed('这场大场还没有小项，无法排阵');
 
@@ -156,6 +182,24 @@ function validateLineup(payload = {}, ctx = {}) {
       uses.set(id, (uses.get(id) || 0) + 1);
     }
 
+    // 性别硬校验：上场队员的性别必须与小项要求完全吻合（男单限男、混双一男
+    // 一女）。按排序后的数组比对，既管性别也管人数，不必分两条规则写。
+    const required = requiredGendersOf(leg.discipline);
+    if (canCheckGender && required) {
+      const actual = players
+        .map((id) => {
+          const member = memberMap.get(id);
+          return member ? member.gender : '';
+        })
+        .sort();
+      const need = required.slice().sort();
+      const same =
+        actual.length === need.length && actual.every((gender, index) => gender === need[index]);
+      if (!same) {
+        return failed(`${label} ${genderRequirementText(leg.discipline)}，请重新选择队员`);
+      }
+    }
+
     entries.push({ legNo, discipline: leg.discipline, players });
   }
 
@@ -182,11 +226,12 @@ function validateLineup(payload = {}, ctx = {}) {
  * @param {Object} [ctx.entry] 该学院名单
  * @param {Date} [ctx.now=new Date()]
  * @param {string} [ctx.carriedFrom] 沿用自哪份排阵的 _id（可空）
+ * @param {Array<Object>|Map<string,Object>} [ctx.members] 全量会员档案，用于校验性别
  * @returns {{ok:boolean, record:Object|null, message:string}}
  */
 function buildLineupRecord(payload = {}, ctx = {}) {
-  const { tie = null, event = null, actor = null, entry = null, now = new Date(), carriedFrom = '' } = ctx;
-  const check = validateLineup(payload, { tie, event, actor, entry });
+  const { tie = null, event = null, actor = null, entry = null, now = new Date(), carriedFrom = '', members = null } = ctx;
+  const check = validateLineup(payload, { tie, event, actor, entry, members });
 
   if (!check.ok) {
     return { ok: false, record: null, message: check.message };

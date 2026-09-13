@@ -40,7 +40,7 @@
           <view class="event-meta">
             {{item.timeText}}<text wx:if="{{item.location}}"> · {{item.location}}</text>
           </view>
-          <view class="event-meta">{{item.levelLabel}} · {{item.matchTypeLabel}} · {{item.quotaText}}</view>
+          <view class="event-meta">{{item.levelLabel}} · {{item.matchTypeLabel}}{{item.disciplineLabel ? ' · ' + item.disciplineLabel : ''}} · {{item.quotaText}}</view>
         </view>
 
         <view class="event-side">

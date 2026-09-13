@@ -38,7 +38,7 @@
         </view>
         <view class="event-info-row">
           <text class="event-info-label">项目</text>
-          <text class="event-info-value">{{view.event.levelLabel}} · {{view.event.matchTypeLabel}} · {{view.event.formatLabel}}</text>
+          <text class="event-info-value">{{view.event.levelLabel}} · {{view.event.matchTypeLabel}}{{view.event.disciplineLabel ? ' · ' + view.event.disciplineLabel : ''}} · {{view.event.formatLabel}}</text>
         </view>
         <view class="event-info-row">
           <text class="event-info-label">名额</text>

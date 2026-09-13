@@ -37,7 +37,9 @@
     <!-- ========== 逐个小项排人 ========== -->
     <view wx:for="{{view.legs}}" wx:key="legNo" class="card">
       <view class="rank-head">
-        <view class="rank-head-title">第 {{item.legNo}} 场 · {{item.disciplineLabel}}</view>
+        <view class="rank-head-title">
+          第 {{item.legNo}} 场 · {{item.disciplineLabel}}{{item.genderHint ? ' · ' + item.genderHint : ''}}
+        </view>
         <view class="rank-head-count">需 {{item.needText}}</view>
       </view>
       <view class="leg-picked">已排：{{item.pickedText}}</view>
@@ -45,7 +47,7 @@
       <checkbox-group data-leg-no="{{item.legNo}}" bindchange="onTogglePlayer">
         <label wx:for="{{item.options}}" wx:for-item="player" wx:key="memberId" class="member-row">
           <checkbox value="{{player.memberId}}" checked="{{player.checked}}" color="#2f7d4f" />
-          <view class="member-name">{{player.name}}</view>
+          <view class="member-name">{{player.name}}{{player.genderLabel ? ' · ' + player.genderLabel : ''}}</view>
         </label>
       </checkbox-group>
     </view>

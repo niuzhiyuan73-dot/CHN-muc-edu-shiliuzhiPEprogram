@@ -61,6 +61,12 @@ const {
   DEFAULT_ADVANCE_PER_GROUP,
   ROLE,
   isRankable,
+  ALL_LEG_DISCIPLINES,
+  LEG_DISCIPLINE_LABEL,
+  GENDER_LABEL,
+  disciplineMatchType,
+  singleGenderOf,
+  disciplineLabelOf,
 } = require('../utils/constants.js');
 const { formatDateTime } = require('../utils/format.js');
 const { canManage, isActive, managesCollege } = require('./permission.js');
@@ -78,6 +84,7 @@ const FIELD_ORDER = [
   'title',
   'description',
   'matchType',
+  'discipline',
   'format',
   'groupCount',
   'advancePerGroup',
@@ -253,6 +260,10 @@ function canSignUp(event, actor, options = {}) {
   if (!isRankable(actor)) return false;
   // 待审核 / 已禁用 / 未登录同样不行：还没转正的人不能承诺到场
   if (!isActive(actor)) return false;
+  // 赛事声明了单性别项目（男单 / 女单 / 男双 / 女双）时，只有相符性别的会员
+  // 能报名。混双与「不限」不在此拦——混双的组合约束留给抽签配对。
+  const genderLimit = singleGenderOf(event.discipline);
+  if (genderLimit && (!actor || actor.gender !== genderLimit)) return false;
   // 已报名或已签到的，报名按钮不该再出现
   if (signup && signup.status !== SIGNUP_STATUS.CANCELED) return false;
 
@@ -349,6 +360,16 @@ function buildSignupRecord(event, actor, ctx = {}) {
   if (!isActive(actor)) {
     return { ok: false, record: null, message: '账号尚未通过审核，暂时不能报名' };
   }
+  // 单性别项目只收相符性别的报名者，与 canSignUp 同一把尺子
+  const genderLimit = singleGenderOf(event.discipline);
+  if (genderLimit && actor.gender !== genderLimit) {
+    const label = LEG_DISCIPLINE_LABEL[event.discipline] || '';
+    return {
+      ok: false,
+      record: null,
+      message: `本赛事为${label}，仅限${GENDER_LABEL[genderLimit]}会员报名`,
+    };
+  }
 
   return {
     ok: true,
@@ -431,6 +452,9 @@ function normalizeDraft(form) {
     description: text(source.description),
     // 数字枚举：'' 变成 null，交给校验去说「请选择」，而不是悄悄当成 0
     matchType: int(source.matchType),
+    // 赛事项目（男单 / 女单 / 男双 / 女双 / 混双）。留空 = 不限，向后兼容：
+    // 历史赛事与老表单没有这个字段，一律当「不限」处理
+    discipline: text(source.discipline),
     // 赛制缺省按单败淘汰：历史赛事没有这个字段，表单也允许不选（等价于旧行为）
     format: text(source.format) || DEFAULT_EVENT_FORMAT,
     // 小组参数只有分组赛制用得上，给上缺省值即可，不强制显式选
@@ -478,6 +502,18 @@ function validateEvent(form = {}) {
 
   if (!MATCH_TYPE_TO_POOL[draft.matchType]) {
     errors.matchType = '请选择单打或双打';
+  }
+
+  // 项目可选（留空 = 不限）；一旦选了就必须是真项目池里的小项，且与单打 /
+  // 双打对得上——否则会出现「双打赛事选了男单」这种自相矛盾的记录
+  if (draft.discipline && !ALL_LEG_DISCIPLINES.includes(draft.discipline)) {
+    errors.discipline = '请选择赛事项目';
+  } else if (
+    draft.discipline &&
+    MATCH_TYPE_TO_POOL[draft.matchType] &&
+    disciplineMatchType(draft.discipline) !== draft.matchType
+  ) {
+    errors.discipline = '赛事项目与单打 / 双打不匹配';
   }
 
   if (!VALID_FORMATS.includes(draft.format)) {
@@ -587,6 +623,9 @@ function buildEventRecord(form, ctx = {}) {
       title: draft.title,
       description: draft.description,
       matchType: draft.matchType,
+      // 赛事项目（男单 / 女单 / 男双 / 女双 / 混双）。null = 不限，与历史
+      // 赛事同一口径；报名按项目性别拦人，双打抽签按它配对
+      discipline: draft.discipline || null,
       // 池必须跟着记录一起写死：漏了会被按池过滤的查询静默漏掉，
       // 赛事发出去却哪儿都查不到，是最难排查的一类问题
       pool: MATCH_TYPE_TO_POOL[draft.matchType],
@@ -835,6 +874,9 @@ function buildEventRow(event, ctx = {}) {
     title: event.title || '（未命名赛事）',
     description: event.description || '',
     matchTypeLabel: MATCH_TYPE_LABEL[event.matchType] || '',
+    // 项目标签（男单 / 女单 / 男双 / 女双 / 混双）；不限时为空串，界面不显示
+    discipline: event.discipline || '',
+    disciplineLabel: disciplineLabelOf(event.discipline),
     isDoubles: event.matchType === MATCH_TYPE.DOUBLES,
     levelLabel: levelLabelOf(event),
     bronzeLabel: bronzeLabelOf(event),

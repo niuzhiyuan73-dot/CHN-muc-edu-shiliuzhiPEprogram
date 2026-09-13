@@ -37,6 +37,16 @@
       </view>
       <view wx:if="{{errors.matchType}}" class="field-error">{{errors.matchType}}</view>
 
+      <!-- 组别：声明本赛事限什么性别。留空「不限」即不按性别拦人 -->
+      <view class="field-row">
+        <view class="field-label">组别</view>
+        <picker mode="selector" range="{{disciplines}}" value="{{disciplineIndex}}" bindchange="onPickDiscipline">
+          <view class="field-value">{{disciplines[disciplineIndex]}} ›</view>
+        </picker>
+      </view>
+      <view wx:if="{{errors.discipline}}" class="field-error">{{errors.discipline}}</view>
+      <view class="field-hint">选了男单 / 女单（男双 / 女双）后，只有相符性别的会员能报名；混双按「一男一女」配对；不限则不拦</view>
+
       <!-- 赛制：单打双打都开放，可选赛制一致。预填单败淘汰，不选即旧行为 -->
       <block>
         <view class="field-row">

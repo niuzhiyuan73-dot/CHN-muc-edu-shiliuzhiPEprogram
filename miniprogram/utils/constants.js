@@ -673,6 +673,112 @@ const ALL_LEG_DISCIPLINES = Object.values(LEG_DISCIPLINE);
  */
 const DOUBLES_DISCIPLINES = [LEG_DISCIPLINE.MD, LEG_DISCIPLINE.WD, LEG_DISCIPLINE.XD];
 
+/** 单打类小项。与 DOUBLES_DISCIPLINES 互补。 */
+const SINGLES_DISCIPLINES = [LEG_DISCIPLINE.MS, LEG_DISCIPLINE.WS];
+
+/**
+ * 小项 → 上场队员性别（真相源）
+ * ============================================================
+ * 这是全项目「谁能在哪个小项上场」的唯一依据。学院赛排阵要按它校验，
+ * 个人赛报名要按它拦人，个人赛双打抽签要按它配对——三处共用一份定义，
+ * 免得各处各写一套、慢慢分叉。
+ *
+ * 【为什么是「按位置列出性别」而不是「男 / 女 / 混」三个标签】
+ * 混双的约束是「恰好一男一女」，用 ['M','F'] 直接表达清楚；男双是
+ * ['M','M']，也顺手把「两人」这个人数信息带了出来。数组长度即人数，
+ * 排序后比对就能判定一份上场名单合不合法，不必再写一套人数规则。
+ * ============================================================
+ */
+const LEG_DISCIPLINE_GENDERS = {
+  [LEG_DISCIPLINE.MS]: [GENDER.MALE],
+  [LEG_DISCIPLINE.WS]: [GENDER.FEMALE],
+  [LEG_DISCIPLINE.MD]: [GENDER.MALE, GENDER.MALE],
+  [LEG_DISCIPLINE.WD]: [GENDER.FEMALE, GENDER.FEMALE],
+  [LEG_DISCIPLINE.XD]: [GENDER.MALE, GENDER.FEMALE],
+};
+
+/**
+ * 小项 → 个人赛的比赛项目类型（单打 / 双打）。
+ * 「这个个人赛项目属单打还是双打」只有这一处判定，赛事表单据此校验
+ * 用户选的项目与单打 / 双打是否对得上。
+ */
+const DISCIPLINE_MATCH_TYPE = {
+  [LEG_DISCIPLINE.MS]: MATCH_TYPE.SINGLES,
+  [LEG_DISCIPLINE.WS]: MATCH_TYPE.SINGLES,
+  [LEG_DISCIPLINE.MD]: MATCH_TYPE.DOUBLES,
+  [LEG_DISCIPLINE.WD]: MATCH_TYPE.DOUBLES,
+  [LEG_DISCIPLINE.XD]: MATCH_TYPE.DOUBLES,
+};
+
+/**
+ * 某个小项需要哪些性别的队员，按位置排列；未知小项返回 null。
+ * @param {string} discipline
+ * @returns {string[]|null}
+ */
+function requiredGendersOf(discipline) {
+  return LEG_DISCIPLINE_GENDERS[discipline] || null;
+}
+
+/**
+ * 小项对应的比赛项目类型；未知小项返回 null。
+ * @param {string} discipline
+ * @returns {number|null}
+ */
+function disciplineMatchType(discipline) {
+  return DISCIPLINE_MATCH_TYPE[discipline] || null;
+}
+
+/**
+ * 某个比赛项目类型可选的小项清单（不含「不限」）。
+ * 双打含混双——个人赛同样可以办混双，只是双打仍共用一个分数池。
+ * @param {number} matchType
+ * @returns {string[]}
+ */
+function disciplinesForMatchType(matchType) {
+  if (matchType === MATCH_TYPE.SINGLES) return SINGLES_DISCIPLINES.slice();
+  if (matchType === MATCH_TYPE.DOUBLES) return DOUBLES_DISCIPLINES.slice();
+  return [];
+}
+
+/**
+ * 小项对「单个报名者」的性别限制。
+ *
+ * 男单 / 男双 → 'M'，女单 / 女双 → 'F'；混双（一男一女）与「不限」
+ * 返回 null，表示不对单个报名者作性别限制——混双的组合约束留给抽签配对。
+ *
+ * @param {string} discipline
+ * @returns {string|null}
+ */
+function singleGenderOf(discipline) {
+  const genders = requiredGendersOf(discipline);
+  if (!genders || genders.length === 0) return null;
+  const unique = Array.from(new Set(genders));
+  return unique.length === 1 ? unique[0] : null;
+}
+
+/**
+ * 赛事项目文案。未指定项目（不限）返回空串，界面据此决定是否显示标签。
+ * @param {string} discipline
+ * @returns {string}
+ */
+function disciplineLabelOf(discipline) {
+  return LEG_DISCIPLINE_LABEL[discipline] || '';
+}
+
+/**
+ * 个人赛表单里「项目」下拉的可选项，首项固定为「不限」。
+ * 与学院赛共用同一份小项定义，避免两套体系各写一份选项。
+ * @param {number} matchType
+ * @returns {Array<{value:string, label:string}>}
+ */
+function disciplineOptionsFor(matchType) {
+  const options = [{ value: '', label: '不限' }];
+  for (const discipline of disciplinesForMatchType(matchType)) {
+    options.push({ value: discipline, label: LEG_DISCIPLINE_LABEL[discipline] });
+  }
+  return options;
+}
+
 /**
  * 大场胜负算法（D23 / D33）。
  *
@@ -919,6 +1025,15 @@ module.exports = {
   LEG_DISCIPLINE_LABEL,
   ALL_LEG_DISCIPLINES,
   DOUBLES_DISCIPLINES,
+  SINGLES_DISCIPLINES,
+  LEG_DISCIPLINE_GENDERS,
+  DISCIPLINE_MATCH_TYPE,
+  requiredGendersOf,
+  disciplineMatchType,
+  disciplinesForMatchType,
+  singleGenderOf,
+  disciplineLabelOf,
+  disciplineOptionsFor,
   TIE_ALGO,
   TIE_ALGO_LABEL,
   DEFAULT_TIE_ALGO,

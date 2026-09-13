@@ -34,6 +34,7 @@ const {
   BRACKET_STAGE,
   SEED_MODE,
   SIGNUP_STATUS,
+  LEG_DISCIPLINE,
   ROLE,
 } = require('../utils/constants.js');
 const { DEFAULT_FORMAT, gamesToWin } = require('../utils/match-format.js');
@@ -627,12 +628,15 @@ function generateSeed(options = {}) {
   //
   // 单打赛事仍然分男子组和女子组：分数池合并了，但比赛本身还是分组的，
   // 就像现实中的校赛——同一个池只是让两个组的名次能放在一起比较。
+  // discipline 是「赛事限什么性别」的正式声明（不限则为 null）。它不只是
+  // 标题里的一个字：报名与上场都按它拦人。双打两场保持不限——双打同样
+  // 分男双 / 女双 / 混双，但这套演示数据沿用「一个双打池」的既有口径。
   const eventPlan = [
-    { week: 3, matchType: MATCH_TYPE.SINGLES, gender: 'M', size: 8, format: { gamePoints: 11, bestOf: 3 } },
-    { week: 5, matchType: MATCH_TYPE.SINGLES, gender: 'F', size: 8, format: { gamePoints: 15, bestOf: 3 } },
+    { week: 3, matchType: MATCH_TYPE.SINGLES, gender: 'M', discipline: LEG_DISCIPLINE.MS, size: 8, format: { gamePoints: 11, bestOf: 3 } },
+    { week: 5, matchType: MATCH_TYPE.SINGLES, gender: 'F', discipline: LEG_DISCIPLINE.WS, size: 8, format: { gamePoints: 15, bestOf: 3 } },
     { week: 7, matchType: MATCH_TYPE.DOUBLES, size: 8, format: { gamePoints: 11, bestOf: 5 } },
-    { week: 11, matchType: MATCH_TYPE.SINGLES, gender: 'M', size: 8, format: { gamePoints: 21, bestOf: 1 } },
-    { week: 12, matchType: MATCH_TYPE.SINGLES, gender: 'F', size: 8, format: { gamePoints: 15, bestOf: 5 } },
+    { week: 11, matchType: MATCH_TYPE.SINGLES, gender: 'M', discipline: LEG_DISCIPLINE.MS, size: 8, format: { gamePoints: 21, bestOf: 1 } },
+    { week: 12, matchType: MATCH_TYPE.SINGLES, gender: 'F', discipline: LEG_DISCIPLINE.WS, size: 8, format: { gamePoints: 15, bestOf: 5 } },
     { week: 15, matchType: MATCH_TYPE.DOUBLES, size: 8, format: { gamePoints: 21, bestOf: 3 } },
   ];
 
@@ -691,6 +695,8 @@ function generateSeed(options = {}) {
       title,
       description: '俱乐部常规赛事，单败淘汰制，取胜者晋级',
       matchType: plan.matchType,
+      // 赛事限什么性别（null 即不限）。报名与上场校验都读它
+      discipline: plan.discipline || null,
       pool: MATCH_TYPE_TO_POOL[plan.matchType],
       location: '学校体育馆 1 号场',
       startTime,
@@ -727,6 +733,7 @@ function generateSeed(options = {}) {
     title: `${openStart.getMonth() + 1}月男子单打赛`,
     description: '俱乐部常规赛事，单败淘汰制，取胜者晋级',
     matchType: MATCH_TYPE.SINGLES,
+    discipline: LEG_DISCIPLINE.MS,
     pool: MATCH_TYPE_TO_POOL[MATCH_TYPE.SINGLES],
     location: '学校体育馆 1 号场',
     startTime: openStart,

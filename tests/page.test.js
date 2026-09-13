@@ -3442,13 +3442,27 @@ test('赛事页 —— 学院赛发布入口同样只给管理员', async () => 
  * 学院赛 —— 名单提交（M2-3）与名单审核（M2-4）
  * ============================================================ */
 
-/** 演示数据里干事的学院（张宇轩 u02 / 郑凯文同院），名单用例都围着它转 */
-const STAFF_COLLEGE = '信息工程学院';
+/**
+ * 学院赛用例围着这一所学院转：一男一女各一名，排阵才排得出男单 + 女单
+ * （单一性别的学院凑不出阵，性别校验在数据层兜底）。
+ *
+ * 【为什么干事换成了本校会员】
+ * 种子里唯一的干事 u02 张宇轩在信息工程学院，而信息工程学院只有两名男
+ * 会员，排不出女单。权限判定按编号回查台账（见 mock.accountOf），不能拿
+ * u02 去管别的学院；所以改由管理员把本校一名男会员任为干事，再用他的
+ * 身份走完整条链路——与真人被任命的路径一致。
+ */
+const STAFF_COLLEGE = '管理学院';
+/** 管理学院的干事：王浩然（u04），发布赛事时现场任命 */
+const STAFF_ID = 'u04';
 
 /**
  * 造一场「报名中」的学院赛。门槛是管理员，这里以管理员身份落库，
  * 用例想以谁的身份看，自己在 onLoad 前摆登录态即可。
  * 默认人数下限压到 1：演示数据里单个学院凑不满默认的 4 人。
+ *
+ * 顺带把 STAFF_ID 任为 STAFF_COLLEGE 的干事：resetCache 会清掉角色任免，
+ * 而学院赛的写入口一律按编号回查角色，不在每条用例里重新任命就都过不去。
  */
 async function publishTestCollegeEvent(overrides = {}) {
   const result = await facade.publishCollegeEvent(
@@ -3463,6 +3477,10 @@ async function publishTestCollegeEvent(overrides = {}) {
     ADMIN._id
   );
   assert.strictEqual(result.ok, true, `发布学院赛失败：${result.firstError}`);
+
+  const appointed = await facade.setCollegeLeader(STAFF_ID, ADMIN._id, true);
+  assert.strictEqual(appointed.ok, true, `任命 ${STAFF_COLLEGE} 干事失败：${appointed.message}`);
+
   return result.record;
 }
 
@@ -3474,7 +3492,7 @@ async function memberIdsOf(college) {
 
 test('名单提交 —— 干事只看得到本学院的候选，外院的人不在其中', async () => {
   const event = await publishTestCollegeEvent();
-  loginAs({ role: 1, _id: 'u02', college: STAFF_COLLEGE });
+  loginAs({ role: 1, _id: STAFF_ID, college: STAFF_COLLEGE });
 
   const page = instantiate(collegeEntryConfig);
   await page.onLoad({ eventId: event._id });
@@ -3493,7 +3511,7 @@ test('名单提交 —— 干事只看得到本学院的候选，外院的人不
 
 test('名单提交 —— 干事提交本学院名单成功，落库为待审核', async () => {
   const event = await publishTestCollegeEvent();
-  loginAs({ role: 1, _id: 'u02', college: STAFF_COLLEGE });
+  loginAs({ role: 1, _id: STAFF_ID, college: STAFF_COLLEGE });
 
   const page = instantiate(collegeEntryConfig);
   await page.onLoad({ eventId: event._id });
@@ -3539,11 +3557,11 @@ test('名单提交 —— 名单混入外院队员被数据层拒下，不落库
   const members = await facade.getMembers();
   const outsider = members.find((member) => member.college !== STAFF_COLLEGE && member.status === USER_STATUS.ACTIVE);
   assert.ok(outsider, '演示数据里应有一个外院会员');
-  loginAs({ role: 1, _id: 'u02', college: STAFF_COLLEGE });
+  loginAs({ role: 1, _id: STAFF_ID, college: STAFF_COLLEGE });
 
   const result = await facade.submitCollegeEntry(
     { eventId: event._id, college: STAFF_COLLEGE, memberIds: [outsider._id] },
-    'u02'
+    STAFF_ID
   );
 
   assert.strictEqual(result.ok, false);
@@ -3555,11 +3573,11 @@ test('名单提交 —— 干事替别的学院提交被拒', async () => {
   const event = await publishTestCollegeEvent();
   const members = await facade.getMembers();
   const otherCollege = members.find((member) => member.college !== STAFF_COLLEGE).college;
-  loginAs({ role: 1, _id: 'u02', college: STAFF_COLLEGE });
+  loginAs({ role: 1, _id: STAFF_ID, college: STAFF_COLLEGE });
 
   const result = await facade.submitCollegeEntry(
     { eventId: event._id, college: otherCollege, memberIds: [] },
-    'u02'
+    STAFF_ID
   );
 
   assert.strictEqual(result.ok, false);
@@ -3572,13 +3590,13 @@ test('名单提交 —— 人数不在上下限内会被数据层拒下', async 
   const ids = await memberIdsOf(STAFF_COLLEGE);
   assert.ok(ids.length >= 2, '演示数据里本院至少两人');
 
-  loginAs({ role: 1, _id: 'u02', college: STAFF_COLLEGE });
+  loginAs({ role: 1, _id: STAFF_ID, college: STAFF_COLLEGE });
   const args = { eventId: event._id, college: STAFF_COLLEGE };
 
-  const justRight = await facade.submitCollegeEntry({ ...args, memberIds: ids.slice(0, 1) }, 'u02');
+  const justRight = await facade.submitCollegeEntry({ ...args, memberIds: ids.slice(0, 1) }, STAFF_ID);
   assert.strictEqual(justRight.ok, true, '刚好落在区间内可以提交');
 
-  const tooMany = await facade.submitCollegeEntry({ ...args, memberIds: ids.slice(0, 2) }, 'u02');
+  const tooMany = await facade.submitCollegeEntry({ ...args, memberIds: ids.slice(0, 2) }, STAFF_ID);
   assert.strictEqual(tooMany.ok, false);
   assert.match(tooMany.message, /最多 1 人/);
 
@@ -3586,7 +3604,7 @@ test('名单提交 —— 人数不在上下限内会被数据层拒下', async 
   const strict = await publishTestCollegeEvent({ rosterMin: 2, rosterMax: 2 });
   const tooFew = await facade.submitCollegeEntry(
     { eventId: strict._id, college: STAFF_COLLEGE, memberIds: ids.slice(0, 1) },
-    'u02'
+    STAFF_ID
   );
   assert.strictEqual(tooFew.ok, false);
   assert.match(tooFew.message, /至少 2 人/);
@@ -3614,7 +3632,7 @@ test('赛事页 —— 学院赛一行按身份去不同的页', async () => {
   ]);
 
   // 干事：报名中直接进本学院的名单页
-  loginAs({ role: 1, _id: 'u02', college: STAFF_COLLEGE });
+  loginAs({ role: 1, _id: STAFF_ID, college: STAFF_COLLEGE });
   const staff = instantiate(eventsConfig);
   await staff.onLoad();
   const staffRow = staff.data.view.collegeEvents[0];
@@ -3656,7 +3674,7 @@ test('名单审核 —— 只有管理员能进，干事被挡', async () => {
   assert.strictEqual(admin.data.view.canReview, true);
   assert.strictEqual(admin.data.view.blockReason, '');
 
-  loginAs({ role: 1, _id: 'u02', college: STAFF_COLLEGE });
+  loginAs({ role: 1, _id: STAFF_ID, college: STAFF_COLLEGE });
   const staff = instantiate(collegeEntryReviewConfig);
   await staff.onLoad({ eventId: event._id });
   assert.match(staff.data.view.blockReason, /只有管理员/);
@@ -3667,7 +3685,7 @@ test('名单审核 —— 通过后状态变为已通过', async () => {
   const ids = await memberIdsOf(STAFF_COLLEGE);
   await facade.submitCollegeEntry(
     { eventId: event._id, college: STAFF_COLLEGE, memberIds: ids },
-    'u02'
+    STAFF_ID
   );
 
   loginAs(ADMIN);
@@ -3690,7 +3708,7 @@ test('名单审核 —— 退回必须填理由，填了才生效', async () => 
   const ids = await memberIdsOf(STAFF_COLLEGE);
   await facade.submitCollegeEntry(
     { eventId: event._id, college: STAFF_COLLEGE, memberIds: ids },
-    'u02'
+    STAFF_ID
   );
 
   loginAs(ADMIN);
@@ -3721,8 +3739,8 @@ test('名单审核 —— 退回必须填理由，填了才生效', async () => 
  * 学院赛详情 / 排阵 / 大场开始
  * ============================================================ */
 
-/** 体育学院 —— 演示数据里的另一所参赛学院 */
-const OTHER_COLLEGE = '体育学院';
+/** 历史文化学院 —— 演示数据里的另一所参赛学院（同样一男一女） */
+const OTHER_COLLEGE = '历史文化学院';
 
 /**
  * 造一场两院参赛、已抽签并已开始的学院赛。
@@ -3735,7 +3753,7 @@ async function startTestCollegeEvent() {
 
   await facade.submitCollegeEntry(
     { eventId: event._id, college: STAFF_COLLEGE, memberIds: await memberIdsOf(STAFF_COLLEGE) },
-    'u02'
+    STAFF_ID
   );
   await facade.submitCollegeEntry(
     { eventId: event._id, college: OTHER_COLLEGE, memberIds: await memberIdsOf(OTHER_COLLEGE) },
@@ -3768,7 +3786,7 @@ test('学院赛详情 —— 管理员点选种子并抽签，名单就此锁定
   const event = await publishTestCollegeEvent({ legPlan: ['MS', 'WS'] });
   await facade.submitCollegeEntry(
     { eventId: event._id, college: STAFF_COLLEGE, memberIds: await memberIdsOf(STAFF_COLLEGE) },
-    'u02'
+    STAFF_ID
   );
   await facade.submitCollegeEntry(
     { eventId: event._id, college: OTHER_COLLEGE, memberIds: await memberIdsOf(OTHER_COLLEGE) },
@@ -3811,7 +3829,7 @@ test('学院赛详情 —— 管理员点选种子并抽签，名单就此锁定
 
 test('学院赛详情 —— 干事报名中能从详情页进名单页', async () => {
   const event = await publishTestCollegeEvent();
-  loginAs({ role: 1, _id: 'u02', college: STAFF_COLLEGE });
+  loginAs({ role: 1, _id: STAFF_ID, college: STAFF_COLLEGE });
 
   const page = instantiate(collegeEventDetailConfig);
   await page.onLoad({ eventId: event._id });
@@ -3828,7 +3846,7 @@ test('学院赛详情 —— 开始赛事生成首轮大场，双方排阵齐后
   const event = await publishTestCollegeEvent({ legPlan: ['MS', 'WS'] });
   await facade.submitCollegeEntry(
     { eventId: event._id, college: STAFF_COLLEGE, memberIds: await memberIdsOf(STAFF_COLLEGE) },
-    'u02'
+    STAFF_ID
   );
   await facade.submitCollegeEntry(
     { eventId: event._id, college: OTHER_COLLEGE, memberIds: await memberIdsOf(OTHER_COLLEGE) },
@@ -3873,7 +3891,7 @@ test('排阵页 —— 未登录与非本大场的学院都被挡住', async () 
 test('排阵页 —— 干事按默认值排人并提交，A 侧标记为已排阵', async () => {
   const { event, ties } = await startTestCollegeEvent();
   const tie = ties[0];
-  loginAs({ role: 1, _id: 'u02', college: STAFF_COLLEGE });
+  loginAs({ role: 1, _id: STAFF_ID, college: STAFF_COLLEGE });
 
   const page = instantiate(collegeLineupConfig);
   await page.onLoad({ tieId: tie._id, eventId: event._id });
@@ -3907,7 +3925,7 @@ test('排阵页 —— 干事按默认值排人并提交，A 侧标记为已排�
 test('排阵页 —— 超过小项人数上限时撤回过多的点选并提示', async () => {
   const { event, ties } = await startTestCollegeEvent();
   const tie = ties[0];
-  loginAs({ role: 1, _id: 'u02', college: STAFF_COLLEGE });
+  loginAs({ role: 1, _id: STAFF_ID, college: STAFF_COLLEGE });
 
   const page = instantiate(collegeLineupConfig);
   await page.onLoad({ tieId: tie._id, eventId: event._id });
@@ -3923,7 +3941,7 @@ test('排阵页 —— 超过小项人数上限时撤回过多的点选并提示
 test('排阵页 —— 有人没排满时提交被数据层拒下', async () => {
   const { event, ties } = await startTestCollegeEvent();
   const tie = ties[0];
-  loginAs({ role: 1, _id: 'u02', college: STAFF_COLLEGE });
+  loginAs({ role: 1, _id: STAFF_ID, college: STAFF_COLLEGE });
 
   const page = instantiate(collegeLineupConfig);
   await page.onLoad({ tieId: tie._id, eventId: event._id });
@@ -3953,7 +3971,7 @@ test('大场开始 —— 双方排阵齐后管理员才能点开始', async () 
         { legNo: 2, players: [staffIds[1]] },
       ],
     },
-    'u02'
+    STAFF_ID
   );
 
   loginAs(ADMIN);
@@ -4126,7 +4144,7 @@ test('学院名次页 —— 名次不是正整数时挡下，赛事不结束', 
 test('学院名次页 —— 干事与会员整页挡住，一条学院名单都不下发', async () => {
   const { event } = await startTestCollegeEvent();
 
-  for (const actor of [{ role: 1, _id: 'u02', college: STAFF_COLLEGE }, { role: 0, _id: 'u06' }]) {
+  for (const actor of [{ role: 1, _id: STAFF_ID, college: STAFF_COLLEGE }, { role: 0, _id: 'u06' }]) {
     loginAs(actor);
     const page = instantiate(collegePlacementConfig);
     await page.onLoad({ eventId: event._id });

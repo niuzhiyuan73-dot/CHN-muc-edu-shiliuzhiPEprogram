@@ -402,10 +402,12 @@ async function submitLineup(payload = {}, ctx) {
   const entry = await ctx.repo.collegeEntries.getById(
     collegeEntryNaturalKey(tie.eventId, college)
   );
+  // 排阵要按小项核对上场队员性别，得先拿到全量会员档案（含 gender）
+  const { members } = await getDataset(ctx);
 
   const built = buildLineupRecord(
     { ...payload, college },
-    { tie, event, actor: ctx.actor, entry, now: ctx.now, carriedFrom: payload.carriedFrom }
+    { tie, event, actor: ctx.actor, entry, now: ctx.now, carriedFrom: payload.carriedFrom, members }
   );
   if (!built.ok) return ok({ ok: false, record: null, message: built.message });
 

@@ -31,22 +31,51 @@
  */
 
 const { playersPerLeg } = require('./college-lineup.js');
-const { USER_STATUS, LEG_DISCIPLINE, TIE_ALGO, TIE_NET_MODE } = require('../utils/constants.js');
+const {
+  USER_STATUS,
+  LEG_DISCIPLINE,
+  TIE_ALGO,
+  TIE_NET_MODE,
+  requiredGendersOf,
+} = require('../utils/constants.js');
 
 /** 种子里的管理员，全场规则性操作都由他做 */
 const ADMIN_ID = 'u01';
 /** 演示账号：赵明宇，本场被任命为法学院干事 */
 const LEADER_ID = 'u06';
 const LAW_COLLEGE = '法学院';
-/** 种子里只有 15 所学院有会员，补的这一所用于凑满 16 签位 */
-const EXTRA_MEMBER = {
-  realName: '顾清和',
-  nickName: '清和',
-  gender: 'F',
-  studentId: '20240099',
-  college: '文学院',
-  phone: '13800000099',
-};
+
+/**
+ * 演示当天临时注册的会员。
+ *
+ * 【为什么非补不可】
+ * 种子里 15 所学院多数只有单一性别——理学院只有刘子涵一名男队员，美术学院
+ * 只有陈曦一名女队员。而本场景每个大场要打男单 + 女单，排阵按小项校验性别，
+ * 不补人就有学院（连文学院自己）排不出阵，整轮演示停在「待排阵」。
+ * 给每所单性别学院补一名异性会员后，16 所学院都能真派出 MS + WS。
+ *
+ * 【为什么不直接往 MEMBER_SEED 里加】
+ * 种子会员数是整季回放（ELO / 积分）随机序列的基准，往种子里加人会让所有
+ * 既有测试的分数整体漂移。演示会员只在 mock 装载时注册，resetCache() 之后
+ * 不复存在，跑回归的测试看不到他们。
+ *
+ * 【文学院为什么也在内】
+ * 种子里只有 15 所学院有会员，文学院是补出来凑满 16 签位的那一所：先有
+ * 顾清和（女），再补一名男队员，它才交得出名单、排得出阵。
+ */
+const DEMO_MEMBERS = [
+  { realName: '顾清和', nickName: '清和', gender: 'F', college: '文学院', studentId: '20240099', phone: '13800000099' },
+  { realName: '周正阳', nickName: '正阳', gender: 'M', college: '文学院', studentId: '20240060', phone: '13800000060' },
+  { realName: '格根塔娜', nickName: '塔娜', gender: 'F', college: '体育学院', studentId: '20240051', phone: '13800000051' },
+  { realName: '苏日娜', nickName: '日娜', gender: 'F', college: '信息工程学院', studentId: '20240052', phone: '13800000052' },
+  { realName: '谭雨菲', nickName: '雨菲', gender: 'F', college: '理学院', studentId: '20240053', phone: '13800000053' },
+  { realName: '白晓棠', nickName: '晓棠', gender: 'F', college: '生命与环境科学学院', studentId: '20240054', phone: '13800000054' },
+  { realName: '石俊峰', nickName: '俊峰', gender: 'M', college: '法学院', studentId: '20240055', phone: '13800000055' },
+  { realName: '龙云飞', nickName: '云飞', gender: 'M', college: '中国少数民族语言文学学院', studentId: '20240056', phone: '13800000056' },
+  { realName: '陆文博', nickName: '文博', gender: 'M', college: '美术学院', studentId: '20240057', phone: '13800000057' },
+  { realName: '秦朗', nickName: '秦朗', gender: 'M', college: '音乐学院', studentId: '20240058', phone: '13800000058' },
+  { realName: '邵一鸣', nickName: '一鸣', gender: 'M', college: '哲学与宗教学院', studentId: '20240059', phone: '13800000059' },
+];
 
 /**
  * 把学院赛演示场景装进数据源。
@@ -67,28 +96,59 @@ function installCollegeDemo(deps) {
   /** 当前在册会员（每次回读，因为前面的写入会重建缓存） */
   const members = () => load().members;
 
-  /** 某学院可以上场的会员编号（在册、且不是干事——干事不参赛） */
-  const rosterIdsOf = (college) =>
-    members()
-      .filter(
-        (member) =>
-          member.college === college &&
-          member.status === USER_STATUS.ACTIVE &&
-          member._id !== LEADER_ID
-      )
-      .map((member) => member._id);
+  /** 某学院可以上场的会员（在册、且不是干事——干事不参赛） */
+  const rosterMembersOf = (college) =>
+    members().filter(
+      (member) =>
+        member.college === college &&
+        member.status === USER_STATUS.ACTIVE &&
+        member._id !== LEADER_ID
+    );
+
+  /** 某学院可以上场的会员编号 */
+  const rosterIdsOf = (college) => rosterMembersOf(college).map((member) => member._id);
 
   /** 替某学院排阵的人：法学院的名单交给干事，其余学院由管理员代劳 */
   const lineupActorOf = (college) => (college === LAW_COLLEGE ? LEADER_ID : ADMIN_ID);
 
-  /** 按每个小项需要的人数排人；单打 1 人，双打 2 人（本场景只用到单打） */
-  const lineupEntries = (ids, legs) =>
-    legs.map((leg) => {
-      const need = playersPerLeg(leg.discipline);
+  /**
+   * 按各小项要求的性别从名单里挑人。
+   *
+   * 【为什么不能再按下标轮着取】
+   * 旧写法 `ids[i % len]` 的 i 在每个小项内部都从 0 重新数，单打又只取 1 人，
+   * 于是男单、女单派了同一个人——这正是要修的 bug 在演示里的样子。现在按
+   * 真相源 requiredGendersOf 逐位取：男单取男、女单取女、混双一男一女。
+   *
+   * 【为什么同一小项内不重复、跨小项允许兼项】
+   * 一个人不能在同一小项里占两个位置（双打无人搭档）；跨小项兼项由赛事
+   * allowMultiEntry 决定，本场景开着，所以两场单打可以派上最合适的人。
+   *
+   * @param {Array<Object>} roster 该学院可上场会员
+   * @param {Array<Object>} legs 大场的小项
+   * @returns {Array<Object>|null} 凑不齐任何一项所需性别时返回 null，由调用方整场放弃
+   */
+  const lineupEntries = (roster, legs) => {
+    const rows = [];
+    for (const leg of legs) {
+      const required = requiredGendersOf(leg.discipline);
+      // 未知小项（真相源里没有）：退回按人数取前几个
+      const need = required ? required.length : playersPerLeg(leg.discipline);
+      const genders = required || new Array(need).fill('');
+
       const players = [];
-      for (let i = 0; i < need; i += 1) players.push(ids[i % ids.length]);
-      return { legNo: leg.legNo, players };
-    });
+      const used = new Set();
+      for (const gender of genders) {
+        const pick = roster.find(
+          (member) => !used.has(member._id) && (!gender || member.gender === gender)
+        );
+        if (!pick) return null;
+        used.add(pick._id);
+        players.push(pick._id);
+      }
+      rows.push({ legNo: leg.legNo, players });
+    }
+    return rows;
+  };
 
   /** 取某大场里某场小场刚生成的比赛记录（从本地台账回读） */
   const legMatchOf = (tie, legNo) => {
@@ -115,11 +175,12 @@ function installCollegeDemo(deps) {
   /** 打完一场大场：双方排阵 → 管理员开始 → 逐小项录分确认 */
   const playTie = (tie, winCollege) => {
     for (const college of [tie.collegeA, tie.collegeB]) {
-      const ids = rosterIdsOf(college);
-      // 凑不出名单就整场放弃，避免只排一半留下畸形大场
-      if (!ids.length) return;
+      const entries = lineupEntries(rosterMembersOf(college), tie.legs);
+      // 凑不齐（名单为空，或某一小项缺所需性别）就整场放弃，
+      // 避免只排一半留下畸形大场
+      if (!entries) return;
       actions.submitLineup(
-        { tieId: tie._id, college, entries: lineupEntries(ids, tie.legs) },
+        { tieId: tie._id, college, entries },
         lineupActorOf(college)
       );
     }
@@ -131,13 +192,22 @@ function installCollegeDemo(deps) {
     for (const leg of started.legs) settleLeg(started, leg.legNo, winIsA);
   };
 
-  // 1. 补第 16 所学院：种子里只有 15 所学院有会员（注册 → 管理员审核通过）
-  actions.registerMember(EXTRA_MEMBER, { now: new Date('2026-08-01T09:00:00') });
-  const extra = userStore
-    .listAccounts()
-    .find((account) => account.studentId === EXTRA_MEMBER.studentId);
-  if (!extra) return null;
-  actions.approveMember(extra._id, ADMIN_ID);
+  // 1. 补齐会员：第 16 所学院（文学院）与各单性别学院的异性队员
+  //    （注册 → 管理员审核通过；全部是当天演示用的临时会员）
+  //
+  // 注册时刻逐条加一秒：mock 的 buildAccount 在无 openId 时用
+  // `local_${now.getTime()}` 当 _id，同一时刻注册的多个人会撞成同一个账号、
+  // 后一条把前一条覆盖掉。错开时间才拿得到 11 份互不相同的记录。
+  const registerBase = new Date('2026-08-01T09:00:00').getTime();
+  for (let index = 0; index < DEMO_MEMBERS.length; index += 1) {
+    const profile = DEMO_MEMBERS[index];
+    actions.registerMember(profile, { now: new Date(registerBase + index * 1000) });
+    const account = userStore
+      .listAccounts()
+      .find((item) => item.studentId === profile.studentId);
+    if (!account) return null;
+    actions.approveMember(account._id, ADMIN_ID);
+  }
 
   // 2. 任命赵明宇为法学院干事（本人不参赛，见 rosterIdsOf 的排除）
   actions.setCollegeLeader(LEADER_ID, ADMIN_ID, true);
@@ -149,7 +219,8 @@ function installCollegeDemo(deps) {
       description: '16 所学院单败淘汰；当前进度：16 进 8 已打完，八进四进行中',
       legPlan: [LEG_DISCIPLINE.MS, LEG_DISCIPLINE.WS],
       allowMultiEntry: true,
-      rosterMin: 1,
+      // 一场大场要打男单 + 女单，名单至少要 1 男 1 女才排得出阵
+      rosterMin: 2,
       rosterMax: 20,
       tieAlgo: TIE_ALGO.FULL_POINTS,
       tieNetMode: TIE_NET_MODE.WIN_DIFF,

@@ -67,7 +67,7 @@
             <image wx:if="{{item.avatarUrl}}" class="member-avatar-img" src="{{item.avatarUrl}}" mode="aspectFill" />
             <text wx:else>{{item.avatarText}}</text>
           </view>
-          <view class="member-name">{{item.nickName}}</view>
+          <view class="member-name">{{item.nickName}}{{item.genderLabel ? ' · ' + item.genderLabel : ''}}</view>
         </label>
       </checkbox-group>
     </view>

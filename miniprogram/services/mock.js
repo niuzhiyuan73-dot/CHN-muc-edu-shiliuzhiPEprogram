@@ -1849,7 +1849,7 @@ async function submitLineup(payload = {}, actor) {
 
   const built = buildLineupRecord(
     { ...payload, college },
-    { tie, event, actor: account, entry, carriedFrom: payload.carriedFrom }
+    { tie, event, actor: account, entry, carriedFrom: payload.carriedFrom, members: load().members }
   );
   if (!built.ok) return { ok: false, record: null, message: built.message };
 

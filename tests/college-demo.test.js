@@ -240,7 +240,7 @@ test('学院赛模拟场景 —— 干事能替本学院排八进四，但发布
   assert.strictEqual(view.blockReason, '');
   assert.strictEqual(view.hasLineup, false, '本场尚未提交过排阵');
   assert.strictEqual(view.statusLabel, TIE_STATUS_LABEL[TIE_STATUS.PENDING_LINEUP]);
-  assert.strictEqual(view.rosterCount, 1, '法学院名单只有孙悦一人');
+  assert.strictEqual(view.rosterCount, 2, '法学院名单是孙悦 + 补入的男队员（男单要有男的可派）');
   // 本场确实没交过排阵（hasLineup 为 false），但页面会把上一轮的人沿用成默认值，
   // 所以每个小项显示的是上一轮那位队员，而不是「未排人」——排阵页正是靠这个
   // 让干事少点几下。想让场景停在「一个人都没排」，得让她上一轮也没上过。

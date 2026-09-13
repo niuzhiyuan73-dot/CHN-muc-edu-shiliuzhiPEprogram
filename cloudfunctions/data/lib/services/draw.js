@@ -48,6 +48,8 @@ const {
   GROUP_CONFIG,
   DEFAULT_GROUP_COUNT,
   DEFAULT_ADVANCE_PER_GROUP,
+  LEG_DISCIPLINE,
+  GENDER,
 } = require('../utils/constants.js');
 const { getPoolRating } = require('../utils/rating.js');
 const { createSeededRandom, shuffle } = require('../utils/random.js');
@@ -175,9 +177,10 @@ function manualPlayersNeeded(seedCount, playerCount) {
  * @param {number} params.seedCount 选定种子组数
  * @param {string[]} [params.manualOrder] 手工指定时管理员点选的顺序
  * @param {number} params.seedValue 随机种子值（手工模式下给非种子洗牌）
+ * @param {string} [params.discipline] 赛事项目；混双（XD）时须一男一女配对
  * @returns {{ok:boolean, entries:string[], seeds:string[], errors:Object, firstError:string}}
  */
-function planDoublesEntries({ entries, members, mode, seedCount, manualOrder, seedValue } = {}) {
+function planDoublesEntries({ entries, members, mode, seedCount, manualOrder, seedValue, discipline } = {}) {
   const players = Array.isArray(entries) ? entries : [];
   const reject = (message) => ({
     ok: false,
@@ -229,8 +232,29 @@ function planDoublesEntries({ entries, members, mode, seedCount, manualOrder, se
   }
 
   const teams = [];
-  for (let i = 0; i < ordered.length; i += 2) {
-    teams.push(teamIdOf([ordered[i], ordered[i + 1]]));
+  if (discipline === LEG_DISCIPLINE.XD) {
+    // 混双必须一男一女。已排好的 order 同时承载了种子优先级，按性别各自
+    // 保序切开，再让「男 i + 女 i」成队：既满足性别约束，又让强弱搭配均匀，
+    // 不会出现「最强男 + 最弱女」这种被抽签随机性掩盖的失衡。
+    const pickByGender = (gender) =>
+      ordered.filter((id) => {
+        const member = memberMap.get(id);
+        return member && member.gender === gender;
+      });
+    const males = pickByGender(GENDER.MALE);
+    const females = pickByGender(GENDER.FEMALE);
+    if (males.length !== females.length) {
+      return reject(`混双需要男女人数相等（男 ${males.length} 人、女 ${females.length} 人）`);
+    }
+    for (let i = 0; i < males.length; i += 1) {
+      teams.push(teamIdOf([males[i], females[i]]));
+    }
+  } else {
+    // 不限性别的双打沿用原口径：按强弱相邻两人一队（男双 / 女双同理，
+    // 报名时已按性别拦过，这里拿到的自然是同一性别）
+    for (let i = 0; i < ordered.length; i += 2) {
+      teams.push(teamIdOf([ordered[i], ordered[i + 1]]));
+    }
   }
 
   return { ok: true, entries: teams, seeds: teams.slice(0, wanted), errors: {}, firstError: '' };
@@ -437,6 +461,8 @@ function planDraw({ event, signups, members, seedValue, manualOrder } = {}) {
       seedCount,
       manualOrder,
       seedValue: value,
+      // 混双（XD）要一男一女配对，其余双打沿用相邻配对
+      discipline: event.discipline || '',
     });
     if (!paired.ok) {
       return fail(paired.firstError);

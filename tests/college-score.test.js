@@ -30,22 +30,31 @@ const {
   EVENT_LEVEL,
   COLLEGE_LEG_FORMAT,
   TEAM,
+  requiredGendersOf,
 } = require('../miniprogram/utils/constants.js');
 
 /** 管理员 */
 const ADMIN = { _id: 'u01', role: ROLE.ADMIN };
 
-/** 种子数据里有 2 名在册会员的四个学院，够撑起两轮签表 */
-const COLLEGES = ['体育学院', '信息工程学院', '经济学院', '管理学院'];
+/**
+ * 种子数据里「一男一女各一名」的四个学院，够撑起两轮签表。
+ * 必须各有两性：本文件的赛程是男单 + 混双，排阵要按小项校验性别。
+ */
+const COLLEGES = ['经济学院', '管理学院', '历史文化学院', '民族学与社会学学院'];
 
 beforeEach(() => {
   facade.resetCache();
 });
 
+/** 取某学院在册会员（含性别），排阵要按小项性别挑人 */
+async function rosterOf(college) {
+  const members = await facade.getMembers();
+  return members.filter((member) => member.college === college);
+}
+
 /** 取某学院在册会员的编号 */
 async function memberIdsOf(college) {
-  const members = await facade.getMembers();
-  return members.filter((member) => member.college === college).map((member) => member._id);
+  return (await rosterOf(college)).map((member) => member._id);
 }
 
 /** 某个选手当前的个人等级分（单打 / 双打两池） */
@@ -58,19 +67,28 @@ async function ratingOf(userId) {
   };
 }
 
-/** 按小项人数排一份阵容：单打 1 人、双打 2 人 */
-function lineupEntries(ids, legs) {
-  return legs.map((leg) => ({
-    legNo: leg.legNo,
-    players: leg.discipline.endsWith('S') ? [ids[0]] : ids.slice(0, 2),
-  }));
+/**
+ * 按小项要求的性别排一份阵容：男单取男队员，混双取一男一女。
+ * 与真人在排阵页上能点出的组合一致（校验在数据层兜底）。
+ */
+function lineupEntries(roster, legs) {
+  return legs.map((leg) => {
+    const used = new Set();
+    const players = [];
+    for (const gender of requiredGendersOf(leg.discipline) || []) {
+      const pick = roster.find((member) => !used.has(member._id) && member.gender === gender);
+      used.add(pick._id);
+      players.push(pick._id);
+    }
+    return { legNo: leg.legNo, players };
+  });
 }
 
 /**
  * 造一场进行中的学院赛：发布 → 四院交名单 → 审核通过 → 抽签 → 开赛。
  * @returns {Promise<{event:Object, ties:Array}>}
  */
-async function setupOngoing(legPlan = ['MS', 'MD']) {
+async function setupOngoing(legPlan = ['MS', 'XD']) {
   const published = await facade.publishCollegeEvent(
     {
       title: '学院团体赛测试',
@@ -106,16 +124,18 @@ async function setupOngoing(legPlan = ['MS', 'MD']) {
 
 /** 双方排阵齐后开始大场，返回该大场的小场编号 */
 async function beginTie(tie) {
-  const aIds = await memberIdsOf(tie.collegeA);
-  const bIds = await memberIdsOf(tie.collegeB);
+  const aRoster = await rosterOf(tie.collegeA);
+  const bRoster = await rosterOf(tie.collegeB);
+  const aIds = aRoster.map((member) => member._id);
+  const bIds = bRoster.map((member) => member._id);
 
   const lineupA = await facade.submitLineup(
-    { tieId: tie._id, college: tie.collegeA, entries: lineupEntries(aIds, tie.legs) },
+    { tieId: tie._id, college: tie.collegeA, entries: lineupEntries(aRoster, tie.legs) },
     ADMIN._id
   );
   assert.strictEqual(lineupA.ok, true, `A 排阵失败：${lineupA.message}`);
   const lineupB = await facade.submitLineup(
-    { tieId: tie._id, college: tie.collegeB, entries: lineupEntries(bIds, tie.legs) },
+    { tieId: tie._id, college: tie.collegeB, entries: lineupEntries(bRoster, tie.legs) },
     ADMIN._id
   );
   assert.strictEqual(lineupB.ok, true, `B 排阵失败：${lineupB.message}`);

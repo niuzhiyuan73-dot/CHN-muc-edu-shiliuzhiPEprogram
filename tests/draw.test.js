@@ -49,6 +49,8 @@ const {
   SIGNUP_STATUS,
   EVENT_FORMAT,
   TEAM_ID_SEPARATOR,
+  GENDER,
+  LEG_DISCIPLINE,
 } = require('../miniprogram/utils/constants.js');
 const { DEFAULT_FORMAT } = require('../miniprogram/utils/match-format.js');
 
@@ -382,6 +384,52 @@ describe('双打 —— 队号、配对与抽签', () => {
 
     assert.equal(plan.ok, true);
     assert.deepEqual(plan.entries, [teamOf('u4', 'u3'), teamOf('u2', 'u1')], '双打分高的两人先成一队');
+  });
+
+  test('混双 —— 一男一女成队，强弱各自保序，不做「最强的男配最弱的女」', () => {
+    // 双打等级分由高到低：m1、f1、m2、f2。若无性别意识，相邻配对会变成
+    // m1+f1（恰好）、m2+f2（恰好）——所以换个分数让相邻配对必然出错：
+    // 设 m1 1600、m2 1590、f1 1300、f2 1290，相邻配对是 m1+m2、f1+f2（两队同性），
+    // 按性别保序配对才是 m1+f1、m2+f2。
+    const members = [
+      { _id: 'm1', gender: GENDER.MALE, ratings: { doubles: { elo: 1600 } } },
+      { _id: 'm2', gender: GENDER.MALE, ratings: { doubles: { elo: 1590 } } },
+      { _id: 'f1', gender: GENDER.FEMALE, ratings: { doubles: { elo: 1300 } } },
+      { _id: 'f2', gender: GENDER.FEMALE, ratings: { doubles: { elo: 1290 } } },
+    ];
+    const plan = planDraw({
+      event: doublesEvent({ discipline: LEG_DISCIPLINE.XD, seedCount: 1 }),
+      signups: members.map((m) => signup(m._id)),
+      members,
+      seedValue: 1,
+    });
+
+    assert.equal(plan.ok, true);
+    assert.deepEqual(
+      plan.entries,
+      [teamOf('m1', 'f1'), teamOf('m2', 'f2')],
+      '男女各自按强弱保序，第 i 强男配第 i 强女'
+    );
+    assert.deepEqual(plan.seeds, [teamOf('m1', 'f1')], '第一队即 1 号种子');
+  });
+
+  test('混双 —— 男女人数不相等时拒绝抽签，并说清各几人', () => {
+    const members = [
+      { _id: 'm1', gender: GENDER.MALE, ratings: { doubles: { elo: 1600 } } },
+      { _id: 'm2', gender: GENDER.MALE, ratings: { doubles: { elo: 1500 } } },
+      { _id: 'm3', gender: GENDER.MALE, ratings: { doubles: { elo: 1400 } } },
+      { _id: 'f1', gender: GENDER.FEMALE, ratings: { doubles: { elo: 1300 } } },
+    ];
+    const plan = planDraw({
+      event: doublesEvent({ discipline: LEG_DISCIPLINE.XD, seedCount: 1 }),
+      signups: members.map((m) => signup(m._id)),
+      members,
+      seedValue: 1,
+    });
+
+    assert.equal(plan.ok, false);
+    assert.match(plan.message, /男女人数相等/);
+    assert.match(plan.message, /男 3 人、女 1 人/);
   });
 
   test('手工指定：先点的人两两成队，前若干队为种子', () => {
