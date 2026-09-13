@@ -181,7 +181,13 @@ Page({
           error: '',
           auth,
           scheduled: Boolean(this.matchId),
-          members: members.map((item) => ({ id: item._id, name: item.nickName || item._id })),
+          // realName 只用于面板搜索（昵称常只是真名的一部分，只按昵称搜，
+          // 输入「赵」就找不到昵称叫「明宇」的人）；名字列显示的仍是昵称
+          members: members.map((item) => ({
+            id: item._id,
+            name: item.nickName || item._id,
+            realName: item.realName || '',
+          })),
           seasonStart,
           blockReason: this.describeBlock(auth),
         },

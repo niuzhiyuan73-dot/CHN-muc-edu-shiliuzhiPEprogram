@@ -1212,6 +1212,26 @@ test('排行榜 —— 搜索范围是全量榜单，前十之外的人也能搜
   assert.ok(hit.rank > 10);
 });
 
+test('排行榜 —— 用真实姓名也能搜到同一个人，展示的仍是昵称', async () => {
+  // 种子里 u06：昵称「明宇」、真实姓名「赵明宇」。只按昵称搜时，
+  // 输入「赵」查无此人——这正是用户反馈的问题。
+  const page = instantiate(rankConfig);
+  await page.onLoad();
+
+  const target = page.data.view.allRows.find((row) => row.userId === 'u06');
+  assert.ok(target, '种子里应当有这位会员');
+  assert.strictEqual(target.nickName, '明宇');
+  assert.strictEqual(target.realName, '赵明宇');
+
+  page.onInputKeyword({ detail: { value: '赵' } });
+
+  const hit = page.data.rows.find((row) => row.userId === 'u06');
+  assert.ok(hit, '输入真名的姓也要能搜到人');
+  assert.strictEqual(hit.rank, target.rank, '按真名搜同样不改名次');
+  // 真实姓名只作为搜索依据，榜面上显示的一律是昵称
+  assert.strictEqual(hit.nickName, '明宇');
+});
+
 /* ============================================================
  * 赛事（赛季积分榜）
  * ============================================================ */
@@ -1280,6 +1300,22 @@ test('赛事页 —— 搜索范围是全量榜单，前十之外的人也能搜
   const hit = page.data.rows.find((row) => row.userId === outside.userId);
   assert.ok(hit, '前十之外的人必须能被搜到');
   assert.strictEqual(hit.rank, outside.rank);
+});
+
+test('赛事页 —— 积分榜用真实姓名也能搜到同一个人', async () => {
+  const page = instantiate(eventsConfig);
+  await page.onLoad();
+
+  const target = page.data.view.allRows.find((row) => row.userId === 'u06');
+  assert.ok(target, '种子里应当有这位会员');
+  assert.strictEqual(target.realName, '赵明宇');
+
+  page.onInputKeyword({ detail: { value: '赵' } });
+
+  const hit = page.data.rows.find((row) => row.userId === 'u06');
+  assert.ok(hit, '输入真名的姓也要能搜到人');
+  assert.strictEqual(hit.rank, target.rank);
+  assert.strictEqual(hit.nickName, '明宇', '展示的仍是昵称');
 });
 
 test('赛事页 —— 搜不到时提示里带上搜索词，清空后回到默认榜', async () => {

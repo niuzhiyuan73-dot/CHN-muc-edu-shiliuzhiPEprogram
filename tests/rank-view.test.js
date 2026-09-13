@@ -145,6 +145,39 @@ test('filterRows —— 只筛不重新编号，名次保持榜单上的绝对�
   );
 });
 
+test('filterRows —— 真实姓名同样能命中（昵称只是真名的一部分时）', () => {
+  // 真实姓名「赵明宇」，昵称只取了「明宇」。用户按真名去搜，输入「赵」
+  // 必须能找到这个人——这正是只按昵称匹配时漏掉的场景。
+  const rows = [
+    { userId: 'u1', rank: 1, nickName: '明宇', realName: '赵明宇' },
+    { userId: 'u2', rank: 2, nickName: '思远', realName: '李思远' },
+  ];
+
+  assert.deepStrictEqual(
+    filterRows(rows, '赵').map((r) => r.userId),
+    ['u1'],
+    '搜真名的姓也应当命中'
+  );
+  assert.deepStrictEqual(
+    filterRows(rows, '明宇').map((r) => r.userId),
+    ['u1'],
+    '昵称仍然照常命中'
+  );
+  assert.deepStrictEqual(
+    filterRows(rows, '思').map((r) => r.userId),
+    ['u2'],
+    '两个名字都能独立命中'
+  );
+  // 同一个人不会因为两个字段都命中而出现两行
+  assert.deepStrictEqual(filterRows(rows, '宇').map((r) => r.userId), ['u1']);
+});
+
+test('filterRows —— 行里没有 realName 字段时不报错', () => {
+  const rows = [{ userId: 'u1', rank: 1, nickName: '张三' }];
+  assert.deepStrictEqual(filterRows(rows, '张').map((r) => r.userId), ['u1']);
+  assert.deepStrictEqual(filterRows(rows, '李'), []);
+});
+
 test('filterRows —— 空搜索词原样返回，非数组当空榜处理', () => {
   const rows = [{ userId: 'u1', rank: 1, nickName: '张三' }];
   assert.strictEqual(filterRows(rows, ''), rows);
@@ -185,7 +218,7 @@ test('describeSearch —— 搜索时给「找到 N 人」，无命中时把搜�
   assert.strictEqual(miss.rows.length, 0);
   assert.strictEqual(miss.empty, true);
   assert.strictEqual(miss.countText, '找到 0 人');
-  assert.strictEqual(miss.emptyNote, '没有昵称含「王」的会员');
+  assert.strictEqual(miss.emptyNote, '没有名字含「王」的会员');
 });
 
 /* ============================================================

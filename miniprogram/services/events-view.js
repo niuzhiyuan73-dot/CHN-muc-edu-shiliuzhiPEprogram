@@ -226,6 +226,8 @@ function buildPointsRows(users, eventCounts, myId) {
     .map((user) => ({
       _id: user._id,
       nickName: user.nickName,
+      // 只参与搜索，不渲染。与排行榜同一口径：昵称与真实姓名都能搜到人
+      realName: user.realName || '',
       avatarUrl: user.avatarUrl || '',
       points: user.points || 0,
     }));
@@ -239,6 +241,7 @@ function buildPointsRows(users, eventCounts, myId) {
       medal: medalOf(row.rank),
       isMe: row._id === myId,
       nickName: row.nickName,
+      realName: row.realName || '',
       avatarText: avatarOf(row.nickName),
       avatarUrl: row.avatarUrl || '',
       detailText: `${count} 场赛事`,

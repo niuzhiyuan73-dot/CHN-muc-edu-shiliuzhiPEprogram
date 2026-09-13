@@ -299,10 +299,11 @@ test('scheduledForm —— 空记录不抛错，给一份能渲染的空表', ()
  * ============================================================ */
 
 const ROSTER = [
-  { id: 'u01', name: '巴特尔' },
-  { id: 'u02', name: '张宇轩' },
-  { id: 'u03', name: '张伟' },
-  { id: 'u04', name: 'Leo' },
+  { id: 'u01', name: '巴特尔', realName: '巴特尔' },
+  // 昵称只取了真名的一部分：真实姓名「赵明宇」，面板上显示「明宇」
+  { id: 'u02', name: '明宇', realName: '赵明宇' },
+  { id: 'u03', name: '张伟', realName: '张伟' },
+  { id: 'u04', name: 'Leo', realName: '李奥' },
 ];
 
 test('buildPickerRows —— 空搜索词给出全名单', () => {
@@ -318,7 +319,7 @@ test('buildPickerRows —— 空搜索词给出全名单', () => {
 test('buildPickerRows —— 按昵称子串筛选，忽略大小写与首尾空格', () => {
   assert.deepStrictEqual(
     buildPickerRows(ROSTER, '张', '').map((row) => row.id),
-    ['u02', 'u03']
+    ['u03']
   );
   assert.deepStrictEqual(
     buildPickerRows(ROSTER, ' le ', '').map((row) => row.id),
@@ -326,6 +327,31 @@ test('buildPickerRows —— 按昵称子串筛选，忽略大小写与首尾空
     '搜 le 应当能命中 Leo'
   );
   assert.deepStrictEqual(buildPickerRows(ROSTER, '王', ''), []);
+});
+
+test('buildPickerRows —— 真实姓名同样能命中（昵称只是真名的一部分时）', () => {
+  // 昵称「明宇」、真名「赵明宇」：输入「赵」必须能找到这个人，
+  // 而面板上显示的名字仍然是昵称「明宇」。
+  const byReal = buildPickerRows(ROSTER, '赵', '');
+  assert.deepStrictEqual(byReal.map((row) => row.id), ['u02']);
+  assert.strictEqual(byReal[0].name, '明宇', '命中后显示的仍是昵称');
+
+  // 昵称与真名都能各自命中同一个人，且只出现一行
+  assert.deepStrictEqual(
+    buildPickerRows(ROSTER, '明宇', '').map((row) => row.id),
+    ['u02']
+  );
+  // 真名的其他部分（如「奥」）也照常命中
+  assert.deepStrictEqual(
+    buildPickerRows(ROSTER, '奥', '').map((row) => row.id),
+    ['u04']
+  );
+});
+
+test('buildPickerRows —— 名单里没有 realName 字段时退回只按昵称匹配', () => {
+  const bare = [{ id: 'u01', name: '张三' }];
+  assert.deepStrictEqual(buildPickerRows(bare, '张', '').map((row) => row.id), ['u01']);
+  assert.deepStrictEqual(buildPickerRows(bare, '李', ''), []);
 });
 
 test('buildPickerRows —— 给每行配首字，并标记这一格当前选中的人', () => {
@@ -339,14 +365,14 @@ test('buildPickerRows —— 给每行配首字，并标记这一格当前选中
 
 test('buildPickerRows —— 选中的人被搜掉时不抛错，非数组当空名单', () => {
   const rows = buildPickerRows(ROSTER, '张', 'u04');
-  assert.strictEqual(rows.length, 2);
+  assert.strictEqual(rows.length, 1);
   assert.strictEqual(rows.some((row) => row.selected), false, 'u04 没被搜出来，自然没有打勾的行');
   assert.deepStrictEqual(buildPickerRows(null, '张', ''), []);
 });
 
 test('pickerEmptyText —— 有搜索词时把词写进提示，没有时给通用那句', () => {
-  assert.strictEqual(pickerEmptyText('王'), '没有昵称含「王」的会员');
-  assert.strictEqual(pickerEmptyText('  王 '), '没有昵称含「王」的会员');
+  assert.strictEqual(pickerEmptyText('王'), '没有名字含「王」的会员');
+  assert.strictEqual(pickerEmptyText('  王 '), '没有名字含「王」的会员');
   assert.strictEqual(pickerEmptyText(''), '还没有可选的会员');
   assert.strictEqual(pickerEmptyText(null), '还没有可选的会员');
 });

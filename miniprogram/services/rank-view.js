@@ -30,7 +30,7 @@
 
 const { RANK_PROJECT_LABEL, ALL_RANK_PROJECTS } = require('../utils/constants.js');
 const { formatElo, formatPercent } = require('../utils/format.js');
-const { getCurrentUser, getLeaderboard } = require('./index.js');
+const { getCurrentUser, getLeaderboard, getMembers } = require('./index.js');
 
 /** 榜单标题里的名字。只剩等级分这一把尺子，不再是可切换的维度 */
 const BOARD_LABEL = '等级分榜';
@@ -100,6 +100,8 @@ function buildEloRows(board, myId) {
     medal: medalOf(row.rank),
     isMe: row._id === myId,
     nickName: row.nickName,
+    // 只参与搜索，不渲染。页面上显示的一律是昵称
+    realName: row.realName || '',
     avatarText: avatarOf(row.nickName),
     avatarUrl: row.avatarUrl || '',
     // 左侧副标题：战绩。胜率只在右侧小字里出现，避免一行塞三个数字
@@ -125,7 +127,14 @@ function normalizeKeyword(keyword) {
 }
 
 /**
- * 按昵称筛选榜单行。
+ * 按名字筛选榜单行：昵称与真实姓名都参与匹配。
+ *
+ * 【为什么两个名字都要看】
+ * 榜单上显示的是昵称，但昵称是各人自己起的，往往只用了名字的一部分
+ * （真实姓名「赵明宇」，昵称可能就叫「明宇」）。只按昵称搜，输入「赵」
+ * 就找不到这个人——可用户脑子里想的正是真名。两个都匹配，才能做到
+ * 「输入赵或明宇都能找到同一个人」。命中后显示的仍是昵称，真实姓名
+ * 只作为搜索依据，不上榜面。
  *
  * 【为什么只筛不重新编号】
  * 搜索不是重新排名。搜「张」时张三仍是第 8 名，不该因为前面的人被滤掉
@@ -145,7 +154,11 @@ function filterRows(rows, keyword) {
   const list = Array.isArray(rows) ? rows : [];
   const needle = normalizeKeyword(keyword);
   if (!needle) return list;
-  return list.filter((row) => String(row.nickName || '').toLowerCase().includes(needle));
+  return list.filter((row) =>
+    [row.nickName, row.realName].some((name) =>
+      String(name || '').toLowerCase().includes(needle)
+    )
+  );
 }
 
 /**
@@ -172,7 +185,7 @@ function describeSearch(allRows, keyword) {
     countText: searching ? `找到 ${rows.length} 人` : `${rows.length} 人上榜`,
     empty: rows.length === 0,
     emptyNote: searching
-      ? `没有昵称含「${text}」的会员`
+      ? `没有名字含「${text}」的会员`
       : total === 0
       ? '这个项目还没有人打过'
       : '',
@@ -191,12 +204,31 @@ async function loadRankView(options = {}) {
     ? options.project
     : ALL_RANK_PROJECTS[0];
 
-  const me = await getCurrentUser();
+  // 真实姓名取自会员名单，而不是榜单本身。榜单行的投影刻意只留展示字段
+  //（见 leaderboard.extractPoolStats 与 pool-leaderboard.test.js 的隐私用例），
+  // 但昵称常只是真名的一部分（赵明宇的昵称是「明宇」），搜索要能「输入赵也找到
+  // 他」，就必须把真名带上。realName 本就是公开数据——会员名单 getMembers 会
+  // 把它下发给任意访客，隐私字段只有 phone / openId（见 read-handlers.publicMember）。
+  const [me, board, members] = await Promise.all([
+    getCurrentUser(),
+    getLeaderboard(activeProject),
+    getMembers(),
+  ]);
   const myId = me ? me._id : null;
 
+  const realNameById = new Map();
+  (Array.isArray(members) ? members : []).forEach((item) => {
+    if (item && item._id) realNameById.set(item._id, item.realName || '');
+  });
+
+  // 把真名补进榜单行（只供搜索用），再整形成页面行。
   // 名次先在完整榜单上算好，再截断显示——顺序不能反，
   // 否则前十之外的人拿不到自己的名次
-  const fullBoard = buildEloRows(rankProjectBoard(await getLeaderboard(activeProject)), myId);
+  const searchable = rankProjectBoard(board).map((row) => ({
+    ...row,
+    realName: realNameById.get(row._id) || '',
+  }));
+  const fullBoard = buildEloRows(searchable, myId);
   const rows = fullBoard.slice(0, TOP_LIMIT);
 
   // 我的名次从完整榜单里找，不能只在截断后的前十行里找

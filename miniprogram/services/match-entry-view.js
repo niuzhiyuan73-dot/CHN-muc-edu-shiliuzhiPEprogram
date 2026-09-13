@@ -196,7 +196,12 @@ function toSubmitParams(form) {
  * 面板要能在几十个名字里按关键字找到一个人，所以筛选必须发生在展示之前。
  * 原生 picker 做不到这一点（它只吃一个静态数组），才另起了这套面板。
  *
- * @param {Array<{id: string, name: string}>} members 完整会员名单
+ * 【为什么昵称与真实姓名都要匹配】
+ * 面板上显示昵称，但昵称常只是真名的一部分（真名「赵明宇」，昵称可能是
+ * 「明宇」）。只按昵称搜，输入「赵」就找不到人。两个都匹配，输入昵称或
+ * 真名都能定位到同一个人；真实姓名只用于匹配，面板上显示的仍是昵称。
+ *
+ * @param {Array<{id: string, name: string, realName?: string}>} members 完整会员名单
  * @param {string} keyword 搜索词
  * @param {string} selectedId 这一格已经选的人，用来打勾
  * @returns {Array<Object>} 命中的行，含展示用的首字与选中标记
@@ -205,7 +210,12 @@ function buildPickerRows(members, keyword, selectedId) {
   const list = Array.isArray(members) ? members : [];
   const needle = String(keyword == null ? '' : keyword).trim().toLowerCase();
   return list
-    .filter((item) => !needle || String(item.name || '').toLowerCase().includes(needle))
+    .filter((item) => {
+      if (!needle) return true;
+      return [item.name, item.realName].some((name) =>
+        String(name || '').toLowerCase().includes(needle)
+      );
+    })
     .map((item) => ({
       id: item.id,
       name: item.name,
@@ -224,7 +234,7 @@ function buildPickerRows(members, keyword, selectedId) {
  */
 function pickerEmptyText(keyword) {
   const text = String(keyword == null ? '' : keyword).trim();
-  return text ? `没有昵称含「${text}」的会员` : '还没有可选的会员';
+  return text ? `没有名字含「${text}」的会员` : '还没有可选的会员';
 }
 
 module.exports = {
