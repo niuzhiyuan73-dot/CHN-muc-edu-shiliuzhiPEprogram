@@ -4,6 +4,7 @@
     "pages/rank/rank",
     "pages/match/match",
     "pages/events/events",
+    "pages/event-list/event-list",
     "pages/profile/profile",
     "pages/member/member",
     "pages/login/login",

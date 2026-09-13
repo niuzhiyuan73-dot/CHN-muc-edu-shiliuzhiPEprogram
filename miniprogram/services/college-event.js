@@ -438,6 +438,8 @@ function buildCollegeEventRow(event, ctx = {}) {
   return {
     eventId: source._id || '',
     title: source.title || '',
+    // 置顶标记：管理员把它放在列表最前，与个人赛、公告同一口径
+    pinned: Boolean(source.pinned),
     status,
     statusLabel: statusLabelOf(source),
     isSignup: status === COLLEGE_EVENT_STATUS.SIGNUP,
@@ -453,7 +455,7 @@ function buildCollegeEventRow(event, ctx = {}) {
     startTimeText: formatDate(source.startTime),
     location: source.location || '',
     publisherName: source.publisherName || '',
-    // 发布 / 审核 / 抽签 / 开始 / 结束都归管理员，一并用它
+    // 发布 / 审核 / 抽签 / 开始 / 结束 / 置顶都归管理员，一并用它
     canManage: canManageCollegeEvent(actor),
   };
 }

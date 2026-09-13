@@ -256,7 +256,20 @@ function buildPointsRows(users, eventCounts, myId) {
  * ============================================================ */
 
 /**
- * 赛事列表的排序：报名中 → 进行中 → 已结束，同状态内先比最近的。
+ * 赛事页上两个列表各显示多少条。
+ *
+ * 赛事页是「最近有什么」的入口，不是全量档案：一次摆出十几场，真正该点
+ * 的那一场反而被淹掉。与首页「近期赛事」保持同一个数量，多余的走
+ * 「查看全部」进列表页（pages/event-list），那里不限条数。
+ */
+const LIST_LIMIT = 3;
+
+/**
+ * 赛事列表的排序：置顶在前，再按 报名中 → 进行中 → 已结束，同状态内先比最近的。
+ *
+ * 【置顶为什么优先于状态】
+ * 与公告同一口径：置顶是管理员的明确表态，压过自动排序的一切规则。
+ * 否则一场置顶的「已结束」赛事会被任何一场「报名中」挤下去，置顶就失去意义。
  *
  * @param {Array<Object>} events
  * @returns {Array<Object>} 新数组，不改动入参
@@ -272,6 +285,8 @@ function sortEvents(events) {
   return asArray(events)
     .slice()
     .sort((a, b) => {
+      const pinDiff = Number(Boolean(b && b.pinned)) - Number(Boolean(a && a.pinned));
+      if (pinDiff !== 0) return pinDiff;
       const diff = priorityOf(a) - priorityOf(b);
       if (diff !== 0) return diff;
       return timeValue(b && b.startTime) - timeValue(a && a.startTime);
@@ -322,7 +337,7 @@ function buildEventListRows(events, ctx = {}) {
 }
 
 /**
- * 学院赛列表排序：报名中 → 待开赛 → 进行中 → 已结束。
+ * 学院赛列表排序：置顶在前，再按 报名中 → 待开赛 → 进行中 → 已结束。
  *
  * 【为什么不复用 sortEvents】
  * 学院赛在「报名中」与「进行中」之间多一个「待开赛」，状态号与个人赛
@@ -344,6 +359,8 @@ function sortCollegeEvents(events) {
   return asArray(events)
     .slice()
     .sort((a, b) => {
+      const pinDiff = Number(Boolean(b && b.pinned)) - Number(Boolean(a && a.pinned));
+      if (pinDiff !== 0) return pinDiff;
       const diff = priorityOf(a) - priorityOf(b);
       if (diff !== 0) return diff;
       return timeValue(a && a.startTime) - timeValue(b && b.startTime);
@@ -378,6 +395,8 @@ function buildCollegeEventListRows(events, ctx = {}) {
       ...row,
       canReview,
       canSubmit,
+      // 置顶与发布/审核同一门槛（仅管理员），直接复用行里算好的 canManage
+      canPin: row.canManage,
       actionText: canReview ? '管理' : canSubmit ? '提交名单' : '查看',
       // 报名中用成功色、进行中用警示色，待开赛与已结束用灰色
       statusClass: row.isSignup ? 'tag-success' : row.isOngoing ? 'tag-warning' : 'tag-gray',
@@ -772,6 +791,8 @@ function buildStandings(event, records, memberMap, actor = null) {
  *
  * @param {Object} [options]
  * @param {Object|null} [options.user] 当前登录会员
+ * @param {number} [options.listLimit] 两个列表各取几条；缺省 LIST_LIMIT，
+ *        传 Infinity 表示不截断（「查看全部」列表页用）
  * @returns {Promise<Object>}
  */
 async function loadEventsView(options = {}) {
@@ -796,9 +817,15 @@ async function loadEventsView(options = {}) {
   const myRow = (myId && allRows.find((row) => row.isMe)) || null;
 
   const signupMap = await loadSignupMap(events);
-  const eventRows = buildEventListRows(events, { actor, signupMap });
-  const collegeRows = buildCollegeEventListRows(collegeEvents, { actor });
+  const allEventRows = buildEventListRows(events, { actor, signupMap });
+  const allCollegeRows = buildCollegeEventListRows(collegeEvents, { actor });
   const canPublish = canManageEvent(actor);
+
+  // 页面只摆最近几条，全量留给「查看全部」那一页。`listLimit` 传 Infinity
+  // 即不截断——列表页就是这么拿到全部行的，两个页面共用同一套装载逻辑。
+  const listLimit = options.listLimit === undefined ? LIST_LIMIT : options.listLimit;
+  const eventRows = allEventRows.slice(0, listLimit);
+  const collegeRows = allCollegeRows.slice(0, listLimit);
 
   return {
     seasonText: describeSeason(season),
@@ -827,12 +854,17 @@ async function loadEventsView(options = {}) {
     events: eventRows,
     hasEvents: eventRows.length > 0,
     eventsEmptyNote: '还没有赛事，等管理员发布一场吧',
+    // 「查看全部」入口的两个数字：总场次与有没有被截断
+    eventTotal: allEventRows.length,
+    hasMoreEvents: allEventRows.length > eventRows.length,
     canPublish,
     // 学院赛入口：列表按人给出不同去向（管理员审核 / 干事交名单），
     // 发布入口与个人赛同权限门槛（仅管理员）
     collegeEvents: collegeRows,
     hasCollegeEvents: collegeRows.length > 0,
     collegeEventsEmptyNote: '还没有学院赛，等管理员发布一场吧',
+    collegeEventTotal: allCollegeRows.length,
+    hasMoreCollegeEvents: allCollegeRows.length > collegeRows.length,
     canManageCollege: canManageCollegeEvent(actor),
   };
 }

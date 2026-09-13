@@ -1,0 +1,5 @@
+/*
+ * 全部赛事 / 全部学院赛
+ * 行样式与赛事页共用 templates/event-list.wxss，这里不再重复一份。
+ */
+@import "../../templates/event-list.wxss";

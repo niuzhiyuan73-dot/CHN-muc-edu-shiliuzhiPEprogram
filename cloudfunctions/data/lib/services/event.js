@@ -849,6 +849,8 @@ function buildEventRow(event, ctx = {}) {
     isTop8Placement:
       KNOCKOUT_FORMATS.includes(formatOf(event)) &&
       event.placementMode === EVENT_PLACEMENT_MODE.TOP8,
+    // 置顶标记：管理员把它放在列表最前，与公告同一口径
+    pinned: Boolean(event.pinned),
     status: event.status,
     statusLabel: statusLabelOf(event),
     isSignup: event.status === EVENT_STATUS.SIGNUP,
@@ -875,6 +877,8 @@ function buildEventRow(event, ctx = {}) {
     canSignUp: canSignUp(event, actor, { signup: mySignup, signups }),
     canCancelSignup: canCancelSignup(event, actor, { signup: mySignup }),
     // 管理端按钮
+    // 置顶/取消置顶与发布同一门槛（仅管理员），列表行据此渲染切换按钮
+    canPin: canManageEvent(actor),
     canStart: canStartEvent(event, actor),
     canCheckIn: canCheckIn(event, actor),
     canFinish: canFinishEvent(event, actor),

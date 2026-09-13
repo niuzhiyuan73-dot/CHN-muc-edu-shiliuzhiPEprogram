@@ -140,6 +140,8 @@ const resetSeason = (actor) => request('resetSeason', { actor });
 const getEventSignups = (eventId) => request('getEventSignups', { eventId });
 const publishEvent = (form, actor) => request('publishEvent', { form, actor });
 const startEvent = (id, actor) => request('startEvent', { id, actor });
+// 置顶 / 取消置顶：与发布同一权限门槛（仅管理员），与赛事进行到哪一步无关
+const setEventPinned = (id, pinned, actor) => request('setEventPinned', { id, pinned, actor });
 // 抽签（含重抽）。seedValue / manualOrder 都是可选：前者用于固定随机结果
 // （主要是测试与复核），后者只在「手工指定种子」模式下才带。
 const drawEvent = (id, actor, options) => request('drawEvent', { id, actor, ...options });
@@ -172,6 +174,8 @@ const reviewCollegeEntry = (entryId, action, reason, actor) =>
 const drawCollegeEvent = (eventId, actor, options) =>
   request('drawCollegeEvent', { eventId, actor, ...options });
 const startCollegeEvent = (eventId, actor) => request('startCollegeEvent', { eventId, actor });
+const setCollegeEventPinned = (eventId, pinned, actor) =>
+  request('setCollegeEventPinned', { eventId, pinned, actor });
 // payload 只含 tieId / college / entries；提交人与时间由服务端填
 const submitLineup = (payload, actor) => request('submitLineup', { ...payload, actor });
 const startTie = (tieId, actor) => request('startTie', { tieId, actor });
@@ -221,6 +225,7 @@ module.exports = {
   getEventSignups,
   publishEvent,
   startEvent,
+  setEventPinned,
   drawEvent,
   signUpEvent,
   cancelSignupEvent,
@@ -237,6 +242,7 @@ module.exports = {
   reviewCollegeEntry,
   drawCollegeEvent,
   startCollegeEvent,
+  setCollegeEventPinned,
   submitLineup,
   startTie,
   recordForfeit,

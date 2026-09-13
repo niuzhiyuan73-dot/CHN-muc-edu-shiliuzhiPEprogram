@@ -25,7 +25,11 @@ const { loadEventsView } = require('../../services/events-view.js');
 // 积分榜的搜索框与排行榜页是同一套逻辑，直接复用它的纯函数，
 // 免得「怎么算命中、怎么拼文案」在两处各写一份、改一处漏一处。
 const { describeSearch } = require('../../services/rank-view.js');
-const { isMock } = require('../../services/index.js');
+const {
+  setEventPinned,
+  setCollegeEventPinned,
+  isMock,
+} = require('../../services/index.js');
 
 Page({
   data: {
@@ -54,6 +58,8 @@ Page({
     empty: false,
     /** 一行都没有时给的原因 */
     emptyNote: '',
+    /** 置顶 / 取消置顶进行中，防止连点 */
+    pinning: false,
   },
 
   /**
@@ -137,6 +143,75 @@ Page({
   /** 清空搜索。清空后回到默认展示的积分榜（前 10） */
   onClearKeyword() {
     this.applyKeyword('');
+  },
+
+  /** 轻提示。测试环境里可能没有这个 API */
+  showToast(title, icon = 'none') {
+    if (typeof wx !== 'undefined' && typeof wx.showToast === 'function') {
+      wx.showToast({ title, icon });
+    }
+  },
+
+  /**
+   * 置顶 / 取消置顶的共用流程：判登录 → 调接口 → 提示 → 整页重载。
+   * 两个列表共用一套，避免「赛事能置顶、学院赛漏了登录判断」这类偏差。
+   *
+   * @param {(actorId:string) => Promise<Object>} write 写接口
+   * @param {string} successText 成功后的提示
+   * @returns {Promise<void>}
+   */
+  async runPin(write, successText) {
+    if (this.data.pinning) return undefined;
+
+    const user = this.currentUser();
+    if (!user) {
+      this.showToast('请先登录后再操作');
+      return undefined;
+    }
+
+    this.setData({ pinning: true });
+    const result = await write(user._id);
+    this.setData({ pinning: false });
+
+    if (!result || !result.ok) {
+      this.showToast((result && (result.firstError || result.message)) || '操作失败');
+      return undefined;
+    }
+
+    this.showToast(successText, 'success');
+    return this.refresh();
+  },
+
+  /** 管理员置顶 / 取消置顶一场赛事 */
+  onToggleEventPin(event) {
+    const { eventId, pinned } = event.currentTarget.dataset;
+    if (!eventId) return undefined;
+    const next = !pinned;
+    return this.runPin(
+      (actorId) => setEventPinned(eventId, next, actorId),
+      next ? '已置顶' : '已取消置顶'
+    );
+  },
+
+  /** 管理员置顶 / 取消置顶一场学院赛 */
+  onToggleCollegePin(event) {
+    const { eventId, pinned } = event.currentTarget.dataset;
+    if (!eventId) return undefined;
+    const next = !pinned;
+    return this.runPin(
+      (actorId) => setCollegeEventPinned(eventId, next, actorId),
+      next ? '已置顶' : '已取消置顶'
+    );
+  },
+
+  /** 进「全部赛事」，看没被截断的完整列表 */
+  onMoreEvents() {
+    wx.navigateTo({ url: '/pages/event-list/event-list?type=event' });
+  },
+
+  /** 进「全部学院赛」 */
+  onMoreCollegeEvents() {
+    wx.navigateTo({ url: '/pages/event-list/event-list?type=college' });
   },
 
   /** 点榜上的任何一行，去看这个人的完整战绩 */

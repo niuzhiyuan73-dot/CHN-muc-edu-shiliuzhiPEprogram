@@ -15,6 +15,8 @@ const {
   countEvents,
   describeSeason,
   buildPointsRows,
+  sortEvents,
+  sortCollegeEvents,
   loadEventsView,
   loadEventDetailView,
   roundLabelOf,
@@ -51,6 +53,7 @@ const {
   ROLE,
   SIGNUP_STATUS,
   EVENT_FORMAT,
+  COLLEGE_EVENT_STATUS,
   TEAM_ID_SEPARATOR,
 } = require('../miniprogram/utils/constants.js');
 
@@ -997,6 +1000,148 @@ test('赛事详情 —— 手工指定种子：下发候选人名单与需凑齐
       manualOrder.slice().sort(),
       '抽签落库的种子应与点名的那几位一致'
     );
+  } finally {
+    facade.resetCache();
+  }
+});
+
+/* ============================================================
+ * 三、列表截断与置顶（赛事页改版）
+ * ============================================================ */
+
+test('sortEvents —— 置顶的压过状态分档，取消置顶后回到原序', () => {
+  const events = [
+    { _id: 'finished', status: EVENT_STATUS.FINISHED, startTime: '2026-03-01T09:00:00' },
+    { _id: 'ongoing', status: EVENT_STATUS.ONGOING, startTime: '2026-04-01T09:00:00' },
+    { _id: 'signup', status: EVENT_STATUS.SIGNUP, startTime: '2026-05-01T09:00:00' },
+  ];
+
+  // 没有置顶时按 报名中 → 进行中 → 已结束
+  assert.deepStrictEqual(sortEvents(events).map((e) => e._id), ['signup', 'ongoing', 'finished']);
+
+  // 置顶是管理员的明确表态，要压过自动排序的一切规则：一场置顶的「已结束」
+  // 赛事必须排在任何「报名中」之前，否则置顶就失去意义
+  const pinned = [{ ...events[0], pinned: true }, events[1], events[2]];
+  assert.deepStrictEqual(sortEvents(pinned).map((e) => e._id), ['finished', 'signup', 'ongoing']);
+  assert.deepStrictEqual(sortEvents([]), []);
+});
+
+test('sortCollegeEvents —— 学院赛同样置顶优先，且不就地改写入参', () => {
+  const events = [
+    { _id: 'finished', status: COLLEGE_EVENT_STATUS.FINISHED, startTime: '2026-03-01T09:00:00' },
+    { _id: 'signup', status: COLLEGE_EVENT_STATUS.SIGNUP, startTime: '2026-05-01T09:00:00' },
+    { _id: 'pinned', status: COLLEGE_EVENT_STATUS.FINISHED, startTime: '2026-02-01T09:00:00', pinned: true },
+  ];
+  const before = events.map((e) => e._id);
+
+  assert.deepStrictEqual(sortCollegeEvents(events).map((e) => e._id), ['pinned', 'signup', 'finished']);
+  assert.deepStrictEqual(events.map((e) => e._id), before, '排序要另起数组，不能改乱入参');
+});
+
+test('赛事页 —— 两个列表都只摆最近 3 条，「查看全部」入口带出总场次', async () => {
+  const facade = require('../miniprogram/services/index.js');
+  facade.resetCache();
+  try {
+    const [allEvents, allCollege] = await Promise.all([facade.getEvents(), facade.getCollegeEvents()]);
+    const view = await loadEventsView();
+
+    assert.strictEqual(view.events.length, Math.min(3, allEvents.length));
+    assert.strictEqual(view.eventTotal, allEvents.length, '总场次如实交代，不是截断后的条数');
+    assert.strictEqual(view.hasMoreEvents, allEvents.length > view.events.length);
+
+    assert.strictEqual(view.collegeEvents.length, Math.min(3, allCollege.length));
+    assert.strictEqual(view.collegeEventTotal, allCollege.length);
+    assert.strictEqual(view.hasMoreCollegeEvents, allCollege.length > view.collegeEvents.length);
+  } finally {
+    facade.resetCache();
+  }
+});
+
+test('赛事页 —— listLimit: Infinity 时列表页拿到全部赛事，不再有「查看全部」', async () => {
+  const facade = require('../miniprogram/services/index.js');
+  facade.resetCache();
+  try {
+    const allEvents = await facade.getEvents();
+    const view = await loadEventsView({ listLimit: Infinity });
+
+    assert.strictEqual(view.events.length, allEvents.length);
+    assert.strictEqual(view.hasMoreEvents, false);
+  } finally {
+    facade.resetCache();
+  }
+});
+
+test('赛事页 —— 管理员置顶后该赛事排到最前并带标记，普通会员无权置顶', async () => {
+  const facade = require('../miniprogram/services/index.js');
+  facade.resetCache();
+  try {
+    const members = await facade.getMembers();
+    const admin = members.find((m) => m.role === ROLE.ADMIN);
+    const plain = members.find((m) => m.role === ROLE.MEMBER);
+    assert.ok(admin && plain, '演示数据里要有管理员与普通会员');
+
+    // 挑一场「最早结束」的赛事：排序后必定垫底，置顶后能看出它被提到最前
+    const events = await facade.getEvents();
+    const target = events
+      .filter((event) => event.status === EVENT_STATUS.FINISHED)
+      .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())[0];
+
+    const denied = await facade.setEventPinned(target._id, true, plain._id);
+    assert.strictEqual(denied.ok, false, '普通会员不能置顶');
+    assert.match(denied.message, /没有管理赛事的权限/);
+
+    const done = await facade.setEventPinned(target._id, true, admin._id);
+    assert.strictEqual(done.ok, true, done.message);
+
+    const view = await loadEventsView({ user: admin });
+    assert.strictEqual(view.events[0].id, target._id, '置顶的赛事排到最前');
+    assert.strictEqual(view.events[0].pinned, true);
+    assert.strictEqual(view.events[0].canPin, true, '管理员看得到置顶开关');
+
+    // 普通会员看同一份列表：置顶标记照旧可见，但拿不到置顶开关
+    const plainView = await loadEventsView({ user: plain });
+    assert.strictEqual(plainView.events[0].pinned, true);
+    assert.strictEqual(plainView.events[0].canPin, false);
+  } finally {
+    facade.resetCache();
+  }
+});
+
+test('赛事页 —— 管理员置顶学院赛排在列表最前，普通会员无权置顶', async () => {
+  const facade = require('../miniprogram/services/index.js');
+  facade.resetCache();
+  try {
+    const members = await facade.getMembers();
+    const admin = members.find((m) => m.role === ROLE.ADMIN);
+    const plain = members.find((m) => m.role === ROLE.MEMBER);
+
+    const published = await facade.publishCollegeEvent(
+      {
+        title: '置顶测试学院赛',
+        legPlan: ['MS', 'WS'],
+        startTime: '2026-10-01T09:00:00',
+        rosterMin: 1,
+        rosterMax: 20,
+      },
+      admin._id
+    );
+    assert.strictEqual(published.ok, true, published.firstError);
+    const id = published.record._id;
+
+    const denied = await facade.setCollegeEventPinned(id, true, plain._id);
+    assert.strictEqual(denied.ok, false, '普通会员不能置顶');
+    assert.match(denied.message, /没有管理学院赛的权限/);
+
+    const done = await facade.setCollegeEventPinned(id, true, admin._id);
+    assert.strictEqual(done.ok, true, done.message);
+
+    const view = await loadEventsView({ user: admin });
+    assert.strictEqual(view.collegeEvents[0].eventId, id);
+    assert.strictEqual(view.collegeEvents[0].pinned, true);
+    assert.strictEqual(view.collegeEvents[0].canPin, true);
+
+    const plainView = await loadEventsView({ user: plain });
+    assert.strictEqual(plainView.collegeEvents[0].canPin, false);
   } finally {
     facade.resetCache();
   }

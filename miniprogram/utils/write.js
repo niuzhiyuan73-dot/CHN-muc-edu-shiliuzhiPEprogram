@@ -49,6 +49,7 @@ const WRITE_ACTIONS = [
   // 赛事闭环
   'publishEvent',
   'startEvent',
+  'setEventPinned',
   'drawEvent',
   'signUpEvent',
   'cancelSignupEvent',
@@ -60,6 +61,7 @@ const WRITE_ACTIONS = [
   'reviewCollegeEntry',
   'drawCollegeEvent',
   'startCollegeEvent',
+  'setCollegeEventPinned',
   'submitLineup',
   'startTie',
   'recordForfeit',

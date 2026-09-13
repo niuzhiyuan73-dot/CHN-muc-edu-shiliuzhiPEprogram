@@ -1,0 +1,110 @@
+<!--
+  全部赛事 / 全部学院赛
+  赛事页「查看全部」的落点。同一页靠 type 分两种列表，行样式与赛事页共用
+  templates/event-list.wxss。数据形状见 services/events-view.js 的 loadEventsView。
+-->
+<view class="page-container">
+
+  <!-- 加载中。必须排在出错之前，否则首屏会一闪而过地报错 -->
+  <view wx:if="{{loading}}" class="loading">正在加载…</view>
+
+  <view wx:elif="{{error}}" class="empty-state">
+    <view class="empty-state-icon">⚠️</view>
+    <view class="empty-state-text">{{error}}</view>
+  </view>
+
+  <block wx:else>
+
+    <!-- ========== 全部赛事 ========== -->
+    <view wx:if="{{type === 'event'}}" class="card">
+      <view class="list-head">
+        <view class="list-head-title">全部赛事</view>
+        <view wx:if="{{view.canPublish}}" class="event-publish" bindtap="onOpenPublish">＋ 发布</view>
+      </view>
+
+      <view wx:if="{{!view.hasEvents}}" class="empty-note">{{view.eventsEmptyNote}}</view>
+
+      <view
+        wx:for="{{view.events}}"
+        wx:key="id"
+        class="event-row"
+        data-event-id="{{item.id}}"
+        bindtap="onOpenEvent"
+      >
+        <view class="event-main">
+          <view class="event-title">
+            <text class="event-name">{{item.title}}</text>
+            <text wx:if="{{item.pinned}}" class="tag tag-danger">置顶</text>
+            <text class="tag {{item.isSignup ? 'tag-success' : (item.isOngoing ? 'tag-warning' : 'tag-gray')}}">{{item.statusLabel}}</text>
+          </view>
+          <view class="event-meta">
+            {{item.timeText}}<text wx:if="{{item.location}}"> · {{item.location}}</text>
+          </view>
+          <view class="event-meta">{{item.levelLabel}} · {{item.matchTypeLabel}} · {{item.quotaText}}</view>
+        </view>
+
+        <view class="event-side">
+          <view wx:if="{{item.signedUp}}" class="event-my-signup">{{item.mySignupLabel}}</view>
+          <!-- 管理员在列表上直接切换置顶；catchtap 挡住行点击，否则会跳进详情 -->
+          <view
+            wx:if="{{item.canPin}}"
+            class="event-pin {{item.pinned ? 'is-on' : ''}}"
+            data-event-id="{{item.id}}"
+            data-pinned="{{item.pinned}}"
+            catchtap="onToggleEventPin"
+          >{{item.pinned ? '取消置顶' : '置顶'}}</view>
+          <view wx:if="{{!item.signedUp && !item.canPin}}" class="event-arrow">›</view>
+        </view>
+      </view>
+    </view>
+
+    <!-- ========== 全部学院赛 ========== -->
+    <view wx:else class="card">
+      <view class="list-head">
+        <view class="list-head-title">全部学院赛</view>
+        <view wx:if="{{view.canManageCollege}}" class="event-publish" bindtap="onOpenCollegePublish">＋ 学院赛</view>
+      </view>
+
+      <view wx:if="{{!view.hasCollegeEvents}}" class="empty-note">{{view.collegeEventsEmptyNote}}</view>
+
+      <view
+        wx:for="{{view.collegeEvents}}"
+        wx:key="eventId"
+        class="event-row"
+        data-event-id="{{item.eventId}}"
+        data-can-submit="{{item.canSubmit}}"
+        bindtap="onOpenCollegeEvent"
+      >
+        <view class="event-main">
+          <view class="event-title">
+            <text class="event-name">{{item.title}}</text>
+            <text wx:if="{{item.pinned}}" class="tag tag-danger">置顶</text>
+            <text class="tag {{item.statusClass}}">{{item.statusLabel}}</text>
+          </view>
+          <view class="event-meta">
+            {{item.startTimeText}}<text wx:if="{{item.location}}"> · {{item.location}}</text>
+          </view>
+          <view class="event-meta">{{item.legPlanText}} · 名单 {{item.rosterText}}</view>
+        </view>
+
+        <view class="event-side">
+          <!-- 管理员在列表上直接切换置顶；catchtap 挡住行点击，否则会跳进详情 -->
+          <view
+            wx:if="{{item.canPin}}"
+            class="event-pin {{item.pinned ? 'is-on' : ''}}"
+            data-event-id="{{item.eventId}}"
+            data-pinned="{{item.pinned}}"
+            catchtap="onToggleCollegePin"
+          >{{item.pinned ? '取消置顶' : '置顶'}}</view>
+          <view wx:if="{{item.actionText}}" class="event-action">{{item.actionText}}</view>
+          <view wx:if="{{!item.actionText && !item.canPin}}" class="event-arrow">›</view>
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{isMock}}" class="mock-note">
+      当前为本地模拟数据，用于开发预览，并非真实成绩
+    </view>
+
+  </block>
+</view>

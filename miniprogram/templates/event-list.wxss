@@ -1,0 +1,126 @@
+/*
+ * 赛事列表行样式
+ * 「赛事」tab 与「全部赛事 / 全部学院赛」两个页面共用同一套行样式，
+ * 所以抽到这里，避免两处各写一份、改一处漏一处。
+ */
+
+/* ==================== 列表头 ==================== */
+
+/* 标题在左、发布入口在右；两个列表页都照这个摆 */
+.list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-sm);
+}
+
+.list-head-title {
+  font-size: var(--font-lg);
+  font-weight: 600;
+}
+
+/* ==================== 发布入口 ==================== */
+
+/* 发布入口做成描边小按钮，不跟整页的主色抢位置；只有管理员才渲染 */
+.event-publish {
+  padding: 6rpx 20rpx;
+  font-size: var(--font-sm);
+  color: var(--color-primary);
+  border: 2rpx solid var(--color-primary);
+  border-radius: var(--radius-sm);
+}
+
+/* ==================== 行 ==================== */
+
+.event-row {
+  display: flex;
+  align-items: center;
+  padding: var(--space-md) 0;
+  border-bottom: 2rpx solid var(--color-divider);
+}
+
+.event-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.event-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.event-title {
+  display: flex;
+  align-items: center;
+}
+
+.event-name {
+  font-size: var(--font-md);
+  font-weight: 600;
+  margin-right: var(--space-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 报名中 / 进行中 / 已结束三档状态复用全局的 tag-success / tag-warning / tag-gray */
+
+.event-meta {
+  margin-top: 6rpx;
+  font-size: var(--font-xs);
+  color: var(--color-text-secondary);
+}
+
+.event-side {
+  flex-shrink: 0;
+  margin-left: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.event-my-signup {
+  font-size: var(--font-xs);
+  color: var(--color-primary);
+}
+
+/* 「提交名单 / 审核名单」入口，比纯箭头更显眼 */
+.event-action {
+  font-size: var(--font-xs);
+  color: var(--color-primary);
+  padding: 4rpx 16rpx;
+  border: 2rpx solid var(--color-primary);
+  border-radius: var(--radius-sm);
+}
+
+/* 管理员的置顶开关。未置顶是描边小按钮，置顶后填色，一眼能看出当前状态 */
+.event-pin {
+  font-size: var(--font-xs);
+  color: var(--color-text-secondary);
+  padding: 4rpx 16rpx;
+  border: 2rpx solid var(--color-divider);
+  border-radius: var(--radius-sm);
+  margin-bottom: 6rpx;
+}
+
+.event-pin.is-on {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.event-arrow {
+  font-size: var(--font-lg);
+  color: var(--color-text-tertiary);
+}
+
+/* ==================== 查看全部 ==================== */
+
+/* 只在列表被截断时出现，点进去看全量 */
+.list-more {
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 2rpx solid var(--color-divider);
+  text-align: center;
+  font-size: var(--font-sm);
+  color: var(--color-primary);
+}

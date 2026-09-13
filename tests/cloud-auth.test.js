@@ -539,3 +539,56 @@ test('修改资料 —— 未登录时顶层失败，提示先登录', async () 
   assert.equal(res.ok, false);
   assert.equal(res.message, '请先登录后再操作');
 });
+
+/* ---------- 置顶赛事 / 学院赛 ---------- */
+
+test('置顶赛事 —— 普通会员被挡下，管理员置顶后真落库', async () => {
+  const repo = createFixtureRepo();
+
+  const member = await contextFor(repo, 'openid-u01');
+  const denied = await dispatch('setEventPinned', { id: 'ev1', pinned: true }, member);
+  assert.equal(denied.data.ok, false);
+  assert.equal(denied.data.message, '当前账号没有管理赛事的权限');
+  assert.equal((await repo.events.getById('ev1')).pinned, undefined, '被拒时一个字都不落库');
+
+  const admin = await contextFor(repo, 'openid-admin');
+  const done = await dispatch('setEventPinned', { id: 'ev1', pinned: true }, admin);
+  assert.equal(done.data.ok, true, done.data.message);
+  assert.equal(done.data.record.pinned, true);
+  assert.equal((await repo.events.getById('ev1')).pinned, true, '置顶要真的写进仓储');
+
+  const missing = await dispatch('setEventPinned', { id: 'nope', pinned: true }, admin);
+  assert.equal(missing.data.ok, false);
+  assert.equal(missing.data.message, '找不到这场赛事');
+});
+
+test('置顶学院赛 —— 普通会员被挡下，管理员置顶后真落库', async () => {
+  const repo = createFixtureRepo();
+  const admin = await contextFor(repo, 'openid-admin');
+
+  const created = await dispatch(
+    'publishCollegeEvent',
+    {
+      form: {
+        title: '学院团体赛',
+        legPlan: ['MS', 'WS'],
+        startTime: '2026-10-01T09:00:00',
+        rosterMin: 1,
+        rosterMax: 20,
+      },
+    },
+    admin
+  );
+  assert.equal(created.data.ok, true, created.data.firstError);
+  const id = created.data.record._id;
+
+  const member = await contextFor(repo, 'openid-u01');
+  const denied = await dispatch('setCollegeEventPinned', { eventId: id, pinned: true }, member);
+  assert.equal(denied.data.ok, false);
+  assert.equal(denied.data.message, '当前账号没有管理学院赛的权限');
+
+  const done = await dispatch('setCollegeEventPinned', { eventId: id, pinned: true }, admin);
+  assert.equal(done.data.ok, true, done.data.message);
+  assert.equal(done.data.record.pinned, true);
+  assert.equal((await repo.collegeEvents.getById(id)).pinned, true, '置顶要真的写进仓储');
+});

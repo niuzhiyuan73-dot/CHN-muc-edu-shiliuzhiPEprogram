@@ -349,6 +349,36 @@ async function startCollegeEvent(payload = {}, ctx) {
 }
 
 /**
+ * 置顶 / 取消置顶一场学院赛。**仅管理员**，与发布同一门槛。
+ *
+ * 与进行到哪一步无关，因此不判状态机。学院赛不走回放，列表直接读集合
+ * （见 getCollegeEvents），改完即可见，无需失效缓存。
+ *
+ * @param {Object} payload { eventId, pinned }
+ * @param {Object} ctx
+ * @returns {Promise<Object>} {ok, record, message}
+ */
+async function setCollegeEventPinned(payload = {}, ctx) {
+  const guard = callerError(ctx);
+  if (guard) return fail(guard);
+
+  const event = await ctx.repo.collegeEvents.getById(payload.eventId);
+  if (!event) return ok({ ok: false, record: null, message: '找不到这场学院赛' });
+
+  if (!canManageCollegeEvent(ctx.actor, { isMock: false })) {
+    return ok({ ok: false, record: null, message: '当前账号没有管理学院赛的权限' });
+  }
+
+  const patch = { pinned: Boolean(payload.pinned), actor: ctx.actorId, actedAt: ctx.now };
+  const record = await ctx.repo.transaction(async (tx) => {
+    await tx.collegeEvents.update(payload.eventId, patch);
+    return { ...event, ...patch };
+  });
+
+  return ok({ ok: true, record, message: '' });
+}
+
+/**
  * 提交本大场的排阵。**干事（本学院）+ 管理员**，且大场尚未开始（D37）。
  *
  * 【为什么提交后要把大场的 lineupA / lineupB 置真】
@@ -620,6 +650,7 @@ module.exports = {
   reviewCollegeEntry,
   drawCollegeEvent,
   startCollegeEvent,
+  setCollegeEventPinned,
   submitLineup,
   startTie,
   recordForfeit,

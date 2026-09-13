@@ -1324,6 +1324,33 @@ async function startEvent(id, actor) {
 }
 
 /**
+ * 置顶 / 取消置顶一场赛事。**仅管理员**，与发布同一门槛。
+ *
+ * 【为什么置顶单独一个动作，而不是混进状态改判】
+ * 改判走的是「开始 / 结束」这类有状态机约束的路径；置顶与赛事进行到哪一步
+ * 无关——报名中可以置顶，已结束也可以。单独一个动作才不会把「现在能不能
+ * 开始」那套判断连累到置顶上。落在 eventStore 的 override 里即可，种子赛事
+ * （e01……）也能被置顶。
+ *
+ * @param {string} id
+ * @param {boolean} pinned
+ * @param {string} actor
+ * @returns {Promise<{ok:boolean, record:Object|null, message:string}>}
+ */
+async function setEventPinned(id, pinned, actor) {
+  const account = accountOf(actor);
+  const target = findEvent(id);
+  if (!target) return { ok: false, record: null, message: '找不到这场赛事' };
+  if (!canManageEvent(account)) {
+    return { ok: false, record: null, message: '当前账号没有管理赛事的权限' };
+  }
+
+  eventStore.setStatus(id, { pinned: Boolean(pinned), actor, actedAt: new Date() });
+  cache = null;
+  return { ok: true, record: findEvent(id), message: '' };
+}
+
+/**
  * 抽签（含重抽）：把签表写进赛事，并按签表生成首轮比赛。
  *
  * 与云端同一套纯逻辑（services/draw.js）：名单、种子、落位都由它算，
@@ -1710,6 +1737,33 @@ async function startCollegeEvent(eventId, actor) {
 }
 
 /**
+ * 置顶 / 取消置顶一场学院赛。**仅管理员**，与发布同一门槛。
+ *
+ * 与个人赛同一口径：置顶与赛事进行到哪一步无关。学院赛不进回放缓存，
+ * 改完直接读台账即可，无需失效缓存。
+ *
+ * @param {string} eventId
+ * @param {boolean} pinned
+ * @param {string} actor
+ * @returns {Promise<{ok:boolean, record:Object|null, message:string}>}
+ */
+async function setCollegeEventPinned(eventId, pinned, actor) {
+  const account = accountOf(actor);
+  const target = collegeStore.findEvent(eventId);
+  if (!target) return { ok: false, record: null, message: '找不到这场学院赛' };
+  if (!canManageCollegeEvent(account)) {
+    return { ok: false, record: null, message: '当前账号没有管理学院赛的权限' };
+  }
+
+  const record = collegeStore.updateEvent(eventId, {
+    pinned: Boolean(pinned),
+    actor,
+    actedAt: new Date(),
+  });
+  return { ok: true, record, message: '' };
+}
+
+/**
  * 提交本大场的排阵。**干事（本学院）+ 管理员**，且大场尚未开始（D37）。
  *
  * @param {Object} payload { tieId, college, entries }
@@ -1957,6 +2011,7 @@ module.exports = {
   resetSeason,
   publishEvent,
   startEvent,
+  setEventPinned,
   drawEvent,
   signUpEvent,
   cancelSignupEvent,
@@ -1967,6 +2022,7 @@ module.exports = {
   reviewCollegeEntry,
   drawCollegeEvent,
   startCollegeEvent,
+  setCollegeEventPinned,
   submitLineup,
   startTie,
   recordForfeit,

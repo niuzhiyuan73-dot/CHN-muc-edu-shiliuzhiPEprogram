@@ -155,6 +155,37 @@ async function startEvent(payload = {}, ctx) {
 }
 
 /**
+ * 置顶 / 取消置顶一场赛事。**仅管理员**，与发布同一门槛。
+ *
+ * 与赛事进行到哪一步无关，因此不判状态机；改的是赛事文档本身，要随
+ * bumpSeason 让回放缓存失效，否则 getEvents 会一直返回置顶前的旧记录。
+ *
+ * @param {Object} payload { id, pinned }
+ * @param {Object} ctx
+ * @returns {Promise<Object>} {ok, record, message}
+ */
+async function setEventPinned(payload = {}, ctx) {
+  const guard = callerError(ctx);
+  if (guard) return fail(guard);
+
+  const event = await ctx.repo.events.getById(payload.id);
+  if (!event) return ok({ ok: false, record: null, message: '找不到这场赛事' });
+
+  if (!canManageEvent(ctx.actor, { isMock: false })) {
+    return ok({ ok: false, record: null, message: '当前账号没有管理赛事的权限' });
+  }
+
+  const patch = { pinned: Boolean(payload.pinned), actor: ctx.actorId, actedAt: ctx.now };
+  const record = await ctx.repo.transaction(async (tx) => {
+    await tx.events.update(payload.id, patch);
+    await bumpSeason(tx, { anchorTime: null, now: ctx.now });
+    return { ...event, ...patch };
+  });
+
+  return ok({ ok: true, record, message: '' });
+}
+
+/**
  * 报名一场赛事。报名人就是调用者本人——不接受 payload 里的 userId，
  * 否则谁都能替别人报名。
  *
@@ -457,6 +488,7 @@ module.exports = {
   getEventSignups,
   publishEvent,
   startEvent,
+  setEventPinned,
   drawEvent,
   signUpEvent,
   cancelSignupEvent,

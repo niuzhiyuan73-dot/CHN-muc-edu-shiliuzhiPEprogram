@@ -44,6 +44,7 @@
         <view class="event-main">
           <view class="event-title">
             <text class="event-name">{{item.title}}</text>
+            <text wx:if="{{item.pinned}}" class="tag tag-danger">置顶</text>
             <text class="tag {{item.isSignup ? 'tag-success' : (item.isOngoing ? 'tag-warning' : 'tag-gray')}}">{{item.statusLabel}}</text>
           </view>
           <view class="event-meta">
@@ -54,8 +55,21 @@
 
         <view class="event-side">
           <view wx:if="{{item.signedUp}}" class="event-my-signup">{{item.mySignupLabel}}</view>
-          <view wx:else class="event-arrow">›</view>
+          <!-- 管理员在列表上直接切换置顶；catchtap 挡住行点击，否则会跳进详情 -->
+          <view
+            wx:if="{{item.canPin}}"
+            class="event-pin {{item.pinned ? 'is-on' : ''}}"
+            data-event-id="{{item.id}}"
+            data-pinned="{{item.pinned}}"
+            catchtap="onToggleEventPin"
+          >{{item.pinned ? '取消置顶' : '置顶'}}</view>
+          <view wx:if="{{!item.signedUp && !item.canPin}}" class="event-arrow">›</view>
         </view>
+      </view>
+
+      <!-- 列表只摆最近几场，其余进「全部赛事」；没被截断时这条不渲染 -->
+      <view wx:if="{{view.hasMoreEvents}}" class="list-more" bindtap="onMoreEvents">
+        查看全部 {{view.eventTotal}} 场赛事 ›
       </view>
     </view>
 
@@ -80,6 +94,7 @@
         <view class="event-main">
           <view class="event-title">
             <text class="event-name">{{item.title}}</text>
+            <text wx:if="{{item.pinned}}" class="tag tag-danger">置顶</text>
             <text class="tag {{item.statusClass}}">{{item.statusLabel}}</text>
           </view>
           <view class="event-meta">
@@ -89,9 +104,22 @@
         </view>
 
         <view class="event-side">
+          <!-- 管理员在列表上直接切换置顶；catchtap 挡住行点击，否则会跳进详情 -->
+          <view
+            wx:if="{{item.canPin}}"
+            class="event-pin {{item.pinned ? 'is-on' : ''}}"
+            data-event-id="{{item.eventId}}"
+            data-pinned="{{item.pinned}}"
+            catchtap="onToggleCollegePin"
+          >{{item.pinned ? '取消置顶' : '置顶'}}</view>
           <view wx:if="{{item.actionText}}" class="event-action">{{item.actionText}}</view>
-          <view wx:else class="event-arrow">›</view>
+          <view wx:if="{{!item.actionText && !item.canPin}}" class="event-arrow">›</view>
         </view>
+      </view>
+
+      <!-- 列表只摆最近几场，其余进「全部学院赛」；没被截断时这条不渲染 -->
+      <view wx:if="{{view.hasMoreCollegeEvents}}" class="list-more" bindtap="onMoreCollegeEvents">
+        查看全部 {{view.collegeEventTotal}} 场学院赛 ›
       </view>
     </view>
 

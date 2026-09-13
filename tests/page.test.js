@@ -177,6 +177,7 @@ require('../miniprogram/pages/college-event-detail/college-event-detail.js');
 require('../miniprogram/pages/college-lineup/college-lineup.js');
 require('../miniprogram/pages/college-match/college-match.js');
 require('../miniprogram/pages/college-placement/college-placement.js');
+require('../miniprogram/pages/event-list/event-list.js');
 
 /**
  * 深拷贝页面初值。
@@ -260,6 +261,8 @@ const collegeEventDetailConfig = registered[20];
 const collegeLineupConfig = registered[21];
 const collegeMatchConfig = registered[22];
 const collegePlacementConfig = registered[23];
+// 「查看全部」列表页，最后注册，下标自然接在末尾
+const eventListConfig = registered[24];
 
 // 写接口（确认 / 撤销 / 录入）只改内存，跑完一条用例就得把内存退回种子状态，
 // 否则上一条确认过的比赛会让下一条拿到的榜单与台账都不一样
@@ -4132,6 +4135,115 @@ test('学院名次页 —— 干事与会员整页挡住，一条学院名单都
     assert.match(page.data.view.blockReason, /只有管理员/);
     assert.deepStrictEqual(page.data.view.rows, [], '没有录入资格就不给名单');
   }
+});
+
+/* ============================================================
+ * 赛事列表改版：近 3 条 + 查看全部 + 置顶
+ * ============================================================ */
+
+test('赛事页 —— 列表只摆近 3 条，「查看全部」入口指向完整列表页', async () => {
+  loginAs(ADMIN);
+  const page = instantiate(eventsConfig);
+  await page.onLoad();
+
+  const view = page.data.view;
+  assert.strictEqual(view.events.length, 3, '赛事列表默认只摆 3 条');
+  assert.strictEqual(view.hasMoreEvents, true, '演示数据里的赛事多于 3 场');
+  assert.ok(view.eventTotal > 3);
+
+  calls.navigations.length = 0;
+  page.onMoreEvents();
+  assert.deepStrictEqual(calls.navigations, ['/pages/event-list/event-list?type=event']);
+
+  calls.navigations.length = 0;
+  page.onMoreCollegeEvents();
+  assert.deepStrictEqual(calls.navigations, ['/pages/event-list/event-list?type=college']);
+});
+
+test('赛事页 —— 管理员点「置顶」把赛事提到最前，普通会员看不到按钮', async () => {
+  loginAs(ADMIN);
+  const page = instantiate(eventsConfig);
+  await page.onLoad();
+
+  // 挑一场原本排在最后的已结束赛事：置顶后能看出它被提到最前
+  const target = page.data.view.events[2];
+  assert.ok(target, '演示数据里至少三场赛事');
+  assert.strictEqual(target.pinned, false);
+  assert.strictEqual(target.canPin, true, '管理员看得到置顶开关');
+
+  calls.toasts.length = 0;
+  await page.onToggleEventPin({ currentTarget: { dataset: { eventId: target.id, pinned: false } } });
+
+  assert.ok(calls.toasts.includes('已置顶'), '置顶成功要有提示');
+  assert.strictEqual(page.data.view.events[0].id, target.id, '置顶后排到最前');
+  assert.strictEqual(page.data.view.events[0].pinned, true);
+
+  // 普通会员：列表照常看到置顶标记，但不给置顶开关
+  loginAs();
+  const memberPage = instantiate(eventsConfig);
+  await memberPage.onLoad();
+  for (const row of memberPage.data.view.events) {
+    assert.strictEqual(row.canPin, false, '普通会员看不到置顶开关');
+  }
+});
+
+test('赛事页 —— 管理员点「置顶」把学院赛提到最前', async () => {
+  const first = await publishTestCollegeEvent({ startTime: '2026-10-01T09:00:00' });
+  const second = await publishTestCollegeEvent({ title: '第二场学院赛', startTime: '2026-11-01T09:00:00' });
+
+  loginAs(ADMIN);
+  const page = instantiate(eventsConfig);
+  await page.onLoad();
+
+  // 两场都是「报名中」，同状态内按开赛时间升序：先开赛的 first 在前
+  assert.strictEqual(page.data.view.collegeEvents[0].eventId, first._id);
+  assert.strictEqual(page.data.view.collegeEvents[1].eventId, second._id);
+  assert.strictEqual(page.data.view.collegeEvents[1].canPin, true);
+
+  calls.toasts.length = 0;
+  await page.onToggleCollegePin({ currentTarget: { dataset: { eventId: second._id, pinned: false } } });
+
+  assert.ok(calls.toasts.includes('已置顶'));
+  assert.strictEqual(page.data.view.collegeEvents[0].eventId, second._id, '置顶后排到最前');
+});
+
+test('全部赛事页 —— 不截断地列出全部赛事，管理员可在页内置顶', async () => {
+  loginAs(ADMIN);
+  const allEvents = await facade.getEvents();
+
+  const page = instantiate(eventListConfig);
+  await page.onLoad({ type: 'event' });
+
+  assert.strictEqual(page.data.loading, false);
+  assert.strictEqual(page.data.error, '');
+  assert.strictEqual(page.data.type, 'event');
+  assert.strictEqual(page.data.title, '全部赛事');
+  assert.strictEqual(page.data.view.events.length, allEvents.length, '这一页不截断');
+  assert.strictEqual(page.data.view.hasMoreEvents, false, '全摆出来就不再有「查看全部」');
+
+  const target = page.data.view.events[1];
+  assert.strictEqual(target.canPin, true, '管理员可在这一页置顶');
+  await page.onToggleEventPin({ currentTarget: { dataset: { eventId: target.id, pinned: false } } });
+  assert.strictEqual(page.data.view.events[0].id, target.id, '置顶后回到最前');
+});
+
+test('全部赛事页 —— type=college 走学院赛口径，点行进对应页面', async () => {
+  const event = await publishTestCollegeEvent();
+
+  loginAs(ADMIN);
+  const page = instantiate(eventListConfig);
+  await page.onLoad({ type: 'college' });
+
+  assert.strictEqual(page.data.type, 'college');
+  assert.strictEqual(page.data.title, '全部学院赛');
+  assert.strictEqual(page.data.view.collegeEvents.length, 1);
+  assert.strictEqual(page.data.view.collegeEvents[0].eventId, event._id);
+
+  calls.navigations.length = 0;
+  page.onOpenCollegeEvent({ currentTarget: { dataset: { eventId: event._id, canSubmit: false } } });
+  assert.deepStrictEqual(calls.navigations, [
+    `/pages/college-event-detail/college-event-detail?eventId=${event._id}`,
+  ]);
 });
 
 /* ============================================================

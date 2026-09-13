@@ -1,9 +1,11 @@
 /*
  * 赛事页样式
  * 「我的排名」卡与榜单行的样式在 templates/rank-board.wxss 里，与「排行榜」页共用。
+ * 赛事 / 学院赛两个列表的行样式在 templates/event-list.wxss 里，与「全部赛事」页共用。
  * 这里只写本页独有的「赛季说明」那一条。
  */
 @import "../../templates/rank-board.wxss";
+@import "../../templates/event-list.wxss";
 
 /* ==================== 赛季说明 ==================== */
 
@@ -24,78 +26,4 @@
   font-size: var(--font-xs);
   color: var(--color-text-secondary);
   margin-top: 4rpx;
-}
-
-/* ==================== 赛事列表 ==================== */
-
-/* 发布入口做成描边小按钮，不跟整页的主色抢位置；只有管理员才渲染 */
-.event-publish {
-  padding: 6rpx 20rpx;
-  font-size: var(--font-sm);
-  color: var(--color-primary);
-  border: 2rpx solid var(--color-primary);
-  border-radius: var(--radius-sm);
-}
-
-.event-row {
-  display: flex;
-  align-items: center;
-  padding: var(--space-md) 0;
-  border-bottom: 2rpx solid var(--color-divider);
-}
-
-.event-row:last-child {
-  border-bottom: none;
-  padding-bottom: 0;
-}
-
-.event-main {
-  flex: 1;
-  min-width: 0;
-}
-
-.event-title {
-  display: flex;
-  align-items: center;
-}
-
-.event-name {
-  font-size: var(--font-md);
-  font-weight: 600;
-  margin-right: var(--space-xs);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 报名中 / 进行中 / 已结束三档状态复用全局的 tag-success / tag-warning / tag-gray */
-
-.event-meta {
-  margin-top: 6rpx;
-  font-size: var(--font-xs);
-  color: var(--color-text-secondary);
-}
-
-.event-side {
-  flex-shrink: 0;
-  margin-left: var(--space-sm);
-}
-
-.event-my-signup {
-  font-size: var(--font-xs);
-  color: var(--color-primary);
-}
-
-/* 「提交名单 / 审核名单」入口，比纯箭头更显眼 */
-.event-action {
-  font-size: var(--font-xs);
-  color: var(--color-primary);
-  padding: 4rpx 16rpx;
-  border: 2rpx solid var(--color-primary);
-  border-radius: var(--radius-sm);
-}
-
-.event-arrow {
-  font-size: var(--font-lg);
-  color: var(--color-text-tertiary);
 }
