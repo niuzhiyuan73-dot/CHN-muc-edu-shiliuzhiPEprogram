@@ -668,7 +668,7 @@ async function getMatchRecords(options = {}) {
  */
 async function submitMatch(params = {}) {
   const { users, meta } = load();
-  const { now, id, ...fields } = params;
+  const { now, id, actor, ...fields } = params;
 
   // 抽签生成的比赛已经有主：补录比分，而不是另立一条新记录
   if (id) {
@@ -676,7 +676,6 @@ async function submitMatch(params = {}) {
     if (!target) {
       return { ok: false, match: null, errors: {}, scoreErrors: [], firstError: '找不到这场比赛' };
     }
-    const actor = (params.actor) || null;
     const actorAccount = accountOf(actor);
     // 抽签比赛的成绩由场上的人补录，管理员代录任意一场，干事只代录本学院
     // 有人上场的比赛——判定与云端 submitScheduledMatch、界面上的「录分」
@@ -719,15 +718,21 @@ async function submitMatch(params = {}) {
     return { ok: true, match, errors: {}, scoreErrors: [], firstError: '' };
   }
 
-  const result = buildMatchRecord(fields, {
-    // 名单必须来自 getMembers：本地注册账号不在种子里，回放时遇到会直接抛错，
-    // 所以「参赛者是否在名单内」要在录入这一步就校验掉
-    members: users,
-    now: now || new Date(),
-    // 时间下界取赛季首场。录到那之前，回放的定级锚点会前移，
-    // 全体中途入会者的初始分被静默重算——一个人的笔误变成全站分数漂移
-    minMatchTime: meta.firstMatchTime,
-  });
+  const result = buildMatchRecord(
+    // 录入人按登录者记：前端传的 recorder 不被信任。把录入人填成一个不在
+    // 场上的人，就能让确认权对场上所有人开放（见 match-record.canConfirm），
+    // 提交者于是能给自己盖章——这条规则与云端 submitMatch 一字不差。
+    { ...fields, recorder: actor || fields.recorder },
+    {
+      // 名单必须来自 getMembers：本地注册账号不在种子里，回放时遇到会直接抛错，
+      // 所以「参赛者是否在名单内」要在录入这一步就校验掉
+      members: users,
+      now: now || new Date(),
+      // 时间下界取赛季首场。录到那之前，回放的定级锚点会前移，
+      // 全体中途入会者的初始分被静默重算——一个人的笔误变成全站分数漂移
+      minMatchTime: meta.firstMatchTime,
+    }
+  );
 
   if (!result.ok) {
     return {
@@ -737,6 +742,26 @@ async function submitMatch(params = {}) {
       scoreErrors: result.scoreErrors,
       firstError: result.firstError,
     };
+  }
+
+  // 给了登录者就按同一条规则查权限：只有参赛者、本学院有人上场的干事、
+  // 管理员能录这一场。没给 actor 的调用只会来自测试或脚本——本地模拟数据
+  // 不是安全边界，真正的边界在云端的 ctx（那里 actor 永远存在）。
+  if (actor) {
+    const mayRecord = canRecordScore(result.record, actor, {
+      role: roleOf(actor),
+      college: (accountOf(actor) || {}).college || '',
+      collegeOf: (memberId) => (users.find((u) => u._id === memberId) || {}).college || '',
+    });
+    if (!mayRecord) {
+      return {
+        ok: false,
+        match: null,
+        errors: {},
+        scoreErrors: [],
+        firstError: '只有参赛者、本学院干事或管理员可以录入这场比赛的成绩',
+      };
+    }
   }
 
   const match = matchStore.addMatch(result.record);

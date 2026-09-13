@@ -62,9 +62,11 @@ const getProgressLeaderboard = (project, options) =>
 const getPercentile = (userId, project) => request('getPercentile', { userId, project });
 
 const getMatchHistory = (userId, options) => request('getMatchHistory', { userId, options });
-const getHeadToHead = (userId) => request('getHeadToHead', { userId });
-const getPartnerRecord = (userId) => request('getPartnerRecord', { userId });
-const getEventRecord = (userId) => request('getEventRecord', { userId });
+// options 必须透传：对头 / 搭档 / 赛事记录都按它筛池与限条数，丢掉就变成
+// 「传了筛选条件却拿到全部」，页面还以为后端已经按条件给了。
+const getHeadToHead = (userId, options) => request('getHeadToHead', { userId, options });
+const getPartnerRecord = (userId, options) => request('getPartnerRecord', { userId, options });
+const getEventRecord = (userId, options) => request('getEventRecord', { userId, options });
 const getRatingHistory = (userId, pool) => request('getRatingHistory', { userId, pool });
 const getForm = (userId, options) => request('getForm', { userId, options });
 const getMyProjects = (userId) => request('getMyProjects', { userId });

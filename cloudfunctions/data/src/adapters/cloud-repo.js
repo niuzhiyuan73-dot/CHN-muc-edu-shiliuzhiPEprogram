@@ -130,14 +130,14 @@ function buildCollections(scope, inTx) {
       list: () => list('matches'),
       getById: (id) => readDoc(scope, COLLECTIONS.matches, id),
       insert: (doc) => col('matches').doc(doc._id).set({ data: withoutId(doc) }),
-      update: (id, patch) => col('matches').doc(id).update({ data: patch }),
+      update: (id, patch) => col('matches').doc(id).update({ data: withoutId(patch) }),
     },
 
     events: {
       list: () => list('events'),
       getById: (id) => readDoc(scope, COLLECTIONS.events, id),
       insert: (doc) => col('events').doc(doc._id).set({ data: withoutId(doc) }),
-      update: (id, patch) => col('events').doc(id).update({ data: patch }),
+      update: (id, patch) => col('events').doc(id).update({ data: withoutId(patch) }),
     },
 
     eventSignups: {
@@ -150,14 +150,14 @@ function buildCollections(scope, inTx) {
       },
       getById: (id) => readDoc(scope, COLLECTIONS.eventSignups, id),
       insert: (doc) => col('eventSignups').doc(doc._id).set({ data: withoutId(doc) }),
-      update: (id, patch) => col('eventSignups').doc(id).update({ data: patch }),
+      update: (id, patch) => col('eventSignups').doc(id).update({ data: withoutId(patch) }),
     },
 
     collegeEvents: {
       list: () => list('collegeEvents'),
       getById: (id) => readDoc(scope, COLLECTIONS.collegeEvents, id),
       insert: (doc) => col('collegeEvents').doc(doc._id).set({ data: withoutId(doc) }),
-      update: (id, patch) => col('collegeEvents').doc(id).update({ data: patch }),
+      update: (id, patch) => col('collegeEvents').doc(id).update({ data: withoutId(patch) }),
     },
 
     collegeEntries: {
@@ -169,7 +169,7 @@ function buildCollections(scope, inTx) {
       },
       getById: (id) => readDoc(scope, COLLECTIONS.collegeEntries, id),
       insert: (doc) => col('collegeEntries').doc(doc._id).set({ data: withoutId(doc) }),
-      update: (id, patch) => col('collegeEntries').doc(id).update({ data: patch }),
+      update: (id, patch) => col('collegeEntries').doc(id).update({ data: withoutId(patch) }),
     },
 
     ties: {
@@ -181,7 +181,7 @@ function buildCollections(scope, inTx) {
       },
       getById: (id) => readDoc(scope, COLLECTIONS.ties, id),
       insert: (doc) => col('ties').doc(doc._id).set({ data: withoutId(doc) }),
-      update: (id, patch) => col('ties').doc(id).update({ data: patch }),
+      update: (id, patch) => col('ties').doc(id).update({ data: withoutId(patch) }),
     },
 
     lineups: {
@@ -192,14 +192,14 @@ function buildCollections(scope, inTx) {
       },
       getById: (id) => readDoc(scope, COLLECTIONS.lineups, id),
       insert: (doc) => col('lineups').doc(doc._id).set({ data: withoutId(doc) }),
-      update: (id, patch) => col('lineups').doc(id).update({ data: patch }),
+      update: (id, patch) => col('lineups').doc(id).update({ data: withoutId(patch) }),
     },
 
     announcements: {
       list: () => list('announcements'),
       getById: (id) => readDoc(scope, COLLECTIONS.announcements, id),
       insert: (doc) => col('announcements').doc(doc._id).set({ data: withoutId(doc) }),
-      update: (id, patch) => col('announcements').doc(id).update({ data: patch }),
+      update: (id, patch) => col('announcements').doc(id).update({ data: withoutId(patch) }),
     },
 
     seasons: {

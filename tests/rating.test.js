@@ -88,6 +88,16 @@ describe('getPoolRating —— 容错读取', () => {
     assert.equal(getPoolRating(null, RATING_POOL.DOUBLES).elo, DEFAULT_ELO);
   });
 
+  test('池数据缺失时按性别补起点分：女会员 1300，不是 1450', () => {
+    // 缺池的老数据若统一按 1450 补，女会员会凭空高出 genderInitialGap 分
+    const female = getPoolRating({ _id: 'u1', gender: 'F', ratings: {} }, RATING_POOL.SINGLES);
+    assert.equal(female.elo, DEFAULT_ELO - DEFAULT_CONFIG.genderInitialGap);
+    assert.equal(female.startElo, female.elo);
+
+    const male = getPoolRating({ _id: 'u2', gender: 'M', ratings: {} }, RATING_POOL.SINGLES);
+    assert.equal(male.elo, DEFAULT_ELO);
+  });
+
   test('补齐老数据中缺失的字段，避免后续计算出现 NaN', () => {
     const user = { _id: 'u1', ratings: { doubles: { elo: 1200 } } };
     const result = getPoolRating(user, RATING_POOL.DOUBLES);

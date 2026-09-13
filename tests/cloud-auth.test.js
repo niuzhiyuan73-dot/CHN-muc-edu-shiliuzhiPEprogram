@@ -61,12 +61,23 @@ test('发布公告 —— 普通会员被挡下', async () => {
   assert.equal(res.data.firstError, '当前账号没有发布公告的权限');
 });
 
-test('发布公告 —— 待审核的账号也被挡下（还没转正，不能去管别人）', async () => {
+test('发布公告 —— 待审核的账号在入口就被挡下（还没转正，不能去管别人）', async () => {
   const ctx = await contextFor(createFixtureRepo(), 'openid-pending');
   const res = await dispatch('publishAnnouncement', { form: ANNOUNCEMENT_FORM }, ctx);
 
-  assert.equal(res.data.ok, false);
-  assert.equal(res.data.firstError, '当前账号没有发布公告的权限');
+  // 账号状态不正常时，连业务校验都不进：顶层就拒绝，不给出「配置了什么」的线索
+  assert.equal(res.ok, false);
+  assert.equal(res.message, '账号还在审核中，通过后才能操作');
+});
+
+test('写接口 —— 已停用的账号一律挡下（账号还在，不能只认「查得到」）', async () => {
+  const banned = { ...USERS[1], _id: 'u_banned', openId: 'openid-banned', status: USER_STATUS.DISABLED };
+  const repo = createFixtureRepo({ users: [...USERS, banned] });
+  const ctx = await contextFor(repo, 'openid-banned');
+
+  const res = await dispatch('publishAnnouncement', { form: ANNOUNCEMENT_FORM }, ctx);
+  assert.equal(res.ok, false);
+  assert.equal(res.message, '账号已被停用，请联系管理员');
 });
 
 test('发布公告 —— 干事即可发布，发布人与发布时间由服务端填写', async () => {
@@ -115,6 +126,50 @@ test('下架公告 —— 普通会员无权，管理员可以，且不能重复
 
   const missing = await dispatch('archiveAnnouncement', { id: 'nope' }, admin);
   assert.equal(missing.data.message, '找不到这条公告');
+});
+
+/* ---------- 录入权限 ---------- */
+
+test('录入比赛 —— 录入人一律记登录者，前端塞的 recorder 不作数', async () => {
+  const repo = createFixtureRepo();
+  const ctx = await contextFor(repo, 'openid-u01');
+
+  const res = await dispatch('submitMatch', { ...MATCH_FORM, recorder: 'u_admin' }, ctx);
+  assert.equal(res.data.ok, true, res.data.firstError);
+  assert.equal(res.data.match.recorder, 'u01', '录入人必须是登录者，不能自选');
+});
+
+test('录入比赛 —— 把录入人填成不在场上的人，也换不来自己确认', async () => {
+  const repo = createFixtureRepo();
+  const ctx = await contextFor(repo, 'openid-u01');
+
+  // 攻击链：自己那队填成赢家，再把 recorder 填成局外人——recorderSide 成了
+  // null，确认权就会向场上所有人开放，提交者随即能给自己盖章涨分。
+  // 录入人由服务端锁死后，这条链断在第一步。
+  const res = await dispatch('submitMatch', { ...MATCH_FORM, recorder: 'nobody' }, ctx);
+  assert.equal(res.data.ok, true, res.data.firstError);
+
+  const confirm = await dispatch('confirmMatch', { id: res.data.match._id }, ctx);
+  assert.equal(confirm.data.ok, false);
+  assert.equal(confirm.data.message, '你无权确认这场比赛');
+});
+
+test('录入比赛 —— 不是参赛者的会员编不出一场比赛', async () => {
+  const repo = createFixtureRepo();
+  const outsider = await contextFor(repo, 'openid-u03');
+
+  const res = await dispatch('submitMatch', MATCH_FORM, outsider);
+  assert.equal(res.data.ok, false);
+  assert.match(res.data.firstError, /只有参赛者/);
+});
+
+test('录入比赛 —— 管理员可以代录任意一场', async () => {
+  const repo = createFixtureRepo();
+  const admin = await contextFor(repo, 'openid-admin');
+
+  const res = await dispatch('submitMatch', MATCH_FORM, admin);
+  assert.equal(res.data.ok, true, res.data.firstError);
+  assert.equal(res.data.match.recorder, 'u_admin');
 });
 
 /* ---------- 比赛确认 ---------- */
@@ -377,14 +432,17 @@ test('提交入会申请 —— 没选性别的申请被挡下并指明字段', 
 });
 
 test('提交入会申请 —— 实名信息不合规时一个字都不落库', async () => {
-  const ctx = await contextFor(createFixtureRepo(), 'openid-new');
+  const repo = createFixtureRepo();
+  const ctx = await contextFor(repo, 'openid-new');
   const res = await dispatch('registerMember', { profile: { realName: '王' } }, ctx);
 
   assert.equal(res.data.ok, false);
   assert.ok(res.data.firstError);
   assert.equal(res.data.account, null);
 
-  const applications = await dispatch('getMemberApplications', {}, ctx);
+  // 申请名单只给干部看（见 read-handlers），所以用管理员去核对条数
+  const admin = await contextFor(repo, 'openid-admin');
+  const applications = await dispatch('getMemberApplications', {}, admin);
   assert.equal(applications.data.length, 1, '被拒的申请不能留下痕迹');
 });
 

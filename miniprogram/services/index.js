@@ -31,6 +31,7 @@
  */
 
 const { DATA_SOURCE } = require('../utils/constants.js');
+const { guardWrite, isWriteAction } = require('../utils/write.js');
 const mock = require('./mock.js');
 
 /**
@@ -95,7 +96,11 @@ for (const name of Object.keys(mock)) {
       // 只可能发生在 mock 特有而 cloud 没有的名字上（load / resetCache）
       throw new Error(`当前数据源（${current}）不支持 ${name}`);
     }
-    return source[name](...args);
+    const run = () => source[name](...args);
+    // 写接口在此收口：云端抛出的基础设施故障收敛成 {ok:false,...}，
+    // 免得页面因未处理的异常卡在 submitting 上（见 utils/write.js）。
+    // 读接口不套——读失败该由页面自己 catch，不能伪装成空数据。
+    return isWriteAction(name) ? guardWrite(run) : run();
   };
 }
 

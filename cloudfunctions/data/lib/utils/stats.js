@@ -384,10 +384,12 @@ function summarizeForm(matches, userId, options = {}) {
   );
   const recent = views.slice(0, limit).map((view) => view.isWin);
 
-  // 当前连胜从最近一场开始数，遇到第一场失利立即停止
+  // 当前连胜从最近一场开始数，遇到第一场失利立即停止。
+  // 【为什么在 views 上数而不是在 recent 上】recent 只截了 limit 场，
+  // 连胜超过 limit 时会被截短——7 连胜配上默认 limit=5 会显示成 5。
   let streak = 0;
-  for (const isWin of recent) {
-    if (!isWin) break;
+  for (const view of views) {
+    if (!view.isWin) break;
     streak += 1;
   }
 

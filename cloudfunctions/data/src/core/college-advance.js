@@ -37,40 +37,57 @@ const { TIE_STATUS } = require('../../lib/utils/constants.js');
 async function advanceCollegeAfterLeg(ctx, legMatch) {
   if (!legMatch || !legMatch.tieId) return null;
 
-  const tie = await ctx.repo.ties.getById(legMatch.tieId);
-  if (!tie) return null;
-  const event = await ctx.repo.collegeEvents.getById(tie.eventId);
+  // 先取一次只是为了拿 eventId 与赛事配置（轮次、赛制在这场里不会变）。
+  // 小项本身要在事务里重读——见下。
+  const snapshot = await ctx.repo.ties.getById(legMatch.tieId);
+  if (!snapshot) return null;
+  const event = await ctx.repo.collegeEvents.getById(snapshot.eventId);
 
-  // 把这一场的结果写回对应的小项（其余小项原样保留）
-  const legs = (Array.isArray(tie.legs) ? tie.legs : []).map((leg) =>
-    Number(leg.legNo) === Number(legMatch.legNo) ? { ...leg, ...legResultOf(tie, legMatch) } : leg
-  );
-  const summary = summarizeTie({ tie: { ...tie, legs }, event });
-
-  const tiePatch = { legs };
-  // 未决（净胜两套都平）不算结束：留在进行中等管理员处理，不记假胜者
-  if (summary.complete && summary.winnerSide) {
-    tiePatch.status = TIE_STATUS.FINISHED;
-    tiePatch.winner = summary.winner;
-    tiePatch.finishedAt = ctx.now;
-  }
-
-  // 下一轮的对阵要在事务外算：事务里不能按赛事条件读取大场
-  const allTies = await ctx.repo.ties.listByEvent(tie.eventId);
-  const merged = allTies.map((item) => (item._id === tie._id ? { ...item, ...tiePatch } : item));
-  const pairs = tiePatch.winner
-    ? nextRoundPairsOf({ draw: event.draw, ties: merged, round: tie.round })
-    : [];
-  const nextTies = pairs.length > 0 ? buildTiesForRound({ event, round: Number(tie.round) + 1, pairs }) : [];
-
+  let tiePatch = null;
   await ctx.repo.transaction(async (tx) => {
-    await tx.ties.update(tie._id, tiePatch);
-    for (const draft of nextTies) {
-      const existing = await tx.ties.getById(draft._id);
-      if (existing) continue; // 排过的轮次不覆盖
-      await tx.ties.insert(draft);
+    // 【为什么必须在事务内重读】
+    // legs 是「整份小项数组」的一次整体写入。若拿事务外的快照来算，同一个
+    // 大场两场小项几乎同时确认时，两边的快照都还没有对方那一场，后写的
+    // 会把先写的冲掉——大场永远差一场，晋级名单也排不出来。重读之后在
+    // 事务里合并，两次写入才会串成一条链。
+    const tie = await tx.ties.getById(legMatch.tieId);
+    if (!tie) return;
+
+    // 把这一场的结果写回对应的小项（其余小项按重读到的现状保留）
+    const legs = (Array.isArray(tie.legs) ? tie.legs : []).map((leg) =>
+      Number(leg.legNo) === Number(legMatch.legNo) ? { ...leg, ...legResultOf(tie, legMatch) } : leg
+    );
+    const summary = summarizeTie({ tie: { ...tie, legs }, event });
+
+    tiePatch = { legs };
+    // 未决（净胜两套都平）不算结束：留在进行中等管理员处理，不记假胜者
+    if (summary.complete && summary.winnerSide) {
+      tiePatch.status = TIE_STATUS.FINISHED;
+      tiePatch.winner = summary.winner;
+      tiePatch.finishedAt = ctx.now;
     }
+
+    await tx.ties.update(tie._id, tiePatch);
   });
+
+  if (!tiePatch || !tiePatch.winner) return { tiePatch: tiePatch || {}, nextTies: [] };
+
+  // 下一轮的对阵要在事务外算：事务里不能按赛事条件读取大场。
+  // 插入仍走「只补不覆盖」，所以这里多算一次是安全的。
+  const allTies = await ctx.repo.ties.listByEvent(snapshot.eventId);
+  const merged = allTies.map((item) => (item._id === snapshot._id ? { ...item, ...tiePatch } : item));
+  const pairs = nextRoundPairsOf({ draw: event.draw, ties: merged, round: snapshot.round });
+  const nextTies = pairs.length > 0 ? buildTiesForRound({ event, round: Number(snapshot.round) + 1, pairs }) : [];
+
+  if (nextTies.length > 0) {
+    await ctx.repo.transaction(async (tx) => {
+      for (const draft of nextTies) {
+        const existing = await tx.ties.getById(draft._id);
+        if (existing) continue; // 排过的轮次不覆盖
+        await tx.ties.insert(draft);
+      }
+    });
+  }
 
   return { tiePatch, nextTies };
 }

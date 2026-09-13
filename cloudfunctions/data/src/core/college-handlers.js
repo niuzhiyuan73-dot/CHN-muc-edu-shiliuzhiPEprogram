@@ -327,10 +327,23 @@ async function startCollegeEvent(payload = {}, ctx) {
   const patch = { status: COLLEGE_EVENT_STATUS.ONGOING, currentRound: 1, startedAt: ctx.now };
 
   const record = await ctx.repo.transaction(async (tx) => {
-    for (const tie of ties) await tx.ties.insert(tie);
+    // 【为什么必须在事务内复查状态】
+    // 上面那次读取与这次写入之间可能插进另一次「开始」。ties.insert 是 set
+    // （upsert），若不复查，并发的第二次会把首轮大场连同其间已经录进去的
+    // 排阵、小场编号一起覆盖掉——大场看着还在，进展却凭空消失。
+    const current = await tx.collegeEvents.getById(payload.eventId);
+    if (!current || current.status !== COLLEGE_EVENT_STATUS.READY) return null;
+
+    for (const tie of ties) {
+      const existing = await tx.ties.getById(tie._id);
+      if (existing) continue; // 只补不覆盖，与 startTie 同一纪律
+      await tx.ties.insert(tie);
+    }
     await tx.collegeEvents.update(payload.eventId, patch);
     return { ...event, ...patch };
   });
+
+  if (!record) return ok({ ok: false, record: null, ties: [], message: '这场学院赛已经开始了' });
 
   return ok({ ok: true, record, ties, message: '' });
 }
@@ -481,8 +494,17 @@ async function recordForfeit(payload = {}, ctx) {
 
   const match = await ctx.repo.matches.getById(leg.matchId);
   if (!match) return ok({ ok: false, match: null, message: '找不到这个小项的比赛' });
-  if (match.status === MATCH_STATUS.ACTIVE) {
-    return ok({ ok: false, match: null, message: '这个小项已经生效，不能再记弃权' });
+  // 只有待确认的小项能记弃权：已生效的再记会重复推进对阵，已撤销的更不能
+  // 借弃权悄悄复活（撤销是管理员的判定，不该被一次弃权推翻）。
+  if (match.status !== MATCH_STATUS.PENDING) {
+    return ok({
+      ok: false,
+      match: null,
+      message:
+        match.status === MATCH_STATUS.REVOKED
+          ? '这个小项已撤销，不能再记弃权'
+          : '这个小项已经生效，不能再记弃权',
+    });
   }
 
   // 弃权方丢掉这一项，对手获胜；比分留空，结果性质由 outcome 表达
@@ -501,11 +523,28 @@ async function recordForfeit(payload = {}, ctx) {
   };
 
   const patched = await ctx.repo.transaction(async (tx) => {
+    // 【为什么必须在事务内复查】
+    // 一次「确认」与一次「记弃权」几乎同时落到同一个小项上时，两边的事务外
+    // 读取都会看到「待确认」，于是都往下写：后写的把先写的胜者冲掉，大场
+    // 汇总却按先写的那次推进过，晋级名单就此与台账对不上。重读之后条件不
+    // 满足的一侧直接放弃，只有一次能落地。
+    const currentTie = await tx.ties.getById(payload.tieId);
+    const currentLeg = (Array.isArray(currentTie && currentTie.legs) ? currentTie.legs : []).find(
+      (item) => Number(item.legNo) === Number(payload.legNo)
+    );
+    if (!currentTie || currentTie.status !== TIE_STATUS.ONGOING) return null;
+    if (!currentLeg || currentLeg.winner) return null;
+
+    const current = await tx.matches.getById(leg.matchId);
+    if (!current || current.status !== MATCH_STATUS.PENDING) return null;
+
     await tx.matches.update(leg.matchId, patch);
     // 台账变了（比赛从待确认转生效），让回放缓存失效
     await bumpSeason(tx, { anchorTime: null, now: ctx.now });
-    return { ...match, ...patch };
+    return { ...current, ...patch };
   });
+
+  if (!patched) return ok({ ok: false, match: null, message: '这个小项已经处理过了' });
 
   await advanceCollegeAfterLeg(ctx, patched);
 

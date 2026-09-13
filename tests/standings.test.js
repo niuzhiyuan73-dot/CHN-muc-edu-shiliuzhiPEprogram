@@ -146,6 +146,21 @@ describe('computeStandings —— 名次由战绩算出来', () => {
     assert.deepEqual(rows.map((row) => row.id), ['x', 'y', 'z']);
   });
 
+  test('局分打平时按记录的胜者判，不能默认判给 B', () => {
+    // 两局各胜一局（1:1），靠总分定胜负，记录判定 A 胜。
+    // 曾经的比较器在局分相等时无条件取 B，把 A 到手的胜利记成了 B 的。
+    const rows = computeStandings({
+      entries: ['a', 'b'],
+      matches: [played('a', 'b', { scoreA: [11, 5], scoreB: [5, 11], winner: 'A' })],
+    });
+
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    assert.equal(byId.get('a').wins, 1);
+    assert.equal(byId.get('b').wins, 0);
+    assert.equal(byId.get('b').losses, 1);
+    assert.deepEqual(rows.map((row) => row.rank), [1, 2]);
+  });
+
   test('全同战绩时按签位次序兜底，绝不并列', () => {
     const rows = computeStandings({ entries: ['p', 'q'], matches: [] });
     assert.deepEqual(rows.map((row) => row.id), ['p', 'q']);

@@ -45,6 +45,13 @@ describe('placementBaseOf —— 名次档位基础分', () => {
     }
   });
 
+  test('小数名次按非法处理，不落进八强档', () => {
+    // 4.5 这种小数既不在档位表里，也不该被当成「八强」发分
+    for (const bad of [4.5, 2.5, 8.1, 0.5]) {
+      assert.equal(placementBaseOf(bad), 0);
+    }
+  });
+
   test('字符串数字按数字处理', () => {
     assert.equal(placementBaseOf('1'), 20);
     assert.equal(placementBaseOf('6'), 4);

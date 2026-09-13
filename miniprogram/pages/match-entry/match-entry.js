@@ -379,16 +379,15 @@ Page({
 
     this.setData({ submitting: true, errors: {}, scoreErrors: [], errorText: '' });
     try {
+      // 两种录入都要带上登录者：云端按 OpenID 认身份，mock 靠 actor 走
+      // 同一条「谁有资格录这一场」的判定（见 mock.submitMatch）。不带上，
+      // 本地演示就落到「谁都能录」，与线上不是一回事。
+      const actor = user ? user._id : undefined;
       // 补录签表比赛：带上编号把比分写回原记录，而不是另立一条新比赛。
       // 对阵、赛制、时间都取自原记录，所以这里只递比分与录入人。
       const result = this.matchId
-        ? await submitMatch({
-            id: this.matchId,
-            scoreA: params.scoreA,
-            scoreB: params.scoreB,
-            actor: user ? user._id : undefined,
-          })
-        : await submitMatch(params);
+        ? await submitMatch({ id: this.matchId, scoreA: params.scoreA, scoreB: params.scoreB, actor })
+        : await submitMatch({ ...params, actor });
       if (!result.ok) {
         this.setData({
           submitting: false,

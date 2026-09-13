@@ -121,7 +121,7 @@ function roundRobinRounds(entryIds) {
  * 只认「已生效且判明了胜负」的比赛——待确认、被撤销都不算数。
  *
  * @param {Object} match
- * @returns {{a:string,b:string,gamesA:number,gamesB:number,pointsA:number,pointsB:number}|null}
+ * @returns {{a:string,b:string,gamesA:number,gamesB:number,pointsA:number,pointsB:number,winner:string}|null}
  */
 function tallyOf(match) {
   if (!match || match.status !== MATCH_STATUS.ACTIVE || !match.winner) return null;
@@ -148,7 +148,7 @@ function tallyOf(match) {
   const pointsA = scoreA.reduce((sum, value) => sum + (Number(value) || 0), 0);
   const pointsB = scoreB.reduce((sum, value) => sum + (Number(value) || 0), 0);
 
-  return { a, b, gamesA, gamesB, pointsA, pointsB };
+  return { a, b, gamesA, gamesB, pointsA, pointsB, winner: match.winner };
 }
 
 /**
@@ -234,8 +234,12 @@ function computeStandings({ entries, matches } = {}) {
     b.pointsWon += tally.pointsB;
     b.pointsLost += tally.pointsA;
 
-    const winner = tally.gamesA > tally.gamesB ? a : b;
-    const loser = winner === a ? b : a;
+    // 局分相同时（例如两局各胜一局，靠总分定胜负）不能默认判给 B ——
+    // 那会把一场 A 赢的比赛记成 B 赢。以记录里判定的 winner 为准。
+    const aWon =
+      tally.gamesA === tally.gamesB ? tally.winner === 'A' : tally.gamesA > tally.gamesB;
+    const winner = aWon ? a : b;
+    const loser = aWon ? b : a;
     winner.wins += 1;
     loser.losses += 1;
   });

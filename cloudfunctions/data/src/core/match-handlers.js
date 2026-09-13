@@ -192,7 +192,19 @@ async function advanceAfterConfirm(ctx, eventId) {
 /**
  * 录入一场比赛。一律以「待确认」入账。
  *
- * @param {Object} payload 见 match-record.buildMatchRecord，另可带 now
+ * 【录入人为什么由服务端定，而不是收前端传的】
+ * 前端在录入单里填谁是「录入人」，等于让提交者自选身份。而「对手确认」
+ * 这道闸门正是靠录入人区分「自己」与「对手」：把录入人填成一个不在场上
+ * 的编号，recorderSide 就成了 null，确认权随即对场上所有人开放——提交者
+ * 于是能给自己的比赛盖章，凭空造出一场胜利并涨分。所以 recorder 一律记
+ * 登录者，前端传什么都不看。
+ *
+ * 【为什么还要查「这一场轮不轮得到我录」】
+ * 光锁死 recorder 还不够：不是参赛者的人照样可以拿别人的名字编一场比赛。
+ * canRecordScore 要求提交者是场上的人、本学院有人上场的干事、或管理员
+ * （见 match-record.js）。日常约球同样适用——不能替陌生人编一场比赛。
+ *
+ * @param {Object} payload 见 match-record.buildMatchRecord
  * @param {Object} ctx
  * @returns {Promise<Object>} {ok, match, errors, scoreErrors, firstError}
  */
@@ -201,23 +213,28 @@ async function submitMatch(payload = {}, ctx) {
   if (guard) return fail(guard);
 
   const dataset = await getDataset(ctx);
-  const { now, id, ...fields } = payload;
+  const { id, ...fields } = payload;
 
   // 抽签生成的比赛已经有主：它带着签位与 eventId，等着有人把比分补上。
   // 若在这里另立一条新记录，签表里那场会永远空着，比分又挂到了另一条上。
   if (id) {
-    return submitScheduledMatch(id, fields, { dataset, ctx, now });
+    return submitScheduledMatch(id, fields, { dataset, ctx });
   }
 
-  const result = buildMatchRecord(fields, {
-    // 名单必须与回放名单一致：不在名单里的参赛者会让回放直接抛错，
-    // 所以「参赛者是否在名单内」要在录入这一步就校验掉
-    members: dataset.users,
-    now: now || ctx.now,
-    // 时间下界取赛季锚点。录到锚点之前，中途入会者的定级依据会被整体
-    // 重算——一个人的笔误变成全站分数漂移
-    minMatchTime: dataset.meta.seasonStart || dataset.meta.firstMatchTime,
-  });
+  const result = buildMatchRecord(
+    // 录入人按登录者记：前端传的 recorder 不被信任（见上方说明）
+    { ...fields, recorder: ctx.actorId },
+    {
+      // 名单必须与回放名单一致：不在名单里的参赛者会让回放直接抛错，
+      // 所以「参赛者是否在名单内」要在录入这一步就校验掉
+      members: dataset.users,
+      // 时间基准取服务端时钟：前端传的 now 不被信任
+      now: ctx.now,
+      // 时间下界取赛季锚点。录到锚点之前，中途入会者的定级依据会被整体
+      // 重算——一个人的笔误变成全站分数漂移
+      minMatchTime: dataset.meta.seasonStart || dataset.meta.firstMatchTime,
+    }
+  );
 
   if (!result.ok) {
     return ok({
@@ -226,6 +243,23 @@ async function submitMatch(payload = {}, ctx) {
       errors: result.errors,
       scoreErrors: result.scoreErrors,
       firstError: result.firstError,
+    });
+  }
+
+  // 校验通过后再看权限：把「这一场轮不轮得到我录」与「这张单子填得对不对」
+  // 分开报，用户被拒时才不会以为是自己某个输入框填错了。
+  const mayRecord = canRecordScore(result.record, ctx.actorId, {
+    role: Number(ctx.role),
+    college: (ctx.actor && ctx.actor.college) || '',
+    collegeOf: (memberId) => (dataset.users.find((u) => u._id === memberId) || {}).college || '',
+  });
+  if (!mayRecord) {
+    return ok({
+      ok: false,
+      match: null,
+      errors: {},
+      scoreErrors: [],
+      firstError: '只有参赛者、本学院干事或管理员可以录入这场比赛的成绩',
     });
   }
 

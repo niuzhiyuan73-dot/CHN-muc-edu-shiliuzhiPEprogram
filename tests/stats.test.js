@@ -508,6 +508,13 @@ describe('summarizeForm —— 近期状态', () => {
     const matches = build(true, true, false);
     assert.equal(summarizeForm(matches, 'a', { limit: 5 }).streak, 0);
   });
+
+  test('连胜超过 limit 时不被截断：7 连胜配 limit=5 仍是 7', () => {
+    const matches = build(true, true, true, true, true, true, true);
+    const form = summarizeForm(matches, 'a', { limit: 5 });
+    assert.equal(form.results.length, 5, '展示序列仍只取最近 5 场');
+    assert.equal(form.streak, 7, '连胜要数到底，不能只在截断后的序列里数');
+  });
 });
 
 describe('统计真实模拟数据 —— 端到端', () => {

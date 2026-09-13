@@ -11,6 +11,7 @@
 
 const { ok } = require('../envelope.js');
 const { getDataset } = require('./derive.js');
+const { canManage } = require('../../lib/services/permission.js');
 const { getPoolRating } = require('../../lib/utils/rating.js');
 const {
   RANK_PROJECT_LABEL,
@@ -61,6 +62,28 @@ function progressEntries(users, project) {
 
 /* ---------- 会员 ---------- */
 
+/**
+ * 名单里不带账号凭据与联系方式。
+ *
+ * 【为什么必须摘掉】
+ * 会员名单是任何人都能拉取的公开数据。openId 是账号的唯一识别凭证，
+ * phone 是联系方式——它们对榜单、选手选择器、会员主页都没有用处，一旦
+ * 随名单下发，等于把全俱乐部的联系方式与账号标识交到任何人手里。摘掉
+ * 之后页面用到的字段（昵称、头像、学院、性别、分数）一个不少。
+ */
+const PRIVATE_MEMBER_FIELDS = ['openId', 'phone'];
+
+/**
+ * 复制一份会员记录并摘掉隐私字段。
+ * @param {Object} user
+ * @returns {Object}
+ */
+function publicMember(user) {
+  const copy = { ...user };
+  for (const field of PRIVATE_MEMBER_FIELDS) delete copy[field];
+  return copy;
+}
+
 /** 当前登录会员。云端就是 OpenID 对应的那一位。 */
 async function getCurrentUser(payload, ctx) {
   return ok(ctx.actor || null);
@@ -68,26 +91,51 @@ async function getCurrentUser(payload, ctx) {
 
 async function getMembers(payload, ctx) {
   const { members } = await getDataset(ctx);
-  return ok(members);
+  return ok(members.map(publicMember));
 }
 
 /**
- * 单个会员。会员名单与申请名单都找一遍：审核页要解析申请人的头像昵称，
- * 会员主页也可能指向一位还没转正的人。
+ * 单个会员。
+ *
+ * 【申请为什么要分权限】
+ * 会员主页与审核页都会按编号取一个人。正式会员的资料对所有人可见，
+ * 但「申请」里带着学号与手机号：干部要审，申请人本人要确认审核结果，
+ * 其余人没有理由拿到——所以只有干部与本人能取到申请，别人一律得到
+ * 「查无此人」，与真的不存在表现一致，不泄露「这里有个申请人」。
  */
 async function getMember(payload, ctx) {
   const { members, applications } = await getDataset(ctx);
   const { userId } = payload;
-  return ok(
-    members.find((user) => user._id === userId) ||
-      applications.find((user) => user._id === userId) ||
-      null
-  );
+
+  const member = members.find((user) => user._id === userId);
+  if (member) return ok(publicMember(member));
+
+  const application = applications.find((user) => user._id === userId);
+  if (!application) return ok(null);
+  // 「是不是本人」认 OpenID，而不是 ctx.actorId：后者是在这次调用开始时
+  // 按 OpenID 查出来的快照，刚提交申请的人当时还没有账号。
+  const isSelf =
+    (ctx.actorId && ctx.actorId === userId) ||
+    (ctx.openId && application.openId === ctx.openId);
+  if (canManage(ctx.actor) || isSelf) return ok(application);
+  return ok(null);
 }
 
+/**
+ * 入会申请名单。
+ *
+ * 【为什么非干部只看到自己那一条】
+ * 申请里是实名、学号、手机号。审核页早在取数之前就挡住了没权限的人
+ * （见 member-review-view），但接口不能只靠调用方自觉：普通会员直接调
+ * 这个 action 就能把全俱乐部的申请人资料拉走。干部看全部，非干部只看
+ * 自己的一条——申请人确认「我的申请到哪一步了」要用它。
+ */
 async function getMemberApplications(payload, ctx) {
   const { applications } = await getDataset(ctx);
-  return ok(applications);
+  if (canManage(ctx.actor)) return ok(applications);
+  // 同上：认 OpenID 而不是 ctx.actorId，刚提交申请的人才拿得到自己那一条
+  if (!ctx.openId) return ok([]);
+  return ok(applications.filter((item) => item.openId && item.openId === ctx.openId));
 }
 
 /* ---------- 比赛与赛事 ---------- */

@@ -52,6 +52,9 @@ const DEFAULT_POINT_CONFIG = {
 function placementBaseOf(placement, config = DEFAULT_POINT_CONFIG) {
   const rank = Number(placement);
   if (!Number.isFinite(rank) || rank < 1) return 0;
+  // 名次必须落在整数上：4.5 这类小数既不在档位表里，也不该被当成「八强」
+  // 发分（否则任何小数名次都会默默拿到 quarterfinalBase）。
+  if (!Number.isInteger(rank)) return 0;
 
   const exact = config.placementBase[rank];
   if (typeof exact === 'number') return exact;

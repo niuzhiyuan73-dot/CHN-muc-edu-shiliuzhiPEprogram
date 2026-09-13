@@ -84,15 +84,41 @@ test('getMembers —— 只给审核通过的会员，申请中的不算', async
   );
 });
 
-test('getMemberApplications —— 只给非正常状态的账号', async () => {
-  const res = await call('getMemberApplications');
+test('getMembers —— 名单里不带 openId 与手机号', async () => {
+  const res = await call('getMembers');
+  const first = res.data[0];
 
-  assert.deepEqual(res.data.map((m) => m._id), ['u_pending']);
+  assert.equal(first.openId, undefined, 'openId 是账号凭据，不该随公开名单下发');
+  assert.equal(first.phone, undefined, '手机号是隐私，公开名单里不该出现');
+  assert.ok(first.nickName, '昵称、头像这些页面要用的字段要留着');
 });
 
-test('getMember —— 会员与申请都能查到，查不到返回 null', async () => {
+test('getMemberApplications —— 干部看全部，普通会员只看自己那一条', async () => {
+  // 管理员（干部）看到完整的申请台账
+  const admin = await call('getMemberApplications', {}, 'openid-admin');
+  assert.deepEqual(admin.data.map((m) => m._id), ['u_pending']);
+
+  // 普通会员没有可看的申请，拿到的是空名单——不能顺手拉走别人的实名资料
+  const member = await call('getMemberApplications');
+  assert.deepEqual(member.data, []);
+
+  // 游客同样拿不到
+  const guest = await call('getMemberApplications', {}, null);
+  assert.deepEqual(guest.data, []);
+});
+
+test('getMember —— 正式会员人人可查，申请只给干部与本人', async () => {
   assert.equal((await call('getMember', { userId: 'u01' })).data._id, 'u01');
-  assert.equal((await call('getMember', { userId: 'u_pending' })).data._id, 'u_pending');
+  assert.equal(
+    (await call('getMember', { userId: 'u_pending' })).data,
+    null,
+    '普通会员查不到别人的申请（申请里带着学号与手机号）'
+  );
+  assert.equal(
+    (await call('getMember', { userId: 'u_pending' }, 'openid-admin')).data._id,
+    'u_pending',
+    '干部要审申请，必须查得到'
+  );
   assert.equal((await call('getMember', { userId: 'nobody' })).data, null);
 });
 
@@ -1176,5 +1202,39 @@ describe('云函数 —— 学院赛闭环', () => {
     const twice = await on(repo, 'startTie', { tieId }, admin);
     assert.equal(twice.data.ok, false);
     assert.match(twice.data.message, /已经开始/);
+  });
+
+  test('记弃权 —— 已撤销的小项不能被弃权悄悄复活', async () => {
+    const repo = collegeFixtureRepo();
+    const id = await publishCollege(repo);
+    await submitBothEntries(repo, id);
+    const [tie] = await startCollege(repo, id);
+    const tieId = tie._id;
+
+    await on(repo, 'submitLineup', { tieId, college: COLLEGE_SPORTS, entries: lineupFrom(tie, ROSTER_SPORTS) }, admin);
+    await on(repo, 'submitLineup', { tieId, college: COLLEGE_INFO, entries: lineupFrom(tie, ROSTER_INFO) }, 'openid-u02');
+    const started = await on(repo, 'startTie', { tieId }, admin);
+    assert.equal(started.data.ok, true, started.data.message);
+
+    const stored = (await on(repo, 'getCollegeTies', { eventId: id }, admin)).data[0];
+    const leg = stored.legs[0];
+    assert.ok(leg.matchId, '小项应当已生成比赛');
+
+    // 管理员撤销了这场小场（判罚有误）。撤销是终局判定，弃权不能把它翻回来
+    await repo.matches.update(leg.matchId, { status: MATCH_STATUS.REVOKED });
+
+    const revived = await on(
+      repo,
+      'recordForfeit',
+      { tieId, legNo: leg.legNo, forfeitBy: stored.collegeA },
+      admin
+    );
+    assert.equal(revived.data.ok, false);
+    assert.match(revived.data.message, /已撤销/);
+    assert.equal(
+      (await repo.matches.getById(leg.matchId)).status,
+      MATCH_STATUS.REVOKED,
+      '被拒的调用不许改动小场状态'
+    );
   });
 });

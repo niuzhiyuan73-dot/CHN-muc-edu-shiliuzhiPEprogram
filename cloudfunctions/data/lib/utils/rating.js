@@ -30,7 +30,7 @@
  */
 
 const { ALL_RATING_POOLS, RATING_POOL } = require('./constants.js');
-const { DEFAULT_CONFIG } = require('./elo.js');
+const { DEFAULT_CONFIG, initialRatingFor } = require('./elo.js');
 
 /**
  * 创建一个空白的池分数记录。
@@ -86,11 +86,13 @@ function createEmptyRatings({ initialElo = DEFAULT_CONFIG.initialRating } = {}) 
  */
 function getPoolRating(user, pool) {
   const bucket = user && user.ratings && user.ratings[pool];
-  if (!bucket) {
-    return createEmptyPoolRating();
-  }
+  // 缺失的池按性别补起点分（男 1450 / 女 1300），与回放给新会员定级的口径一致。
+  // 【为什么不能统一按 1450 补】女会员的定级分本就低 150，档案里一旦缺了这个池
+  // （老数据、后来新增的池），统一补 1450 会让她凭空高出 150 分，榜上排位失真。
+  const blank = createEmptyPoolRating(initialRatingFor(user && user.gender));
+  if (!bucket) return blank;
   // 补齐可能缺失的字段，防止老数据缺字段导致后续计算得到 NaN
-  return { ...createEmptyPoolRating(), ...bucket };
+  return { ...blank, ...bucket };
 }
 
 /**

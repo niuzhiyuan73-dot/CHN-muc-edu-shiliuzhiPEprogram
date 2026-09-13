@@ -14,7 +14,7 @@
  * ============================================================
  */
 
-const { ROLE } = require('../../lib/utils/constants.js');
+const { ROLE, USER_STATUS } = require('../../lib/utils/constants.js');
 
 /**
  * 组装一次调用的上下文。
@@ -42,13 +42,37 @@ async function buildContext({ repo, openId = '', now = new Date() }) {
 }
 
 /**
- * 写操作的前置检查：调用者得是个已登记的账号。
+ * 账号状态不可用时，给用户一句能看懂的说法。
+ * 待审核的人还没转正、已禁用的人被停用、已离校的人不该再产生新数据——
+ * 三者卡住的原因不同，分开措辞用户才知道下一步该做什么。
+ *
+ * @param {number} status
+ * @returns {string}
+ */
+function statusMessage(status) {
+  if (status === USER_STATUS.PENDING) return '账号还在审核中，通过后才能操作';
+  if (status === USER_STATUS.LEFT) return '账号已离校，不能进行此操作';
+  return '账号已被停用，请联系管理员';
+}
+
+/**
+ * 写操作的前置检查：调用者得是个状态正常的账号。
+ *
+ * 【为什么状态也要在这里挡】
+ * 只查「有没有账号」是不够的：账号被驳回、被停用或离校之后，文档还在，
+ * 按 OpenID 依然查得到。如果这里放行，一个已被停用的人照样能报名、录分、
+ * 发公告——停用就只是一句空话。所有写接口都从这里过一道，堵在这里最稳。
+ *
+ * 【为什么注册不受影响】
+ * 入会申请走 registerMember，它不经过 callerError——没转正的人才正要提交
+ * 申请，自然不能用「已激活」来要求他。
  *
  * @param {Object} ctx
  * @returns {string} 出错文案；通过时为空串
  */
 function callerError(ctx) {
   if (!ctx.actor) return '请先登录后再操作';
+  if (ctx.actor.status !== USER_STATUS.ACTIVE) return statusMessage(ctx.actor.status);
   return '';
 }
 
