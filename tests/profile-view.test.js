@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
+const { beforeEach } = require('node:test');
 
 const {
   pickProject,
@@ -11,7 +12,19 @@ const {
 const { PLACEHOLDER } = require('../miniprogram/utils/format.js');
 const { sortProjectsForDisplay } = require('../miniprogram/utils/leaderboard.js');
 const { RANK_PROJECT_CONFIG, ROLE, USER_STATUS } = require('../miniprogram/utils/constants.js');
-const { getMatchHistory, getMyProjects } = require('../miniprogram/services/index.js');
+const {
+  getMatchHistory,
+  getMyProjects,
+  resetCache,
+} = require('../miniprogram/services/index.js');
+
+/* 模拟数据源默认会装载学院赛演示场景（见 services/college-demo.js），
+ * 其中的演示账号 u06 被任命为法学院干事。本文件断言的是干净种子
+ * （u06 还是普通会员），所以每个用例前复位一次——resetCache 同时会
+ * 关掉演示场景，之后各用例拿到的都是 24 人基线。 */
+beforeEach(() => {
+  resetCache();
+});
 
 /* ============================================================
  * 一、纯函数部分

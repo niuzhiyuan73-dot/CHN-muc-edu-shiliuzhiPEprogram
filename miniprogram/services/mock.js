@@ -27,6 +27,7 @@ const collegeStore = require('./college-store.js');
 const profileStore = require('./profile-store.js');
 const roleStore = require('./role-store.js');
 const seasonStore = require('./season-store.js');
+const { installCollegeDemo } = require('./college-demo.js');
 const { register: registerAccount } = require('./auth.js');
 const { DEFAULT_RESET_POLICY, canResetSeason } = require('./season.js');
 const { REVIEW_ACTION, validateReview, validateCollegeLeader } = require('./member-review.js');
@@ -145,6 +146,59 @@ const SEED_OPTIONS = {
 };
 
 let cache = null;
+
+/**
+ * 学院赛演示场景是否还允许自动装载。
+ *
+ * resetCache() 是测试专用复位：一旦被调用就永久关掉演示场景，让既有用例
+ * 拿到干净的 24 人基线，不必每条断言都去减掉演示数据。模拟器里没人调
+ * resetCache，所以开机第一次读到数据时场景就会自己装上（见 college-demo.js）。
+ */
+let collegeDemoEnabled = true;
+
+/** 演示场景只装一次；装上后再读多少遍都不重复，也不重复跑那段回放 */
+let collegeDemoInstalled = false;
+
+/**
+ * 第一次读到数据前，把学院赛演示场景装进台账。
+ *
+ * 【为什么在这两个地方调】
+ * load() 是所有「会员 / 等级分」读取的必经之路，装了它演示账号 u06 的
+ * 干事身份才立得住；学院赛的列表 / 名单 / 大场 / 排阵是直接读台账的
+ * （见各 getCollege* 的注释），不经过 load()，所以那几处也要各补一次。
+ *
+ * 【为什么先置位再装】
+ * 装载过程中动作函数会回调 load()，置位后递归调用立即返回，不会死循环。
+ * 装完 cache 已被写入失效，调用方的 load() 会再补一次含场景的最终缓存。
+ */
+function ensureCollegeDemo() {
+  if (!collegeDemoEnabled || collegeDemoInstalled) return;
+  collegeDemoInstalled = true;
+  try {
+    installCollegeDemo({
+      load,
+      actions: {
+        registerMember,
+        approveMember,
+        setCollegeLeader,
+        publishCollegeEvent,
+        submitCollegeEntry,
+        reviewCollegeEntry,
+        drawCollegeEvent,
+        startCollegeEvent,
+        submitLineup,
+        startTie,
+        submitMatch,
+        confirmMatch,
+      },
+      stores: { collegeStore, matchStore, userStore },
+    });
+  } catch (err) {
+    // 装不上就退回干净种子，绝不让演示数据把整个数据源拖垮；
+    // 保留置位，免得每次读取都重试一遍同样的失败。
+    console.warn('[mock] 学院赛演示场景装载失败：', err);
+  }
+}
 
 /**
  * 组装一份完整数据：种子 + 本地写入 → 回放 → 台账。
@@ -307,7 +361,12 @@ function buildCache() {
  * @returns {{users:Array, matches:Array, events:Array, ledger:Array, meta:Object, nameOf:Function}}
  */
 function load() {
-  if (!cache) cache = buildCache();
+  if (!cache) {
+    cache = buildCache();
+    ensureCollegeDemo();
+    // 演示场景的写入已让上面那份缓存失效，这里补一次；补完就是含场景的最终缓存
+    if (!cache) cache = buildCache();
+  }
   return cache;
 }
 
@@ -335,6 +394,9 @@ function resetCache() {
   roleStore.reset();
   // 赛季重置同理：分界点必须一起清，否则下一轮生成的分数还是被压过的
   seasonStore.reset();
+  // 学院赛演示场景也一并关掉：复位是测试专用动作，之后各用例要的是干净
+  // 基线（24 位会员、0 场学院赛），而不是再把演示数据装回来。
+  collegeDemoEnabled = false;
 }
 
 /**
@@ -446,6 +508,7 @@ async function getEventSignups(eventId) {
  * @returns {Promise<Array<Object>>}
  */
 async function getCollegeEvents() {
+  ensureCollegeDemo();
   return collegeStore.listEvents();
 }
 
@@ -455,6 +518,7 @@ async function getCollegeEvents() {
  * @returns {Promise<Object|null>}
  */
 async function getCollegeEvent(id) {
+  ensureCollegeDemo();
   return collegeStore.findEvent(id);
 }
 
@@ -468,6 +532,7 @@ async function getCollegeEvent(id) {
  * @returns {Promise<Array<Object>>}
  */
 async function getCollegeEntries(eventId) {
+  ensureCollegeDemo();
   return collegeStore.listEntries(eventId);
 }
 
@@ -1659,6 +1724,7 @@ async function reviewCollegeEntry(entryId, action, reason, actor) {
  * @returns {Promise<Array<Object>>}
  */
 async function getCollegeTies(eventId) {
+  ensureCollegeDemo();
   return collegeStore.listTies(eventId);
 }
 
@@ -1668,6 +1734,7 @@ async function getCollegeTies(eventId) {
  * @returns {Promise<Array<Object>>}
  */
 async function getCollegeLineups(eventId) {
+  ensureCollegeDemo();
   return collegeStore.listLineups(eventId);
 }
 
