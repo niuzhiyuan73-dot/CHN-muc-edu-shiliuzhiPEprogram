@@ -1108,6 +1108,25 @@ test('排行榜 —— 下拉刷新会收起刷新动画', async () => {
   assert.strictEqual(calls.pullDownStopped, 1);
 });
 
+test('排行榜 —— 首屏还没落地时 onShow 不重复取数', async () => {
+  const page = instantiate(rankConfig);
+  // 框架不 await onLoad，紧接着就会同步调一次 onShow；此时 loaded 还是假，
+  // 应当被挡下，否则首屏白刷两遍
+  const loading = page.onLoad();
+  assert.strictEqual(page.onShow(), undefined);
+  await loading;
+});
+
+test('排行榜 —— 从别的页面切回来会重算榜单', async () => {
+  const page = instantiate(rankConfig);
+  await page.onLoad();
+  const before = page.data.view;
+
+  // 刚确认的比赛会改名字次，切回来必须重取
+  await page.onShow();
+  assert.notStrictEqual(page.data.view, before, 'onShow 应当重新装载一份视图模型');
+});
+
 test('排行榜 —— 搜索框空着时就是榜单本身，计数与视图模型一致', async () => {
   const page = instantiate(rankConfig);
   await page.onLoad();

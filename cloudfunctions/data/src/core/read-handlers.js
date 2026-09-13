@@ -21,7 +21,7 @@ const {
 const {
   buildProjectLeaderboard,
   buildProgressLeaderboard,
-  calculatePercentile,
+  percentileFromBoard,
   resolveProject,
   selectProjectUsers,
 } = require('../../lib/utils/leaderboard.js');
@@ -192,7 +192,8 @@ async function getProgressLeaderboard(payload = {}, ctx) {
 async function getPercentile(payload = {}, ctx) {
   const { userId, project } = payload;
   const { users } = await getDataset(ctx);
-  return ok(calculatePercentile(buildProjectLeaderboard(users, project), userId));
+  // buildProjectLeaderboard 已经排好序，直接读百分位，不必再排一遍
+  return ok(percentileFromBoard(buildProjectLeaderboard(users, project), userId));
 }
 
 /* ---------- 个人战绩 ---------- */
@@ -253,7 +254,7 @@ async function getMyProjects(payload = {}, ctx) {
     if (bucket.matchCount === 0) continue;
 
     const board = buildProjectLeaderboard(users, project);
-    const stats = calculatePercentile(board, userId);
+    const stats = percentileFromBoard(board, userId);
 
     result.push({
       project,

@@ -114,7 +114,13 @@ function buildLeaderboard(players, { sortBy = 'elo', now = Date.now() } = {}) {
  *          数据不足时返回 null
  */
 function calculateTrend(matchesDesc, windowSize = 5) {
-  if (!Array.isArray(matchesDesc) || matchesDesc.length < windowSize * 2) {
+  // windowSize 必须是个正数。为 0 时两个窗口都是空数组，胜率算成 0/0=NaN，
+  // 下面的大小比较全为假，于是 trend 悄悄变成 'flat'，而 recentRate /
+  // previousRate 带着 NaN 一路渲染到页面上。负数的 slice 语义更是另一回事。
+  if (!Array.isArray(matchesDesc) || !(windowSize > 0)) {
+    return null;
+  }
+  if (matchesDesc.length < windowSize * 2) {
     return null;
   }
 
@@ -333,22 +339,30 @@ function buildProgressLeaderboard(entries, options = {}) {
 }
 
 /**
- * 计算某位会员在榜单中的百分位。
+ * 从一份已经排好序的榜单上读百分位。
  *
  * 返回的 beatPercent 语义是「超过了百分之多少的会员」。
  * 这比绝对分数直观得多——新人看不懂 1150 分是什么水平，
  * 但一看「超过了 72% 的会员」立刻就明白了。
  *
- * @param {Array<Object>} players 已摊平的榜单数据（与 buildLeaderboard 输入一致）
+ * 【为什么与 calculatePercentile 分成两个】
+ * calculatePercentile 的入参是「未排序的摊平数据」，它自己会先 buildLeaderboard
+ * 再算百分位。但榜单接口手上往往已经有一份排好序的榜（buildProjectLeaderboard
+ * 的产物），若再喂给 calculatePercentile，等于把整张榜重排一遍。分开之后，
+ * 手上已有榜单的调用方直接走这里：结果一字不差，省掉一次 O(n log n) 排序
+ * （getMyProjects 要按项目循环，一个页面就省下好几次）。
+ *
+ * @param {Array<Object>} board 已排序并带 rank 的榜单
  * @param {string} targetId 目标会员的 _id
- * @param {Object} [options] 同 buildLeaderboard 的可选项
  * @returns {{rank:number, total:number, beatCount:number, beatPercent:number}|null}
  *          目标不在榜单中时返回 null
  */
-function calculatePercentile(players, targetId, options = {}) {
-  const board = buildLeaderboard(players, options);
-  const index = board.findIndex((p) => p._id === targetId);
+function percentileFromBoard(board, targetId) {
+  if (!Array.isArray(board)) {
+    return null;
+  }
 
+  const index = board.findIndex((p) => p._id === targetId);
   if (index === -1) {
     return null;
   }
@@ -367,6 +381,19 @@ function calculatePercentile(players, targetId, options = {}) {
   };
 }
 
+/**
+ * 计算某位会员在榜单中的百分位。
+ *
+ * @param {Array<Object>} players 已摊平的榜单数据（与 buildLeaderboard 输入一致）
+ * @param {string} targetId 目标会员的 _id
+ * @param {Object} [options] 同 buildLeaderboard 的可选项
+ * @returns {{rank:number, total:number, beatCount:number, beatPercent:number}|null}
+ *          目标不在榜单中时返回 null
+ */
+function calculatePercentile(players, targetId, options = {}) {
+  return percentileFromBoard(buildLeaderboard(players, options), targetId);
+}
+
 module.exports = {
   INACTIVE_DAYS,
   PROVISIONAL_MATCH_COUNT,
@@ -380,5 +407,6 @@ module.exports = {
   buildProjectLeaderboard,
   buildProgressLeaderboard,
   calculatePercentile,
+  percentileFromBoard,
   sortProjectsForDisplay,
 };

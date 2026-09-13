@@ -192,3 +192,41 @@ test('本地没有登录态时不发起校正请求', async () => {
   assert.strictEqual(cloudCalls, 0, '没登录就没有可校正的东西');
   assert.strictEqual(appConfig.globalData.userInfo, null);
 });
+
+/* ============================================================
+ * 云开发初始化失败
+ * ============================================================ */
+
+test('wx.cloud.init 抛错时整份退回 mock，onLaunch 不中断', async () => {
+  // 环境 ID 填错或基础库残缺时 init 会同步抛错。若任它冒出去，onLaunch
+  // 会中断在 setDataSource 之前：门面停在默认 mock、globalData 没写，
+  // 两边对不上。这里守住「抛错也退回 mock，且启动继续走完」。
+  const originalInit = global.wx.cloud.init;
+  global.wx.cloud.init = () => {
+    throw new Error('invalid env');
+  };
+  try {
+    await launch({ envId: 'bad-env' });
+
+    assert.strictEqual(appConfig.globalData.dataSource, DATA_SOURCE.MOCK);
+    assert.strictEqual(facade.getDataSource(), DATA_SOURCE.MOCK);
+    assert.strictEqual(cloudCalls, 0, '退回 mock 后不该再调云函数');
+    // 启动流程走完了，后面的步骤（采集系统信息）没被跳过
+    assert.ok(appConfig.globalData.systemInfo, 'onLaunch 不该中断在 initDataSource');
+  } finally {
+    global.wx.cloud.init = originalInit;
+  }
+});
+
+test('基础库没有 wx.cloud 时退回 mock，不抛错', async () => {
+  const originalCloud = global.wx.cloud;
+  delete global.wx.cloud;
+  try {
+    await launch({ envId: 'test-env' });
+
+    assert.strictEqual(appConfig.globalData.dataSource, DATA_SOURCE.MOCK);
+    assert.strictEqual(facade.getDataSource(), DATA_SOURCE.MOCK);
+  } finally {
+    global.wx.cloud = originalCloud;
+  }
+});

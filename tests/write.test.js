@@ -132,4 +132,29 @@ describe('门面 —— 写接口抛错不再冒泡到页面', () => {
       assert.match(result.message, /找不到/);
     })
   );
+
+  /*
+   * 这是 P2-A1 的守门测试。
+   *
+   * 页面处理写操作的习惯写法是：置 submitting → await → 按结果复位。云端
+   * 未初始化时 request() 会当场抛出，若门面漏套了某一个写接口，那一页的
+   * await 就会拒绝，submitting 停在 true，按钮从此点不动。逐页补 try/catch
+   * 既臃肿又必然会漏，所以约定是「门面兜底」——这份测试把三十个写接口逐个
+   * 在故障云环境下走一遍，要求每一个都返回 {ok:false} 而不是拒绝。
+   *
+   * 逐个调用而不是只测一个：名单是手写的，将来新增接口若没接进守卫，
+   * 这里会直接点名。
+   */
+  test(
+    'cloud 下全部写接口逐个调用都不拒绝（P2-A1：submitting 不会卡死）',
+    withSource('cloud', async () => {
+      for (const name of WRITE_ACTIONS) {
+        const result = await facade[name]('dummy', 'u01');
+        assert.equal(result && result.ok, false, `${name} 应当返回 {ok:false}，而不是抛出`);
+        assert.equal(typeof result.message, 'string', `${name} 的失败结果要带提示文案`);
+        assert.ok(result.message.length > 0, `${name} 的失败提示不能为空`);
+        assert.deepEqual(result.scoreErrors, [], `${name} 的失败结果要有 scoreErrors 占位`);
+      }
+    })
+  );
 });

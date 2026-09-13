@@ -53,6 +53,17 @@ Page({
     return this.refresh();
   },
 
+  /**
+   * 从别的页面切回时重算榜单：刚确认的比赛会改变名次。
+   * 【为什么要 loaded 这道闸】onLoad 之后框架紧接着就会调一次 onShow，
+   * 没有它首屏会被白刷两遍。loaded 只在首屏那次 refresh 落地后才置真，
+   * 因此紧随其后的 onShow 会被挡掉，此后每次切回来都重算。
+   */
+  onShow() {
+    if (!this.loaded) return undefined;
+    return this.refresh();
+  },
+
   /** 下拉刷新：数据都在内存里，重算一遍很快 */
   onPullDownRefresh() {
     return this.refresh().then(() => wx.stopPullDownRefresh());
@@ -78,6 +89,9 @@ Page({
         switching: false,
         error: '排行榜加载失败，请下拉重试',
       });
+    } finally {
+      // 失败也置真：让后续 onShow 还能再试一次，否则一次抖动就再也不刷新了
+      this.loaded = true;
     }
   },
 

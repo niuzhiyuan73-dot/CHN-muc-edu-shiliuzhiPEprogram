@@ -207,4 +207,17 @@ describe('calculateTrend —— 近期状态趋势', () => {
     const result = calculateTrend(matches.slice(0, 5).concat(matches.slice(6)));
     assert.equal(result.trend, 'flat');
   });
+
+  test('窗口为 0 或负数时返回 null，不吐出 NaN', () => {
+    // 窗口为 0 会让两段胜率都算成 0/0=NaN，比较全为假、trend 悄悄变 'flat'，
+    // NaN 再一路渲染到页面上。宁可返回 null（页面显示「数据不足」）。
+    const matches = Array(10).fill({ isWin: true });
+    assert.equal(calculateTrend(matches, 0), null);
+    assert.equal(calculateTrend(matches, -3), null);
+  });
+
+  test('入参不是数组时返回 null，不抛错', () => {
+    assert.equal(calculateTrend(null), null);
+    assert.equal(calculateTrend(undefined), null);
+  });
 });

@@ -35,7 +35,7 @@ const {
   getCollegeTies,
   getCollegeLineups,
   getMatchRecords,
-  isMock,
+  isMockNow,
 } = require('./index.js');
 const {
   canSubmitCollegeEntry,
@@ -560,12 +560,19 @@ async function loadCollegeMatchView(matchId, options = {}) {
   const record = records && records[0] ? records[0] : null;
 
   if (!record) {
+    // 找不到比赛也要给全「比分行」所需的形状：页面 refresh 会按 bestOf 逐行读
+    // scoreA/scoreB 回填输入框，缺了字段会在读下标时抛错，把「找不到」这个
+    // 本可以好好展示的提示变成一句「加载失败」。
     return {
       found: false,
       blockReason: '找不到这场比赛',
       matchId: matchId || '',
       teamARows: [],
       teamBRows: [],
+      scoreA: [],
+      scoreB: [],
+      gamePoints: 11,
+      bestOf: 1,
     };
   }
 
@@ -596,8 +603,12 @@ async function loadCollegeMatchView(matchId, options = {}) {
   // 待确认时才有「录入 / 确认」可言；生效后要改先撤销（与比赛页同口径）
   const pending = record.status === MATCH_STATUS.PENDING;
   const canRecord = Boolean(pending && actor && canRecordScore(record, actor._id, { role, college, collegeOf }));
-  const canConfirm = Boolean(pending && record.winner && actor && canConfirm(record, actor._id, { isMock, role }));
-  const canRevoke = Boolean(actor && canRevoke(record, actor._id, { role }));
+  // 【变量名为什么不能叫 canConfirm / canRevoke】它们与上面从 match-record.js
+  // 导入的函数同名。同名 const 在自己的初始化表达式里会撞上暂时性死区：闸门
+  // 一旦为真（待确认、有胜方、已登录），求值到 canConfirm(...) 时就抛
+  // ReferenceError，整页加载失败。换个名字，调用才是调用。
+  const canConfirmNow = Boolean(pending && record.winner && actor && canConfirm(record, actor._id, { isMock: isMockNow(), role }));
+  const canRevokeNow = Boolean(actor && canRevoke(record, actor._id, { role }));
 
   const leg = tie ? (Array.isArray(tie.legs) ? tie.legs : []).find((item) => Number(item.legNo) === Number(record.legNo)) : null;
   const legSettled = Boolean(leg && leg.winner);
@@ -614,7 +625,7 @@ async function loadCollegeMatchView(matchId, options = {}) {
   const winnerSide = record.winner || null;
   // 只有 mock 放宽才能确认、严格口径却不行时，才需要提示「这是演示口径」
   const relaxed =
-    Boolean(canConfirm && actor) &&
+    Boolean(canConfirmNow && actor) &&
     !canConfirm(record, actor._id, { isMock: false, role });
 
   return {
@@ -664,8 +675,8 @@ async function loadCollegeMatchView(matchId, options = {}) {
           : '',
     needsScore: needsScore(record),
     canRecord,
-    canConfirm,
-    canRevoke,
+    canConfirm: canConfirmNow,
+    canRevoke: canRevokeNow,
     canForfeit,
     isDoubles: doubles,
     // 单打小场立刻计个人 ELO（一级 K）；双打小场只汇总大场，不动个人分

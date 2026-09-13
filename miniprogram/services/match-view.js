@@ -35,7 +35,7 @@ const {
   needsScore,
   sideOf,
 } = require('./match-record.js');
-const { getCurrentUser, getMember, getMembers, getMatchRecords, isMock } = require('./index.js');
+const { getCurrentUser, getMember, getMembers, getMatchRecords, isMockNow } = require('./index.js');
 
 /**
  * 页面上的两个标签页。
@@ -133,7 +133,10 @@ function buildRecordRow(record, ctx = {}) {
     college = '',
     collegeOf = null,
     nameOf = DEFAULT_NAME_OF,
-    isMock: mock = isMock,
+    // 默认值取「此刻」的数据源状态，而不是模块加载那一刻的快照：
+    // 页面可能先于 app.js 的 setDataSource 被 require（测试环境尤其如此），
+    // 解构快照会把演示口径带到正式数据源上。
+    isMock: mock = isMockNow(),
   } = ctx;
 
   const tag = statusTagOf(record.status, record.action);

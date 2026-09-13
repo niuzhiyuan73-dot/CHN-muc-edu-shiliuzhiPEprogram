@@ -572,6 +572,33 @@ describe('mock 数据源 —— 比赛录入与流转', () => {
       }
     })
   );
+
+  test(
+    '确认 / 撤销 / 驳回返回的都是改动后的那条记录',
+    withCleanStore(async () => {
+      // 页面拿到 result.match 后直接拿去渲染（比如 college-match 页用它的
+      // status 决定按钮），若回的是改动前的快照，页面上会看到「刚确认完
+      // 还是待确认」。三个动作各验一遍，与云端 { ...current, ...patch } 对齐。
+      const me = await mock.getCurrentUser();
+      // 自然键含时间，三场要各给一个不同的 matchTime，否则会撞成同一 _id
+      const at = (time) => singlesDraft({ matchTime: time });
+
+      const a = (await mock.submitMatch(at('2026-05-01T18:00:00'))).match;
+      const confirmed = await mock.confirmMatch(a._id, me._id);
+      assert.equal(confirmed.match.status, MATCH_STATUS.ACTIVE);
+      assert.equal(confirmed.match.action, 'confirm');
+
+      const b = (await mock.submitMatch(at('2026-05-02T18:00:00'))).match;
+      const rejected = await mock.rejectMatch(b._id, me._id, '录反了');
+      assert.equal(rejected.match.status, MATCH_STATUS.REVOKED);
+      assert.equal(rejected.match.action, 'reject');
+
+      const c = (await mock.submitMatch(at('2026-05-03T18:00:00'))).match;
+      const revoked = await mock.revokeMatch(c._id, me._id, '重打了一场');
+      assert.equal(revoked.match.status, MATCH_STATUS.REVOKED);
+      assert.equal(revoked.match.action, 'revoke');
+    })
+  );
 });
 
 describe('mock 数据源 —— 会员注册与审核', () => {

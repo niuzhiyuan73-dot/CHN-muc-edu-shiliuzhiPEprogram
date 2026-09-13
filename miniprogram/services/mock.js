@@ -112,7 +112,7 @@ const {
 const {
   buildProjectLeaderboard,
   buildProgressLeaderboard,
-  calculatePercentile,
+  percentileFromBoard,
   resolveProject,
   selectProjectUsers,
 } = require('../utils/leaderboard.js');
@@ -515,7 +515,8 @@ async function getProgressLeaderboard(project, options = {}) {
 async function getPercentile(userId, project) {
   const { users } = load();
   const board = buildProjectLeaderboard(users, project);
-  return calculatePercentile(board, userId);
+  // board 已经是排好序的榜，直接读百分位，不必再排一遍
+  return percentileFromBoard(board, userId);
 }
 
 /* ---------- 个人战绩 ---------- */
@@ -579,7 +580,7 @@ async function getMyProjects(userId) {
     if (bucket.matchCount === 0) continue;
 
     const board = buildProjectLeaderboard(users, project);
-    const stats = calculatePercentile(board, userId);
+    const stats = percentileFromBoard(board, userId);
 
     result.push({
       project,
@@ -810,21 +811,25 @@ async function confirmMatch(id, actor) {
     return { ok: false, match: null, message: '这场比赛还没有比分，请先录入成绩' };
   }
 
-  matchStore.setStatus(id, {
+  // 返回「改判后的」这一条，而不是改判前从台账里取到的那条：云端就是这么
+  // 返的（{ ...current, ...patch }），页面拿 match.status 判断状态时两边才
+  // 给得出同一个答案。
+  const patch = {
     status: MATCH_STATUS.ACTIVE,
     action: 'confirm',
     actor,
     actedAt: new Date(),
-  });
+  };
+  matchStore.setStatus(id, patch);
   cache = null;
   if (match.competition === MATCH_COMPETITION.COLLEGE) {
     // 学院赛小场：把结果写回大场，本轮打完则排下一轮
-    advanceCollegeAfterLeg({ ...match, status: MATCH_STATUS.ACTIVE });
+    advanceCollegeAfterLeg({ ...match, ...patch });
   } else {
     // 刚打完的若是某一轮的最后一场，把下一轮排出来
     advanceEvent(match.eventId);
   }
-  return { ok: true, match, message: '' };
+  return { ok: true, match: { ...match, ...patch }, message: '' };
 }
 
 /**
@@ -884,15 +889,16 @@ async function rejectMatch(id, actor, reason) {
     return { ok: false, match: null, message: '请填写驳回理由' };
   }
 
-  matchStore.setStatus(id, {
+  const patch = {
     status: MATCH_STATUS.REVOKED,
     action: 'reject',
     reason: String(reason).trim(),
     actor,
     actedAt: new Date(),
-  });
+  };
+  matchStore.setStatus(id, patch);
   cache = null;
-  return { ok: true, match, message: '' };
+  return { ok: true, match: { ...match, ...patch }, message: '' };
 }
 
 /**
@@ -922,15 +928,16 @@ async function revokeMatch(id, actor, reason) {
     return { ok: false, match: null, message: '请填写撤销理由' };
   }
 
-  matchStore.setStatus(id, {
+  const patch = {
     status: MATCH_STATUS.REVOKED,
     action: 'revoke',
     reason: String(reason).trim(),
     actor,
     actedAt: new Date(),
-  });
+  };
+  matchStore.setStatus(id, patch);
   cache = null;
-  return { ok: true, match, message: '' };
+  return { ok: true, match: { ...match, ...patch }, message: '' };
 }
 
 /**

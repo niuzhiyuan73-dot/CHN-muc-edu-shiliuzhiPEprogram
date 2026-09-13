@@ -238,6 +238,10 @@ function applyEventPoints({ roster, replayed, events, config, resetMs, resetAppl
       });
       user.points += points.total;
 
+      // 找不到落脚点也要发分：赛事分认的是「名次」这件事本身，而不是某一场
+      // 已生效的比赛。赛事可以在一部分小场还没确认时就录名次收尾，这时冠军
+      // 照样该拿分。上面那句「明细之和 == 总分」只在有比赛可挂时成立，别为了
+      // 迁就它把没有明细的这笔分砍掉（tests/replay.test.js 守着这条）。
       const index = lastMatchIndex.get(`${result.userId}|${event._id}`);
       if (index === undefined) continue;
 

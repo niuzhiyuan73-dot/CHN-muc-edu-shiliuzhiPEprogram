@@ -76,6 +76,10 @@ App({
    * 【失败为什么退回 mock 而不是硬走云端】环境 ID 填错或基础库太旧时，
    * 走云端会让每个页面都报「云函数调用失败」。退回模拟数据至少界面是活的，
    * 且控制台留下了明确的错误——比一片白屏好定位得多。
+   *
+   * 【init 为什么也包一层】init 在参数非法或基础库残缺时会同步抛错。若任它
+   * 冒出去，onLaunch 会中断在 setDataSource 之前：门面停在默认的 mock，而
+   * globalData 也来不及写——两边对不上，比老老实实退回 mock 更难查。
    */
   initDataSource() {
     const envId = this.globalData.cloudEnvId;
@@ -85,13 +89,17 @@ App({
       if (!wx.cloud) {
         console.error('[app] 当前基础库不支持云开发，请升级至 2.2.3 以上');
       } else {
-        wx.cloud.init({
-          env: envId,
-          // traceUser 会在云开发控制台的「用户管理」中记录访问用户
-          traceUser: true,
-        });
-        target = DATA_SOURCE.CLOUD;
-        console.info('[app] 云开发已初始化，环境：', envId);
+        try {
+          wx.cloud.init({
+            env: envId,
+            // traceUser 会在云开发控制台的「用户管理」中记录访问用户
+            traceUser: true,
+          });
+          target = DATA_SOURCE.CLOUD;
+          console.info('[app] 云开发已初始化，环境：', envId);
+        } catch (err) {
+          console.error('[app] 云开发初始化失败，退回本地模拟数据', err);
+        }
       }
     }
 

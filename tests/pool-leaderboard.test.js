@@ -6,10 +6,12 @@ const assert = require('node:assert/strict');
 
 const {
   extractPoolStats,
+  buildLeaderboard,
   buildPoolLeaderboard,
   buildProjectLeaderboard,
   buildProgressLeaderboard,
   calculatePercentile,
+  percentileFromBoard,
 } = require('../miniprogram/utils/leaderboard.js');
 
 const { createEmptyRatings, applyMatchResult } = require('../miniprogram/utils/rating.js');
@@ -313,5 +315,42 @@ describe('calculatePercentile —— 百分位', () => {
     const players = Array.from({ length: 3 }, (_, i) => flat(`u${i}`, 2000 - i * 10));
     const result = calculatePercentile(players, 'u0');
     assert.equal(result.beatPercent, 66.7); // 2 / 3
+  });
+});
+
+describe('percentileFromBoard —— 从已排序的榜上直接读百分位', () => {
+  const flat = (id, elo) => ({
+    _id: id,
+    nickName: `会员${id}`,
+    elo,
+    points: 0,
+    wins: 20,
+    losses: 10,
+    lastMatchTime: new Date('2026-09-01'),
+  });
+
+  test('与 calculatePercentile 对同一批人给出完全一致的结果', () => {
+    // 这是拆分的意义所在：省掉重复排序，但结果不能有一丝差别。
+    // 榜单接口拿到的本来就是 buildLeaderboard 的产物，两条路径必须同解。
+    const players = Array.from({ length: 40 }, (_, i) => flat(`u${i}`, 2000 - i * 10));
+    const board = buildLeaderboard(players);
+    for (const id of ['u0', 'u7', 'u39']) {
+      assert.deepEqual(percentileFromBoard(board, id), calculatePercentile(players, id));
+    }
+  });
+
+  test('空榜返回 null', () => {
+    assert.equal(percentileFromBoard([], 'u0'), null);
+  });
+
+  test('入参不是数组时返回 null，不抛错', () => {
+    // 榜单接口的调用方可能从 payload 里带进一个坏值，这里不能崩
+    assert.equal(percentileFromBoard(null, 'u0'), null);
+    assert.equal(percentileFromBoard(undefined, 'u0'), null);
+  });
+
+  test('会员不在榜上返回 null', () => {
+    const board = buildLeaderboard([flat('u0', 1200)]);
+    assert.equal(percentileFromBoard(board, 'nobody'), null);
   });
 });
