@@ -127,7 +127,7 @@ App({
   },
 
   /**
-   * 拿服务端的最新状态校正本地登录态。
+   * 拿权威数据校正本地登录态。
    *
    * 【为什么必须有这一步】登录态是在注册/登录那一刻整份写进本地缓存的
    * （见 setUserInfo），而所有页面读的都是这份缓存，没有一处会主动回查。
@@ -136,31 +136,47 @@ App({
    * 不行，也没有任何提示告诉他「重新登录一次」。启动时静默校正一次，
    * 就把这个死结解开了。
    *
-   * 【为什么只走云端】mock 的会员就在同一个客户端内存里，注册、审核、读
-   * 页面用的是同一份数据，不存在不同步；反过来，mock 的 login() 返回的是
-   * 种子里的演示会员，拿它去覆盖刚注册的账号，反而会把状态改错。
+   * 【两条来源，各按各的规矩】云端按微信身份重新取一次账号（login）。
+   * mock 没有服务端，但数据源里的人是可以就地读的——按缓存里的 _id 回查
+   * 本人。刻意不在 mock 下调 login()：那等于「以演示会员身份登录」，会把
+   * 刚注册的账号顶掉；按 _id 回查只校正同一个人，改不到别人头上。
    *
-   * 【失败为什么一律保留缓存】拉取失败多半是网络抖动或云函数偶发故障。
-   * 这时把人踢回未登录，比让他多看一会儿旧状态糟糕得多。只有服务端明确
+   * 【mock 为什么也要校正】演示场景会把当前用户提为某学院干事
+   * （见 college-demo.js），而登录快照是更早写下的「普通会员」。不回查的话，
+   * 界面按快照判权限，干事照样进不了排阵——正是这一步要防的不同步。
+   *
+   * 【失败/none 为什么一律保留缓存】拉取失败多半是网络抖动或云函数偶发
+   * 故障；mock 下回查不到，意味着这个 _id 既不在种子也不在申请里。无论
+   * 哪种，把人踢回未登录都比让他多看一会儿旧状态糟糕得多。只有云端明确
    * 回答「没有这个账号」（例如账号文档被删）才清本地——那种情况下留着
    * 一份账号，会让每次写操作都报「请先登录」，反而更难排查。
    *
    * @returns {Promise<void>}
    */
   async refreshSession() {
-    if (this.globalData.dataSource !== DATA_SOURCE.CLOUD) return;
-    if (!this.getUserInfo()) return;
+    const cached = this.getUserInfo();
+    if (!cached) return;
+
+    if (this.globalData.dataSource === DATA_SOURCE.CLOUD) {
+      try {
+        // 延迟取用：与 services/auth.js 里 login() 的写法一致，
+        // 避免 app → auth → 门面 → mock 的加载期环
+        const { login } = require('./services/auth.js');
+        const { ok, user } = await login();
+
+        if (ok && user) this.setUserInfo(user);
+        else this.clearUserInfo();
+      } catch (err) {
+        console.error('[app] 校正登录态失败，继续沿用本地缓存', err);
+      }
+      return;
+    }
 
     try {
-      // 延迟取用：与 services/auth.js 里 login() 的写法一致，
-      // 避免 app → auth → 门面 → mock 的加载期环
-      const { login } = require('./services/auth.js');
-      const { ok, user } = await login();
-
-      if (ok && user) this.setUserInfo(user);
-      else this.clearUserInfo();
+      const fresh = await facade.getMember(cached._id);
+      if (fresh) this.setUserInfo(fresh);
     } catch (err) {
-      console.error('[app] 校正登录态失败，继续沿用本地缓存', err);
+      console.error('[app] 校正本地登录态失败，继续沿用缓存', err);
     }
   },
 

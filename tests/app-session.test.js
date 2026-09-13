@@ -17,6 +17,7 @@ const { beforeEach } = require('node:test');
 
 const facade = require('../miniprogram/services/index.js');
 const { resolveAuthState } = require('../miniprogram/services/auth.js');
+const { DEFAULT_CURRENT_USER_ID } = require('../miniprogram/services/mock.js');
 const { DATA_SOURCE, STORAGE_KEY, ROLE, USER_STATUS } = require('../miniprogram/utils/constants.js');
 
 /* ============================================================
@@ -175,8 +176,9 @@ test('云端故障时保留本地登录态，不因为一次抖动把人踢下�
 test('mock 模式一次云端请求都不发，也不拿演示会员覆盖刚注册的账号', async () => {
   const cached = pendingMember();
   storage[STORAGE_KEY.USER_INFO] = cached;
-  // mock 的 login() 会返回种子里的演示会员（已通过审核），
-  // 一旦用它去覆盖，刚注册的人会莫名其妙变成正式会员
+  // mock 的 login() 会返回种子里的演示会员（已通过审核），一旦用它去覆盖，
+  // 刚注册的人会莫名其妙变成正式会员。所以 mock 的校正走「按 _id 回查」：
+  // 'u_3f2a' 既不在种子里也不在申请里，回查为空，原快照原样留着。
   cloudResult = { ok: true, data: approvedMember() };
 
   await launch({ envId: '' });
@@ -184,6 +186,27 @@ test('mock 模式一次云端请求都不发，也不拿演示会员覆盖刚注
   assert.strictEqual(cloudCalls, 0, 'mock 模式不该请求云端');
   assert.strictEqual(appConfig.globalData.userInfo, cached);
   assert.strictEqual(appConfig.globalData.userInfo.status, USER_STATUS.PENDING);
+});
+
+test('mock 模式按 _id 校正角色 —— 数据源把人提为干事，排阵权限不该还停在旧快照', async () => {
+  // 登录快照是更早写下的「普通会员」；数据源里同一人已被提为学院干事。
+  // 不回查的话，界面按快照判权限，干事照样进不了排阵。
+  const stale = {
+    _id: DEFAULT_CURRENT_USER_ID,
+    nickName: '赵明宇',
+    realName: '赵明宇',
+    role: ROLE.MEMBER,
+    status: USER_STATUS.ACTIVE,
+  };
+  storage[STORAGE_KEY.USER_INFO] = stale;
+
+  await launch({ envId: '' });
+
+  const user = appConfig.globalData.userInfo;
+  assert.strictEqual(cloudCalls, 0, 'mock 模式仍然一次云端请求都不发');
+  assert.strictEqual(user.role, ROLE.STAFF, '角色应被数据源里的最新值覆盖');
+  assert.ok(user.college, '学院也一并带回，排阵判权限要用它');
+  assert.strictEqual(storage[STORAGE_KEY.USER_INFO].role, ROLE.STAFF, '缓存同步更新');
 });
 
 test('本地没有登录态时不发起校正请求', async () => {
