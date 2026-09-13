@@ -393,8 +393,9 @@ async function drawEvent(payload = {}, ctx) {
   const { members } = await getDataset(ctx);
 
   // 重抽前置：已有比赛被确认生效过就禁止重抽（决策 9.5）。
-  // 集合查询不能进事务，所以在这里先把该赛事的比赛读齐
-  const existing = (await ctx.repo.matches.list()).filter((match) => match.eventId === payload.id);
+  // 集合查询不能进事务，所以在这里先把该赛事的比赛读齐。按赛事条件取，
+  // 不必把整张比赛流水翻一遍再筛——上面 getDataset 已经全表读过一次了。
+  const existing = await ctx.repo.matches.listByEvent(payload.id);
   if (event.draw && !canRedraw(existing)) {
     return ok({
       ok: false,

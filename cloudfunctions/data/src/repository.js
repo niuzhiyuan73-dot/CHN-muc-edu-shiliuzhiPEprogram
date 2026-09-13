@@ -11,6 +11,7 @@
  *   repo.users.getByOpenId(openId)      → Promise<Object|null>
  *   repo.users.set(id, doc)             → Promise<void>   按 _id 整体写入（upsert）
  *   repo.matches.list()                 → Promise<Array<Object>>
+ *   repo.matches.listByEvent(eid)       → Promise<Array<Object>>
  *   repo.matches.getById(id)            → Promise<Object|null>
  *   repo.matches.insert(doc)            → Promise<Object>  doc 必须自带 _id
  *   repo.matches.update(id, patch)      → Promise<void>    只改给定字段
@@ -48,6 +49,8 @@
  *   repo.announcements.update(id, patch)→ Promise<void>
  *   repo.seasons.get(id)                → Promise<Object|null>
  *   repo.seasons.set(id, doc)           → Promise<void>
+ *   repo.rankings.get(id)               → Promise<Object|null>
+ *   repo.rankings.set(id, doc)          → Promise<void>    排行榜快照（可随时删除的纯缓存）
  *   repo.transaction(fn)                → Promise<*>       fn(txRepo)，抛错则整体回滚
  *   repo.audit.append(entry)            → Promise<void>
  *
@@ -72,6 +75,7 @@ const COLLECTIONS = {
   lineups: COLLECTION.COLLEGE_LINEUPS,
   announcements: COLLECTION.ANNOUNCEMENTS,
   seasons: COLLECTION.SEASONS,
+  rankings: COLLECTION.RANKINGS,
   auditLogs: COLLECTION.AUDIT_LOGS,
 };
 

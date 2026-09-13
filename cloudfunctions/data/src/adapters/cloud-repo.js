@@ -128,6 +128,12 @@ function buildCollections(scope, inTx) {
 
     matches: {
       list: () => list('matches'),
+      // 按赛事取比赛：抽签时会先在数据集里看过一遍全表，再单独取该赛事的
+      // 比赛入签表。走条件查询，省掉一次整表翻页。
+      listByEvent: (eventId) => {
+        if (inTx) throw new Error('事务内不允许条件读取（matches），请改用 getById');
+        return readWhere(scope, COLLECTIONS.matches, { eventId });
+      },
       getById: (id) => readDoc(scope, COLLECTIONS.matches, id),
       insert: (doc) => col('matches').doc(doc._id).set({ data: withoutId(doc) }),
       update: (id, patch) => col('matches').doc(id).update({ data: withoutId(patch) }),
@@ -205,6 +211,11 @@ function buildCollections(scope, inTx) {
     seasons: {
       get: (id) => readDoc(scope, COLLECTIONS.seasons, id),
       set: (id, doc) => col('seasons').doc(id).set({ data: withoutId(doc) }),
+    },
+
+    rankings: {
+      get: (id) => readDoc(scope, COLLECTIONS.rankings, id),
+      set: (id, doc) => col('rankings').doc(id).set({ data: withoutId(doc) }),
     },
 
     audit: {

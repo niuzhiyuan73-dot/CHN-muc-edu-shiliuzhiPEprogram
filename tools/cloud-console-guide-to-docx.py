@@ -226,7 +226,7 @@ def build():
 
     # ---------------- 二、集合总览 ----------------
     heading(doc, "二、数据库集合总览", 1)
-    para(doc, "环境里一共有 11 个业务集合：个人赛 7 个、学院赛 4 个。名称必须与下表完全一致（区分大小写与下划线）。")
+    para(doc, "环境里一共有 12 个业务集合：个人赛 8 个、学院赛 4 个。名称必须与下表完全一致（区分大小写与下划线）。")
     para(doc, "个人赛集合：", bold=True)
     table(
         doc,
@@ -238,6 +238,7 @@ def build():
             ["event_signups", "赛事报名与签到", "是", "_id、eventId、userId、status(0已取消/1已报名/2已签到)、signTime、checkInTime"],
             ["announcements", "公告", "是", "_id、title、content、category、pinned、status('published'/'archived')、publishTime"],
             ["seasons", "赛季锚点，只需要一条 _id='current' 的记录", "是", "_id、anchorTime、resetTime、resetPolicy、seasonNumber、version、algoVersion"],
+            ["rankings", "排行榜快照，一条 _id='current' 的记录（纯缓存，删了会自动重算）", "是", "_id、key、algoVersion、savedAt、data（整份数据集）"],
             ["audit_logs", "写操作留痕（预留，当前不写入）", "可选", "—"],
         ],
         widths=[2.6, 5.0, 1.6, 7.0],
@@ -256,15 +257,15 @@ def build():
     )
     callout(doc, "event_signups 必须建。cloudfunctions/README.md 里曾写「报名集合不必建」，那是旧版本的说法；现在的报名与签到都会写这个集合，缺了它报名会直接报错。", "关键")
     callout(doc, "学院赛的 4 个集合同样必须建。college_events 与 college_entries 缺一不可，ties 与 lineups 在「开始赛事」后就会写入；少建任何一个，学院赛都会在对应步骤直接报错。", "关键")
-    para(doc, "另外还有一个 rankings 集合在代码里预留了常量，但没有映射、没有任何读写，无需创建。")
-    para(doc, "等级分与赛季积分不落库。每次读取时，云函数从 users + matches + events 现场重放算出结果，所以数据库里看不到「分数」字段，也不需要维护它。学院赛名次也不参与个人分重放——它只写在 college_events.results 里。")
+    para(doc, "rankings 也必须建。它存的是「重放结果的落库缓存」——云函数冷启动时先读它，省掉全表读与两遍重放。它是纯缓存：键由赛季版本号 + 算法版本 + 锚点拼成，任何写操作让版本号 +1，旧快照即作废；读不到或读坏了都会退回现场重算，所以删掉它只会让下一次读变慢，不会算错分数。")
+    para(doc, "等级分仍以比赛流水为唯一事实来源：分数不落在 users 里，而是从 users + matches + events 重放算出。rankings 里那份是重放结果的缓存副本，不是权威数据，任何时候都可以整条删掉。学院赛名次也不参与个人分重放——它只写在 college_events.results 里。")
 
     # ---------------- 三、首次部署 ----------------
     heading(doc, "三、首次部署：集合、索引、安全规则、第一个管理员", 1)
 
     heading(doc, "3.1 新建集合", 2)
     numbered(doc, "数据库 → 集合管理 → 「＋ 新建集合」。")
-    numbered(doc, "按第 2 节的表格逐个建个人赛集合：users、matches、events、event_signups、announcements、seasons。可选建 audit_logs。")
+    numbered(doc, "按第 2 节的表格逐个建个人赛集合：users、matches、events、event_signups、announcements、seasons、rankings。可选建 audit_logs。")
     numbered(doc, "再逐个建学院赛集合：college_events、college_entries、ties、lineups。")
     numbered(doc, "集合名一个字都不能差，建错名字等于没建。")
     numbered(doc, "seasons 建好后，手工新增一条 _id 为 current 的文档（字段见第 6 节）；不建也能跑，系统会按默认第一赛季处理。")
@@ -414,9 +415,10 @@ def build():
     para(doc, "这一节是「小程序里改不动、又必须马上修」时的兜底手段。直接改库没有业务校验，改前请先导出备份。")
 
     heading(doc, "7.1 先记住缓存这件事", 2)
-    para(doc, "等级分、积分、排行榜都是由云函数从原始数据现场算出来的，结果会按 seasons.version 缓存在云函数容器里。也就是说：你改完 matches / users / events，小程序可能还是旧数字。")
+    para(doc, "等级分、积分、排行榜都是由云函数从原始数据现场算出来的，结果会按 seasons.version 缓存两处：云函数容器内存里一份，rankings/current 里一份。也就是说：你改完 matches / users / events，小程序可能还是旧数字。")
     numbered(doc, "改完数据后，到 seasons/current 把 version 加 1 并保存。")
-    numbered(doc, "下一次读取就会重算，小程序刷新即可看到新结果。")
+    numbered(doc, "下一次读取就会重算，并把新的快照写回 rankings/current，小程序刷新即可看到新结果。")
+    para(doc, "如果不放心，也可以顺手把 rankings/current 整条删掉强制重算——它是纯缓存，删了不影响任何数据。", muted=True)
 
     heading(doc, "7.2 改一个比分", 2)
     numbered(doc, "优先方案：在小程序「比赛」页把该场撤销（要填理由），再重新录分、确认。这样分数会正确回滚与叠加。")

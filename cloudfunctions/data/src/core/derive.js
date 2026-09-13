@@ -18,6 +18,14 @@
  * 测试会造很多个互不相干的内存仓储，用模块级单变量缓存会互相串味。
  * 挂在仓储对象上，天然隔离；云函数那边仓储是容器级的单例，缓存也就
  * 自然地在热容器里留存下来。
+ *
+ * 【为什么还有一层落库的排行榜快照】
+ * WeakMap 活在容器里：容器一冷启动就没了，第一读仍要全表读 + 两遍回放，
+ * 流水越长这笔开销越大。于是把算好的数据集再写一份到 rankings 集合，
+ * 键就是上面那串缓存键——写操作让版本号 +1，旧快照自然作废，行为与
+ * 内存缓存完全一致。快照是纯缓存：随时可删、写失败不影响读、体积超限
+ * 就退回重放（见 SNAPSHOT_MAX_BYTES）。等级分「以流水为唯一事实来源」
+ * 这条没有被打破，快照只是把重放结果暂存了一份。
  * ============================================================
  */
 
@@ -33,6 +41,43 @@ const { loadSeason, ALGO_VERSION } = require('./season.js');
 
 /** 仓储 → { key, dataset } */
 const memoByRepo = new WeakMap();
+
+/**
+ * 排行榜快照在 rankings 集合里的固定 _id：一个俱乐部同时只有一份。
+ * 快照只是缓存的落库版，随时可以删；删了下一次读会重新算并写回。
+ */
+const RANKING_SNAPSHOT_ID = 'current';
+
+/**
+ * 快照单文档的体积上限。
+ *
+ * 【为什么要有这道闸】
+ * 云开发单条记录有大小硬限，而这份快照装的是整份数据集：流水越多它越大。
+ * 超过闸门就干脆不写——宁可每次重放，也不能让写快照把整个读接口带崩。
+ * 真正到流水塞不下的一天，再把快照拆成「按人一行」。
+ */
+const SNAPSHOT_MAX_BYTES = 900 * 1024;
+
+/**
+ * 数据集 → 可落库的快照。
+ * nameOf 是函数（createNameResolver 的产物），落不了库，读回来时现建。
+ * @param {Object} dataset
+ * @returns {Object}
+ */
+function toSnapshot(dataset) {
+  const payload = { ...dataset };
+  delete payload.nameOf;
+  return payload;
+}
+
+/**
+ * 快照 → 数据集。补上落库时丢掉的 nameOf。
+ * @param {Object} payload
+ * @returns {Object}
+ */
+function fromSnapshot(payload) {
+  return { ...payload, nameOf: createNameResolver(payload.users || []) };
+}
 
 /**
  * 从数据库读原始数据，重放成一份完整数据集。
@@ -132,9 +177,64 @@ async function getDataset(ctx) {
   const cached = memoByRepo.get(ctx.repo);
   if (cached && cached.key === key) return cached.dataset;
 
+  // 容器内存缓存没命中，再退一步看落库的快照。云函数冷启动时内存缓存
+  // 一定是空的，这一层才是「省掉全表读 + 两遍回放」的地方。
+  const stored = await readSnapshot(ctx.repo, key);
+  if (stored) {
+    memoByRepo.set(ctx.repo, { key, dataset: stored });
+    return stored;
+  }
+
   const dataset = await buildDataset(ctx.repo, season);
   memoByRepo.set(ctx.repo, { key, dataset });
+  await writeSnapshot(ctx.repo, key, dataset);
   return dataset;
+}
+
+/**
+ * 读排行榜快照。键对不上（写操作让版本号变了）或读失败都当作没有，
+ * 交给上层重放——快照只是缓存，绝不能因为读它出错而让接口挂掉。
+ *
+ * @param {Object} repo
+ * @param {string} key
+ * @returns {Promise<Object|null>}
+ */
+async function readSnapshot(repo, key) {
+  if (!repo.rankings || typeof repo.rankings.get !== 'function') return null;
+  try {
+    const doc = await repo.rankings.get(RANKING_SNAPSHOT_ID);
+    // 除了键，还要看必备字段在不在：一条被手工改坏的快照不该让读接口崩
+    if (!doc || doc.key !== key || !doc.data) return null;
+    if (!Array.isArray(doc.data.users) || !Array.isArray(doc.data.ledger)) return null;
+    return fromSnapshot(doc.data);
+  } catch (err) {
+    return null;
+  }
+}
+
+/**
+ * 把刚算好的数据集写成快照。best-effort：体积超限或写失败都只是静默跳过，
+ * 不影响这次读返回正确结果。
+ *
+ * @param {Object} repo
+ * @param {string} key
+ * @param {Object} dataset
+ * @returns {Promise<void>}
+ */
+async function writeSnapshot(repo, key, dataset) {
+  if (!repo.rankings || typeof repo.rankings.set !== 'function') return;
+  try {
+    const data = toSnapshot(dataset);
+    if (JSON.stringify(data).length > SNAPSHOT_MAX_BYTES) return;
+    await repo.rankings.set(RANKING_SNAPSHOT_ID, {
+      key,
+      algoVersion: ALGO_VERSION,
+      savedAt: new Date(),
+      data,
+    });
+  } catch (err) {
+    // 快照写失败不该影响这次读；下一次读会再试
+  }
 }
 
 /**

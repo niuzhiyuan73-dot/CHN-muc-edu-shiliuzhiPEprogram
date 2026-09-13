@@ -40,6 +40,7 @@ function emptyStore() {
     lineups: new Map(),
     announcements: new Map(),
     seasons: new Map(),
+    rankings: new Map(),
     auditLogs: [],
   };
 }
@@ -97,6 +98,10 @@ function createMemoryRepo(seed = {}) {
 
       matches: {
         list: () => list('matches'),
+        listByEvent: (eventId) => {
+          if (inTx) throw new Error('事务内不允许条件读取（matches），请改用 getById');
+          return [...target.matches.values()].filter((doc) => doc.eventId === eventId).map(clone);
+        },
         getById: (id) => read('matches', id),
         insert: async (doc) => {
           target.matches.set(doc._id, clone(doc));
@@ -227,6 +232,13 @@ function createMemoryRepo(seed = {}) {
         get: (id) => read('seasons', id),
         set: async (id, doc) => {
           target.seasons.set(id, { ...doc, _id: id });
+        },
+      },
+
+      rankings: {
+        get: (id) => read('rankings', id),
+        set: async (id, doc) => {
+          target.rankings.set(id, { ...doc, _id: id });
         },
       },
 
