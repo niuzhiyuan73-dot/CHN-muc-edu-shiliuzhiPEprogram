@@ -95,10 +95,20 @@ test('canReview —— 普通会员没有审核权，与数据源无关', () => 
   assert.strictEqual(canReview(MEMBER, { isMock: true }), false);
 });
 
-test('canReview —— 干事与管理员都能审', () => {
-  for (const actor of [STAFF, ADMIN]) {
-    assert.strictEqual(canReview(actor), true, `${actor._id} 应当可审`);
-  }
+test('canReview —— 仅管理员可审', () => {
+  assert.strictEqual(canReview(ADMIN), true);
+});
+
+test('canReview —— 干事没有审核权', () => {
+  // 干事是「学院负责人」，其权限以学院为界；而批下来的是「俱乐部会员」
+  // 这个身份，拿到手就能报名、上榜、算积分，与申请人填的哪个学院无关，
+  // 没有可靠的边界可收，只能收归管理员。
+  assert.strictEqual(canReview(STAFF), false);
+  assert.strictEqual(canReview(STAFF, { isMock: true }), false);
+});
+
+test('canReview —— 调用方传更宽的门槛也放不进干事', () => {
+  assert.strictEqual(canReview(STAFF, { minRole: ROLE.STAFF }), false);
 });
 
 /* ============================================================
@@ -118,9 +128,10 @@ test('canReviewApplication —— 管理员也不能审自己的申请', () => {
   assert.strictEqual(canReviewApplication(ADMIN, mine), false);
 });
 
-test('canReviewApplication —— 普通会员审不了，干事能审别人的待审核申请', () => {
+test('canReviewApplication —— 普通会员与干事都审不了，管理员能审别人的待审核申请', () => {
   assert.strictEqual(canReviewApplication(MEMBER, APPLICANT), false);
-  assert.strictEqual(canReviewApplication(STAFF, APPLICANT), true);
+  assert.strictEqual(canReviewApplication(STAFF, APPLICANT), false);
+  assert.strictEqual(canReviewApplication(ADMIN, APPLICANT), true);
 });
 
 test('canReviewApplication —— 已经处理过的申请不能再动', () => {
@@ -260,7 +271,7 @@ test('validateReview —— 驳回时忽略传入的初始分', () => {
  * ============================================================ */
 
 test('buildApplicationRow —— 有权限且不是自己时，两个按钮都放行', () => {
-  const row = buildApplicationRow(APPLICANT, { actor: STAFF });
+  const row = buildApplicationRow(APPLICANT, { actor: ADMIN });
 
   assert.strictEqual(row.applicationId, 'local_1001');
   assert.strictEqual(row.canApprove, true);
@@ -268,15 +279,17 @@ test('buildApplicationRow —— 有权限且不是自己时，两个按钮都�
   assert.strictEqual(row.isSelf, false);
 });
 
-test('buildApplicationRow —— 普通会员那一行没有任何按钮', () => {
-  const row = buildApplicationRow(APPLICANT, { actor: MEMBER });
-  assert.strictEqual(row.canApprove, false);
-  assert.strictEqual(row.canReject, false);
+test('buildApplicationRow —— 普通会员与干事那一行都没有任何按钮', () => {
+  for (const actor of [MEMBER, STAFF]) {
+    const row = buildApplicationRow(APPLICANT, { actor });
+    assert.strictEqual(row.canApprove, false, `${actor._id} 不该能批`);
+    assert.strictEqual(row.canReject, false, `${actor._id} 不该能驳`);
+  }
 });
 
 test('buildApplicationRow —— 本人那条只留提示，不给按钮', () => {
-  const mine = { ...APPLICANT, _id: STAFF._id };
-  const row = buildApplicationRow(mine, { actor: STAFF });
+  const mine = { ...APPLICANT, _id: ADMIN._id };
+  const row = buildApplicationRow(mine, { actor: ADMIN });
 
   assert.strictEqual(row.isSelf, true);
   assert.strictEqual(row.canApprove, false);
@@ -284,27 +297,27 @@ test('buildApplicationRow —— 本人那条只留提示，不给按钮', () =>
 });
 
 test('buildApplicationRow —— 昵称逐层兜底，不渲染出 undefined', () => {
-  const withNick = buildApplicationRow(APPLICANT, { actor: STAFF });
+  const withNick = buildApplicationRow(APPLICANT, { actor: ADMIN });
   assert.strictEqual(withNick.nickName, '孙悟空');
 
   // 注册时昵称可以不填，退回真实姓名
-  const noNick = buildApplicationRow({ ...APPLICANT, nickName: '' }, { actor: STAFF });
+  const noNick = buildApplicationRow({ ...APPLICANT, nickName: '' }, { actor: ADMIN });
   assert.strictEqual(noNick.nickName, '孙悟空');
 
   // 连姓名都没有（异常数据）时退回编号，而不是 undefined
-  const bare = buildApplicationRow({ _id: 'local_9', status: USER_STATUS.PENDING }, { actor: STAFF });
+  const bare = buildApplicationRow({ _id: 'local_9', status: USER_STATUS.PENDING }, { actor: ADMIN });
   assert.strictEqual(bare.nickName, 'local_9');
   assert.strictEqual(bare.realName, '');
   assert.strictEqual(bare.phone, '');
 });
 
 test('buildApplicationRow —— 申请时间格式化成中文，未知状态不空白', () => {
-  const row = buildApplicationRow(APPLICANT, { actor: STAFF });
+  const row = buildApplicationRow(APPLICANT, { actor: ADMIN });
   assert.strictEqual(row.appliedAtText, '9月1日 10:00');
 
   const handled = buildApplicationRow(
     { ...APPLICANT, status: USER_STATUS.DISABLED, action: REVIEW_ACTION.REJECT, reason: '学号对不上' },
-    { actor: STAFF }
+    { actor: ADMIN }
   );
   assert.strictEqual(handled.statusLabel, '已驳回');
   assert.strictEqual(handled.action, 'reject');

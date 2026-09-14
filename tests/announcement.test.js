@@ -25,6 +25,11 @@ function staff(overrides = {}) {
   return { _id: 'u02', nickName: '干事', role: ROLE.STAFF, status: USER_STATUS.ACTIVE, ...overrides };
 }
 
+/** 一名管理员 */
+function admin(overrides = {}) {
+  return { _id: 'u01', nickName: '会长', role: ROLE.ADMIN, status: USER_STATUS.ACTIVE, ...overrides };
+}
+
 /** 一份合法的公告表单 */
 function form(overrides = {}) {
   return {
@@ -76,10 +81,21 @@ describe('canPublish —— 发布权', () => {
     assert.strictEqual(canPublish(member({ status: USER_STATUS.PENDING })), false);
   });
 
-  test('要求干事及以上', () => {
+  test('要求管理员', () => {
     assert.strictEqual(canPublish(member()), false);
-    assert.strictEqual(canPublish(staff()), true);
-    assert.strictEqual(canPublish(staff({ role: ROLE.ADMIN })), true);
+    assert.strictEqual(canPublish(admin()), true);
+  });
+
+  test('干事不能发公告：公告没有学院可言，收不出范围就只能收归管理员', () => {
+    // 干事是「学院负责人」，权限以学院为界。公告是发给全俱乐部的，
+    // 若干事可发，法学院的干事就能往全校发通知——这类越界没有任何边界可挡。
+    assert.strictEqual(canPublish(staff()), false);
+    assert.strictEqual(canPublish(staff({ college: '法学院' }), { targetCollege: '法学院' }), false);
+  });
+
+  test('显式传更宽的门槛也不会把干事放进来', () => {
+    // 调用方传进来的 minRole 不该能把业务自己的门槛冲掉
+    assert.strictEqual(canPublish(staff(), { minRole: ROLE.STAFF }), false);
   });
 
   test('普通会员在本地模拟数据源里也没有发布权', () => {
@@ -229,8 +245,10 @@ describe('buildAnnouncementRow —— 整形列表行', () => {
     assert.strictEqual(row.publisherName, '体育部');
   });
 
-  test('干事且未下架时才能下架', () => {
-    assert.strictEqual(buildAnnouncementRow(published, { actor: staff() }).canArchive, true);
+  test('管理员且未下架时才能下架', () => {
+    assert.strictEqual(buildAnnouncementRow(published, { actor: admin() }).canArchive, true);
+    // 干事与会员一样看不到下架按钮
+    assert.strictEqual(buildAnnouncementRow(published, { actor: staff() }).canArchive, false);
     // 没有发布权的普通会员看不到下架按钮
     assert.strictEqual(buildAnnouncementRow(published, { actor: member() }).canArchive, false);
     // 访客也不行

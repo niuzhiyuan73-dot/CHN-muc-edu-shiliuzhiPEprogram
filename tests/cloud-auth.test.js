@@ -7,7 +7,7 @@
  * 这一组测试把每条严格边界钉死：
  *   确认 —— 限对手方，录入方不能给自己盖章
  *   撤销 —— 限管理员或原录入者
- *   审核 / 公告 —— 限 role >= 干事，且不能审自己
+ *   审核 / 公告 —— 限管理员（干事是学院范围角色，管不到这两件事），且不能审自己
  * 任何一条被「顺手放宽」，都会在这里变红。
  * ============================================================
  */
@@ -23,7 +23,7 @@ const {
   contextFor,
 } = require('./helpers/cloud-fixture.js');
 
-/** 一位干事，用来验证「role >= STAFF 即可管理」这条线 */
+/** 一位干事，用来验证「干事管不到俱乐部全局事务」这条线 */
 const STAFF = { ...USERS[1], _id: 'u_staff', openId: 'openid-staff', role: ROLE.STAFF };
 
 /** 一份合法的录入单：u01 录入，对手是 u02 */
@@ -80,15 +80,24 @@ test('写接口 —— 已停用的账号一律挡下（账号还在，不能只
   assert.equal(res.message, '账号已被停用，请联系管理员');
 });
 
-test('发布公告 —— 干事即可发布，发布人与发布时间由服务端填写', async () => {
+test('发布公告 —— 干事被挡下（公告是发给全俱乐部的，干事收不出范围）', async () => {
   const repo = createFixtureRepo({ users: [...USERS, STAFF] });
   const ctx = await contextFor(repo, 'openid-staff');
   const res = await dispatch('publishAnnouncement', { form: ANNOUNCEMENT_FORM }, ctx);
 
+  assert.equal(res.data.ok, false);
+  assert.equal(res.data.firstError, '当前账号没有发布公告的权限');
+});
+
+test('发布公告 —— 管理员即可发布，发布人与发布时间由服务端填写', async () => {
+  const repo = createFixtureRepo();
+  const ctx = await contextFor(repo, 'openid-admin');
+  const res = await dispatch('publishAnnouncement', { form: ANNOUNCEMENT_FORM }, ctx);
+
   assert.equal(res.data.ok, true);
   assert.equal(res.data.record.status, ANNOUNCEMENT_STATUS.PUBLISHED);
-  assert.equal(res.data.record.publisherId, 'u_staff');
-  assert.equal(res.data.record.publisherName, '甲', '昵称逐层兜底，绝不落空字符串');
+  assert.equal(res.data.record.publisherId, 'u_admin');
+  assert.equal(res.data.record.publisherName, '管理员', '昵称逐层兜底，绝不落空字符串');
   assert.equal(
     new Date(res.data.record.publishTime).getTime(),
     ctx.now.getTime(),

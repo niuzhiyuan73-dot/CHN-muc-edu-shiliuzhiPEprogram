@@ -24,6 +24,7 @@
  */
 
 const {
+  ROLE,
   ANNOUNCEMENT_CATEGORIES,
   ANNOUNCEMENT_STATUS,
   ANNOUNCEMENT_STATUS_LABEL,
@@ -64,17 +65,25 @@ function sortAnnouncements(list) {
 }
 
 /**
- * 有没有发布资格。
+ * 有没有发布资格。**仅管理员**。
  *
- * 判定规则与审核入会一字不差，已抽到 permission.canManage；这里只把它
- * 包一层，留住「发布」这个业务语义的函数名。
+ * 【为什么门槛是管理员而不是干事】
+ * 公告是发给全俱乐部的，发出去就收不回，还会顶在首页——这是「定盘子」
+ * 的事，与发布赛事、赛季重置同一级别（见 event.canManageEvent 的同款理由）。
+ * 干事即学院负责人，权限以学院为界（见 permission.managesCollege），
+ * 而公告根本没有「某个学院的公告」这一说，做成干事可发就必然越界：
+ * 法学院的干事能往全校发通知。所以这里连学院范围都没得收，只能收归管理员。
+ *
+ * 【为什么还要包一层】
+ * 判定规则与审核入会一字不差，已抽到 permission.canManage；这里留住
+ * 「发布」这个业务语义的函数名，并声明本业务自己的门槛。
  *
  * @param {Object|null} actor
  * @param {Object} [options] 透传给 permission.canManage（如 minRole）
  * @returns {boolean}
  */
 function canPublish(actor, options = {}) {
-  return canManage(actor, options);
+  return canManage(actor, { ...options, minRole: ROLE.ADMIN });
 }
 
 /**

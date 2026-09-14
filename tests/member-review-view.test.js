@@ -18,8 +18,11 @@ const { REVIEW_TAB, filterApplications, loadMemberReviewView } = require('../min
 const facade = require('../miniprogram/services/index.js');
 const { ROLE, USER_STATUS } = require('../miniprogram/utils/constants.js');
 
-/** 看审核页的人。审核权只看角色，所以这里得是干事 */
-const REVIEWER = { _id: 'u02', nickName: '张宇轩', role: ROLE.STAFF, status: USER_STATUS.ACTIVE };
+/** 看审核页的人。审核权只看角色，所以这里得是管理员 */
+const REVIEWER = { _id: 'u01', nickName: '巴特尔', role: ROLE.ADMIN, status: USER_STATUS.ACTIVE };
+
+/** 干事：管得了本院临场事务，但管不到入会审核 */
+const STAFF = { _id: 'u02', nickName: '张宇轩', role: ROLE.STAFF, status: USER_STATUS.ACTIVE };
 
 /** 已转正但没有审核权的普通会员，用来验证「一行都不下发」 */
 const MEMBER = { _id: 'u05', nickName: '李思远', role: ROLE.MEMBER, status: USER_STATUS.ACTIVE };
@@ -67,7 +70,7 @@ describe('会员审核视图 —— 防泄漏', () => {
  * ============================================================ */
 
 describe('会员审核视图 —— 内容', () => {
-  test('干事看到两条待审申请', async () => {
+  test('管理员看到两条待审申请', async () => {
     const view = await loadMemberReviewView({ user: REVIEWER });
 
     assert.strictEqual(view.allowed, true);
@@ -83,6 +86,15 @@ describe('会员审核视图 —— 内容', () => {
 
     assert.strictEqual(view.allowed, false);
     assert.deepStrictEqual(view.rows, []);
+    assert.match(view.blockedText, /权限/);
+  });
+
+  test('干事同样一行都拿不到：申请单上是全体申请人的实名信息', async () => {
+    const view = await loadMemberReviewView({ user: STAFF });
+
+    assert.strictEqual(view.allowed, false);
+    assert.deepStrictEqual(view.rows, []);
+    assert.deepStrictEqual(view.tabs, []);
     assert.match(view.blockedText, /权限/);
   });
 
@@ -125,8 +137,8 @@ describe('会员审核视图 —— 内容', () => {
 
   test('本人那条只留提示，不给按钮', async () => {
     // 演示申请 local_demo01 就是「自己」时，不该出现批准 / 驳回按钮。
-    // 账号本身得有审核权（干事），冲突只出在「不能审自己」这一条上
-    const self = { _id: 'local_demo01', role: ROLE.STAFF, status: USER_STATUS.ACTIVE };
+    // 账号本身得有审核权（管理员），冲突只出在「不能审自己」这一条上
+    const self = { _id: 'local_demo01', role: ROLE.ADMIN, status: USER_STATUS.ACTIVE };
     const view = await loadMemberReviewView({ user: self });
 
     const mine = view.rows.find((row) => row.applicationId === 'local_demo01');
@@ -206,9 +218,9 @@ describe('会员审核视图 —— 渲染字段', () => {
 
   test('viewer 带出当前登录者的角色文案', async () => {
     const view = await loadMemberReviewView({ user: REVIEWER });
-    assert.strictEqual(view.viewer.userId, 'u02');
+    assert.strictEqual(view.viewer.userId, 'u01');
     assert.strictEqual(view.viewer.loggedIn, true);
-    assert.strictEqual(view.viewer.roleLabel, '干事');
+    assert.strictEqual(view.viewer.roleLabel, '管理员');
   });
 });
 

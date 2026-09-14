@@ -95,7 +95,7 @@ async function reviewMember(applicationId, action, reason, ctx, initialElo) {
     members.find((item) => item._id === applicationId) ||
     null;
 
-  // 严格口径：审核权限 role >= STAFF，且不能审自己的申请。
+  // 严格口径：仅管理员能审（见 member-review.canReview），且不能审自己的申请。
   // initialElo 也在这里校验取值范围——请求体里的任何数值都不被信任。
   const verdict = validateReview(ctx.actor, application, action, reason, {
     isMock: false,

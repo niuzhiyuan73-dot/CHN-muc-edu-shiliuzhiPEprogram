@@ -88,18 +88,25 @@ function isSelf(actor, application) {
 }
 
 /**
- * 有没有审核资格。
+ * 有没有审核资格。**仅管理员**。
  *
- * 判定规则本身与「发公告」等管理动作一字不差，已抽到 permission.canManage；
- * 这里只把它包一层，留住「审核」这个业务语义的函数名，调用方不必知道它
- * 背后其实就是通用的管理权限。
+ * 【为什么门槛是管理员而不是干事】
+ * 审核一条入会申请就是决定「这个人算不算俱乐部的人」，批了之后他能报名、
+ * 能上榜、能算积分——一旦批错，账要连同后续成绩一起回滚，属于「定盘子」
+ * 的事（与发布赛事、赛季重置同一级别）。
+ *
+ * 【为什么不像代签到那样收口到本学院】
+ * 干事即学院负责人，其权限以学院为界（见 permission.managesCollege）。
+ * 可入会审核根本没有这条边界可用：批下来的是「俱乐部会员」这个身份，
+ * 拿到手就能报名、上榜、算积分，与申请人填的是哪个学院无关；台账也是一份
+ * 全校名单，没有按学院分给谁看的口径。收不出范围，就只能收归管理员。
  *
  * @param {Object|null} actor
  * @param {Object} [options]
  * @returns {boolean}
  */
 function canReview(actor, options = {}) {
-  return canManage(actor, options);
+  return canManage(actor, { ...options, minRole: ROLE.ADMIN });
 }
 
 /**

@@ -1412,7 +1412,7 @@ async function registerMember(profile, options = {}) {
  */
 async function reviewMember(applicationId, actor, action, reason, initialElo) {
   const account = userStore.findAccount(applicationId);
-  // 审核权不再按数据源放宽：种子里 u02 张宇轩就是干事，切到该账号即可演示。
+  // 审核权不再按数据源放宽：种子里 u01 巴特尔就是管理员，切到该账号即可演示。
   // 「不能审自己的申请」这条本来就不放宽。
   const verdict = validateReview(accountOf(actor), account, action, reason, { initialElo });
   if (!verdict.ok) return { ok: false, account: null, message: verdict.message };
@@ -1500,7 +1500,7 @@ async function setCollegeLeader(targetId, actor, makeLeader) {
  */
 async function publishAnnouncement(form, actor) {
   const account = accountOf(actor);
-  // 发布权不再按数据源放宽：种子里 u02 张宇轩就是干事，切到该账号即可演示
+  // 发布权不再按数据源放宽：种子里 u01 巴特尔就是管理员，切到该账号即可演示
   if (!canPublish(account)) {
     return { ok: false, record: null, errors: {}, firstError: '当前账号没有发布公告的权限' };
   }

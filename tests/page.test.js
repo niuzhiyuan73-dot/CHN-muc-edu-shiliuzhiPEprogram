@@ -604,9 +604,9 @@ test('我的页 —— 普通会员看不到任何管理入口', async () => {
   assert.strictEqual(page.data.adminEntry.visible, false);
 });
 
-test('我的页 —— 干事看到审核入口，点进去跳转审核页', async () => {
+test('我的页 —— 管理员看到审核入口，点进去跳转审核页', async () => {
   resetSession();
-  app.globalData.userInfo = fakeMember({ role: 1 });
+  app.globalData.userInfo = fakeMember(ADMIN);
 
   const page = instantiate(profileConfig);
   await page.onLoad({});
@@ -619,9 +619,19 @@ test('我的页 —— 干事看到审核入口，点进去跳转审核页', asy
   assert.deepStrictEqual(calls.navigations, ['/pages/member-review/member-review']);
 });
 
+test('我的页 —— 干事看不到审核入口：入会审核是俱乐部全局事务', async () => {
+  resetSession();
+  app.globalData.userInfo = fakeMember(STAFF);
+
+  const page = instantiate(profileConfig);
+  await page.onLoad({});
+
+  assert.strictEqual(page.data.reviewEntry.visible, false);
+});
+
 test('我的页 —— 退出登录后 onShow 会把审核入口收回去', async () => {
   resetSession();
-  app.globalData.userInfo = fakeMember({ role: 1 });
+  app.globalData.userInfo = fakeMember(ADMIN);
 
   const page = instantiate(profileConfig);
   await page.onLoad({});
@@ -640,9 +650,9 @@ test('我的页 —— 访客看不到公告管理入口', async () => {
   assert.strictEqual(page.data.adminEntry.visible, false);
 });
 
-test('我的页 —— 干事看到公告管理入口，点进去跳转公告管理页', async () => {
+test('我的页 —— 管理员看到公告管理入口，点进去跳转公告管理页', async () => {
   resetSession();
-  app.globalData.userInfo = fakeMember({ role: 1 });
+  app.globalData.userInfo = fakeMember(ADMIN);
 
   const page = instantiate(profileConfig);
   await page.onLoad({});
@@ -655,9 +665,19 @@ test('我的页 —— 干事看到公告管理入口，点进去跳转公告管
   assert.deepStrictEqual(calls.navigations, ['/pages/announcement-manage/announcement-manage']);
 });
 
+test('我的页 —— 干事看不到公告管理入口：公告是发给全俱乐部的', async () => {
+  resetSession();
+  app.globalData.userInfo = fakeMember(STAFF);
+
+  const page = instantiate(profileConfig);
+  await page.onLoad({});
+
+  assert.strictEqual(page.data.adminEntry.visible, false);
+});
+
 test('我的页 —— 退出登录后 onShow 会把公告管理入口一并收回去', async () => {
   resetSession();
-  app.globalData.userInfo = fakeMember({ role: 1 });
+  app.globalData.userInfo = fakeMember(ADMIN);
 
   const page = instantiate(profileConfig);
   await page.onLoad({});
@@ -2972,9 +2992,21 @@ test('会员审核页 —— 待审核账号自己还没转正，不能去审别
   assert.match(page.data.view.blockedText, /权限/);
 });
 
-test('会员审核页 —— 干事看到两条待审申请', async () => {
+test('会员审核页 —— 干事被整页挡住：干事是学院范围角色，管不到入会审核', async () => {
   resetSession();
   app.globalData.userInfo = fakeMember(STAFF);
+
+  const page = instantiate(memberReviewConfig);
+  await page.onLoad();
+
+  assert.strictEqual(page.data.view.allowed, false);
+  assert.deepStrictEqual(page.data.view.rows, [], '干事不该拿到申请人的实名资料');
+  assert.match(page.data.view.blockedText, /权限/);
+});
+
+test('会员审核页 —— 管理员看到两条待审申请', async () => {
+  resetSession();
+  app.globalData.userInfo = fakeMember(ADMIN);
 
   const page = instantiate(memberReviewConfig);
   await page.onLoad();
@@ -2983,7 +3015,7 @@ test('会员审核页 —— 干事看到两条待审申请', async () => {
   assert.strictEqual(page.data.view.rows.length, 2);
   assert.strictEqual(page.data.view.pendingCount, 2);
   assert.strictEqual(page.data.view.tabs.filter((item) => item.active).length, 1);
-  assert.strictEqual(page.data.view.viewer.roleLabel, '干事');
+  assert.strictEqual(page.data.view.viewer.roleLabel, '管理员');
 
   const text = JSON.stringify(page.data.view);
   assert.ok(!text.includes('undefined'), '视图数据里出现了 undefined');
@@ -2993,7 +3025,7 @@ test('会员审核页 —— 干事看到两条待审申请', async () => {
 
 test('会员审核页 —— 通过后申请离开待审列表，申请人成为正式会员', async () => {
   resetSession();
-  app.globalData.userInfo = fakeMember(STAFF);
+  app.globalData.userInfo = fakeMember(ADMIN);
 
   const page = instantiate(memberReviewConfig);
   await page.onLoad();
@@ -3015,7 +3047,7 @@ test('会员审核页 —— 通过后申请离开待审列表，申请人成为
 
 test('会员审核页 —— 通过时填的初始分会落到账号上', async () => {
   resetSession();
-  app.globalData.userInfo = fakeMember(STAFF);
+  app.globalData.userInfo = fakeMember(ADMIN);
 
   const page = instantiate(memberReviewConfig);
   await page.onLoad();
@@ -3032,7 +3064,7 @@ test('会员审核页 —— 通过时填的初始分会落到账号上', async 
 
 test('会员审核页 —— 初始分越界时挡在本地，申请保持待审核', async () => {
   resetSession();
-  app.globalData.userInfo = fakeMember(STAFF);
+  app.globalData.userInfo = fakeMember(ADMIN);
 
   const page = instantiate(memberReviewConfig);
   await page.onLoad();
@@ -3051,7 +3083,7 @@ test('会员审核页 —— 初始分越界时挡在本地，申请保持待审
 
 test('会员审核页 —— 驳回不填理由被拦下，申请原样不动', async () => {
   resetSession();
-  app.globalData.userInfo = fakeMember(STAFF);
+  app.globalData.userInfo = fakeMember(ADMIN);
 
   const page = instantiate(memberReviewConfig);
   await page.onLoad();
@@ -3069,7 +3101,7 @@ test('会员审核页 —— 驳回不填理由被拦下，申请原样不动', 
 
 test('会员审核页 —— 驳回后进「已处理」标签页，理由留在卡片上', async () => {
   resetSession();
-  app.globalData.userInfo = fakeMember(STAFF);
+  app.globalData.userInfo = fakeMember(ADMIN);
 
   const page = instantiate(memberReviewConfig);
   await page.onLoad();
@@ -3096,7 +3128,7 @@ test('会员审核页 —— 驳回后进「已处理」标签页，理由留在
 
 test('会员审核页 —— 重复点当前标签不做无谓的重新加载', async () => {
   resetSession();
-  app.globalData.userInfo = fakeMember(STAFF);
+  app.globalData.userInfo = fakeMember(ADMIN);
 
   const page = instantiate(memberReviewConfig);
   await page.onLoad();
@@ -3110,7 +3142,7 @@ test('会员审核页 —— 重复点当前标签不做无谓的重新加载', 
 
 test('会员审核页 —— 下拉刷新会收起刷新动画', async () => {
   resetSession();
-  app.globalData.userInfo = fakeMember(STAFF);
+  app.globalData.userInfo = fakeMember(ADMIN);
 
   const page = instantiate(memberReviewConfig);
   await page.onLoad();
@@ -3203,9 +3235,31 @@ test('公告管理页 —— 访客被整页挡住，一条公告台账都拿不
   assert.match(page.data.view.blockedText, /登录/);
 });
 
-test('公告管理页 —— 干事看到台账', async () => {
+test('公告管理页 —— 干事被整页挡住：公告是发给全俱乐部的，干事没有这个范围', async () => {
   resetSession();
   app.globalData.userInfo = fakeMember(STAFF);
+
+  const page = instantiate(announcementManageConfig);
+  await page.onLoad();
+
+  assert.strictEqual(page.data.view.allowed, false);
+  assert.deepStrictEqual(page.data.view.rows, [], '干事不该拿到公告台账，尤其是已下架的');
+  assert.match(page.data.view.blockedText, /权限/);
+});
+
+test('发布公告页 —— 干事填不了表，整页只给一句提示', async () => {
+  resetSession();
+  app.globalData.userInfo = fakeMember(STAFF);
+
+  const page = instantiate(announcementEditConfig);
+  await page.onLoad();
+
+  assert.match(page.data.blockReason, /权限/);
+});
+
+test('公告管理页 —— 管理员看到台账', async () => {
+  resetSession();
+  app.globalData.userInfo = fakeMember(ADMIN);
 
   const page = instantiate(announcementManageConfig);
   await page.onLoad();
@@ -3220,7 +3274,7 @@ test('公告管理页 —— 干事看到台账', async () => {
 
 test('公告管理页 —— 下架后台账里仍在、沉到底部且不再给按钮，公开页少一条', async () => {
   resetSession();
-  app.globalData.userInfo = fakeMember(STAFF);
+  app.globalData.userInfo = fakeMember(ADMIN);
 
   const page = instantiate(announcementManageConfig);
   await page.onLoad();
@@ -3242,7 +3296,7 @@ test('公告管理页 —— 下架后台账里仍在、沉到底部且不再给
 
 test('公告管理页 —— 点发布跳到发布页', async () => {
   resetSession();
-  app.globalData.userInfo = fakeMember(STAFF);
+  app.globalData.userInfo = fakeMember(ADMIN);
 
   const page = instantiate(announcementManageConfig);
   await page.onLoad();
@@ -3254,7 +3308,7 @@ test('公告管理页 —— 点发布跳到发布页', async () => {
 
 test('公告管理页 —— 从发布页返回时刷新台账', async () => {
   resetSession();
-  app.globalData.userInfo = fakeMember(STAFF);
+  app.globalData.userInfo = fakeMember(ADMIN);
 
   const page = instantiate(announcementManageConfig);
   await page.onLoad();
@@ -3263,7 +3317,7 @@ test('公告管理页 —— 从发布页返回时刷新台账', async () => {
   // 模拟在发布页里发了一条，返回时 onShow 应当把它带出来
   await facade.publishAnnouncement(
     { title: '临时通知', content: '明天停训一次。', category: '通知' },
-    STAFF._id
+    ADMIN._id
   );
   await page.onShow();
 
@@ -3283,9 +3337,9 @@ test('发布公告页 —— 未登录被整页挡住，表单都不给', () => 
   assert.match(page.data.blockReason, /登录/);
 });
 
-test('发布公告页 —— 干事能填表，填好后提交落进数据源并返回上一页', async () => {
+test('发布公告页 —— 管理员能填表，填好后提交落进数据源并返回上一页', async () => {
   resetSession();
-  app.globalData.userInfo = fakeMember(STAFF);
+  app.globalData.userInfo = fakeMember(ADMIN);
 
   const page = instantiate(announcementEditConfig);
   page.onLoad();
@@ -3307,7 +3361,7 @@ test('发布公告页 —— 干事能填表，填好后提交落进数据源并
 
 test('发布公告页 —— 标题为空时不提交，逐字段报错', async () => {
   resetSession();
-  app.globalData.userInfo = fakeMember(STAFF);
+  app.globalData.userInfo = fakeMember(ADMIN);
 
   const page = instantiate(announcementEditConfig);
   page.onLoad();
@@ -3327,7 +3381,7 @@ test('发布公告页 —— 标题为空时不提交，逐字段报错', async 
 
 test('发布公告页 —— 输入标题会把该项的旧错误清掉', async () => {
   resetSession();
-  app.globalData.userInfo = fakeMember(STAFF);
+  app.globalData.userInfo = fakeMember(ADMIN);
 
   const page = instantiate(announcementEditConfig);
   page.onLoad();

@@ -41,16 +41,20 @@ test('isActive —— 只有正常状态算可用', () => {
  * 二、通用管理权
  * ============================================================ */
 
-test('canManage —— 默认门槛是干事，管理员同样过', () => {
+test('canManage —— 默认门槛是最保守的管理员（忘了声明 minRole 时挡住越权，而不是放行）', () => {
   assert.strictEqual(canManage(actor(ROLE.MEMBER)), false);
-  assert.strictEqual(canManage(actor(ROLE.STAFF)), true);
+  assert.strictEqual(canManage(actor(ROLE.STAFF)), false);
   assert.strictEqual(canManage(actor(ROLE.ADMIN)), true);
   assert.strictEqual(canManage(null), false);
 });
 
-test('canManage —— 可抬高门槛（如任免干事只给管理员）', () => {
+test('canManage —— 显式声明门槛时才按声明的来', () => {
+  // 抬高：任免干事只给管理员
   assert.strictEqual(canManage(actor(ROLE.STAFF), { minRole: ROLE.ADMIN }), false);
   assert.strictEqual(canManage(actor(ROLE.ADMIN), { minRole: ROLE.ADMIN }), true);
+  // 保留给临场事务的干事档（实际业务里都还要再过 managesCollege）
+  assert.strictEqual(canManage(actor(ROLE.STAFF), { minRole: ROLE.STAFF }), true);
+  assert.strictEqual(canManage(actor(ROLE.MEMBER), { minRole: ROLE.STAFF }), false);
 });
 
 test('canManage —— 状态不可用时角色再高也没用', () => {
