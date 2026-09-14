@@ -459,7 +459,9 @@ async function rejectMatch(payload = {}, ctx) {
 
 /**
  * 撤销一场比赛，分数随之回滚（回滚方式见本文件头部说明）。
- * 管理员可撤任意一场；其余人只能撤自己录的。
+ * 只有管理员能撤——撤销改写的是已生效的账本，而录入者不是可信第三方
+ * （他是录分的人自己选的），放开就等于当事人可以单方面抹掉战绩。
+ * 录分错了走驳回（rejectMatch），那条路在比分生效之前，不涉及回滚。
  *
  * @param {Object} payload { id, reason }
  * @param {Object} ctx

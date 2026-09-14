@@ -1030,7 +1030,7 @@ async function revokeMatch(id, actor, reason) {
   if (match.status === MATCH_STATUS.REVOKED) {
     return { ok: false, match: null, message: '这场比赛已经作废了' };
   }
-  // 管理员可撤任意一场；其余人只能撤自己录的
+  // 撤销改写已生效的账本，只归管理员；录分错了走驳回（canConfirm）
   if (!canRevoke(match, actor, { role: roleOf(actor) })) {
     return { ok: false, match: null, message: '你无权撤销这场比赛' };
   }

@@ -219,11 +219,11 @@ test('buildRecordRow —— 已经有比分的比赛不再给「录分」', () =
   assert.strictEqual(row.canRecord, false);
 });
 
-test('buildRecordRow —— 撤销权：录入者可撤，管理员可撤，旁人不可撤', () => {
+test('buildRecordRow —— 撤销权：只有管理员有，录入者本人也没有', () => {
   const base = { userId: ME, nameOf: fakeNameOf, role: ROLE.MEMBER };
-  assert.strictEqual(buildRecordRow(pendingRecord(), base).canRevoke, true);
+  // ME 就是这一场的 recorder：撤销改写已生效的账本，当事人不能单方面行使
+  assert.strictEqual(buildRecordRow(pendingRecord(), base).canRevoke, false);
 
-  // 输家不能单方面删掉已确认的败绩来刷分
   assert.strictEqual(
     buildRecordRow(pendingRecord(), { ...base, userId: RIVAL }).canRevoke,
     false

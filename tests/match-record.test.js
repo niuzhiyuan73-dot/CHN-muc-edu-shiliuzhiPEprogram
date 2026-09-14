@@ -102,17 +102,24 @@ test('canConfirm —— 管理员可以确认任意一场（含自己没打的�
  * 三、撤销权
  * ============================================================ */
 
-test('canRevoke —— 管理员可以撤任意一场', () => {
+test('canRevoke —— 只有管理员能撤，撤谁的场次都行', () => {
   assert.strictEqual(canRevoke(DOUBLES, 'u03', { role: ROLE.ADMIN }), true);
   assert.strictEqual(canRevoke(DOUBLES, 'u99', { role: ROLE.ADMIN }), true);
 });
 
-test('canRevoke —— 普通会员只能撤自己录的', () => {
-  // 挡的是「输家删掉自己的败绩来刷分」
-  assert.strictEqual(canRevoke(DOUBLES, 'u01', { role: ROLE.MEMBER }), true);
-  assert.strictEqual(canRevoke(DOUBLES, 'u03', { role: ROLE.MEMBER }), false);
-  assert.strictEqual(canRevoke(DOUBLES, 'u01'), true, '角色缺省即普通会员');
-  assert.strictEqual(canRevoke(null, 'u01'), false);
+test('canRevoke —— 录入者本人也不再能撤', () => {
+  // 关键边界：u01 正是这一场的 recorder。撤销改写的是已生效的账本，
+  // 录入者是当事人自己选的，放开就等于「赢了我就把记录删掉」。
+  assert.strictEqual(isRecorder(DOUBLES, 'u01'), true, '前提：u01 确实是录入者');
+  assert.strictEqual(canRevoke(DOUBLES, 'u01', { role: ROLE.MEMBER }), false);
+  assert.strictEqual(canRevoke(DOUBLES, 'u01', { role: ROLE.STAFF }), false, '干事也不行');
+  assert.strictEqual(canRevoke(DOUBLES, 'u99', { role: ROLE.MEMBER }), false);
+});
+
+test('canRevoke —— 缺省角色即普通会员，且空入参一律不放行', () => {
+  assert.strictEqual(canRevoke(DOUBLES, 'u01'), false, '角色缺省即普通会员');
+  assert.strictEqual(canRevoke(null, 'u01', { role: ROLE.ADMIN }), false);
+  assert.strictEqual(canRevoke(DOUBLES, ''), false);
 });
 
 /* ============================================================

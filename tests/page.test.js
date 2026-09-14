@@ -21,6 +21,7 @@ const facade = require('../miniprogram/services/index.js');
 // 门面是「调用时才解析实现」，所以改这里的导出真的会作用到上面那层
 const mock = require('../miniprogram/services/mock.js');
 const {
+  ROLE,
   MATCH_STATUS,
   MATCH_OUTCOME,
   MATCH_TYPE,
@@ -2222,9 +2223,18 @@ function fillValidForm(page) {
  * 比赛页
  * ============================================================ */
 
-/** 造一个「已登录且审核通过」的会员——录入与撤销都要求这个身份 */
+/** 造一个「已登录且审核通过」的会员——录入要求这个身份 */
 function activeMember(overrides = {}) {
   return fakeMember({ _id: 'u06', status: 1, ...overrides });
+}
+
+/**
+ * 管理员。撤销是「改写已生效的账本」，只留给他。
+ * 用的是种子里那位真管理员（u01 巴特尔）：写接口查的是台账里的角色，
+ * 光把 userInfo 的 role 改大是骗不过门面的。
+ */
+function adminMember(overrides = {}) {
+  return activeMember({ _id: ADMIN_ID, nickName: '巴特尔', role: ROLE.ADMIN, ...overrides });
 }
 
 /** 一场可以直接提交的单打：我 vs 对手，11 分制三局两胜 */
@@ -2246,6 +2256,8 @@ function pendingParams() {
 
 const ME = 'u06';
 const RIVAL = 'u02';
+/** 种子里的管理员（u01 巴特尔） */
+const ADMIN_ID = 'u01';
 
 test('比赛页 —— 访客看不到台账，录入入口与空态都给登录引导', async () => {
   resetSession();
@@ -2419,12 +2431,18 @@ test('比赛页 —— 确认后成绩计入等级分，待确认标签随即空
   assert.ok(calls.toasts.some((text) => /已计入等级分/.test(text)));
 });
 
-test('比赛页 —— 撤销后分数回滚，理由留在台账里', async () => {
+test('比赛页 —— 管理员撤销后分数回滚，理由留在台账里', async () => {
   resetSession();
-  app.globalData.userInfo = activeMember();
+  app.globalData.userInfo = adminMember();
 
-  const { match } = await facade.submitMatch(pendingParams());
-  await facade.confirmMatch(match._id, ME);
+  // 让管理员本人就在场上：这样「我参与的」一栏里找得到它，写入端也会
+  // 按 u01 在种子里的角色（管理员）放行——两个「u01」必须是同一个人
+  const { match } = await facade.submitMatch({
+    ...pendingParams(),
+    teamA: [ADMIN_ID],
+    teamB: [RIVAL],
+  });
+  await facade.confirmMatch(match._id, RIVAL);
   const beforeRevoke = (await facade.getMatches()).length;
 
   const page = instantiate(matchConfig);
@@ -2433,7 +2451,7 @@ test('比赛页 —— 撤销后分数回滚，理由留在台账里', async () 
 
   const row = page.data.view.records.find((item) => item.matchId === match._id);
   assert.ok(row);
-  assert.strictEqual(row.canRevoke, true, '录入者应当能撤销自己录的比赛');
+  assert.strictEqual(row.canRevoke, true, '管理员应当能撤销这场');
 
   await page.onOpenAction({ currentTarget: { dataset: { matchId: match._id, kind: 'revoke' } } });
   page.onInputReason({ detail: { value: '这局其实没打完' } });
@@ -2453,12 +2471,42 @@ test('比赛页 —— 撤销后分数回滚，理由留在台账里', async () 
   assert.ok(calls.toasts.some((text) => /已撤销/.test(text)));
 });
 
-test('比赛页 —— 撤销不填理由被拦下，比赛原样不动', async () => {
+test('比赛页 —— 撤销权只在管理员手上，录入者本人也撤不动', async () => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
+  // ME 就是这一场的录入者
   const { match } = await facade.submitMatch(pendingParams());
   await facade.confirmMatch(match._id, ME);
+
+  const page = instantiate(matchConfig);
+  await page.onLoad();
+
+  const row = page.data.view.records.find((item) => item.matchId === match._id);
+  assert.ok(row);
+  assert.strictEqual(row.canRevoke, false, '撤销入口不该出现在普通会员的页面上');
+
+  // 就算绕过界面直接提交，写入端也要挡住——界面上的按钮不是权限边界
+  page.setData({
+    action: { open: true, matchId: match._id, kind: 'revoke' },
+    reason: '我自己录的，我想撤',
+  });
+  await page.onSubmitAction();
+
+  const ledgerRow = (await facade.getMatchRecords()).find((item) => item._id === match._id);
+  assert.strictEqual(ledgerRow.status, MATCH_STATUS.ACTIVE, '被挡下就不该动到状态');
+});
+
+test('比赛页 —— 撤销不填理由被拦下，比赛原样不动', async () => {
+  resetSession();
+  app.globalData.userInfo = adminMember();
+
+  const { match } = await facade.submitMatch({
+    ...pendingParams(),
+    teamA: [ADMIN_ID],
+    teamB: [RIVAL],
+  });
+  await facade.confirmMatch(match._id, RIVAL);
 
   const page = instantiate(matchConfig);
   await page.onLoad();

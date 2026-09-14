@@ -31,9 +31,10 @@ const {
 } = require('../miniprogram/utils/constants.js');
 
 /**
- * 管理类写入要由管理员或有干事权限的账号执行。
+ * 管理类写入要由管理员执行。
  * 种子里 u01 巴特尔是管理员、u02 张宇轩是干事；getCurrentUser() 答的是
- * 普通会员 u06，拿它去审核 / 发公告 / 管理赛事都会被权限闸门挡回来。
+ * 普通会员 u06。审核入会、发公告、管理赛事、撤销比赛这些「定盘子」的事
+ * 都归管理员（见 permission.js 顶部）——拿干事或普通会员去做都会被挡回来。
  */
 const ADMIN_ID = 'u01';
 const getManager = () => mock.getMember(ADMIN_ID);
@@ -491,7 +492,8 @@ describe('mock 数据源 —— 比赛录入与流转', () => {
       // 多了这一场，出场次数必然增加
       assert.equal(afterConfirm.matchCount, before.matchCount + 1);
 
-      const revoked = await mock.revokeMatch(match._id, me._id, '对手记错了比分');
+      // 撤销只归管理员——「改判」动的是已生效的账本，当事人不能自己抹掉
+      const revoked = await mock.revokeMatch(match._id, ADMIN_ID, '对手记错了比分');
       assert.equal(revoked.ok, true, revoked.message);
 
       const afterRevoke = (await mock.getMyProjects(me._id)).find(
@@ -510,7 +512,8 @@ describe('mock 数据源 —— 比赛录入与流转', () => {
       const me = await mock.getCurrentUser();
       const { match } = await mock.submitMatch(singlesDraft());
 
-      const noReason = await mock.revokeMatch(match._id, me._id, '   ');
+      // 撤销要管理员（me 是普通会员，先用他试只会撞上权限闸门，试不出理由校验）
+      const noReason = await mock.revokeMatch(match._id, ADMIN_ID, '   ');
       assert.equal(noReason.ok, false);
       assert.match(noReason.message, /理由/);
 
@@ -550,10 +553,37 @@ describe('mock 数据源 —— 比赛录入与流转', () => {
       const { match } = await mock.submitMatch(singlesDraft());
       await mock.confirmMatch(match._id, me._id);
 
-      assert.equal((await mock.revokeMatch(match._id, me._id, '第一次')).ok, true);
-      const again = await mock.revokeMatch(match._id, me._id, '第二次');
+      assert.equal((await mock.revokeMatch(match._id, ADMIN_ID, '第一次')).ok, true);
+      const again = await mock.revokeMatch(match._id, ADMIN_ID, '第二次');
       assert.equal(again.ok, false);
       assert.match(again.message, /已经作废/);
+    })
+  );
+
+  test(
+    '撤销只归管理员：录入者本人与干事都撤不动已生效的比赛',
+    withCleanStore(async () => {
+      const me = await mock.getCurrentUser();
+      const { match } = await mock.submitMatch(singlesDraft());
+      await mock.confirmMatch(match._id, me._id);
+      assert.equal((await mock.getMatchRecords({ status: MATCH_STATUS.ACTIVE })).some((m) => m._id === match._id), true);
+
+      // me 就是录入者：早先的口径放他撤销，等于让当事人自己抹掉战绩
+      const byRecorder = await mock.revokeMatch(match._id, me._id, '不想认这场');
+      assert.equal(byRecorder.ok, false);
+      assert.match(byRecorder.message, /无权撤销/);
+
+      // 干事同样不行：撤销不是临场事务，是改写账本
+      const staff = (await mock.getMembers()).find((m) => m.role === ROLE.STAFF);
+      if (staff) {
+        const byStaff = await mock.revokeMatch(match._id, staff._id, '想帮个忙');
+        assert.equal(byStaff.ok, false);
+        assert.match(byStaff.message, /无权撤销/);
+      }
+
+      // 被挡下就不该动到任何状态：比赛仍是生效的
+      const record = (await mock.getMatchRecords()).find((m) => m._id === match._id);
+      assert.equal(record.status, MATCH_STATUS.ACTIVE);
     })
   );
 
@@ -594,7 +624,7 @@ describe('mock 数据源 —— 比赛录入与流转', () => {
       assert.equal(rejected.match.action, 'reject');
 
       const c = (await mock.submitMatch(at('2026-05-03T18:00:00'))).match;
-      const revoked = await mock.revokeMatch(c._id, me._id, '重打了一场');
+      const revoked = await mock.revokeMatch(c._id, ADMIN_ID, '重打了一场');
       assert.equal(revoked.match.status, MATCH_STATUS.REVOKED);
       assert.equal(revoked.match.action, 'revoke');
     })

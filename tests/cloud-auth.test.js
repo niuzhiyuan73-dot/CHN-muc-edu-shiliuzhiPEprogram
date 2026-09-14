@@ -6,7 +6,7 @@
  *
  * 这一组测试把每条严格边界钉死：
  *   确认 —— 限对手方，录入方不能给自己盖章
- *   撤销 —— 限管理员或原录入者
+ *   撤销 —— 限管理员（它改写已生效的账本，录入者本人也不行）
  *   审核 / 公告 —— 限管理员（干事是学院范围角色，管不到这两件事），且不能审自己
  * 任何一条被「顺手放宽」，都会在这里变红。
  * ============================================================
@@ -234,37 +234,35 @@ test('驳回比赛 —— 必须给出理由，且只有对手方能驳回', asy
 
 /* ---------- 比赛撤销 ---------- */
 
-test('撤销比赛 —— 普通会员只能撤自己录的', async () => {
+test('撤销比赛 —— 只有管理员能撤，录入者本人也被挡下', async () => {
   const repo = createFixtureRepo();
-  const other = await contextFor(repo, 'openid-u03');
 
-  // m1 由 u01 录入，u03 既不是录入者也不是管理员
+  // m1 由 u01 录入。关键在于连录入者本人也不放行：撤销改写的是已生效的
+  // 账本，而录入者是谁由录分的人自己选，放开就等于「赢了我就把记录抹掉」。
+  const recorder = await contextFor(repo, 'openid-u01');
+  const mine = await dispatch('revokeMatch', { id: 'm1', reason: '录错了' }, recorder);
+  assert.equal(mine.data.message, '你无权撤销这场比赛');
+
+  const other = await contextFor(repo, 'openid-u03');
   const denied = await dispatch('revokeMatch', { id: 'm1', reason: '录错了' }, other);
   assert.equal(denied.data.message, '你无权撤销这场比赛');
 });
 
-test('撤销比赛 —— 录入者可以撤，理由是必填的', async () => {
-  const repo = createFixtureRepo();
-  const recorder = await contextFor(repo, 'openid-u01');
-
-  const noReason = await dispatch('revokeMatch', { id: 'm1' }, recorder);
-  assert.equal(noReason.data.message, '请填写撤销理由');
-
-  const done = await dispatch('revokeMatch', { id: 'm1', reason: '对手记错了' }, recorder);
-  assert.equal(done.data.ok, true);
-  assert.equal(done.data.match.action, 'revoke');
-
-  const again = await dispatch('revokeMatch', { id: 'm1', reason: '再撤一次' }, recorder);
-  assert.equal(again.data.message, '这场比赛已经作废了');
-});
-
-test('撤销比赛 —— 管理员可以撤别人的比赛', async () => {
+test('撤销比赛 —— 管理员可以撤别人的比赛，理由是必填的', async () => {
   const repo = createFixtureRepo();
   const admin = await contextFor(repo, 'openid-admin');
 
   // m2 由 u03 录入
+  const noReason = await dispatch('revokeMatch', { id: 'm2' }, admin);
+  assert.equal(noReason.data.message, '请填写撤销理由');
+
   const res = await dispatch('revokeMatch', { id: 'm2', reason: '重复录入' }, admin);
   assert.equal(res.data.ok, true);
+  assert.equal(res.data.match.action, 'revoke');
+  assert.equal(res.data.match.status, MATCH_STATUS.REVOKED);
+
+  const again = await dispatch('revokeMatch', { id: 'm2', reason: '再撤一次' }, admin);
+  assert.equal(again.data.message, '这场比赛已经作废了');
 
   // 撤销后分数整体重算：这场不再计入流水
   const list = await dispatch('getMatches', {}, admin);
