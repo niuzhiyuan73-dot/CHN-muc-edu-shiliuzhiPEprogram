@@ -1,11 +1,35 @@
-/* 实时计分台：横屏铺满，两块大按钮各占半边 */
+/*
+ * 实时计分台：横屏铺满一屏，不需要滚动。
+ *
+ * 【为什么纵向尺寸一律用 vh，而不是 rpx】
+ * rpx 按屏幕「长边」换算。横屏时长边是宽度（如 812），200rpx 会变成
+ * ~216px；而可用的高度只有 ~375px，顶栏 + 比分区一撑就溢出屏幕，于是
+ * 「判 A 得分」得下滑才点得到。改用 vh 后，纵向尺寸跟着「高度」缩，
+ * 屏幕多高都装得下一屏。横向留白才用 vw / rpx。
+ *
+ * 页面用 position: fixed 钉在视口上，配合 overflow: hidden：即便某台机型
+ * 的 vh 算法有出入，也只是裁掉一点，不会出现滚动条。
+ */
+page {
+  height: 100%;
+  overflow: hidden;
+}
+
 .page {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  overflow: hidden;
   box-sizing: border-box;
   background: #10161d;
   color: #ffffff;
+  /* 横屏刘海在左右两侧，躲开它 */
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
 }
 
 .hint {
@@ -13,62 +37,75 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 40rpx;
-  font-size: 30rpx;
+  padding: 0 6vw;
+  font-size: 3.2vh;
   color: #c9d1d9;
   text-align: center;
 }
 
 /* ---------- 顶栏 ---------- */
 .topbar {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16rpx 28rpx;
+  padding: 1.6vh 3vw;
   background: #182029;
 }
 
+/* 左侧信息可能很长：允许它收缩并被裁，别把右侧按钮挤出屏幕 */
 .scoreline {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
   display: flex;
   align-items: baseline;
 }
 
 .games {
-  font-size: 44rpx;
+  flex-shrink: 0;
+  font-size: 5vh;
   font-weight: 700;
-  letter-spacing: 4rpx;
+  letter-spacing: 0.3vw;
 }
 
 .game-index {
-  margin-left: 24rpx;
-  font-size: 26rpx;
+  flex-shrink: 0;
+  margin-left: 2vw;
+  font-size: 2.6vh;
   color: #8b98a6;
 }
 
 .format {
-  margin-left: 16rpx;
-  font-size: 24rpx;
+  flex-shrink: 0;
+  margin-left: 1.5vw;
+  font-size: 2.4vh;
   color: #8b98a6;
 }
 
 .referee {
-  margin-left: 20rpx;
-  font-size: 24rpx;
+  margin-left: 2vw;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 2.4vh;
   color: #f0c674;
 }
 
 .actions {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
 }
 
 .btn {
-  margin: 0 0 0 16rpx;
-  padding: 0 26rpx;
-  height: 60rpx;
-  line-height: 60rpx;
-  font-size: 26rpx;
-  border-radius: 30rpx;
+  margin: 0 0 0 1.6vw;
+  padding: 0 3vw;
+  height: 9vh;
+  line-height: 9vh;
+  font-size: 3.2vh;
+  border-radius: 4.5vh;
   color: #ffffff;
   background: #2a3542;
 }
@@ -97,13 +134,18 @@
 }
 
 /* ---------- 球场 ---------- */
+/* min-height: 0 是让 flex 子项真的能收缩，否则内容会把整页顶出屏幕 */
 .court {
   flex: 1;
+  min-height: 0;
   display: flex;
 }
 
 .side {
   flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -131,19 +173,20 @@
 }
 
 .team-name {
-  font-size: 32rpx;
-  color: #c9d1d9;
-  max-width: 80%;
+  max-width: 88%;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+  font-size: 4vh;
+  color: #c9d1d9;
 }
 
+/* 比分是主角：用 vh 定尺寸，横屏多高就给多大，且始终留在这一屏里 */
 .points {
-  margin: 10rpx 0;
-  font-size: 200rpx;
+  margin: 2vh 0;
+  font-size: 36vh;
   font-weight: 700;
-  line-height: 1.05;
+  line-height: 1;
 }
 
 .side.is-leading .points {
@@ -151,22 +194,32 @@
 }
 
 .tap-hint {
-  font-size: 24rpx;
+  font-size: 3.2vh;
   color: #6b7785;
 }
 
 /* ---------- 底部提示 ---------- */
+/* 绝对定位浮在底部：提示出现时不占布局高度，比分区不会因此被挤下去 */
 .notice {
-  padding: 12rpx 28rpx;
-  font-size: 26rpx;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 1.6vh 3vw;
+  text-align: center;
+  font-size: 2.8vh;
   color: #ffb4a2;
-  background: #2a1a1a;
+  background: rgba(42, 26, 26, 0.95);
 }
 
 .finished-tip {
-  padding: 12rpx 28rpx;
-  font-size: 26rpx;
-  color: #8ff0b5;
-  background: #10251b;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 1.6vh 3vw;
   text-align: center;
+  font-size: 2.8vh;
+  color: #8ff0b5;
+  background: rgba(16, 37, 27, 0.95);
 }

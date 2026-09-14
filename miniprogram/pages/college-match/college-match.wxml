@@ -21,6 +21,16 @@
 
   <block wx:else>
 
+    <!-- 实时计分入口：摆在这一页最上面。逐球计分是录分最常用的动作，
+         埋在底部提交栏里容易被忽略 -->
+    <view wx:if="{{view.canRecord}}" class="live-entry" bindtap="onGoLiveScore">
+      <view class="live-entry-text">
+        <view class="live-entry-title">实时计分</view>
+        <view class="live-entry-sub">横屏逐球计分，比分实时更新到各页面</view>
+      </view>
+      <view class="live-entry-arrow">›</view>
+    </view>
+
     <!-- ========== 小场信息 ========== -->
     <view class="card">
       <view class="rank-head">
@@ -99,8 +109,6 @@
     <!-- ========== 操作 ========== -->
     <view wx:if="{{view.canRecord}}" class="submit-bar">
       <view class="btn btn-outline submit-btn" bindtap="onBack">返回</view>
-      <!-- 小项也能改用横屏计分台逐球计分（有录分权才出现） -->
-      <view class="btn btn-outline submit-btn" bindtap="onGoLiveScore">实时计分</view>
       <view
         class="btn btn-primary submit-btn {{submitting ? 'btn-disabled' : ''}}"
         bindtap="onSubmit"

@@ -204,3 +204,42 @@
   font-size: var(--font-xs);
   line-height: 1.5;
 }
+
+/* ==================== 实时计分入口 ==================== */
+
+/* 这一页最先看到的动作：整块主色，摆在小场信息之上，不必滑到底部提交栏找 */
+.live-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-md);
+  padding: var(--space-md) var(--space-lg);
+  border-radius: var(--radius-md);
+  background: var(--color-primary);
+  box-shadow: 0 4rpx 16rpx rgba(30, 122, 85, 0.28);
+}
+
+.live-entry-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.live-entry-title {
+  font-size: var(--font-lg);
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.live-entry-sub {
+  margin-top: 4rpx;
+  font-size: var(--font-xs);
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.live-entry-arrow {
+  flex-shrink: 0;
+  margin-left: var(--space-sm);
+  font-size: 44rpx;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.9);
+}
