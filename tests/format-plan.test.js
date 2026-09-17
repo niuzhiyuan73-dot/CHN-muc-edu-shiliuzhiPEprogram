@@ -18,6 +18,7 @@ const assert = require('node:assert/strict');
 const {
   buildInitialMatches,
   planStageMatches,
+  findDependentMatches,
   planGroupPhase,
   knockoutBracket,
   derivePlacements,
@@ -560,3 +561,105 @@ function top8Matches(eventId) {
     mk(eventId, 3, BRACKET_STAGE.PLACEMENT, 1, 'p4', 'p8'),
   ]);
 }
+
+/* ============================================================
+ * 撤销前的自查
+ * ============================================================
+ * 签表是「排」出来的：确认一场会把下一轮落成真实的比赛记录，而写入侧
+ * 只补不覆盖、也没有删除。撤得回分数，却撤不掉已经排下去的那一轮，
+ * 于是要先问「后面还挂着场次没有」——有就让管理员从后往前撤。
+ * ============================================================ */
+
+describe('findDependentMatches —— 撤销前的自查', () => {
+  /**
+   * 签表比赛。mk 只把 eventId 编进 _id，真实草稿（见 draw.draftsFromPairs）
+   * 是把它落成字段的，而这个自查正是按字段分组，所以这里补上。
+   */
+  function bracket(eventId, round, stage, slot, status = MATCH_STATUS.ACTIVE) {
+    return { ...mk(eventId, round, stage, slot, 'p1', 'p2'), eventId, status };
+  }
+
+  const ids = (list) => list.map((m) => m._id);
+
+  test('后面轮次的比赛会挡路，末轮不挡', () => {
+    const semi = bracket('e1', 1, BRACKET_STAGE.MAIN, 0);
+    const final = bracket('e1', 2, BRACKET_STAGE.MAIN, 0, MATCH_STATUS.PENDING);
+    assert.deepEqual(ids(findDependentMatches({ match: semi, matches: [semi, final] })), [final._id]);
+    assert.deepEqual(findDependentMatches({ match: final, matches: [semi, final] }), []);
+  });
+
+  test('同一轮的邻场互不依赖，不挡', () => {
+    const a = bracket('e1', 1, BRACKET_STAGE.MAIN, 0);
+    const b = bracket('e1', 1, BRACKET_STAGE.MAIN, 1);
+    assert.deepEqual(findDependentMatches({ match: a, matches: [a, b] }), []);
+  });
+
+  test('季军赛挡半决赛，却不挡决赛 —— 两者同处第 2 轮', () => {
+    const semi = bracket('e1', 1, BRACKET_STAGE.MAIN, 0);
+    const final = bracket('e1', 2, BRACKET_STAGE.MAIN, 0);
+    const bronze = bracket('e1', 2, BRACKET_STAGE.BRONZE, 0, MATCH_STATUS.PENDING);
+    assert.deepEqual(
+      ids(findDependentMatches({ match: semi, matches: [semi, final, bronze] })).sort(),
+      [final._id, bronze._id].sort()
+    );
+    assert.deepEqual(
+      findDependentMatches({ match: final, matches: [semi, final, bronze] }),
+      [],
+      '决赛不靠季军赛，不该被它锁死'
+    );
+  });
+
+  test('小组循环的各轮彼此独立，不比轮次深浅', () => {
+    const g1 = bracket('e1', 1, BRACKET_STAGE.GROUP, 0);
+    const g2 = bracket('e1', 2, BRACKET_STAGE.GROUP, 0, MATCH_STATUS.PENDING);
+    assert.deepEqual(findDependentMatches({ match: g1, matches: [g1, g2] }), []);
+  });
+
+  test('小组赛喂出来的淘汰签表算「后面」', () => {
+    const g1 = bracket('e1', 1, BRACKET_STAGE.GROUP, 0);
+    const ko = bracket('e1', 1, BRACKET_STAGE.MAIN, 0, MATCH_STATUS.PENDING);
+    assert.deepEqual(ids(findDependentMatches({ match: g1, matches: [g1, ko] })), [ko._id]);
+  });
+
+  test('已经作废的下一轮不再挡路 —— 从后往前撤时它先走', () => {
+    const semi = bracket('e1', 1, BRACKET_STAGE.MAIN, 0);
+    const final = bracket('e1', 2, BRACKET_STAGE.MAIN, 0, MATCH_STATUS.REVOKED);
+    assert.deepEqual(findDependentMatches({ match: semi, matches: [semi, final] }), []);
+  });
+
+  test('别的赛事的场次不算数', () => {
+    const semi = bracket('e1', 1, BRACKET_STAGE.MAIN, 0);
+    const otherEvent = bracket('e2', 2, BRACKET_STAGE.MAIN, 0, MATCH_STATUS.PENDING);
+    assert.deepEqual(findDependentMatches({ match: semi, matches: [semi, otherEvent] }), []);
+  });
+
+  test('学院赛小场自成一张签表 —— 按 collegeEventId 分组，同样挡得住', () => {
+    // 小场刻意把 eventId 留空、改记 collegeEventId（见 college-tie.buildLegDrafts），
+    // 撤销走的却是同一个 revokeMatch，所以自查必须也认得出它们
+    const leg = (round, slot, status = MATCH_STATUS.ACTIVE) => ({
+      _id: `ce1@tie@${round}@${slot}`,
+      eventId: null,
+      collegeEventId: 'ce1',
+      round,
+      stage: BRACKET_STAGE.MAIN,
+      slot,
+      status,
+    });
+    const r1 = leg(1, 0);
+    const r1b = leg(1, 1);
+    const r2 = leg(2, 0, MATCH_STATUS.PENDING);
+    assert.deepEqual(ids(findDependentMatches({ match: r1, matches: [r1, r1b, r2] })), [r2._id]);
+    assert.deepEqual(
+      findDependentMatches({ match: r1, matches: [r1, r1b] }),
+      [],
+      '同一轮里各场小场互不依赖'
+    );
+  });
+
+  test('日常约球没有签表，永远撤得动；入参残缺也不抛', () => {
+    const daily = { _id: 'd1', eventId: null, teamA: ['p1'], teamB: ['p2'], status: MATCH_STATUS.ACTIVE };
+    assert.deepEqual(findDependentMatches({ match: daily, matches: [daily] }), []);
+    assert.deepEqual(findDependentMatches({ match: daily }), []);
+    assert.deepEqual(findDependentMatches(), []);
+  });
+});

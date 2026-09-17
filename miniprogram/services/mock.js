@@ -113,7 +113,12 @@ const {
   canRedraw,
 } = require('./draw.js');
 // 赛制阶段派发：循环 / 小组 / 复合赛制的推进与名次推导都在这里
-const { buildInitialMatches, planStageMatches, derivePlacements } = require('./format-plan.js');
+const {
+  buildInitialMatches,
+  planStageMatches,
+  findDependentMatches,
+  derivePlacements,
+} = require('./format-plan.js');
 const { buildProfilePatch } = require('./profile.js');
 const { getPoolRating } = require('../utils/rating.js');
 const {
@@ -1019,6 +1024,12 @@ async function rejectMatch(id, actor, reason) {
  * replaySeason 从零重算——赛前赛后的每一个分数都重新长出来，不存在
  * 「减去当初加的那几分」这种近似做法。这也是本模块敢让撤销立刻生效的原因。
  *
+ * 【分数撤得回，签表撤不回】
+ * 回滚只覆盖「算出来的东西」。签表是排出来的：确认一场会让 advanceEvent 把
+ * 下一轮存成真实的比赛记录，而这里同样只补不覆盖、也不删除。撤掉第 1 轮后，
+ * 第 2 轮那些场次仍留着作废的晋级者，等着被谁录个比分确认掉。所以与云端
+ * 一致，撤销前用 findDependentMatches 拦一道，要求从后往前撤。
+ *
  * @param {string} id
  * @param {string} actor
  * @param {string} reason 撤销理由，必填
@@ -1036,6 +1047,14 @@ async function revokeMatch(id, actor, reason) {
   }
   if (!String(reason || '').trim()) {
     return { ok: false, match: null, message: '请填写撤销理由' };
+  }
+  const dependent = findDependentMatches({ match, matches: load().ledger });
+  if (dependent.length > 0) {
+    return {
+      ok: false,
+      match: null,
+      message: `这场比赛已经排进了后面的 ${dependent.length} 场，请从最后一轮往前依次撤销`,
+    };
   }
 
   const patch = {

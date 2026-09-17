@@ -75,6 +75,32 @@ describe('applySeasonalReset —— 赛季软重置', () => {
     assert.throws(() => applySeasonalReset(1400, { retentionFactor: -0.1 }), /必须位于 0 到 1 之间/);
   });
 
+  test('保留系数非数字时抛出错误，不静默压分', () => {
+    // null 曾经能从范围检查里溜过去：null < 0 与 null > 1 都是 false，
+    // 于是 1400 × null 归零，全季所有人都被压成基准分——一声不吭。
+    for (const bad of [null, NaN, '0.5', {}, []]) {
+      assert.throws(
+        () => applySeasonalReset(1400, { retentionFactor: bad }),
+        /retentionFactor 必须是有效数字/,
+        `retentionFactor=${JSON.stringify(bad)} 应被拒`
+      );
+    }
+    // 不传 / 传 undefined 仍走默认值，不是错误
+    assert.equal(applySeasonalReset(1400, { retentionFactor: undefined }), resetTo(1400));
+    assert.equal(applySeasonalReset(1400, {}), resetTo(1400));
+  });
+
+  test('基准分非数字时抛出错误，不静默压分', () => {
+    for (const bad of [null, NaN, '1000', {}]) {
+      assert.throws(
+        () => applySeasonalReset(1400, { anchorRating: bad }),
+        /anchorRating 必须是有效数字/,
+        `anchorRating=${JSON.stringify(bad)} 应被拒`
+      );
+    }
+    assert.equal(applySeasonalReset(1400, { anchorRating: undefined }), resetTo(1400));
+  });
+
   test('结果始终是整数', () => {
     for (const r of [1001, 1234, 1567, 1899, 777]) {
       assert.ok(Number.isInteger(applySeasonalReset(r)));

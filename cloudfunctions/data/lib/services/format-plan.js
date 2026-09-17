@@ -19,8 +19,14 @@
  * 【为什么读操作要能凭空重推】
  * 比赛记录只存「事实」，阶段该排到哪一轮是从事实推出来的。这样：
  *   - 断点续跑天然成立：中途关掉小程序，回来照着已有比赛接着推；
- *   - 管理员删掉/撤销一场，状态自动回退，不会留下排错的下一轮。
+ *   - 管理员撤销一场，分数与名次随重放退回原样。
  * 因此本模块全部是纯函数：只读赛事、签表与比赛，产出「还缺哪些轮次」。
+ *
+ * 【重推推不掉的是什么】
+ * 「还缺哪些轮次」只做增量补入（advance 是「只补不覆盖」，见 match-handlers），
+ * 而写入侧没有删除。所以撤销撤得回分数，却撤不掉已经排下去的下一轮——它会
+ * 顶着一个作废了的晋级者留在台账里。这由 findDependentMatches 在撤销前拦下：
+ * 让管理员从后往前撤，签表才不会悬空。
  *
  * 【为什么名次也从这里推】
  * 循环赛的名次是算出来的，不是打出来的（淘汰赛恰恰相反）。名次页的
@@ -83,6 +89,102 @@ function buildInitialMatches(event, draw) {
 /** 该赛制的主淘汰阶段是不是双败 */
 function hasDoubleKnockout(format) {
   return DOUBLE_ELIM_FORMATS.includes(format);
+}
+
+/**
+ * 阶段的先后次序，供「撤销前的自查」判断谁排在谁后面。
+ *
+ * 【为什么小组赛单独给 0，且组内不比轮次深浅】
+ * 小组循环的「轮次」只是把一张循环表切成几段，第 2 轮并不依赖第 1 轮的
+ * 结果——撤掉第 1 轮的一场，不该连累第 2 轮里别人的比赛。淘汰阶段正相反：
+ * 第 2 轮的人是第 1 轮打上来的，撤了第 1 轮，第 2 轮就悬空了。所以只有
+ * 淘汰阶段才比轮次。
+ *
+ * 【为什么主签表 / 季军赛 / 排位赛同为 1，即「同一段时间线」】
+ * 这三者共用同一套轮次编号：季军赛与排位赛都挂在第 r 轮的负者上、被排成
+ * 第 r+1 轮，与「第 r 轮打完去排决赛」是同一个深度。给它们同一个 rank 再
+ * 比轮次，才问得出正确的依赖：
+ *   - 半决赛（主签表 r） vs 季军赛（r+1）：r+1 > r，挡 → 对，季军赛靠负者
+ *   - 决赛（主签表 r+1） vs 季军赛（r+1）：同轮，不挡 → 对，决赛不靠季军赛
+ * 若把季军赛另判为一个更晚的阶段，就会得出「决赛也靠季军赛」，把决赛一起
+ * 锁死，结果是整张签表谁也撤不动。
+ *
+ * 【为什么败者组 / 总决赛另算】
+ * 双败的败者组与胜者组交错推进（败者组某一轮接住胜者组某几轮掉下来的人），
+ * 光看轮次比不出先后，只能整组排在胜者组之后；总决赛再排在最后。这里宁可
+ * 保守——多拦一次只是让管理员多撤一场，漏拦却会留下一场打不了、也不该
+ * 存在的比赛。
+ */
+const STAGE_ORDER = {
+  [BRACKET_STAGE.GROUP]: 0,
+  [BRACKET_STAGE.MAIN]: 1,
+  [BRACKET_STAGE.WINNERS]: 1,
+  [BRACKET_STAGE.BRONZE]: 1,
+  [BRACKET_STAGE.PLACEMENT]: 1,
+  [BRACKET_STAGE.LOSERS]: 2,
+  [BRACKET_STAGE.GRAND_FINAL]: 3,
+};
+
+/**
+ * 这场比赛属于哪张签表。个人赛记在 eventId 上；学院赛小场刻意把 eventId
+ * 留空、改记 collegeEventId（见 college-tie.buildLegDrafts），两者各自成表。
+ * @param {Object} match
+ * @returns {string} 空串表示它不挂在任何签表上（日常约球）
+ */
+function bracketScope(match) {
+  if (!match) return '';
+  return match.eventId || match.collegeEventId || '';
+}
+
+/** 这场是不是「签表推出来的」：有签表、有轮次、有阶段。日常约球不是 */
+function isBracketMatch(match) {
+  return Boolean(
+    match &&
+      bracketScope(match) &&
+      match.stage !== undefined &&
+      STAGE_ORDER[match.stage] !== undefined &&
+      match.round !== undefined &&
+      match.round !== null &&
+      Number.isFinite(Number(match.round))
+  );
+}
+
+/**
+ * 撤销前的自查：找出「已经排在这场比赛之后」的场次。
+ *
+ * 【为什么需要这道闸门】
+ * 撤销靠重放把分数退回去，这对等级分是准的（见 replay.js）。但签表不是
+ * 算出来的，是**排出来**的：确认一场会经 advanceAfterConfirm 把下一轮落成
+ * 真实的比赛记录，而写入侧只给 upsert / patch、没有删除（见 repository.js）。
+ * 于是撤掉第 1 轮之后，第 2 轮那几场仍留在台账里，身上还带着「已经作废的
+ * 那个人」：它不会被删掉，也不会被重排覆盖（advance 是「只补不覆盖」），
+ * 只等着谁随手录个比分确认掉，凭空多出一场不该有的成绩。
+ *
+ * 本函数不动数据，只回答「撤不撤得动」：返回非空即表示后面还挂着场次。
+ * 让管理员从后往前撤（先撤决赛、再撤半决赛），签表就始终自洽。
+ *
+ * @param {Object} params
+ * @param {Object} params.match 准备撤销的那场
+ * @param {Array<Object>} [params.matches] 台账里的全部比赛（本函数自己按签表分组）
+ * @returns {Array<Object>} 挡在后面的场次；已作废的不算（从后往前撤时它们先走）
+ */
+function findDependentMatches({ match, matches } = {}) {
+  if (!isBracketMatch(match)) return [];
+  const scope = bracketScope(match);
+  const rank = STAGE_ORDER[match.stage];
+  const round = Number(match.round);
+
+  return (Array.isArray(matches) ? matches : []).filter((other) => {
+    if (!isBracketMatch(other)) return false;
+    if (other._id === match._id || bracketScope(other) !== scope) return false;
+    // 已经作废的那几场不再挡路
+    if (other.status === MATCH_STATUS.REVOKED) return false;
+
+    const otherRank = STAGE_ORDER[other.stage];
+    if (otherRank !== rank) return otherRank > rank;
+    // 同阶段：只有淘汰阶段才论深浅，小组循环的各轮彼此独立
+    return match.stage !== BRACKET_STAGE.GROUP && Number(other.round) > round;
+  });
 }
 
 /**
@@ -760,6 +862,7 @@ function groupRoundDrafts(event, item, roundNo) {
 module.exports = {
   buildInitialMatches,
   planStageMatches,
+  findDependentMatches,
   planGroupPhase,
   planSingleKnockout,
   knockoutBracket,

@@ -5,11 +5,16 @@
  * 一概不信；业务失败包在 ok({ok:false,…}) 里正常返回，只有基础设施故障
  * 才走顶层 fail（见 envelope.js）。
  *
- * 【为什么学院赛不改动回放缓存】
- * 回放输入是「比赛 + 个人赛 + 公告」，学院赛在 M2 只是一个「发布 + 收名单」
- * 的壳，既不算等级分也不算积分，不参与回放。所以发布、交名单、审名单都
- * 不需要 bumpSeason——它们读写的集合（college_events / college_entries）
- * 本就不在 getDataset 里，失效缓存既无必要，还白搭一次全场重放。
+ * 【学院赛哪些写操作要 bumpSeason】
+ * 判据不是「是不是学院赛」，而是「改动的集合进没进 getDataset」。回放输入是
+ * 「比赛 + 个人赛 + 公告」，所以：
+ *   - college_events / college_entries / college_ties：不在 getDataset 里，
+ *     发布、交名单、审名单、开大场、记弃权都不必失效缓存；
+ *   - **matches**：学院赛小场就存在这个集合里（startTie 生成），它既是回放
+ *     输入，也是 getMatchRecords / findRecord 的唯一来源。凡写它就必须 +1，
+ *     否则紧接着的「录分 / 开台计分」会在旧快照里找不到刚生成的场次。
+ * 判据看「写了哪个集合」，别看「属于哪条业务线」——这条区分曾经漏过，
+ * 后果是学院赛开台后录分直接报「找不到这场比赛」。
  *
  * 【名单为什么用「赛事 + 学院」当自然键】
  * 同一赛事同一学院只该有一份有效名单（D10）。把这两者压成 _id，重交时
@@ -482,6 +487,10 @@ async function startTie(payload = {}, ctx) {
       if (!existing) await tx.matches.insert(draft);
     }
     await tx.ties.update(tie._id, patch);
+    // 小场落的是 matches 集合，它经 dataset 读（按赛季版本号缓存）。
+    // 不 +1，刚生成的场次在下一次读里就查不到——录分与开台计分都会
+    // 报「找不到这场比赛」，要等某次无关写入才「自己好了」。
+    await bumpSeason(tx, { anchorTime: null, now: ctx.now });
     return { ...tie, ...patch };
   });
 
@@ -660,8 +669,10 @@ async function finishCollegeEvent(payload = {}, ctx) {
  * 小项比赛要到 startTie 才生成，而裁判本就是「录分之前」才指派。若进行中
  * 也禁掉，学院赛就永远指派不了裁判。只有已结束（胜负已定）才锁死。
  *
- * 【为什么不 bumpSeason】
- * 与个人赛同一理由：裁判不影响回放输入，不必让整季重放。
+ * 【为什么要 bumpSeason】
+ * 与 assignMatchReferee 同一条：小场是 matches 文档，而 referee 只从 dataset
+ * 读得到。不 +1，改派后的裁判在明细里看不见，权限收窄（参赛者不得再录分）
+ * 也不生效。此外这里还连带写了大场，大场虽不在 dataset 里，一并失效无害。
  *
  * @param {Object} payload { tieId, refereeId }
  * @param {Object} ctx
@@ -709,6 +720,8 @@ async function assignTieReferee(payload = {}, ctx) {
       matches.push({ ...leg, ...patch });
     }
     await tx.ties.update(payload.tieId, patch);
+    // 小场的 referee 从 dataset 读，必须让缓存失效（见上面说明）
+    await bumpSeason(tx, { anchorTime: null, now: ctx.now });
     return { record: { ...currentTie, ...patch }, matches };
   });
 

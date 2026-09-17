@@ -327,3 +327,143 @@ test('写操作让快照作废，冷启动后读到的仍是新流水', async ()
   const snapshot = await repo.rankings.get('current');
   assert.notEqual(snapshot.key, before.key, '版本号变了，快照的键也必须跟着变');
 });
+
+/* ---------- 写库必 +1：裁判与学院赛小场 ---------- */
+/*
+ * 等级分不落库、全靠重放，所以「读到的数据」是按赛季版本号缓存的。
+ * 凡是写了 matches / events 的动作都必须 bumpSeason，否则新值要等某次
+ * 无关写入才「自己好了」——表现为「指派了裁判却看不见」「刚开台就报
+ * 找不到这场比赛」。下面三条按「那个动作该让谁看见」来钉。
+ */
+
+/** 一条待确认的单打（裁判指派只认待确认） */
+function pendingSingles(id, teamA, teamB, matchTime = '2026-05-02T18:00:00') {
+  return {
+    _id: id,
+    matchType: 1,
+    pool: 'singles',
+    teamA,
+    teamB,
+    scoreA: [],
+    scoreB: [],
+    gamePoints: 11,
+    bestOf: 1,
+    winner: null,
+    location: '',
+    matchTime,
+    recorder: '',
+    eventId: null,
+    status: 0,
+  };
+}
+
+test('指派个人赛裁判让版本号 +1 —— 不 +1 就是「指派了看不见」', async () => {
+  const repo = createFixtureRepo({
+    matches: [...MATCHES, pendingSingles('p_ref', ['u01'], ['u02'])],
+  });
+  const admin = await contextFor(repo, 'openid-admin');
+
+  const before = await getDataset(admin);
+  assert.equal(before.ledger.find((m) => m._id === 'p_ref').referee, undefined, '前提：还没指派');
+
+  const res = await dispatch('assignMatchReferee', { matchId: 'p_ref', refereeId: 'u03' }, admin);
+  assert.equal(res.data.ok, true, res.data.message);
+
+  const season = await repo.seasons.get(SEASON_ID);
+  assert.equal(season.version, 1, 'referee 只从 dataset 读得到，写了就得让缓存失效');
+
+  const after = await getDataset(admin);
+  assert.notEqual(after, before, '版本变了，缓存必须失效');
+  assert.equal(
+    after.ledger.find((m) => m._id === 'p_ref').referee,
+    'u03',
+    '不 +1 的话，改派后的裁判在明细里看不见，参赛者也照样能录分'
+  );
+});
+
+/** 一场学院赛大场：双方排阵已齐，等管理员点「开始」 */
+function collegeFixture(overrides = {}) {
+  const lineup = (college, players) => ({
+    _id: `ln_${college}`,
+    eventId: 'ce1',
+    tieId: 't1',
+    college,
+    entries: [{ legNo: 1, players }],
+  });
+
+  return createFixtureRepo({
+    collegeEvents: [{ _id: 'ce1', title: '学院杯', location: '体育馆', status: 1 }],
+    ties: [
+      {
+        _id: 't1',
+        eventId: 'ce1',
+        round: 1,
+        stage: 'main',
+        slot: 1,
+        collegeA: '甲院',
+        collegeB: '乙院',
+        lineupA: true,
+        lineupB: true,
+        legs: [{ legNo: 1, discipline: 'MS', matchId: '' }],
+        status: 1,
+        ...overrides.tie,
+      },
+    ],
+    lineups: [lineup('甲院', ['u01']), lineup('乙院', ['u02'])],
+    ...overrides.repo,
+  });
+}
+
+test('开始大场让版本号 +1 —— 不 +1，刚生成的小场就查不到', async () => {
+  const repo = collegeFixture();
+  const admin = await contextFor(repo, 'openid-admin');
+
+  const legId = 'l_ce1_t1_1';
+  const before = await getDataset(admin);
+  assert.ok(!before.ledger.some((m) => m._id === legId), '前提：小场还没生成');
+
+  const res = await dispatch('startTie', { tieId: 't1' }, admin);
+  assert.equal(res.data.ok, true, res.data.message);
+  assert.deepEqual(res.data.legs.map((leg) => leg._id), [legId]);
+
+  const season = await repo.seasons.get(SEASON_ID);
+  assert.equal(season.version, 1, '小场落的是 matches 集合，必须让缓存失效');
+
+  const after = await getDataset(admin);
+  assert.notEqual(after, before);
+  assert.ok(
+    after.ledger.some((m) => m._id === legId),
+    '不 +1，紧接着的录分会报「找不到这场比赛」'
+  );
+});
+
+test('指派大场裁判让版本号 +1，且下发到名下小场', async () => {
+  const repo = collegeFixture({
+    tie: { status: 2, legs: [{ legNo: 1, discipline: 'MS', matchId: 'leg1' }] },
+    repo: {
+      matches: [
+        ...MATCHES,
+        { ...pendingSingles('leg1', ['u01'], ['u02']), collegeEventId: 'ce1', tieId: 't1' },
+      ],
+    },
+  });
+  const admin = await contextFor(repo, 'openid-admin');
+
+  const before = await getDataset(admin);
+  assert.equal(before.ledger.find((m) => m._id === 'leg1').referee, undefined, '前提：还没指派');
+
+  const res = await dispatch('assignTieReferee', { tieId: 't1', refereeId: 'u03' }, admin);
+  assert.equal(res.data.ok, true, res.data.message);
+  assert.deepEqual(res.data.matches.map((m) => m._id), ['leg1'], '一次指派要落到名下每一场小场');
+
+  const season = await repo.seasons.get(SEASON_ID);
+  assert.equal(season.version, 1, '小场的 referee 从 dataset 读，必须让缓存失效');
+
+  const after = await getDataset(admin);
+  assert.notEqual(after, before);
+  assert.equal(
+    after.ledger.find((m) => m._id === 'leg1').referee,
+    'u03',
+    '不 +1，小场看不到裁判，改派后的权限收窄也不生效'
+  );
+});

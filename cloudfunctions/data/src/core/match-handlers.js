@@ -39,7 +39,8 @@ const {
 const { canManage } = require('../../lib/services/permission.js');
 const { buildRoundMatches } = require('../../lib/services/draw.js');
 // 赛制阶段派发：单败排下一轮，循环排下一轮，小组赛在全部小组打完后转去排淘汰阶段
-const { planStageMatches } = require('../../lib/services/format-plan.js');
+// findDependentMatches：撤销前的自查——签表是「排」出来的，撤不掉已经排下去的下一轮
+const { planStageMatches, findDependentMatches } = require('../../lib/services/format-plan.js');
 const { MATCH_STATUS, ROLE, MATCH_COMPETITION, USER_STATUS } = require('../../lib/utils/constants.js');
 
 /**
@@ -463,6 +464,13 @@ async function rejectMatch(payload = {}, ctx) {
  * （他是录分的人自己选的），放开就等于当事人可以单方面抹掉战绩。
  * 录分错了走驳回（rejectMatch），那条路在比分生效之前，不涉及回滚。
  *
+ * 【为什么「已经排进下一轮」的就撤不动】
+ * 分数撤得回，签表撤不回。确认一场时 advanceAfterConfirm 已经把下一轮落成
+ * 真实的比赛记录，而写入侧只给 upsert / patch、没有删除（见 repository.js），
+ * 那个 advance 又是「只补不覆盖」。撤下去只会让下一轮顶着一个作废的晋级者
+ * 留在台账里，等着被谁录个比分确认掉。所以这里用 findDependentMatches 拦一道，
+ * 要求从最后一轮往前撤——先撤决赛，再撤半决赛，签表才始终自洽。
+ *
  * @param {Object} payload { id, reason }
  * @param {Object} ctx
  * @returns {Promise<Object>} {ok, match, message}
@@ -484,6 +492,18 @@ async function revokeMatch(payload = {}, ctx) {
   }
   if (!String(reason || '').trim()) {
     return ok({ ok: false, match: null, message: '请填写撤销理由' });
+  }
+  // 分数撤得回，签表撤不回：确认这场时已经把下一轮落成了真实记录，而写入侧
+  // 没有删除（见 repository.js），advance 又「只补不覆盖」。放任撤下去，下一轮
+  // 会顶着一个作废的晋级者留在台账里，随时可能被人录个比分确认掉。
+  // 挡在这里，让管理员从后往前撤（先撤决赛、再撤半决赛）。
+  const dependent = findDependentMatches({ match, matches: dataset.ledger });
+  if (dependent.length > 0) {
+    return ok({
+      ok: false,
+      match: null,
+      message: `这场比赛已经排进了后面的 ${dependent.length} 场，请从最后一轮往前依次撤销`,
+    });
   }
 
   const patched = await ctx.repo.transaction(async (tx) => {
@@ -513,9 +533,14 @@ async function revokeMatch(payload = {}, ctx) {
 /**
  * 指派 / 改派 / 取消一场比赛的裁判。**仅管理员**（Q3），且比赛尚未生效。
  *
- * 【为什么不 bumpSeason】
- * 裁判只影响「谁能录分、谁能确认」，与回放输入（比分、胜方）无关。让它
- * 失效整季缓存，等于每派一次裁判就白跑一遍全场重放。
+ * 【为什么要 bumpSeason】
+ * 这里曾经不 bump，理由是「裁判只影响权限，与回放输入无关」。这个前提是错的：
+ * referee 是 matches 文档上的字段，而读它的路径全部走 dataset ——
+ * canRecordScore / canConfirm 拿到的 match 来自 dataset.ledger，签表页渲染的
+ * 也是 ledger。不 +1 就会出现两种相反的错：
+ *   1. 权限收窄不生效：指派裁判后，参赛者仍能录分、能确认；
+ *   2. 被指派的裁判本人被拒：他看到的还是「没有裁判」的旧副本。
+ * 判据是「改没改 dataset 里的集合」，不是「这次改动与等级分有没有关系」。
  *
  * 【为什么在事务内复查】
  * 与确认 / 撤销同一手法：指派与「确认」并发时，只有一次能落地——否则会
@@ -559,6 +584,9 @@ async function assignMatchReferee(payload = {}, ctx) {
     const current = await tx.matches.getById(payload.matchId);
     if (!current || !canAssignReferee(current)) return null;
     await tx.matches.update(payload.matchId, patch);
+    // 裁判是从 dataset 读的（见上面说明），不 +1 就「指派了看不见」，
+    // 且权限收窄不生效
+    await bumpSeason(tx, { anchorTime: null, now: ctx.now });
     return { ...current, ...patch };
   });
 

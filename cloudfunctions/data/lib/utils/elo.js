@@ -360,8 +360,20 @@ function applySeasonalReset(currentRating, options = {}) {
   if (typeof currentRating !== 'number' || !Number.isFinite(currentRating)) {
     throw new Error('applySeasonalReset 的 currentRating 必须是有效数字');
   }
+  // 【为什么先判「是不是数字」，再判范围】
+  // null 过得去范围比较：`null < 0` 与 `null > 1` 都是假。放它进来，
+  // 1900 × null = 0，于是全员分数被悄悄压成锚定分——一次重置抹平整张榜，
+  // 且一声不吭。NaN 同理（任何比较都为假）。所以范围之前先排除非数字。
+  // 这两个参数来自落库的赛季文档（见 season.js 的 resetPolicy），
+  // 手工改库或老数据都可能给到 null；宁可在这里炸出来，也别静默算错分。
+  if (typeof retentionFactor !== 'number' || !Number.isFinite(retentionFactor)) {
+    throw new Error('retentionFactor 必须是有效数字');
+  }
   if (retentionFactor < 0 || retentionFactor > 1) {
     throw new Error('retentionFactor 必须位于 0 到 1 之间');
+  }
+  if (typeof anchorRating !== 'number' || !Number.isFinite(anchorRating)) {
+    throw new Error('anchorRating 必须是有效数字');
   }
 
   return normalizeZero(Math.round(currentRating * retentionFactor + anchorRating * (1 - retentionFactor)));

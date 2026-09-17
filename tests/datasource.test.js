@@ -1649,6 +1649,68 @@ describe('mock 数据源 —— 赛事闭环', () => {
   );
 
   test(
+    '撤销撤得回分数，撤不回签表 —— 已排进下一轮的挡下，从后往前才撤得动',
+    withCleanStore(async () => {
+      // 签表是「排」出来的，不是算出来的：确认一场会把下一轮落成真实的比赛
+      // 记录，而写入侧只补不覆盖、也没有删除。放任撤下去，决赛会顶着一个
+      // 作废的半决赛胜者留在台账里，等着被谁录个比分确认掉。
+      const members = await mock.getMembers();
+      const players = members.slice(0, 4).map((m) => m._id);
+      const host = players[0];
+
+      const { record } = await mock.publishEvent(eventDraft({ seedCount: 2 }), host);
+      const id = record._id;
+      for (const userId of players) await mock.signUpEvent(id, userId);
+      await mock.drawEvent(id, host, { seedValue: 11 });
+      await mock.startEvent(id, host);
+
+      // 一路打完，让引擎把后续轮次排出来
+      for (let guard = 0; guard < 12; guard += 1) {
+        const pending = (await mock.getMatchRecords({ eventId: id })).filter(
+          (m) => m.status === MATCH_STATUS.PENDING && m.teamA[0] && m.teamB[0]
+        );
+        if (pending.length === 0) break;
+        for (const match of pending) {
+          const scored = await mock.submitMatch({
+            id: match._id,
+            scoreA: ['11', '11'],
+            scoreB: ['3', '5'],
+            actor: match.teamA[0],
+          });
+          assert.equal(scored.ok, true, scored.firstError);
+          const confirmed = await mock.confirmMatch(match._id, match.teamB[0]);
+          assert.equal(confirmed.ok, true, confirmed.message);
+        }
+      }
+
+      const all = await mock.getMatchRecords({ eventId: id });
+      const semis = all.filter((m) => m.round === 1 && m.stage === BRACKET_STAGE.MAIN);
+      const downstream = all.filter((m) => m.round > 1 && m.status !== MATCH_STATUS.REVOKED);
+      assert.equal(semis.length, 2, '4 人单败首轮两场');
+      assert.ok(downstream.length > 0, '首轮打完应排出决赛（以及三四名赛）');
+
+      // 首轮撤不动：它的胜者已经写进后面那几场里了
+      const blocked = await mock.revokeMatch(semis[0]._id, ADMIN_ID, '半决赛录错了');
+      assert.equal(blocked.ok, false);
+      assert.match(blocked.message, /已经排进了后面的/);
+      assert.equal(
+        (await mock.getMatchRecords({ id: semis[0]._id }))[0].status,
+        MATCH_STATUS.ACTIVE,
+        '被挡下时不该改动任何状态'
+      );
+
+      // 从后往前撤：先撤掉后面那几场，首轮就撤得动了
+      for (const later of downstream) {
+        const undone = await mock.revokeMatch(later._id, ADMIN_ID, '重打');
+        assert.equal(undone.ok, true, undone.message);
+      }
+      const now = await mock.revokeMatch(semis[0]._id, ADMIN_ID, '半决赛录错了');
+      assert.equal(now.ok, true, now.message);
+      assert.equal(now.match.status, MATCH_STATUS.REVOKED);
+    })
+  );
+
+  test(
     'resetCache 清掉赛事与报名，编号也复位',
     withCleanStore(async () => {
       const me = await getManager();

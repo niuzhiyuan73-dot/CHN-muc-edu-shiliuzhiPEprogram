@@ -17,6 +17,7 @@ const assert = require('node:assert/strict');
 
 const facade = require('../miniprogram/services/index.js');
 const live = require('../miniprogram/services/live-score.js');
+const liveView = require('../miniprogram/services/live-view.js');
 const { HANDLERS, dispatch } = require('../cloudfunctions/data/src/core/dispatch.js');
 const {
   createFixtureRepo,
@@ -102,6 +103,51 @@ describe('实时比分状态机', () => {
     state = repeat(state, live.SIDE.A, 33);
     assert.equal(state.gamesA, 3);
     assert.equal(state.status, live.LIVE_STATUS.FINISHED);
+    assert.equal(state.gameIndex, 2, '三局都在，末局就是第 3 局');
+  });
+
+  test('终局 —— 停在末局：比分不清零、局数不虚增', () => {
+    let state = live.createLive(baseMatch());
+    state = repeat(state, live.SIDE.A, 22);
+    assert.equal(state.status, live.LIVE_STATUS.FINISHED);
+    assert.equal(state.gamesA, 2);
+    assert.equal(state.gamesB, 0);
+    assert.equal(state.gameIndex, 1, '第 2 局就是末局，不该再进一局');
+    assert.equal(state.pointsA, 11, '末局比分要留着，查看端显示的就是终局');
+    assert.equal(state.pointsB, 0);
+
+    // 查看端视图必须与之一致，否则页面会显示「已结束 · 第 4 局 · 0 : 0」
+    const view = live.liveScoreOf(state);
+    assert.equal(view.finished, true);
+    assert.equal(view.pointsA, 11);
+    assert.equal(view.gameIndex, 1);
+  });
+
+  test('终局 —— 赢完之后再塞进来的球不计分，但仍留在流水里', () => {
+    let state = live.createLive(baseMatch());
+    state = repeat(state, live.SIDE.A, 22);
+    assert.equal(state.pointsA, 11);
+
+    // 脏数据 / 连点：终局之后还往流水里塞球
+    state = live.applyRally(state, live.SIDE.B);
+    assert.equal(state.pointsA, 11, '终局比分纹丝不动');
+    assert.equal(state.pointsB, 0);
+    assert.equal(state.status, live.LIVE_STATUS.FINISHED);
+    assert.equal(state.rallies.length, 23, '流水照记——它是审计，不因结束而丢球');
+  });
+
+  test('终局撤销 —— 撤掉制胜球，末局比分与局数一起退回', () => {
+    let state = live.createLive(baseMatch());
+    state = repeat(state, live.SIDE.A, 22);
+    assert.equal(state.status, live.LIVE_STATUS.FINISHED);
+    assert.equal(state.gameIndex, 1);
+
+    state = live.undoRally(state);
+    assert.equal(state.status, live.LIVE_STATUS.LIVE, '制胜球一撤，比赛重新悬着');
+    assert.equal(state.pointsA, 10, '退回末局的第 10 分，而不是清成 0');
+    assert.equal(state.gameIndex, 1);
+    assert.equal(state.gamesA, 1);
+    assert.deepEqual(live.toOfficialScores(state), { scoreA: [11], scoreB: [0] });
   });
 
   test('撤销 —— 撤掉决定性的那一球，整场退回进行中', () => {
@@ -247,6 +293,17 @@ describe('实时比分（内存数据源）', () => {
     }
     assert.equal(state.status, 'finished');
     assert.equal(state.gamesA, 2);
+
+    // 终局的那一刻，查看端要看到的是终局比分，不是「已结束 · 第 4 局 · 0 : 0」
+    const lastBall = live.liveScoreOf(state);
+    assert.equal(lastBall.pointsA, 11);
+    assert.equal(lastBall.pointsB, 0);
+    assert.equal(lastBall.gameIndex, 1);
+    const text = liveView.describeLive(lastBall);
+    assert.equal(text.scoreText, '11 : 0');
+    assert.equal(text.gamesText, '2 : 0');
+    assert.equal(text.gameIndexText, '第 2 局');
+    assert.equal(text.statusLabel, '已结束');
 
     // 定稿：转成正式比分，仍是待确认
     const done = await facade.finishLiveScore(match._id, me);

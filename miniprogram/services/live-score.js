@@ -122,9 +122,16 @@ function gameWon(points, other, gamePoints) {
  * 更关键的是：撤销一球之后，状态必须与「从没判过那一球」完全一致——
  * 重算天然满足，增量更新迟早会留下残影。
  *
+ * 【为什么「打完最后一局」与「打完中间某一局」要分开处理】
+ * 中间某一局打完，确实该清零并进下一局。最后一局打完却不同：没有「下一局」
+ * 可进，那一局就是终局。若不分青红皂白地清零 +1，定稿前后的查看端会看到
+ * 「已结束 · 第 4 局 · 0 : 0」——比分归零、局数凭空多一局，真正的终局比分
+ * 反而被抹掉。所以整场结束时就停在末局：分数不清、局数不增。
+ *
  * @param {Array<Object>} rallies 逐球流水 [{ g, side, id? }]
  * @param {Object} format { gamePoints, bestOf }
  * @returns {{gameIndex:number, pointsA:number, pointsB:number, gamesA:number, gamesB:number, games:Array<{a:number,b:number}>, finished:boolean}}
+ *          gameIndex 是当前局的 0 起编号；整场已结束时指向末局
  */
 function replayRallies(rallies, format) {
   const list = Array.isArray(rallies) ? rallies : [];
@@ -140,8 +147,6 @@ function replayRallies(rallies, format) {
   const games = [];
 
   for (const rally of list) {
-    // 分出胜负之后的球不再计（脏数据 / 连点兜底），避免出现「赢完还在加分」
-    if (finished) break;
     const side = rally && rally.side;
     if (side !== SIDE.A && side !== SIDE.B) continue;
     if (side === SIDE.A) pointsA += 1;
@@ -154,12 +159,18 @@ function replayRallies(rallies, format) {
     if (aWon) gamesA += 1;
     else gamesB += 1;
     games.push({ a: pointsA, b: pointsB });
+
+    // 整场打完就收手：停在末局（分数不清零、局数不再 +1，见上面说明），
+    // 后面的球一律不再计——脏数据 / 连点会往流水里塞进「赢完还在加分」的球。
+    if (gamesA >= need || gamesB >= need) {
+      finished = true;
+      break;
+    }
+
     // 记一局、进下一局
     pointsA = 0;
     pointsB = 0;
     gameIndex += 1;
-
-    if (gamesA >= need || gamesB >= need) finished = true;
   }
 
   return { gameIndex, pointsA, pointsB, gamesA, gamesB, games, finished };
