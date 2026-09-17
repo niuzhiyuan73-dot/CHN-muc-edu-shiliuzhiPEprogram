@@ -267,9 +267,16 @@ function canSignUp(event, actor, options = {}) {
   // 已报名或已签到的，报名按钮不该再出现
   if (signup && signup.status !== SIGNUP_STATUS.CANCELED) return false;
 
-  // 名额满了就不放人进来；未设名额（0 / 缺省）视为不限
+  // 名额满了就不放人进来；未设名额（0 / 缺省）视为不限。
+  //
+  // 【这里不能再加「他已经有一条记录了」的豁免】
+  // 上一行已经把「非取消状态」的报名挡掉了，所以走到这里的人只可能是
+  // 从没报过名、或者退过赛。退赛的人退掉的是名额，重新报名就是重新占位，
+  // 与新人同一条尺子。曾经写成 `&& !signup`（即「有记录就不查名额」），
+  // 正好把「退过赛的人」整个豁免出去：满员 → 退赛让位 → 别人补上 → 他再
+  // 报一次，有效人数就超出上限，抽签时凭空多出一个人。
   const quota = Number(event.quota) || 0;
-  if (quota > 0 && signupCountOf(event, options.signups) >= quota && !signup) return false;
+  if (quota > 0 && signupCountOf(event, options.signups) >= quota) return false;
 
   return true;
 }

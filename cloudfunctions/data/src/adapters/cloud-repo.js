@@ -57,6 +57,13 @@ async function readDoc(scope, name, id) {
 
 /**
  * 整表读取，自动翻页。
+ *
+ * 【翻页为什么必须带 orderBy】
+ * skip/limit 是「先排序、再切一段」。不指定顺序时，数据库给出的次序没有
+ * 任何保证，两次翻页之间若有人写入（或本就无序），第 2 页可能与第 1 页
+ * 重叠、也可能整条漏掉。台账漏一条，等级分就少算一场，且查不出原因。
+ * 按 _id 升序是唯一稳定且不依赖业务字段的排法。
+ *
  * @param {Object} scope db
  * @param {string} name 集合名
  * @returns {Promise<Array<Object>>}
@@ -64,7 +71,12 @@ async function readDoc(scope, name, id) {
 async function readAll(scope, name) {
   const out = [];
   for (let offset = 0; ; offset += PAGE_SIZE) {
-    const res = await scope.collection(name).skip(offset).limit(PAGE_SIZE).get();
+    const res = await scope
+      .collection(name)
+      .orderBy('_id', 'asc')
+      .skip(offset)
+      .limit(PAGE_SIZE)
+      .get();
     const batch = (res && res.data) || [];
     for (const doc of batch) out.push(doc);
     if (batch.length < PAGE_SIZE) break;
@@ -80,7 +92,7 @@ function withoutId(doc) {
 }
 
 /**
- * 带等值条件读取，自动翻页。
+ * 带等值条件读取，自动翻页。翻页同理必须带 orderBy（见 readAll）。
  * @param {Object} scope db
  * @param {string} name 集合名
  * @param {Object} where 等值条件
@@ -89,7 +101,13 @@ function withoutId(doc) {
 async function readWhere(scope, name, where) {
   const out = [];
   for (let offset = 0; ; offset += PAGE_SIZE) {
-    const res = await scope.collection(name).where(where).skip(offset).limit(PAGE_SIZE).get();
+    const res = await scope
+      .collection(name)
+      .where(where)
+      .orderBy('_id', 'asc')
+      .skip(offset)
+      .limit(PAGE_SIZE)
+      .get();
     const batch = (res && res.data) || [];
     for (const doc of batch) out.push(doc);
     if (batch.length < PAGE_SIZE) break;

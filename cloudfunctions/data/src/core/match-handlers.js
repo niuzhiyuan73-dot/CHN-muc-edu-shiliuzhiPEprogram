@@ -24,7 +24,11 @@ const { getDataset } = require('./derive.js');
 const { bumpSeason } = require('./season.js');
 const { matchNaturalKey } = require('./idempotency.js');
 // 学院赛小场确认后，把结果写回大场并推进轮次（单向依赖，无环）
-const { advanceCollegeAfterLeg } = require('./college-advance.js');
+const {
+  advanceCollegeAfterLeg,
+  collegeLegRevokeBlocker,
+  revertCollegeAfterRevoke,
+} = require('./college-advance.js');
 const {
   canConfirm,
   canRevoke,
@@ -505,6 +509,10 @@ async function revokeMatch(payload = {}, ctx) {
       message: `这场比赛已经排进了后面的 ${dependent.length} 场，请从最后一轮往前依次撤销`,
     });
   }
+  // 学院赛小场的下游在大场那一侧（下一轮大场按胜者落成真实记录），
+  // findDependentMatches 只看 matches，够不着，得单独拦一道。
+  const collegeBlock = await collegeLegRevokeBlocker(ctx, match);
+  if (collegeBlock) return ok({ ok: false, match: null, message: collegeBlock });
 
   const patched = await ctx.repo.transaction(async (tx) => {
     const current = await tx.matches.getById(id);
@@ -527,6 +535,14 @@ async function revokeMatch(payload = {}, ctx) {
   });
 
   if (!patched) return ok({ ok: false, match: null, message: '这场比赛已经作废了' });
+
+  // 学院赛小场：把这一场的结果从大场里收回来（清胜负、必要时退回进行中）。
+  // 少了这一步，大场会一直记着已经退回去的那一场胜负——等级分退回了，
+  // 大场却还把晋级给了同一个人。
+  if (patched.competition === MATCH_COMPETITION.COLLEGE) {
+    await revertCollegeAfterRevoke(ctx, patched);
+  }
+
   return ok({ ok: true, match: patched, message: '' });
 }
 

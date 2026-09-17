@@ -18,6 +18,7 @@
 
 const {
   legResultOf,
+  revertLegResult,
   summarizeTie,
   nextRoundPairsOf,
   buildTiesForRound,
@@ -92,4 +93,67 @@ async function advanceCollegeAfterLeg(ctx, legMatch) {
   return { tiePatch, nextTies };
 }
 
-module.exports = { advanceCollegeAfterLeg };
+/**
+ * 撤销一场学院赛小场之前：这道撤销会不会把签表留在悬空状态。
+ *
+ * 与个人赛的 findDependentMatches 同一个道理（见 match-handlers.revokeMatch）：
+ * 分数撤得回，签表撤不回。大场一旦结束，下一轮大场就按它的胜者落成了真实
+ * 记录（advanceCollegeAfterLeg），而写入侧只给 upsert / patch、没有删除，
+ * 那个推进又是「只补不覆盖」。撤下去只会让下一轮顶着一个作废的晋级者留在
+ * 台账里。挡在这里，要求管理员从最后一轮往前撤。
+ *
+ * 另一种拦法在大场那一侧：撤的是决定性的那一场时，大场会再也打不完——小场
+ * 作废即终态，既不能重录也不能重开（见 revertLegResult）。
+ *
+ * @param {Object} ctx
+ * @param {Object} legMatch 待撤销的小场
+ * @returns {Promise<string>} 拒绝理由；可以撤时给空串
+ */
+async function collegeLegRevokeBlocker(ctx, legMatch) {
+  if (!legMatch || !legMatch.tieId) return '';
+
+  const tie = await ctx.repo.ties.getById(legMatch.tieId);
+  if (!tie) return ''; // 小场挂在一个查不到的大场上：不拦，撤销本身没问题
+
+  const ties = await ctx.repo.ties.listByEvent(tie.eventId);
+  const ahead = ties.filter((item) => Number(item.round) > Number(tie.round));
+  if (ahead.length > 0) {
+    return `这场大场的结果已经排进了第 ${ahead[0].round} 轮，请从最后一轮往前依次撤销`;
+  }
+
+  const event = await ctx.repo.collegeEvents.getById(tie.eventId);
+  const reverted = revertLegResult({ tie, event, legNo: legMatch.legNo });
+  return reverted && reverted.blocked ? reverted.blocked : '';
+}
+
+/**
+ * 撤销一场学院赛小场之后：把结果从大场里收回来（详见 revertLegResult）。
+ *
+ * 要在比赛记录已经作废之后再调——撤销失败（例如并发下已被别人撤掉）时不该
+ * 动大场。
+ *
+ * @param {Object} ctx
+ * @param {Object} legMatch 已作废的小场
+ * @returns {Promise<Object|null>} 写回大场的字段，没动过大场时给 null
+ */
+async function revertCollegeAfterRevoke(ctx, legMatch) {
+  if (!legMatch || !legMatch.tieId) return null;
+
+  let tiePatch = null;
+  await ctx.repo.transaction(async (tx) => {
+    // 与 advanceCollegeAfterLeg 同理：legs 是整份数组的整体写入，必须在事务里
+    // 重读，否则两场小项一前一后地撤会互相冲掉。
+    const tie = await tx.ties.getById(legMatch.tieId);
+    if (!tie) return;
+    const event = await ctx.repo.collegeEvents.getById(tie.eventId);
+    const reverted = revertLegResult({ tie, event, legNo: legMatch.legNo });
+    // 拦截已经在前置检查里做过；这里再判一次是为了「查到什么就是什么」
+    if (!reverted || !reverted.patch) return;
+
+    tiePatch = reverted.patch;
+    await tx.ties.update(tie._id, tiePatch);
+  });
+  return tiePatch;
+}
+
+module.exports = { advanceCollegeAfterLeg, collegeLegRevokeBlocker, revertCollegeAfterRevoke };

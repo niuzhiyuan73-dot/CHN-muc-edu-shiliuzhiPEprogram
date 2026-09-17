@@ -294,6 +294,26 @@ describe('canSignUp —— 报名判定', () => {
     assert.equal(canSignUp(openEvent({ quota: 2 }), member('m1'), { signups: list }), true);
   });
 
+  test('退过赛的人重新报名，同样要占名额（不再被豁免）', () => {
+    // 名额 2：a 在册、b 退了赛；此时 c 补上了空位 —— 有效人数已经满
+    const list = [
+      signupRecord('a'),
+      signupRecord('b', SIGNUP_STATUS.CANCELED),
+      signupRecord('c'),
+    ];
+    assert.equal(signupCountOf(openEvent(), list), 2);
+    // b 想再报一次：他就是退了赛的那个人，不能凭「有记录」白占第三个位子
+    assert.equal(
+      canSignUp(openEvent({ quota: 2 }), member('b'), { signups: list, signup: list[1] }),
+      false
+    );
+    // 少一个人时他就能回来
+    assert.equal(
+      canSignUp(openEvent({ quota: 3 }), member('b'), { signups: list, signup: list[1] }),
+      true
+    );
+  });
+
   test('抽签后名单冻结，再多的人也不能报名（决策 5）', () => {
     // 赛事仍是「报名中」，所以挡住他的必须是 draw 而不是状态
     const drawn = openEvent({ draw: { seedValue: 1 } });

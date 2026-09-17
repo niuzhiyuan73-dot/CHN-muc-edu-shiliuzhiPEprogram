@@ -526,3 +526,66 @@ describe('实时比分（云端）', () => {
     assert.deepEqual(res.data, []);
   });
 });
+
+/* ============================================================
+ * 四、定稿之后只读（缺陷修复）
+ * ============================================================
+ * 「打完」与「定稿」隔着一段时间：打完还能撤掉制胜球重来，这是正常的临场
+ * 更正。定稿之后不同——正式比分已经写进比赛记录，此时再撤会让实时态与比赛
+ * 记录各说各话。所以定稿那一刻在实时态上盖 finalizedAt 章，此后撤销与重复
+ * 定稿一律拒绝。
+ * ============================================================ */
+
+test('isFinalized —— 只认定稿章，不认「打完了」', () => {
+  assert.equal(live.isFinalized(null), false);
+  assert.equal(live.isFinalized({}), false);
+  assert.equal(live.isFinalized({ status: 'finished' }), false, '打完还能撤，不算定稿');
+  assert.equal(live.isFinalized({ status: 'finished', finalizedAt: new Date() }), true);
+});
+
+test('定稿后只读 —— 撤销判球与重复定稿都被拒，实时态保持终局', async () => {
+  const { match } = await setupSingles();
+  const me = match.teamA[0];
+
+  await facade.startLiveScore(match._id, me);
+  for (let i = 0; i < 22; i += 1) {
+    await facade.recordRally(match._id, 'A', me, { rallyId: `f${i}` });
+  }
+
+  const done = await facade.finishLiveScore(match._id, me);
+  assert.equal(done.ok, true, done.message);
+  assert.ok(done.live.finalizedAt, '定稿要在实时态上盖章');
+
+  // 撤销：正式比分已经交出去了，不能退
+  const undo = await facade.undoRally(match._id, me);
+  assert.equal(undo.ok, false);
+  assert.match(undo.message, /已经定稿/);
+  assert.equal(undo.live.pointsA, 11, '被拒之后比分不能动');
+  assert.equal(undo.live.gamesA, 2);
+
+  // 重复定稿：正式比分早交过了，不该再交一次
+  const again = await facade.finishLiveScore(match._id, me);
+  assert.equal(again.ok, false);
+  assert.match(again.message, /已经定稿/);
+});
+
+test('定稿后只读（云端）—— 撤销判球同样被拒', async () => {
+  const repo = liveFixture();
+  await cloudCall(repo, 'startLiveScore', { matchId: 'p_live' });
+  for (let i = 0; i < 22; i += 1) {
+    await cloudCall(repo, 'recordRally', { matchId: 'p_live', side: 'A', rallyId: `cf${i}` });
+  }
+
+  const done = await cloudCall(repo, 'finishLiveScore', { matchId: 'p_live' });
+  assert.equal(done.data.ok, true, done.data.message);
+  assert.ok(done.data.live.finalizedAt, '定稿要在实时态上盖章');
+
+  const undo = await cloudCall(repo, 'undoRally', { matchId: 'p_live' });
+  assert.equal(undo.data.ok, false);
+  assert.match(undo.data.message, /已经定稿/);
+  assert.equal(undo.data.live.pointsA, 11);
+
+  const again = await cloudCall(repo, 'finishLiveScore', { matchId: 'p_live' });
+  assert.equal(again.data.ok, false);
+  assert.match(again.data.message, /已经定稿/);
+});

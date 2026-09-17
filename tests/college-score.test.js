@@ -380,3 +380,91 @@ test('弃权 —— 大场还没开始不能记', async () => {
   assert.strictEqual(result.ok, false);
   assert.match(result.message, /还没开始/);
 });
+
+/* ============================================================
+ * 八、撤销小场要把大场一起退回去（缺陷修复）
+ * ============================================================
+ * 小场的结果在确认那一刻被抄进 tie.legs[]（见 legResultOf）。撤了小场却
+ * 不动大场，大场会一直记着已经退回去的那一场胜负——等级分退回了，大场却
+ * 还把那一场算成赢、把晋级给了同一个人。这里跑三条：撤得动的跟着退、
+ * 撤的是决定性的一场时拦下来、结果已经排进下一轮时也拦下来。
+ * ============================================================ */
+
+/** 取最新的某大场记录 */
+async function tieOf(eventId, tieId) {
+  return (await facade.getCollegeTies(eventId)).find((item) => item._id === tieId);
+}
+
+test('撤销小场 —— 大场跟着把这一场收回去，大场结论不受影响', async () => {
+  const { event, ties } = await setupOngoing();
+  const { tie } = await beginTie(ties[0]);
+
+  // 先赢一场：两小项「先到 2 场胜」，此时大场还没结束
+  await settleLeg(tie, 1, true);
+  const midway = await tieOf(event._id, tie._id);
+  assert.strictEqual(midway.status, TIE_STATUS.ONGOING);
+  assert.strictEqual(midway.legs[0].winner, tie.collegeA);
+  assert.strictEqual(midway.legs[0].scoreText, '11:5');
+
+  // 撤销这一场：大场里那一场的胜负与比分都要跟着作废
+  const legMatch = await legMatchOf(midway, 1);
+  const revoked = await facade.revokeMatch(legMatch._id, ADMIN._id, '人名记错了');
+  assert.strictEqual(revoked.ok, true, `撤销失败：${revoked.message}`);
+
+  const back = await tieOf(event._id, tie._id);
+  assert.strictEqual(back.legs[0].winner, null, '撤销了小场，大场不能还记着它赢了');
+  assert.strictEqual(back.legs[0].scoreText, '', '比分文本一并清掉');
+  assert.strictEqual(back.legs[0].pointsA, 0, '累计局分也要清');
+  assert.strictEqual(back.legs[0].matchId, legMatch._id, '编号留着，详情页还点得进去');
+  assert.strictEqual(back.status, TIE_STATUS.ONGOING);
+
+  // 剩下那一场照常录：小场的录分链路没被这次撤销带坏
+  await settleLeg(back, 2, true);
+  const after = await tieOf(event._id, tie._id);
+  assert.strictEqual(after.legs[1].winner, tie.collegeA);
+  assert.strictEqual(after.status, TIE_STATUS.ONGOING, '两场里只有一场有效，够不上「先到 2 场」');
+});
+
+test('撤销小场 —— 撤掉决定性的那一场被拒：作废即终态，大场会永远打不完', async () => {
+  const { event, ties } = await setupOngoing();
+  const { tie } = await beginTie(ties[0]);
+
+  await finishTie(tie, true);
+  const settled = await tieOf(event._id, tie._id);
+  assert.strictEqual(settled.status, TIE_STATUS.FINISHED);
+  assert.strictEqual(settled.winner, tie.collegeA);
+
+  const legMatch = await legMatchOf(settled, 1);
+  const blocked = await facade.revokeMatch(legMatch._id, ADMIN._id, '想重打');
+  assert.strictEqual(blocked.ok, false);
+  assert.match(blocked.message, /永远打不完/);
+
+  // 被拒之后一分不动，大场结论照旧
+  const kept = await tieOf(event._id, tie._id);
+  assert.strictEqual(kept.legs[0].winner, tie.collegeA);
+  assert.strictEqual(kept.status, TIE_STATUS.FINISHED);
+  assert.strictEqual(kept.winner, tie.collegeA);
+});
+
+test('撤销小场 —— 结果已经排进下一轮时拦下来，要求从最后一轮往前撤', async () => {
+  const { event, ties } = await setupOngoing(['MS']);
+  const first = (await beginTie(ties[0])).tie;
+  const second = (await beginTie(ties[1])).tie;
+
+  await finishTie(first, true);
+  await finishTie(second, false);
+
+  const round2 = (await facade.getCollegeTies(event._id)).filter(
+    (item) => Number(item.round) === 2
+  );
+  assert.strictEqual(round2.length, 1, '首轮打完自动生成决赛');
+
+  const legMatch = await legMatchOf(await tieOf(event._id, first._id), 1);
+  const blocked = await facade.revokeMatch(legMatch._id, ADMIN._id, '想重打');
+  assert.strictEqual(blocked.ok, false);
+  assert.match(blocked.message, /已经排进了第 2 轮/);
+
+  const kept = await tieOf(event._id, first._id);
+  assert.strictEqual(kept.status, TIE_STATUS.FINISHED);
+  assert.strictEqual(kept.legs[0].winner, first.collegeA);
+});

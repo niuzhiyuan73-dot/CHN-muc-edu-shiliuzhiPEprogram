@@ -53,6 +53,7 @@ const {
   // 与下面 mock 的同名写接口撞名，导入时改个前缀
   undoRally: undoLiveRally,
   hasRally,
+  isFinalized,
   liveScoreOf,
   toOfficialScores,
 } = require('./live-score.js');
@@ -88,6 +89,7 @@ const {
   buildTiesForRound,
   buildLegMatchDrafts,
   legResultOf,
+  revertLegResult,
   summarizeTie,
   nextRoundPairsOf,
   isEloEligibleMatch,
@@ -1056,6 +1058,9 @@ async function revokeMatch(id, actor, reason) {
       message: `这场比赛已经排进了后面的 ${dependent.length} 场，请从最后一轮往前依次撤销`,
     };
   }
+  // 学院赛小场的下游在大场那一侧，findDependentMatches 只看 matches，够不着
+  const collegeBlock = collegeLegRevokeBlocker(match);
+  if (collegeBlock) return { ok: false, match: null, message: collegeBlock };
 
   const patch = {
     status: MATCH_STATUS.REVOKED,
@@ -1066,7 +1071,13 @@ async function revokeMatch(id, actor, reason) {
   };
   matchStore.setStatus(id, patch);
   cache = null;
-  return { ok: true, match: { ...match, ...patch }, message: '' };
+
+  // 学院赛小场：把这一场的结果从大场里收回来（清胜负、必要时退回进行中）
+  const revoked = { ...match, ...patch };
+  if (revoked.competition === MATCH_COMPETITION.COLLEGE) {
+    revertCollegeAfterRevoke(revoked);
+  }
+  return { ok: true, match: revoked, message: '' };
 }
 
 /**
@@ -1312,6 +1323,10 @@ async function undoRally(matchId, actor) {
 
   const state = liveStore.get(matchId);
   if (!state) return { ok: false, live: null, message: '这场比赛还没开实时计分台' };
+  // 定稿之后正式比分已经写进比赛记录，此时再撤会让实时态与比赛记录各说各话。
+  if (isFinalized(state)) {
+    return { ok: false, live: state, message: '比赛已经定稿，不能再撤销判球' };
+  }
   if (!state.rallies || state.rallies.length === 0) {
     return { ok: false, live: state, message: '没有可撤销的判球' };
   }
@@ -1341,6 +1356,10 @@ async function finishLiveScore(matchId, actor) {
 
   const state = liveStore.get(matchId);
   if (!state) return { ok: false, live: null, match: null, message: '这场比赛还没开实时计分台' };
+  // 已经定稿过就别再交一次：正式比分早已写进比赛记录，重交只会白 bump 一次赛季
+  if (isFinalized(state)) {
+    return { ok: false, live: state, match: null, message: '比赛已经定稿了' };
+  }
   // 只有分出胜负才能定稿：半局比分（比如 5:2）不是一场合法比赛
   if (state.status !== LIVE_STATUS.FINISHED) {
     return { ok: false, live: state, match: null, message: '比赛还没打完，不能定稿' };
@@ -1358,7 +1377,9 @@ async function finishLiveScore(matchId, actor) {
 
   // 实时态留在台账里（status=finished），查看端据此显示终局；
   // 正式比分已经写进 matches，回放与积分都由那条走。
-  const done = liveStore.set({ ...state, updatedBy: actor, updatedAt: new Date() });
+  // 盖 finalizedAt 章：此后 undoRally 一律拒绝，实时态转只读。
+  const now = new Date();
+  const done = liveStore.set({ ...state, finalizedAt: now, updatedBy: actor, updatedAt: now });
   return { ok: true, live: done, match: submitted.match, message: '' };
 }
 
@@ -2281,6 +2302,46 @@ function advanceCollegeAfterLeg(legMatch) {
   // 只补不覆盖：已排过的轮次不重排，免得冲掉已录的比分
   const taken = new Set(collegeStore.listTies(tie.eventId).map((item) => item._id));
   collegeStore.saveTies(nextTies.filter((draft) => !taken.has(draft._id)));
+}
+
+/**
+ * 撤销一场学院赛小场之前：这道撤销会不会把签表留在悬空状态。
+ * 与云端 collegeLegRevokeBlocker 同一套规则。
+ *
+ * @param {Object} legMatch 待撤销的小场
+ * @returns {string} 拒绝理由；可以撤时给空串
+ */
+function collegeLegRevokeBlocker(legMatch) {
+  if (!legMatch || !legMatch.tieId) return '';
+  const tie = collegeStore.findTie(legMatch.tieId);
+  if (!tie) return '';
+  const ahead = collegeStore
+    .listTies(tie.eventId)
+    .filter((item) => Number(item.round) > Number(tie.round));
+  if (ahead.length > 0) {
+    return `这场大场的结果已经排进了第 ${ahead[0].round} 轮，请从最后一轮往前依次撤销`;
+  }
+  // 另一种拦法在大场那一侧：撤的是决定性的那一场时，大场会再也打不完
+  const event = collegeStore.findEvent(tie.eventId);
+  const reverted = revertLegResult({ tie, event, legNo: legMatch.legNo });
+  return reverted && reverted.blocked ? reverted.blocked : '';
+}
+
+/**
+ * 撤销一场学院赛小场之后：把结果从大场里收回来。
+ * 与云端 revertCollegeAfterRevoke 同一套规则，复用同一个纯函数。
+ *
+ * @param {Object} legMatch 已作废的小场
+ */
+function revertCollegeAfterRevoke(legMatch) {
+  if (!legMatch || !legMatch.tieId) return;
+  const tie = collegeStore.findTie(legMatch.tieId);
+  if (!tie) return;
+  const event = collegeStore.findEvent(tie.eventId);
+  const reverted = revertLegResult({ tie, event, legNo: legMatch.legNo });
+  // 拦截已经在前置检查里做过；这里再判一次是为了「查到什么就是什么」
+  if (!reverted || !reverted.patch) return;
+  collegeStore.updateTie(tie._id, reverted.patch);
 }
 
 /**

@@ -222,6 +222,24 @@ function undoRally(state) {
 }
 
 /**
+ * 这份实时态是不是已经定稿（正式比分已经交出去了）。
+ *
+ * 【为什么需要一个标记，而不是看状态】
+ * 「整场打完」（status = finished）与「定稿交分」隔着一段时间：打完还能
+ * 撤掉制胜那一球重来，这是正常的临场更正。定稿之后再撤就不同了——正式
+ * 比分已经写进比赛记录，此时把实时态退回「进行中」，查看端会看到一场
+ * 还没打完的比赛，而备战表里它已经有成绩了。两者各说各话，且比赛一旦
+ * 被对手确认（status 转已生效），实时台就永远停在「进行中」再也定不了稿。
+ * 所以定稿那一刻在实时态上盖个章，之后只读。
+ *
+ * @param {Object} state
+ * @returns {boolean}
+ */
+function isFinalized(state) {
+  return Boolean(state && state.finalizedAt);
+}
+
+/**
  * 这一球是不是已经记过（幂等去重）。
  * 断线重发 / 连点会给同一个 rallyId 发两次，服务端据此判重。
  *
@@ -293,6 +311,7 @@ module.exports = {
   applyRally,
   undoRally,
   hasRally,
+  isFinalized,
   liveScoreOf,
   toOfficialScores,
 };

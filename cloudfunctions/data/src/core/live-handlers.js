@@ -34,6 +34,7 @@ const {
   // 与下面的云端写接口撞名，导入时改个前缀
   undoRally: undoLiveRally,
   hasRally,
+  isFinalized,
   liveScoreOf,
   toOfficialScores,
 } = require('../../lib/services/live-score.js');
@@ -182,6 +183,11 @@ async function undoRally(payload = {}, ctx) {
   const result = await ctx.repo.transaction(async (tx) => {
     const current = await tx.liveScores.getById(id);
     if (!current) return { error: '这场比赛还没开实时计分台', live: null };
+    // 定稿之后正式比分已经写进比赛记录，此时再撤会让实时态与比赛记录各说各话
+    // （查看端看到一场没打完的比赛，备战表里它却已经有成绩了）。定稿即只读。
+    if (isFinalized(current)) {
+      return { error: '比赛已经定稿，不能再撤销判球', live: current };
+    }
     if (!current.rallies || current.rallies.length === 0) {
       return { error: '没有可撤销的判球', live: current };
     }
@@ -224,6 +230,10 @@ async function finishLiveScore(payload = {}, ctx) {
   if (!current) {
     return ok({ ok: false, live: null, match: null, message: '这场比赛还没开实时计分台' });
   }
+  // 已经定稿过就别再交一次：正式比分早已写进比赛记录，重交只会白 bump 一次赛季
+  if (isFinalized(current)) {
+    return ok({ ok: false, live: current, match: null, message: '比赛已经定稿了' });
+  }
   // 只有分出胜负才能定稿：半局比分（比如 5:2）不是一场合法比赛
   if (current.status !== LIVE_STATUS.FINISHED) {
     return ok({ ok: false, live: current, match: null, message: '比赛还没打完，不能定稿' });
@@ -248,7 +258,8 @@ async function finishLiveScore(payload = {}, ctx) {
 
   // 实时态留在台账里（status=finished），查看端据此显示终局；
   // 正式比分已经写进 matches，回放与积分都由那条走。
-  const done = { ...current, updatedBy: ctx.actorId, updatedAt: ctx.now };
+  // 盖 finalizedAt 章：此后 undoRally 一律拒绝，实时态转只读。
+  const done = { ...current, finalizedAt: ctx.now, updatedBy: ctx.actorId, updatedAt: ctx.now };
   await ctx.repo.liveScores.update(id, done);
   return ok({ ok: true, live: done, match: body.match, message: '' });
 }

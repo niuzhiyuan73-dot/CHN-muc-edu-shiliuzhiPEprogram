@@ -10,7 +10,7 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { replaySeason, isLateJoiner } = require('../miniprogram/services/replay.js');
+const { replaySeason, isLateJoiner, sortByTime } = require('../miniprogram/services/replay.js');
 const { generateSeed } = require('../miniprogram/services/seed.js');
 const { getPoolRating } = require('../miniprogram/utils/rating.js');
 const { DEFAULT_CONFIG, initialRatingFor } = require('../miniprogram/utils/elo.js');
@@ -936,5 +936,60 @@ describe('replaySeason —— 按性别取初始分', () => {
     const start = getPoolRating(userOf(result, 'g'), RATING_POOL.SINGLES).startElo;
 
     assert.equal(start, FEMALE_START, '一场未胜的女新人应被封顶在女会员初始分');
+  });
+});
+
+describe('回放排序 —— 必须是全序，等级分不能随扫描顺序漂移', () => {
+  /** 同一张签表里的一场比赛：与 draw.js 一致，整张签表共用同一时刻 */
+  function bracketMatch(id, round, slot, stage, teamA, teamB, winner) {
+    return {
+      _id: id,
+      matchType: MATCH_TYPE.SINGLES,
+      teamA,
+      teamB,
+      winner,
+      matchTime: new Date('2026-05-05T18:00:00'),
+      eventId: 'ev1',
+      round,
+      slot,
+      stage,
+      status: MATCH_STATUS.ACTIVE,
+    };
+  }
+
+  const bracket = [
+    bracketMatch('r1s0', 1, 0, 'main', ['a'], ['b'], 'A'),
+    bracketMatch('r1s1', 1, 1, 'main', ['c'], ['d'], 'A'),
+    bracketMatch('r2s0', 2, 0, 'main', ['a'], ['c'], 'A'),
+  ];
+
+  test('同一时刻的比赛按 轮次 → 签位 定序，与输入顺序无关', () => {
+    const ids = (list) => sortByTime(list).map((m) => m._id);
+    assert.deepEqual(ids(bracket), ['r1s0', 'r1s1', 'r2s0']);
+    assert.deepEqual(ids([...bracket].reverse()), ['r1s0', 'r1s1', 'r2s0']);
+    // 任意打乱都给出同一个次序
+    assert.deepEqual(ids([bracket[2], bracket[0], bracket[1]]), ['r1s0', 'r1s1', 'r2s0']);
+  });
+
+  test('缺时间 / 时间非法的排到最后，不影响正常场次的先后', () => {
+    const broken = { ...bracket[0], _id: 'zzz', matchTime: 'not-a-date' };
+    const ids = sortByTime([broken, ...bracket]).map((m) => m._id);
+    assert.deepEqual(ids, ['r1s0', 'r1s1', 'r2s0', 'zzz']);
+  });
+
+  test('回放结果不随输入顺序变化 —— 半决赛先于决赛，谁先扫到都一样', () => {
+    const members = ['a', 'b', 'c', 'd'].map((id) => ({ _id: id, nickName: id }));
+    const forward = replaySeason({ members, matches: bracket, events: [] });
+    const backward = replaySeason({ members, matches: [...bracket].reverse(), events: [] });
+
+    for (const id of ['a', 'b', 'c', 'd']) {
+      assert.equal(
+        getPoolRating(userOf(backward, id), RATING_POOL.SINGLES).elo,
+        getPoolRating(userOf(forward, id), RATING_POOL.SINGLES).elo,
+        `${id} 的等级分不该因为扫描顺序而不同`
+      );
+    }
+    // 冠军拿下两场、且决赛是先赢半决赛之后才打的
+    assert.equal(getPoolRating(userOf(forward, 'a'), RATING_POOL.SINGLES).elo > MALE_START, true);
   });
 });

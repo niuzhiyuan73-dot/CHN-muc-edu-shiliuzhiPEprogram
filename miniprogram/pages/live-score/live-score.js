@@ -218,8 +218,9 @@ Page({
     const view = liveScoreOf(state) || this.data.view;
     this.setData({
       view,
-      canUndo: Boolean(state && state.rallies && state.rallies.length > 0),
-      canFinish: Boolean(view && view.finished),
+      // 定稿之后实时态只读：撤分会与已经写进比赛记录的正式比分打架
+      canUndo: Boolean(state && state.rallies && state.rallies.length > 0 && !state.finalizedAt),
+      canFinish: Boolean(view && view.finished && !state.finalizedAt),
     });
   },
 
