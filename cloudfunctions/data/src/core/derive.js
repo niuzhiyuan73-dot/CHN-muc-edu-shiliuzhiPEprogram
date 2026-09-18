@@ -31,6 +31,7 @@
 
 const { replaySeason } = require('../../lib/services/replay.js');
 const { isEloEligibleMatch } = require('../../lib/services/college-tie.js');
+const { findCappedMatchIds } = require('../../lib/services/rating-cap.js');
 const { createNameResolver } = require('../../lib/utils/stats.js');
 const {
   USER_STATUS,
@@ -115,7 +116,14 @@ async function buildDataset(repo, season) {
   // 进回放的只有「计个人等级分」的比赛：已生效、非弃权，且学院赛里只有
   // 单打小场（双打小场只汇总大场，见 college-tie.isEloEligibleMatch）。
   // 台账仍是完整的 staged，录分页按编号取小场不受影响。
-  const activeOnly = staged.filter((match) => isEloEligibleMatch(match));
+  //
+  // 再排除防刷分超限的场次（见 rating-cap.js）：一对会员一个赛季最多
+  // RATED_PAIR_LIMIT 场日常约球计分，多出来的就不进流水了。与弃权同一路数
+  // ——「记录在案，但不计分」，台账仍是完整的 staged。
+  const cappedIds = findCappedMatchIds(staged, { seasonStart: season.resetTime });
+  const activeOnly = staged.filter(
+    (match) => isEloEligibleMatch(match) && !cappedIds.has(String(match._id))
+  );
 
   const replayed = replaySeason({
     members,

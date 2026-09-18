@@ -32,6 +32,7 @@ const { installCollegeDemo } = require('./college-demo.js');
 const { register: registerAccount } = require('./auth.js');
 const { canManage } = require('./permission.js');
 const { canResetSeason } = require('./season.js');
+const { findCappedMatchIds } = require('./rating-cap.js');
 const { REVIEW_ACTION, validateReview, validateCollegeLeader } = require('./member-review.js');
 const {
   canConfirm,
@@ -285,10 +286,23 @@ function buildCache() {
       return patch ? { ...match, ...patch } : match;
     });
 
+  // 本次会话若开始过新赛季，后面的积分切分与防刷分名额都以它为准。
+  // 口径与云端的 season.resetTime 一致。
+  const reset = seasonStore.getReset();
+
   // 进回放的只有「计个人等级分」的比赛：已生效、非弃权，且学院赛里只有
   // 单打小场（双打小场只汇总大场，见 college-tie.isEloEligibleMatch）。
   // 台账仍是完整的 afterStore，录分页按编号取小场不受影响。
-  const activeOnly = afterStore.filter((match) => isEloEligibleMatch(match));
+  //
+  // 再排除防刷分超限的场次（见 rating-cap.js）：一对会员一个赛季最多
+  // RATED_PAIR_LIMIT 场日常约球计分，多出来的就不进流水了。与弃权同一路数
+  // ——「记录在案，但不计分」；台账仍是完整的 afterStore，比赛记录页查得到。
+  const cappedIds = findCappedMatchIds(afterStore, {
+    seasonStart: reset ? reset.resetTime : null,
+  });
+  const activeOnly = afterStore.filter(
+    (match) => isEloEligibleMatch(match) && !cappedIds.has(String(match._id))
+  );
 
   // 2.5 赛事：种子接上本次会话新发的，再盖上改判（开始 / 结束与名次）。
   //     与比赛同一套路数——把 override 作用于拼接后的整条数组，于是种子里的
@@ -314,10 +328,8 @@ function buildCache() {
   // 3. 回放名单 = 种子会员 + 已通过审核的本地账号。
   //    注意 replaySeason 的参数名是 members（不是 users）：它返回的
   //    replayed.users 才是「回放后的会员」。
-  // 本次会话若开始过新赛季，把分界点交给回放：分界之前的赛事积分
-  // 不计入本赛季（见 replay.js 的 applyEventPoints）。等级分不受影响。
-  const reset = seasonStore.getReset();
-
+  // 开始过新赛季时把分界点交给回放：分界之前的赛事积分不计入本赛季
+  // （见 replay.js 的 applyEventPoints）。等级分不受影响。
   const replayed = replaySeason({
     ...seed,
     members: seed.members.concat(approved),

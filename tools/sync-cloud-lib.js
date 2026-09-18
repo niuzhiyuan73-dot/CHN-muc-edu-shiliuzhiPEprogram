@@ -68,6 +68,7 @@ const MANIFEST = [
   'services/profile.js',
   'services/permission.js',
   'services/season.js',
+  'services/rating-cap.js',
   'services/auth.js',
 ];
 

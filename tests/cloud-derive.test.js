@@ -16,6 +16,7 @@ const { dispatch } = require('../cloudfunctions/data/src/core/dispatch.js');
 const { getDataset, resetMemo } = require('../cloudfunctions/data/src/core/derive.js');
 const { SEASON_ID } = require('../cloudfunctions/data/src/core/season.js');
 const { USERS, MATCHES, NOW, createFixtureRepo, contextFor } = require('./helpers/cloud-fixture.js');
+const { RATED_PAIR_LIMIT } = require('../miniprogram/utils/constants.js');
 
 const MATCH_FORM = {
   matchType: 1,
@@ -466,4 +467,128 @@ test('指派大场裁判让版本号 +1，且下发到名下小场', async () =>
     'u03',
     '不 +1，小场看不到裁判，改派后的权限收窄也不生效'
   );
+});
+
+/* ---------- 防刷分上限 ---------- */
+
+/**
+ * 一连串日常单打：u01 对 u02，一天一场。
+ *
+ * 全部落在赛季区间内（夹具的赛季首场是 04-08，NOW 是 06-01），且没有
+ * eventId，因此都算「自行录入的比赛」。
+ */
+function singlesStreak(count, fromDay = 1) {
+  const matches = [];
+  for (let i = 0; i < count; i += 1) {
+    const day = String(fromDay + i).padStart(2, '0');
+    matches.push(singles(`c${fromDay + i}`, 'u01', 'u02', `2026-05-${day}T18:00:00`));
+  }
+  return matches;
+}
+
+test('防刷分 —— 同一对会员超过上限后，多出来的比赛进不了回放', async () => {
+  const repo = createFixtureRepo({ matches: singlesStreak(16) });
+  const ctx = await contextFor(repo, 'openid-u01');
+
+  const dataset = await getDataset(ctx);
+
+  assert.equal(dataset.ledger.length, 16, '台账要完整：比赛记录页仍查得到每一场');
+  assert.equal(dataset.matches.length, RATED_PAIR_LIMIT, '只有前 15 场进回放');
+  assert.ok(dataset.matches.some((m) => m._id === 'c15'), '第 15 场仍在额度内');
+  assert.ok(!dataset.matches.some((m) => m._id === 'c16'), '第 16 场超限，不该计分');
+});
+
+test('防刷分 —— 上限只压那一对，别人的比赛照常计分', async () => {
+  const repo = createFixtureRepo({
+    matches: singlesStreak(16).concat([
+      singles('other', 'u03', 'u04', '2026-05-20T18:00:00'),
+    ]),
+  });
+  const ctx = await contextFor(repo, 'openid-u01');
+
+  const dataset = await getDataset(ctx);
+
+  assert.equal(dataset.matches.length, RATED_PAIR_LIMIT + 1);
+  assert.ok(
+    dataset.matches.some((m) => m._id === 'other'),
+    'u03 与 u04 只打了这一场，不该被牵连'
+  );
+});
+
+test('防刷分 —— 赛事比赛不占日常名额', async () => {
+  // 同一对人先打 15 场赛事（不受限、也不占名额），再打 15 场日常
+  const eventMatches = [];
+  for (let i = 0; i < RATED_PAIR_LIMIT; i += 1) {
+    const day = String(i + 1).padStart(2, '0');
+    eventMatches.push({
+      ...singles(`e${i}`, 'u01', 'u02', `2026-05-${day}T18:00:00`),
+      eventId: 'ev1',
+    });
+  }
+  const repo = createFixtureRepo({ matches: eventMatches.concat(singlesStreak(15, 20)) });
+  const ctx = await contextFor(repo, 'openid-u01');
+
+  const dataset = await getDataset(ctx);
+
+  assert.equal(
+    dataset.matches.length,
+    RATED_PAIR_LIMIT * 2,
+    '赛事 15 场 + 日常 15 场都该计分：赛事既不设上限，也不占日常名额'
+  );
+});
+
+test('防刷分 —— 赛季分界点之前的场次不占本赛季名额', async () => {
+  const matches = singlesStreak(20); // 05-01 .. 05-20
+
+  // 没有分界点：整批都算本赛季，第 16 场起超限
+  const openRepo = createFixtureRepo({ matches });
+  const openCtx = await contextFor(openRepo, 'openid-u01');
+  const open = await getDataset(openCtx);
+  assert.ok(!open.matches.some((m) => m._id === 'c16'), '前提：不分赛季时 c16 本该被压');
+
+  // 本赛季从 05-06 开始：05-01..05-05 归上个赛季，本赛季正好 15 场
+  const repo = createFixtureRepo({ matches });
+  await repo.seasons.set(SEASON_ID, {
+    _id: SEASON_ID,
+    anchorTime: null,
+    resetTime: '2026-05-06T00:00:00',
+    seasonNumber: 2,
+    version: 1,
+  });
+  const ctx = await contextFor(repo, 'openid-u01');
+  const dataset = await getDataset(ctx);
+
+  assert.equal(dataset.matches.length, 20, '分界之前的场次不占名额，一场都不该被压');
+  assert.ok(dataset.matches.some((m) => m._id === 'c20'), '新赛季的名额重新给满');
+  assert.equal(dataset.ledger.length, 20, '两边的台账都应该是完整的');
+});
+
+test('防刷分 —— 待确认的场次也占名额', async () => {
+  // 15 场待确认（05-01..05-15）+ 15 场已生效（05-16..05-30）
+  const pending = singlesStreak(RATED_PAIR_LIMIT).map((m) => ({ ...m, status: 0 }));
+  const active = singlesStreak(RATED_PAIR_LIMIT, 16);
+  const repo = createFixtureRepo({ matches: pending.concat(active) });
+  const ctx = await contextFor(repo, 'openid-u01');
+
+  const dataset = await getDataset(ctx);
+
+  assert.equal(
+    dataset.matches.length,
+    0,
+    '名额被先提交的待确认场次占满，已在时间上排在后面的那些同样进不了回放'
+  );
+  assert.equal(dataset.ledger.length, RATED_PAIR_LIMIT * 2, '台账不受影响');
+});
+
+test('防刷分 —— 已撤销的场次不占名额，名额让给后面的比赛', async () => {
+  // 前 15 场全部撤销，第 16 场是第一场有效的
+  const revoked = singlesStreak(RATED_PAIR_LIMIT).map((m) => ({ ...m, status: 2 }));
+  const active = singlesStreak(1, 16);
+  const repo = createFixtureRepo({ matches: revoked.concat(active) });
+  const ctx = await contextFor(repo, 'openid-u01');
+
+  const dataset = await getDataset(ctx);
+
+  assert.equal(dataset.matches.length, 1, '撤销的场次把名额还了回来');
+  assert.ok(dataset.matches.some((m) => m._id === 'c16'));
 });

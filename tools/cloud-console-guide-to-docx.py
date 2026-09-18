@@ -466,6 +466,14 @@ def build():
     bullet(doc, "学院名次不计个人分，因此改 college_events.results 不需要动 seasons.version；但若改了学院赛小场的比分，需要把 version 加 1 让 ELO 重算。")
     bullet(doc, "弃权的小场（outcome='forfeit'）与双打小场都不计 ELO，改这些场次不会影响任何人的等级分。")
 
+    heading(doc, "7.6 防刷分超限的比赛不见了", 2)
+    para(doc, "有一类比赛「在 matches 集合里查得到，却不进成绩公示、也查不到分数变化」：同一对会员在一个赛季里已经打过 15 场日常约球，多出来的那几场。")
+    bullet(doc, "这不是数据丢了，是算出来的。上限写在代码里（miniprogram/utils/constants.js 的 RATED_PAIR_LIMIT），没有存在库里的「已超限」标记，改库改不掉。")
+    bullet(doc, "只有日常约球受这条限制：带 eventId（赛事）或 collegeEventId + tieId（学院赛小场）的比赛一律不受限、也不占日常名额。")
+    bullet(doc, "双打按跨队无序对算：一队两人对对手两人算四组对，任一组满额整场就不计分。")
+    bullet(doc, "赛季分界点（seasons/current.resetTime）之前的场次属于上一个赛季，不占本赛季名额。")
+    callout(doc, "要放宽或收紧这条规则，得改 RATED_PAIR_LIMIT 并重新上传云函数，同时把 season.js 的 ALGO_VERSION 加 1 —— 否则容器里缓存的旧分数不会重算，改了等于没改。", "注意")
+
     # ---------------- 八、导入历史成绩 ----------------
     heading(doc, "八、日常操作五：导入历史成绩", 1)
     numbered(doc, "用仓库里的 tools/import-matches.py 把历史 Excel 转成 matches 集合需要的 JSON。")

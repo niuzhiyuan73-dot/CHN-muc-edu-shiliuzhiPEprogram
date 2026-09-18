@@ -28,7 +28,9 @@ const {
   BRACKET_STAGE,
   SEED_MODE,
   EVENT_FORMAT,
+  MATCH_OUTCOME,
 } = require('../miniprogram/utils/constants.js');
+const { findCappedMatchIds } = require('../miniprogram/services/rating-cap.js');
 
 /**
  * 管理类写入要由管理员执行。
@@ -404,11 +406,35 @@ describe('mock 数据源 —— 比赛录入与流转', () => {
       const records = await mock.getMatchRecords();
       const active = await mock.getMatches();
 
+      assert.ok(records.length > 0);
+      // 流水里每一场都必须已生效——回放会把送进去的无条件改写成 ACTIVE，
+      // 所以「待确认不得进流水」只能靠数据层这一关（见下一条用例）
+      assert.ok(active.every((match) => match.status === MATCH_STATUS.ACTIVE));
+      // 流水是台账的子集，不会冒出台账里没有的比赛
+      const ledgerIds = new Set(records.map((record) => String(record._id)));
+      assert.ok(active.every((match) => ledgerIds.has(String(match._id))));
+
       // 演示赛事里排好签、还没开打的半决赛只进台账，不进成绩公示
       const pending = records.filter((record) => record.status === MATCH_STATUS.PENDING);
       assert.ok(pending.length > 0, '种子里应当留有待确认的演示场次');
-      assert.equal(records.length, active.length + pending.length);
-      assert.ok(records.length > 0);
+
+      // 台账比流水多出来的那些，每一场都要有个「不进流水」的理由：
+      // 待确认、已撤销、弃权、或防刷分超限。解释不清的就是比赛凭空丢了。
+      const activeIds = new Set(active.map((match) => String(match._id)));
+      const capped = findCappedMatchIds(records, { seasonStart: null });
+      const unexplained = records.filter((record) => {
+        if (activeIds.has(String(record._id))) return false;
+        if (record.status === MATCH_STATUS.PENDING) return false;
+        if (record.status === MATCH_STATUS.REVOKED) return false;
+        if (record.outcome === MATCH_OUTCOME.FORFEIT) return false;
+        if (capped.has(String(record._id))) return false;
+        return true;
+      });
+      assert.deepEqual(
+        unexplained.map((record) => record._id),
+        [],
+        '台账里有比赛既没进流水，又说不清为什么不算分'
+      );
     })
   );
 
