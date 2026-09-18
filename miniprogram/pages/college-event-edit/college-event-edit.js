@@ -35,6 +35,7 @@ const {
   DEFAULT_TIE_NET_MODE,
   ROSTER_LIMITS,
   DEFAULT_ALLOW_MULTI_ENTRY,
+  COURT_LIMITS,
 } = require('../../utils/constants.js');
 const {
   TITLE_MAX,
@@ -125,6 +126,10 @@ Page({
     rosterHardMin: ROSTER_LIMITS.MIN,
     rosterHardMax: ROSTER_LIMITS.MAX,
 
+    /** 场地数硬边界，交给输入提示 */
+    courtHardMin: COURT_LIMITS.MIN,
+    courtHardMax: COURT_LIMITS.MAX,
+
     /** 表单本体。tieAlgo 初值为默认算法，但净胜口径随算法显隐 */
     form: {
       title: '',
@@ -139,6 +144,8 @@ Page({
       location: '',
       date: '',
       time: '',
+      // 可用场地数：必填，初值留空（一个大场占一块场地）
+      courtCount: '',
     },
     /** 逐字段的错误提示 */
     errors: {},
@@ -197,6 +204,10 @@ Page({
 
   onInputLocation(event) {
     this.setField('location', event.detail.value);
+  },
+
+  onInputCourtCount(event) {
+    this.setField('courtCount', event.detail.value);
   },
 
   onInputRosterMin(event) {

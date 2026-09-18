@@ -39,7 +39,11 @@
       </view>
       <view class="event-meta">{{view.title}}</view>
       <view class="event-meta">{{view.roundText}} · {{view.legNoText}} · {{view.disciplineLabel}}</view>
-      <view class="event-meta">{{view.formatText}}<text wx:if="{{view.location}}"> · {{view.location}}</text></view>
+      <!-- 场号独立成标签：与「第 N 场」的签位号区分开，不要读成同一件事（Q8） -->
+      <view class="event-meta">{{view.formatText}}
+        <text wx:if="{{view.courtText}}" class="court-tag">{{view.courtText}}</text>
+        <text wx:if="{{view.location}}"> · {{view.location}}</text>
+      </view>
 
       <!-- 裁判：谁执法；收口提示只在「我录不了」时出现，免得挡了裁判自己 -->
       <view wx:if="{{view.hasReferee}}" class="referee-bar">

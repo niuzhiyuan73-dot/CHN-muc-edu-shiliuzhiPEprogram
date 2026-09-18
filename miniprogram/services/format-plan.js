@@ -56,6 +56,7 @@ const {
   formatOf,
   normalizeAdvancePerGroup,
 } = require('./draw.js');
+const { withCourts } = require('./court.js');
 
 /**
  * 抽签后生成第一批比赛。
@@ -72,18 +73,42 @@ function buildInitialMatches(event, draw) {
   if (!event || !event._id || !draw) return [];
   const format = formatOf(event);
 
-  if (Array.isArray(draw.groups) && draw.groups.length > 0) {
-    return draw.groups.flatMap((item) => groupRoundDrafts(event, item, 1));
-  }
+  // 分组赛制：一次把每个小组的第 1 轮都摆出来。场号必须在**全部小组铺完之后**
+  // 统一排（见 buildPlannedDrafts）——小组池是跨组共用的，逐组各排一次的话
+  // 每个组都会从 1 号场重新数，A 组与 B 组的第一轮就撞号了
+  const drafts =
+    Array.isArray(draw.groups) && draw.groups.length > 0
+      ? draw.groups.flatMap((item) => groupRoundDrafts(event, item, 1))
+      : buildRoundMatches(event, {
+          round: 1,
+          // 双败的首轮长在「胜者组」上，单败长在主签表上：stage 决定它归哪一区
+          stage: hasDoubleKnockout(format) ? BRACKET_STAGE.WINNERS : BRACKET_STAGE.MAIN,
+          pairs: chunkPairs(Array.isArray(draw.slots) ? draw.slots : []),
+          format: DEFAULT_FORMAT,
+        });
 
-  const slots = Array.isArray(draw.slots) ? draw.slots : [];
-  return buildRoundMatches(event, {
-    round: 1,
-    // 双败的首轮长在「胜者组」上，单败长在主签表上：stage 决定它归哪一区
-    stage: hasDoubleKnockout(format) ? BRACKET_STAGE.WINNERS : BRACKET_STAGE.MAIN,
-    pairs: chunkPairs(slots),
-    format: DEFAULT_FORMAT,
-  });
+  return withCourts(drafts, event.courtCount);
+}
+
+/**
+ * 把 planStageMatches 排出的各轮铺成比赛草稿，并统一排好场号。
+ *
+ * 【为什么场号要在这里统一排，而不是逐轮各排】
+ * planStageMatches 返回的是「一批」轮次：小组赛里 A 组第 2 轮与 B 组第 2 轮
+ * 会同时出现在这个数组里，而它们共用同一个场地池（见 court.poolKeyOf）。
+ * 逐轮各调一次分配，两组都会从 1 号场重新数，同一批里就撞号了。所以先全部
+ * 铺平、再整体分配——poolKeyOf 会按池归拢，不同轮次之间照样互不干扰。
+ *
+ * @param {Object} event 赛事记录（读 courtCount）
+ * @param {Array<Object>} rounds planStageMatches 的 rounds
+ * @returns {Array<Object>} 带 courtNo 的比赛草稿
+ */
+function buildPlannedDrafts(event, rounds) {
+  const drafts = (Array.isArray(rounds) ? rounds : []).reduce(
+    (all, roundPlan) => all.concat(buildRoundMatches(event, roundPlan)),
+    []
+  );
+  return withCourts(drafts, event && event.courtCount);
 }
 
 /** 该赛制的主淘汰阶段是不是双败 */
@@ -861,6 +886,7 @@ function groupRoundDrafts(event, item, roundNo) {
 
 module.exports = {
   buildInitialMatches,
+  buildPlannedDrafts,
   planStageMatches,
   findDependentMatches,
   planGroupPhase,

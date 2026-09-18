@@ -105,6 +105,7 @@ const validForm = (extra = {}) => ({
   location: '学校体育馆 1 号场',
   startTime: new Date('2026-05-01T10:00:00'),
   quota: 8,
+  courtCount: 4,
   ...extra,
 });
 

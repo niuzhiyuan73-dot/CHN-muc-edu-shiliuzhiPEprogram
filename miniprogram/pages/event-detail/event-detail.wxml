@@ -41,6 +41,10 @@
           <text class="event-info-value">{{view.event.levelLabel}} · {{view.event.matchTypeLabel}}{{view.event.disciplineLabel ? ' · ' + view.event.disciplineLabel : ''}} · {{view.event.formatLabel}}</text>
         </view>
         <view class="event-info-row">
+          <text class="event-info-label">场地数</text>
+          <text class="event-info-value">{{view.event.courtCountText}}</text>
+        </view>
+        <view class="event-info-row">
           <text class="event-info-label">名额</text>
           <text class="event-info-value">{{view.event.quotaText}}</text>
         </view>
@@ -126,6 +130,34 @@
       </view>
     </view>
 
+    <!-- ========== 场地分配表 ========== -->
+    <!-- 按场号分组，看得到每块场地上依次要打哪几场。全部由现有数据推得，
+         不需要新接口；批次没有落库，是这里重算出来的（见 buildCourtBoard） -->
+    <view wx:if="{{view.hasCourts}}" class="card">
+      <view class="rank-head">
+        <view class="rank-head-title">场地分配</view>
+        <view class="rank-head-count">{{view.event.courtCountText}}</view>
+      </view>
+
+      <view wx:for="{{view.courtBoard}}" wx:for-item="court" wx:key="courtNo" class="court-group">
+        <view class="court-group-title">{{court.courtText}}</view>
+        <view
+          wx:for="{{court.rows}}"
+          wx:for-item="row"
+          wx:key="matchId"
+          class="court-row"
+          data-match-id="{{row.matchId}}"
+          bindtap="onRecordMatch"
+        >
+          <text class="court-row-round">{{row.groupText ? row.groupText + ' · ' : ''}}{{row.roundText}}</text>
+          <text class="court-row-teams">{{row.teamAText}} vs {{row.teamBText}}</text>
+          <text class="tag {{row.statusClass}}">{{row.statusLabel}}</text>
+        </view>
+      </view>
+
+      <view class="field-hint">同一轮次的比赛不共用场地；场地数不够时，同一块场地上靠后的那几场依次进行</view>
+    </view>
+
     <!-- ========== 签表 ========== -->
     <view wx:if="{{view.hasBracket}}" class="card">
       <view class="rank-head">
@@ -133,7 +165,9 @@
       </view>
 
       <view wx:for="{{view.bracketRows}}" wx:key="matchId" class="bracket-row">
-        <view class="bracket-round">{{item.groupText ? item.groupText + ' · ' : ''}}{{item.roundText}}</view>
+        <view class="bracket-round">{{item.groupText ? item.groupText + ' · ' : ''}}{{item.roundText}}
+          <text wx:if="{{item.courtText}}" class="court-tag">{{item.courtText}}</text>
+        </view>
 
         <view class="bracket-main">
           <view class="bracket-teams">

@@ -52,6 +52,7 @@ const MANIFEST = [
   'utils/standings.js',
   // 纯逻辑服务
   'services/replay.js',
+  'services/court.js',
   'services/match-record.js',
   'services/live-score.js',
   'services/member-review.js',

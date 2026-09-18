@@ -38,6 +38,7 @@ const {
   SEED_COUNTS,
   DEFAULT_SEED_COUNT,
   DOUBLES_SEED_MODES,
+  COURT_LIMITS,
   disciplineOptionsFor,
 } = require('../../utils/constants.js');
 const {
@@ -160,6 +161,9 @@ Page({
     titleMax: TITLE_MAX,
     descriptionMax: DESCRIPTION_MAX,
     locationMax: LOCATION_MAX,
+    /** 场地数的提示区间，模板里拼进占位符 */
+    courtMin: COURT_LIMITS.MIN,
+    courtMax: COURT_LIMITS.MAX,
 
     /** 表单本体。level / bronzeMode 初值为空，必须由管理员选定 */
     form: {
@@ -184,6 +188,8 @@ Page({
       date: '',
       time: '',
       quota: '',
+      // 可用场地数：必填，初值留空，必须由管理员填
+      courtCount: '',
     },
     /** 逐字段的错误提示 */
     errors: {},
@@ -246,6 +252,10 @@ Page({
 
   onInputQuota(event) {
     this.setField('quota', event.detail.value);
+  },
+
+  onInputCourtCount(event) {
+    this.setField('courtCount', event.detail.value);
   },
 
   onPickMatchType(event) {

@@ -226,6 +226,8 @@ function installCollegeDemo(deps) {
       tieNetMode: TIE_NET_MODE.WIN_DIFF,
       startTime: '2026-09-20T09:00:00',
       location: '学校体育馆',
+      // 八进四那一轮有 4 个大场，正好摆得下 4 块场地
+      courtCount: 4,
     },
     ADMIN_ID
   );

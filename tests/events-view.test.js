@@ -924,6 +924,7 @@ test('赛事详情 —— 抽签后签表随详情下发，逐轮推进后决赛
         startTime: '2026-05-20T09:00:00',
         location: '学校体育馆',
         quota: 8,
+        courtCount: 4,
       },
       host
     );
@@ -987,6 +988,7 @@ test('赛事详情 —— 首轮某场被驳回后重抽，该签位恢复为待
         startTime: '2026-05-20T09:00:00',
         location: '学校体育馆',
         quota: 8,
+        courtCount: 4,
       },
       host
     );
@@ -1038,6 +1040,7 @@ test('赛事详情 —— 手工指定种子：下发候选人名单与需凑齐
         startTime: '2026-05-20T09:00:00',
         location: '学校体育馆',
         quota: 8,
+        courtCount: 4,
       },
       host
     );
@@ -1192,6 +1195,7 @@ test('赛事页 —— 管理员置顶学院赛排在列表最前，普通会员
         startTime: '2026-10-01T09:00:00',
         rosterMin: 1,
         rosterMax: 20,
+        courtCount: 4,
       },
       admin._id
     );

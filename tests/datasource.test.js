@@ -1198,6 +1198,7 @@ describe('mock 数据源 —— 赛事闭环', () => {
       startTime: '2026-05-20T09:00:00',
       location: '学校体育馆',
       quota: 8,
+      courtCount: 4,
       ...overrides,
     };
   }

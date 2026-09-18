@@ -120,6 +120,46 @@
   border-bottom: none;
 }
 
+/* ========== 场地分配表 ========== */
+.court-group {
+  margin-top: var(--space-sm);
+}
+
+.court-group-title {
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.court-row {
+  display: flex;
+  align-items: center;
+  margin-top: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: 8rpx;
+  background: var(--color-bg);
+  font-size: var(--font-xs);
+}
+
+.court-row-round {
+  flex-shrink: 0;
+  width: 150rpx;
+  color: var(--color-text-tertiary);
+}
+
+.court-row-teams {
+  flex: 1;
+  color: var(--color-text-secondary);
+}
+
+.court-tag {
+  margin-left: var(--space-xs);
+  padding: 0 8rpx;
+  border-radius: 4rpx;
+  background-color: var(--color-bg-subtle, #f0f2f5);
+  color: var(--color-text-secondary);
+}
+
 .bracket-round {
   flex-shrink: 0;
   width: 130rpx;

@@ -129,6 +129,14 @@
   color: var(--color-text-secondary);
 }
 
+.court-tag {
+  margin-left: var(--space-xs);
+  padding: 0 8rpx;
+  border-radius: 4rpx;
+  background-color: var(--color-bg-subtle, #f0f2f5);
+  color: var(--color-text-secondary);
+}
+
 .leg-list {
   margin-top: var(--space-sm);
   padding: var(--space-sm);

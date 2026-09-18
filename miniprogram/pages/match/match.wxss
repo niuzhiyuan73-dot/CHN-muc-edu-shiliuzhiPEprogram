@@ -217,6 +217,15 @@
   color: var(--color-text-tertiary);
 }
 
+/* 场号独立成一块标签，与「第 N 场」签位号区分开（Q8） */
+.match-court {
+  margin-left: var(--space-xs);
+  padding: 0 8rpx;
+  border-radius: 4rpx;
+  background-color: var(--color-bg-subtle, #f0f2f5);
+  color: var(--color-text-secondary);
+}
+
 .match-reason {
   margin-top: var(--space-xs);
   font-size: var(--font-xs);

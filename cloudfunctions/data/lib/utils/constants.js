@@ -303,6 +303,28 @@ const BRACKET_STAGE = {
 };
 
 /**
+ * 阶段的展示次序：小的在前。
+ *
+ * 【为什么要放在这里而不是留在赛事页】
+ * 它有两个消费方——赛事详情页的签表排序（events-view.buildBracketRows）
+ * 与场地分配（services/court.js）。后者要上云，读不到 miniprogram 里的
+ * 视图模块，所以两边共用的次序只能住在 constants 里。两处排序一旦分叉，
+ * 「界面上看到的先后」与「场号的先后」就会对不上。
+ *
+ * 让位给新增的 group 阶段。main 与 bronze 之间的相对位置不影响任何判定，
+ * 只影响同一轮里先给谁排场号。
+ */
+function stageOrder(stage) {
+  if (stage === BRACKET_STAGE.GROUP) return 0;
+  if (stage === BRACKET_STAGE.WINNERS) return 1;
+  if (stage === BRACKET_STAGE.LOSERS) return 2;
+  if (stage === BRACKET_STAGE.BRONZE) return 2;
+  if (stage === BRACKET_STAGE.PLACEMENT) return 3;
+  if (stage === BRACKET_STAGE.GRAND_FINAL) return 3;
+  return 1; // 正赛 / 未标注阶段
+}
+
+/**
  * 赛事赛制。
  *
  *   single_elim          —— 单败淘汰（历史缺省，抽签引擎原先唯一支持的形态）
@@ -946,6 +968,35 @@ const ROSTER_LIMITS = {
 const DEFAULT_ALLOW_MULTI_ENTRY = true;
 
 /**
+ * 可用场地数的边界。
+ *
+ * 【为什么是必填而不是「不限」】
+ * 场地数决定同一批能同时开打几场比赛。缺省成「不限」等于没有约束，
+ * 排出来的场号也就无从谈起——所以发布时必须显式填一个数，不许留空。
+ *
+ * 【为什么上限是 20】
+ * 与 ROSTER_LIMITS.MAX、学院赛 LEG_PLAN_MAX 同一量级：一个校园赛事同时
+ * 开二十块场地已经远超实际，再多只可能是填错了。下限 1 是因为「一块
+ * 场地都没有」的比赛排不出任何场号，没有意义。
+ */
+const COURT_LIMITS = {
+  MIN: 1,
+  MAX: 20,
+};
+
+/** 场地数文案：0 / 非法值一律显示「未设置」 */
+function courtCountTextOf(count) {
+  const value = Number(count);
+  return Number.isFinite(value) && value >= COURT_LIMITS.MIN ? `${value} 块场地` : '未设置';
+}
+
+/** 场号文案：1 号场；未分配（0 / 非法）时为空串，界面据此不显示 */
+function courtNoTextOf(courtNo) {
+  const value = Number(courtNo);
+  return Number.isFinite(value) && value >= 1 ? `${value} 号场` : '';
+}
+
+/**
  * 学院赛小场的赛制：11 分制、一局一胜。
  *
  * 【为什么写死而不是让管理员选】
@@ -1011,6 +1062,10 @@ module.exports = {
   EVENT_PLACEMENT_MODE,
   EVENT_PLACEMENT_MODE_LABEL,
   DEFAULT_PLACEMENT_MODE,
+  COURT_LIMITS,
+  courtCountTextOf,
+  courtNoTextOf,
+  stageOrder,
   GROUP_CONFIG,
   DEFAULT_GROUP_COUNT,
   DEFAULT_ADVANCE_PER_GROUP,

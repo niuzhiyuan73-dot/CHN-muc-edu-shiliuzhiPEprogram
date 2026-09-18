@@ -40,8 +40,11 @@ const {
   SIGNUP_STATUS,
   COLLEGE_EVENT_STATUS,
   isRankable,
+  stageOrder,
+  courtNoTextOf,
 } = require('../utils/constants.js');
 const { computeStandings } = require('../utils/standings.js');
+const { planCourts } = require('./court.js');
 const { derivePlacements, hasDoubleKnockout } = require('./format-plan.js');
 const { getPoolRating } = require('../utils/rating.js');
 const { buildLeaderboard } = require('../utils/leaderboard.js');
@@ -503,21 +506,6 @@ function buildResultRows(event, memberMap, actor = null) {
  * ============================================================ */
 
 /**
- * 阶段排序：小组赛在前，正赛次之，季军赛 / 败者组再次之，排位赛与总决赛最后。
- * main 与 bronze 的相对先后与此前一致（正赛在前、季军赛在后），只是整体
- * 让位给新增的 group 阶段。
- */
-function stageOrder(stage) {
-  if (stage === BRACKET_STAGE.GROUP) return 0;
-  if (stage === BRACKET_STAGE.WINNERS) return 1;
-  if (stage === BRACKET_STAGE.LOSERS) return 2;
-  if (stage === BRACKET_STAGE.BRONZE) return 2;
-  if (stage === BRACKET_STAGE.PLACEMENT) return 3;
-  if (stage === BRACKET_STAGE.GRAND_FINAL) return 3;
-  return 1; // 正赛 / 未标注阶段
-}
-
-/**
  * 一轮叫什么。
  *
  * 从最后一轮倒着数才不会因为签表大小不同而叫错：8 人签的最后一轮是
@@ -733,6 +721,9 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
         teamAText: teamTextOf(record.teamA, memberMap),
         teamBText: teamTextOf(record.teamB, memberMap),
         timeText: record.matchTime ? formatDateTime(record.matchTime) : '',
+        // 场号：抽签 / 晋级时按同轮次不重复的规则算好落库，这里只转文案。
+        // 老赛事没有这个字段，courtText 是空串而不是「0 号场」
+        courtText: courtNoTextOf(record.courtNo),
         scoreText: hasScore ? formatScore(record.scoreA, record.scoreB) : '',
         // 正在逐球计分的那一场：当前比分顶在终局比分的位置上（进行中 / 已结束）
         live: describeLive(record.live),
@@ -756,6 +747,56 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
     });
 }
 
+
+/**
+ * 场地分配表：按场号分组，每组按「该场地上的先后」列出要打的比赛。
+ *
+ * 【为什么要重算一遍，而不是读落库的 courtNo】
+ * 落库的只有 courtNo，批次（第几批开打）没有存（Q2）。要让管理员看出
+ * 「1 号场先打哪场、再打哪场」，就得把批序推出来，而批序只有把整批比赛
+ * 放回同一个纯函数里才算得准。重算的结果与落库的场号必然一致——分配函数
+ * 是确定性的，这正是它敢在写路径上被反复调用的前提（见 services/court.js）。
+ *
+ * 【为什么组内按签表次序排，而不是按批号排】
+ * 同池内的批序与签表次序本来就同向；不同池（不同轮次）之间批号各自从 1
+ * 起算，拿批号跨池比较会把第 2 轮的第 1 批排到第 1 轮的第 2 批前面。
+ * 签表次序天然是「一轮一轮打」，正是一个场地上的真实上场顺序。
+ *
+ * @param {Object} event 赛事记录（读 courtCount）
+ * @param {Array<Object>} records 该赛事的比赛台账
+ * @param {Array<Object>} rows buildBracketRows 的结果（已按签表次序排好）
+ * @returns {Array<{courtNo:number, courtText:string, rows:Array<Object>}>}
+ */
+function buildCourtBoard(event, records, rows) {
+  const courtCount = Number(event && event.courtCount);
+  if (!Number.isFinite(courtCount) || courtCount < 1) return [];
+
+  const list = asArray(records);
+  const plan = planCourts(list, courtCount);
+  const orderOf = new Map();
+  asArray(rows).forEach((row, index) => orderOf.set(row.matchId, index));
+  const rowOf = new Map(asArray(rows).map((row) => [row.matchId, row]));
+
+  const byCourt = new Map();
+  list.forEach((record, index) => {
+    const row = rowOf.get(record && record._id);
+    if (!row || !row.courtText) return;
+    const courtNo = plan[index].courtNo;
+    if (!byCourt.has(courtNo)) byCourt.set(courtNo, []);
+    byCourt.get(courtNo).push({ order: orderOf.get(record._id), row });
+  });
+
+  return Array.from(byCourt.keys())
+    .sort((a, b) => a - b)
+    .map((courtNo) => ({
+      courtNo,
+      courtText: courtNoTextOf(courtNo),
+      rows: byCourt
+        .get(courtNo)
+        .sort((a, b) => a.order - b.order)
+        .map((item) => item.row),
+    }));
+}
 
 /**
  * 把分组信息与比赛整形成积分表（循环赛 / 小组赛用）。
@@ -941,6 +982,8 @@ async function loadEventDetailView(eventId, options = {}) {
       seedUnit: '位种子',
       resultRows: [],
       hasResults: false,
+      courtBoard: [],
+      hasCourts: false,
     };
   }
 
@@ -957,6 +1000,8 @@ async function loadEventDetailView(eventId, options = {}) {
   const bracketRows = buildBracketRows(ledger, event, memberMap, { actor, isMock: mock });
   const standings = buildStandings(event, ledger, memberMap, actor);
   const resultRows = buildResultRows(event, memberMap, actor);
+  // 场地分配表完全由现有数据推得（Q2：批次不落库），不需要新接口
+  const courtBoard = buildCourtBoard(event, ledger, bracketRows);
 
   // 手工指定种子的候选名单就是有效报名者；顺序由管理员在页面上点出来，
   // 这里给的先后不重要——抽签的随机性只该来自 seedValue（见 draw.js）
@@ -976,6 +1021,8 @@ async function loadEventDetailView(eventId, options = {}) {
     signupsEmptyNote: '还没有人报名',
     bracketRows,
     hasBracket: bracketRows.length > 0,
+    courtBoard,
+    hasCourts: courtBoard.length > 0,
     standings,
     hasStandings: standings.some((group) => group.rows.length > 0),
     drawText: describeDraw(event.draw),
@@ -1208,6 +1255,7 @@ module.exports = {
   entryTextOf,
   byeTextOf,
   buildBracketRows,
+  buildCourtBoard,
   buildStandings,
   drawnTeamIds,
   buildTeamRows,

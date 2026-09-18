@@ -110,13 +110,13 @@ const {
 const {
   planDraw,
   buildDrawRecord,
-  buildRoundMatches,
   drawnEntryCount,
   canRedraw,
 } = require('./draw.js');
 // 赛制阶段派发：循环 / 小组 / 复合赛制的推进与名次推导都在这里
 const {
   buildInitialMatches,
+  buildPlannedDrafts,
   planStageMatches,
   findDependentMatches,
   derivePlacements,
@@ -974,12 +974,12 @@ function advanceEvent(id) {
 
   const taken = new Set(ledger.map((match) => match._id));
   let inserted = false;
-  plan.rounds.forEach((roundPlan) => {
-    buildRoundMatches(event, roundPlan).forEach((draft) => {
-      if (taken.has(draft._id)) return; // 排过的轮次不覆盖
-      matchStore.saveMatch(draft);
-      inserted = true;
-    });
+  // 场号由 buildPlannedDrafts 统一排：同一批里的 A 组与 B 组共用一个场地池，
+  // 逐轮各排一次会让两组都从 1 号场重新数（与云端同一条路径）
+  buildPlannedDrafts(event, plan.rounds).forEach((draft) => {
+    if (taken.has(draft._id)) return; // 排过的轮次不覆盖
+    matchStore.saveMatch(draft);
+    inserted = true;
   });
   if (inserted) cache = null;
 }

@@ -36,6 +36,8 @@ const {
   DEFAULT_TIE_NET_MODE,
   ROSTER_LIMITS,
   DEFAULT_ALLOW_MULTI_ENTRY,
+  COURT_LIMITS,
+  courtCountTextOf,
 } = require('../utils/constants.js');
 const { formatDate, formatPlacement } = require('../utils/format.js');
 const { canManage } = require('./permission.js');
@@ -63,6 +65,7 @@ const FIELD_ORDER = [
   'tieNetMode',
   'startTime',
   'location',
+  'courtCount',
 ];
 
 /** 合法的大场胜负算法集合 */
@@ -131,6 +134,9 @@ function normalizeDraft(form) {
     tieNetMode: text(source.tieNetMode) || DEFAULT_TIE_NET_MODE,
     location: text(source.location),
     startTime: source.startTime ? new Date(source.startTime) : null,
+    // 可用场地数：必填，不设缺省（与个人赛同一口径）。未填留 null 交给
+    // 校验去说「请填写」，不悄悄当成 1
+    courtCount: int(source.courtCount),
   };
 }
 
@@ -206,6 +212,15 @@ function validateCollegeEvent(form = {}) {
     errors.location = `场地最多 ${LOCATION_MAX} 个字`;
   }
 
+  // 场地数必填：一个大场占一块场地，签表按它给每个大场排场号
+  if (
+    !Number.isFinite(draft.courtCount) ||
+    draft.courtCount < COURT_LIMITS.MIN ||
+    draft.courtCount > COURT_LIMITS.MAX
+  ) {
+    errors.courtCount = `场地数需为 ${COURT_LIMITS.MIN}~${COURT_LIMITS.MAX} 的整数`;
+  }
+
   const firstFailed = FIELD_ORDER.find((field) => errors[field]);
 
   return {
@@ -260,6 +275,8 @@ function buildCollegeEventRecord(form, ctx = {}) {
       results: [],
       location: draft.location,
       startTime: draft.startTime,
+      // 可用场地总数：一个大场占一块场地，抽签时按它排场号，再下推到小场
+      courtCount: draft.courtCount,
       publishTime: now,
       publisherId: actor ? actor._id : '',
       publisherName: actor ? actor.nickName || actor.realName || actor._id : '',
@@ -454,6 +471,9 @@ function buildCollegeEventRow(event, ctx = {}) {
     tieNetModeLabel: tieNetModeLabelOf(source),
     startTimeText: formatDate(source.startTime),
     location: source.location || '',
+    // 可用场地数（如「3 块场地」）。老赛事没有这个字段，显示「未设置」
+    courtCount: Number(source.courtCount) || 0,
+    courtCountText: courtCountTextOf(source.courtCount),
     publisherName: source.publisherName || '',
     // 发布 / 审核 / 抽签 / 开始 / 结束 / 置顶都归管理员，一并用它
     canManage: canManageCollegeEvent(actor),

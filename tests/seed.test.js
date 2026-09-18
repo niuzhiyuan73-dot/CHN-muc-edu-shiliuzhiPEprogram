@@ -18,12 +18,15 @@ const {
 } = require('../miniprogram/services/seed.js');
 
 const { createSeededRandom } = require('../miniprogram/utils/random.js');
+// 种子里的场号必须与这个分配函数算出来的完全一致，测试直接重算一遍比对
+const { planCourts } = require('../miniprogram/services/court.js');
 const {
   MATCH_TYPE,
   MATCH_STATUS,
   RATING_POOL,
   EVENT_STATUS,
   SIGNUP_STATUS,
+  COURT_LIMITS,
 } = require('../miniprogram/utils/constants.js');
 const {
   GAME_POINTS_OPTIONS,
@@ -752,5 +755,105 @@ describe('generateSeed —— 赛事数据', () => {
         `双打赛事「${event.title}」不该带性别前缀`
       );
     }
+  });
+});
+
+describe('generateSeed —— 场地分配', () => {
+  /** 某场赛事自己的对局，保持种子返回的时间序 */
+  const matchesOf = (data, event) => data.matches.filter((m) => m.eventId === event._id);
+
+  test('每场赛事都带合法场地数、对局都排了场号，日常约球不排', () => {
+    const data = generateSeed();
+
+    for (const event of data.events) {
+      assert.ok(
+        Number.isInteger(event.courtCount) &&
+          event.courtCount >= COURT_LIMITS.MIN &&
+          event.courtCount <= COURT_LIMITS.MAX,
+        `赛事「${event.title}」的场地数 ${event.courtCount} 不合法`
+      );
+      for (const match of matchesOf(data, event)) {
+        assert.ok(
+          match.courtNo >= 1 && match.courtNo <= event.courtCount,
+          `${match._id} 的场号 ${match.courtNo} 超出了 1~${event.courtCount}`
+        );
+      }
+    }
+
+    // 约球没有场地可言，不能凭空捏一个场号（历史赛事读不到 courtNo 时同此口径）
+    for (const match of data.matches.filter((m) => m.eventId === null)) {
+      assert.equal(match.courtNo, undefined, `${match._id} 是日常约球，不该有场号`);
+    }
+  });
+
+  test('场号与 planCourts 重算结果逐场一致，换一个读库顺序也照样对得上', () => {
+    // 种子里排场号的方式与正式抽签同源：都拿这个纯函数现算。手写的场号一旦
+    // 与算法分叉，界面上「场地分配」表就会与签表里的场号打架——而这种不一致
+    // 光看数据是看不出来的。反过来，用逆序重算也检验了分配的可重入性。
+    const data = generateSeed();
+
+    for (const event of data.events) {
+      const shuffled = matchesOf(data, event).reverse();
+      const plan = planCourts(shuffled, event.courtCount);
+      shuffled.forEach((match, index) => {
+        assert.equal(
+          match.courtNo,
+          plan[index].courtNo,
+          `${match._id} 的场号与重算结果不符（逆序后算出了另一套）`
+        );
+      });
+    }
+  });
+
+  test('同一轮次不重号；场地不够时排到第二批（种子里确有这种赛事）', () => {
+    const data = generateSeed();
+    let batched = 0;
+
+    for (const event of data.events) {
+      const rounds = new Map();
+      for (const match of matchesOf(data, event)) {
+        if (!rounds.has(match.round)) rounds.set(match.round, []);
+        rounds.get(match.round).push(match.courtNo);
+      }
+
+      rounds.forEach((courtNos, round) => {
+        if (courtNos.length <= event.courtCount) {
+          assert.equal(
+            new Set(courtNos).size,
+            courtNos.length,
+            `「${event.title}」第 ${round} 轮有 ${courtNos.length} 场、${event.courtCount} 块场地，不该重号：${courtNos}`
+          );
+          return;
+        }
+        // 场地不够时必然重号，但每 N 场为一小批，批内仍然不重号
+        batched += 1;
+        for (let i = 0; i < courtNos.length; i += event.courtCount) {
+          const wave = courtNos.slice(i, i + event.courtCount);
+          assert.equal(
+            new Set(wave).size,
+            wave.length,
+            `「${event.title}」第 ${round} 轮第 ${i / event.courtCount + 1} 批重号了：${wave}`
+          );
+        }
+      });
+    }
+
+    // 只有「场地够用」的样本，分批这条分支在界面和演示里永远看不到，等于没做
+    assert.ok(batched > 0, '种子里没有任何场地不够的赛事，分批行为无从验收');
+  });
+
+  test('进行中的赛事：八进四占满 4 块场地，半决赛回到 1、2 号场', () => {
+    const data = generateSeed();
+    const event = data.events.find((item) => item.status === EVENT_STATUS.ONGOING);
+    const own = matchesOf(data, event);
+
+    const courtNosOf = (round) =>
+      own
+        .filter((match) => match.round === round)
+        .sort((a, b) => a.slot - b.slot)
+        .map((match) => match.courtNo);
+
+    assert.deepEqual(courtNosOf(1), [1, 2, 3, 4], '八进四四场应当一人一块场地');
+    assert.deepEqual(courtNosOf(2), [1, 2], '半决赛两场用 1、2 号场');
   });
 });

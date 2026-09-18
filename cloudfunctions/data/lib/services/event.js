@@ -64,6 +64,8 @@ const {
   ALL_LEG_DISCIPLINES,
   LEG_DISCIPLINE_LABEL,
   GENDER_LABEL,
+  COURT_LIMITS,
+  courtCountTextOf,
   disciplineMatchType,
   singleGenderOf,
   disciplineLabelOf,
@@ -95,6 +97,7 @@ const FIELD_ORDER = [
   'seedCount',
   'startTime',
   'location',
+  'courtCount',
   'quota',
 ];
 
@@ -482,6 +485,9 @@ function normalizeDraft(form) {
     startTime: source.startTime ? new Date(source.startTime) : null,
     // 名额：未填视为不限（0）
     quota: int(source.quota) === null ? 0 : int(source.quota),
+    // 可用场地数：必填，不设缺省——未填留 null 交给校验去说「请填写」，
+    // 悄悄当成 1 会让管理员以为排好了，实际全挤在一块场地上
+    courtCount: int(source.courtCount),
   };
 }
 
@@ -589,6 +595,16 @@ function validateEvent(form = {}) {
     errors.location = `场地最多 ${LOCATION_MAX} 个字`;
   }
 
+  // 场地数必填。它是唯一一个必填的「新增约束」——名额可以不填（不限），
+  // 但没有场地的比赛排不出场号，所以这里不给 0 也不给缺省
+  if (
+    !Number.isFinite(draft.courtCount) ||
+    draft.courtCount < COURT_LIMITS.MIN ||
+    draft.courtCount > COURT_LIMITS.MAX
+  ) {
+    errors.courtCount = `场地数需为 ${COURT_LIMITS.MIN}~${COURT_LIMITS.MAX} 的整数`;
+  }
+
   if (!Number.isFinite(draft.quota) || draft.quota < 0) {
     errors.quota = '名额必须是不小于 0 的整数';
   }
@@ -654,6 +670,9 @@ function buildEventRecord(form, ctx = {}) {
       location: draft.location,
       startTime: draft.startTime,
       quota: draft.quota,
+      // 可用场地总数：签表生成时按它给每场比赛排场号（services/court.js）。
+      // 发布后没有编辑接口（Q10 的结论），填错了只能重发赛事
+      courtCount: draft.courtCount,
       status: EVENT_STATUS.SIGNUP,
       // 名次在赛事结束后才录入，这里先占好位置，读的时候不必判 undefined
       results: [],
@@ -919,6 +938,9 @@ function buildEventRow(event, ctx = {}) {
     drawCount: (event.draw && event.draw.drawCount) || 0,
     signupCount: count,
     quotaText: quota > 0 ? `${count}/${quota} 人` : `${count} 人`,
+    // 可用场地数（如「3 块场地」）。老赛事没有这个字段，显示「未设置」
+    courtCount: Number(event && event.courtCount) || 0,
+    courtCountText: courtCountTextOf(event && event.courtCount),
     mySignupLabel: state.label,
     signedUp: state.signed,
     checkedIn: state.checkedIn,

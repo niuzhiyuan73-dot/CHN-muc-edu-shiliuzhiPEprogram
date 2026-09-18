@@ -41,10 +41,13 @@ const {
   canRecordScore,
 } = require('../../lib/services/match-record.js');
 const { canManage } = require('../../lib/services/permission.js');
-const { buildRoundMatches } = require('../../lib/services/draw.js');
 // 赛制阶段派发：单败排下一轮，循环排下一轮，小组赛在全部小组打完后转去排淘汰阶段
 // findDependentMatches：撤销前的自查——签表是「排」出来的，撤不掉已经排下去的下一轮
-const { planStageMatches, findDependentMatches } = require('../../lib/services/format-plan.js');
+const {
+  planStageMatches,
+  buildPlannedDrafts,
+  findDependentMatches,
+} = require('../../lib/services/format-plan.js');
 const { MATCH_STATUS, ROLE, MATCH_COMPETITION, USER_STATUS } = require('../../lib/utils/constants.js');
 
 /**
@@ -177,10 +180,9 @@ async function advanceAfterConfirm(ctx, eventId) {
   });
   if (!plan.ok) return;
 
-  const drafts = plan.rounds.reduce(
-    (all, roundPlan) => all.concat(buildRoundMatches(event, roundPlan)),
-    []
-  );
+  // 场号在这一步统一排：plan.rounds 里可能同时有 A 组第 2 轮与 B 组第 2 轮，
+  // 它们共用一个场地池，逐轮各排一次会让两组都从 1 号场重新数
+  const drafts = buildPlannedDrafts(event, plan.rounds);
   if (drafts.length === 0) return;
 
   await ctx.repo.transaction(async (tx) => {

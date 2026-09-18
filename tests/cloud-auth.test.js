@@ -582,6 +582,7 @@ test('置顶学院赛 —— 普通会员被挡下，管理员置顶后真落库
         startTime: '2026-10-01T09:00:00',
         rosterMin: 1,
         rosterMax: 20,
+        courtCount: 4,
       },
     },
     admin

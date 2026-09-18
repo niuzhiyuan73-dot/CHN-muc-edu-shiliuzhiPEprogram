@@ -1429,6 +1429,7 @@ async function publishTestEvent(overrides = {}) {
       location: '体育馆 1 号场',
       startTime: '2026-06-10T09:00:00',
       quota: 8,
+      courtCount: 4,
       ...overrides,
     },
     ADMIN._id
@@ -1764,6 +1765,7 @@ test('发布赛事 —— 填全后提交落库，并退回上一页', async () 
   page.onPickDate({ detail: { value: '2026-06-10' } });
   page.onPickTime({ detail: { value: '09:00' } });
   page.onInputQuota({ detail: { value: '8' } });
+  page.onInputCourtCount({ detail: { value: '4' } });
 
   const before = calls.backCount;
   await page.onSubmit();
@@ -1793,6 +1795,7 @@ test('发布赛事 —— 选循环赛落库带上赛制，组数与出线人数
   page.onPickDate({ detail: { value: '2026-06-10' } });
   page.onPickTime({ detail: { value: '09:00' } });
   page.onInputQuota({ detail: { value: '8' } });
+  page.onInputCourtCount({ detail: { value: '4' } });
 
   await page.onSubmit();
 
@@ -1823,6 +1826,7 @@ test('发布赛事 —— 小组赛可选出线人数，组数与出线人数一
   page.onPickDate({ detail: { value: '2026-06-10' } });
   page.onPickTime({ detail: { value: '09:00' } });
   page.onInputQuota({ detail: { value: '8' } });
+  page.onInputCourtCount({ detail: { value: '4' } });
 
   await page.onSubmit();
 
@@ -1870,6 +1874,7 @@ test('发布赛事 —— 选双败淘汰：可关掉总决赛重赛，组数与
   page.onPickDate({ detail: { value: '2026-06-10' } });
   page.onPickTime({ detail: { value: '09:00' } });
   page.onInputQuota({ detail: { value: '8' } });
+  page.onInputCourtCount({ detail: { value: '4' } });
 
   await page.onSubmit();
 
@@ -1917,6 +1922,7 @@ test('发布赛事 —— 小组赛+双败：2 组出线 2 人（共 4 人）正
   page.onPickSeedMode({ detail: { value: '1' } });
   page.onPickDate({ detail: { value: '2026-06-10' } });
   page.onPickTime({ detail: { value: '09:00' } });
+  page.onInputCourtCount({ detail: { value: '4' } });
 
   await page.onSubmit();
 
@@ -3637,6 +3643,7 @@ test('发布学院赛 —— 填齐配置可发布，落库即报名中', async 
   page.onPickDate({ detail: { value: '2026-10-01' } });
   page.onPickTime({ detail: { value: '09:00' } });
   page.onInputLocation({ detail: { value: '体育馆' } });
+  page.onInputCourtCount({ detail: { value: '4' } });
 
   // 默认先摆一项男单，点两次「+」依次补齐女单与男双，行号即出场顺序
   assert.deepStrictEqual(page.data.form.legPlan, ['MS']);
@@ -3664,6 +3671,7 @@ test('发布学院赛 —— 填齐配置可发布，落库即报名中', async 
   // 人数留空取默认区间；算法默认打满比净胜
   assert.strictEqual(list[0].rosterMin, 4);
   assert.strictEqual(list[0].rosterMax, 20);
+  assert.strictEqual(list[0].courtCount, 4);
   assert.strictEqual(list[0].tieAlgo, 'full_points');
   assert.strictEqual(list[0].tieNetMode, 'win_diff');
 });
@@ -3705,6 +3713,7 @@ test('发布学院赛 —— 先到 N 场胜时不校验净胜口径', async () 
   page.onPickDate({ detail: { value: '2026-10-01' } });
   page.onPickTime({ detail: { value: '09:00' } });
   page.onPickTieAlgo({ detail: { value: '1' } });
+  page.onInputCourtCount({ detail: { value: '4' } });
   await page.onSubmit();
 
   const list = await facade.getCollegeEvents();
@@ -3769,6 +3778,7 @@ async function publishTestCollegeEvent(overrides = {}) {
       startTime: '2026-10-01T09:00:00',
       rosterMin: 1,
       rosterMax: 20,
+      courtCount: 4,
       ...overrides,
     },
     ADMIN._id
@@ -4468,6 +4478,7 @@ async function scheduledSinglesMatch() {
       startTime: '2026-05-20T09:00:00',
       location: '学校体育馆',
       quota: 4,
+      courtCount: 4,
     },
     ADMIN._id
   );

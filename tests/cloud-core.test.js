@@ -281,6 +281,7 @@ describe('云函数 —— 赛事闭环', () => {
     startTime: '2026-06-10T09:00:00',
     location: '学校体育馆',
     quota: 8,
+    courtCount: 4,
   };
 
   /** 在同一份仓储上换个身份再调一次（不必为每一步重建夹具） */
@@ -891,6 +892,7 @@ describe('云函数 —— 学院赛闭环', () => {
     rosterMax: 10,
     startTime: '2026-06-10T09:00:00',
     location: '学校体育馆',
+    courtCount: 4,
   };
 
   const publishCollege = async (repo, form = {}) => {

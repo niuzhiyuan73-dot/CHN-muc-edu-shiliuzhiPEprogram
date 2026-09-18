@@ -50,6 +50,7 @@ function draft(overrides = {}) {
     startTime: '2026-05-20T09:00:00',
     location: '学校体育馆',
     quota: 4,
+    courtCount: 4,
     ...overrides,
   };
 }

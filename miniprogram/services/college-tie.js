@@ -61,9 +61,11 @@ const {
   DOUBLES_DISCIPLINES,
   EVENT_LEVEL,
   TEAM,
+  courtNoTextOf,
 } = require('../utils/constants.js');
 const { canManageCollegeEvent } = require('./college-event.js');
 const { collegeTieKey } = require('./college-draw.js');
+const { planCourts } = require('./court.js');
 
 /* ============================================================
  * 赛事级开始
@@ -165,9 +167,32 @@ function buildTiesForRound({ event, round, pairs, stage = BRACKET_STAGE.MAIN } =
       lineupB: false,
       startedAt: null,
       finishedAt: null,
+      // 场号：一个大场占一块场地，同一轮内不重复（见 services/court.js）。
+      // 在整轮铺完之后统一排——逐场各排一次的话每场都从 1 号场开始
+      courtNo: 0,
     });
   });
+
+  applyTieCourts(ties, event.courtCount);
   return ties;
+}
+
+/**
+ * 给一轮的大场排场号，就地写入 `courtNo`。
+ *
+ * 【为什么排在大场而不是小场】
+ * 一个大场只占一块场地：它的几个小项依次在同一块场地上打完，所以小项的
+ * 场号就是大场的场号（由 buildLegDrafts 下推）。若按小场排，「同一轮次」
+ * 的场次数会变成大场数 × 小项数，场地会凭空紧张好几倍。
+ *
+ * @param {Array<Object>} ties 同一轮的大场列表
+ * @param {number} courtCount 赛事可用场地总数
+ */
+function applyTieCourts(ties, courtCount) {
+  const plan = planCourts(ties, courtCount);
+  ties.forEach((tie, index) => {
+    tie.courtNo = plan[index].courtNo;
+  });
 }
 
 /* ============================================================
@@ -291,6 +316,8 @@ function buildLegMatchDrafts({ event = null, tie = null, lineups = [], now = nul
       bestOf: COLLEGE_LEG_FORMAT.bestOf,
       winner: null,
       location: event.location || '',
+      // 场号从大场下推：几个小项在同一块场地上依次打，与 referee 同一条路径
+      courtNo: (tie && tie.courtNo) || 0,
       matchTime: now || null,
       recorder: '',
       // 个人赛的 eventId 留空：小场不计赛事积分，也不该混进个人赛的赛事读路径
@@ -741,6 +768,9 @@ function buildTieRow(tie, ctx = {}) {
     round: source.round || 0,
     roundText: roundTextOf(source.round),
     slot: source.slot || 0,
+    // 一个大场占一块场地，小项依次在同一块场地上打完（Q7），
+    // 所以场号挂在大场这一层，不必逐个小项重复
+    courtText: courtNoTextOf(source.courtNo),
     collegeA: source.collegeA || '',
     collegeB: source.collegeB || '',
     status,

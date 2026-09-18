@@ -28,6 +28,7 @@
       </view>
       <view class="event-meta">{{view.legPlanText}}</view>
       <view class="event-meta">名单 {{view.rosterText}} · {{view.startTimeText}}</view>
+      <view class="event-meta">场地数 {{view.courtCountText}}</view>
       <view wx:if="{{view.location}}" class="event-meta">{{view.location}}</view>
       <view class="event-meta">大场胜负：{{view.tieAlgoLabel}}<text wx:if="{{view.tieNetModeLabel}}"> · {{view.tieNetModeLabel}}</text></view>
       <view wx:if="{{view.currentRound}}" class="field-hint">当前第 {{view.currentRound}} 轮</view>
@@ -129,7 +130,11 @@
           <text class="tie-college">{{item.collegeB}}</text>
           <text class="tag {{item.isOngoing ? 'tag-warning' : (item.isFinished ? 'tag-gray' : (item.isReady ? 'tag-primary' : 'tag-gray'))}} tie-status">{{item.statusLabel}}</text>
         </view>
-        <view class="tie-meta">{{item.roundText}} · 第 {{item.slot + 1}} 场</view>
+        <!-- 「第 N 场」是签位号，场号是另一件事，用标签分开渲染（Q8）。
+             一个大场占一块场地，下辖小项依次在这块场地上打完（Q7） -->
+        <view class="tie-meta">{{item.roundText}} · 第 {{item.slot + 1}} 场
+          <text wx:if="{{item.courtText}}" class="court-tag">{{item.courtText}}</text>
+        </view>
 
         <!-- 大场裁判：指派后铺到本大场还没开打的各小场，各小场录分随之收口 -->
         <view wx:if="{{item.referee}}" class="tie-referee">

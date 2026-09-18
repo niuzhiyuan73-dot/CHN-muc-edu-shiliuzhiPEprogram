@@ -60,6 +60,7 @@ async function setupOngoing(legPlan = ['MS']) {
       startTime: '2026-10-01T09:00:00',
       rosterMin: 1,
       rosterMax: 20,
+      courtCount: 4,
     },
     ADMIN._id
   );
@@ -308,6 +309,7 @@ test('弃权演练 —— 个人赛本人可自弃，对手晋级且不计 ELO',
       startTime: '2026-05-20T09:00:00',
       location: '学校体育馆',
       quota: 4,
+      courtCount: 4,
     },
     ADMIN._id
   );

@@ -53,6 +53,7 @@ async function setupOngoing(legPlan = ['MS', 'MD']) {
       startTime: '2026-10-01T09:00:00',
       rosterMin: 1,
       rosterMax: 20,
+      courtCount: 4,
     },
     ADMIN._id
   );
@@ -130,7 +131,7 @@ test('结束赛事 —— 干事与会员都无权', async () => {
 test('结束赛事 —— 未开始与已结束都不能录名次', async () => {
   // 报名中：还没有任何大场结果
   const published = await facade.publishCollegeEvent(
-    { title: '还没开始的学院赛', legPlan: ['MS'], startTime: '2026-10-01T09:00:00', rosterMin: 1, rosterMax: 20 },
+    { title: '还没开始的学院赛', legPlan: ['MS'], startTime: '2026-10-01T09:00:00', rosterMin: 1, rosterMax: 20, courtCount: 4 },
     ADMIN._id
   );
   const notStarted = await facade.finishCollegeEvent(
@@ -253,7 +254,7 @@ test('名次页视图 —— 管理员在赛事进行中可提交，候选只有
 
 test('名次页视图 —— 未开始 / 已结束 / 无权限各有各的拦截文案', async () => {
   const notStarted = await facade.publishCollegeEvent(
-    { title: '报名中的学院赛', legPlan: ['MS'], startTime: '2026-10-01T09:00:00', rosterMin: 1, rosterMax: 20 },
+    { title: '报名中的学院赛', legPlan: ['MS'], startTime: '2026-10-01T09:00:00', rosterMin: 1, rosterMax: 20, courtCount: 4 },
     ADMIN._id
   );
   const signupView = await loadCollegePlacementView(notStarted.record._id, { user: ADMIN });

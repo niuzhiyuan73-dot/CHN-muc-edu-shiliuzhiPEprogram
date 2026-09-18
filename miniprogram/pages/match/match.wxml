@@ -102,6 +102,7 @@
 
         <view class="match-meta">
           {{item.dateText}}
+          <text wx:if="{{item.courtText}}" class="match-court">{{item.courtText}}</text>
           <text wx:if="{{item.locationText}}"> · {{item.locationText}}</text>
         </view>
 

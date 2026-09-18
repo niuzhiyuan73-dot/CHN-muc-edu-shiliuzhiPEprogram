@@ -38,6 +38,10 @@ const {
   ROLE,
 } = require('../utils/constants.js');
 const { DEFAULT_FORMAT, gamesToWin } = require('../utils/match-format.js');
+// 场号必须用与正式抽签完全相同的分配函数算出来，不能在种子里手写：
+// 手写的场号一旦与 planCourts 的算法分叉，界面上的「场地分配」表就会
+// 与签表里的场号对不上，而这种不一致光看数据是看不出来的
+const { withCourts } = require('./court.js');
 
 /** 默认随机种子。换一个数字就能得到一整套完全不同的模拟数据。 */
 const DEFAULT_SEED = 20260901;
@@ -634,13 +638,17 @@ function generateSeed(options = {}) {
   // discipline 是「赛事限什么性别」的正式声明（不限则为 null）。它不只是
   // 标题里的一个字：报名与上场都按它拦人。双打两场保持不限——双打同样
   // 分男双 / 女双 / 混双，但这套演示数据沿用「一个双打池」的既有口径。
+  // courtCount 是这场赛事的可用场地总数，故意在几场之间取了不同的值：
+  // 8 人签表第 1 轮有 4 场，给 4 块场地就是「一人一块」的理想情况，给 2 块
+  // 就得排第二批（同一批内仍然不重号，见 services/court.js）。两种情形都要
+  // 有样本，验收时才知道分批那条分支到底走不走得通。
   const eventPlan = [
-    { week: 3, matchType: MATCH_TYPE.SINGLES, gender: 'M', discipline: LEG_DISCIPLINE.MS, size: 8, format: { gamePoints: 11, bestOf: 3 } },
-    { week: 5, matchType: MATCH_TYPE.SINGLES, gender: 'F', discipline: LEG_DISCIPLINE.WS, size: 8, format: { gamePoints: 15, bestOf: 3 } },
-    { week: 7, matchType: MATCH_TYPE.DOUBLES, size: 8, format: { gamePoints: 11, bestOf: 5 } },
-    { week: 11, matchType: MATCH_TYPE.SINGLES, gender: 'M', discipline: LEG_DISCIPLINE.MS, size: 8, format: { gamePoints: 21, bestOf: 1 } },
-    { week: 12, matchType: MATCH_TYPE.SINGLES, gender: 'F', discipline: LEG_DISCIPLINE.WS, size: 8, format: { gamePoints: 15, bestOf: 5 } },
-    { week: 15, matchType: MATCH_TYPE.DOUBLES, size: 8, format: { gamePoints: 21, bestOf: 3 } },
+    { week: 3, matchType: MATCH_TYPE.SINGLES, gender: 'M', discipline: LEG_DISCIPLINE.MS, size: 8, courtCount: 4, format: { gamePoints: 11, bestOf: 3 } },
+    { week: 5, matchType: MATCH_TYPE.SINGLES, gender: 'F', discipline: LEG_DISCIPLINE.WS, size: 8, courtCount: 2, format: { gamePoints: 15, bestOf: 3 } },
+    { week: 7, matchType: MATCH_TYPE.DOUBLES, size: 8, courtCount: 4, format: { gamePoints: 11, bestOf: 5 } },
+    { week: 11, matchType: MATCH_TYPE.SINGLES, gender: 'M', discipline: LEG_DISCIPLINE.MS, size: 8, courtCount: 3, format: { gamePoints: 21, bestOf: 1 } },
+    { week: 12, matchType: MATCH_TYPE.SINGLES, gender: 'F', discipline: LEG_DISCIPLINE.WS, size: 8, courtCount: 2, format: { gamePoints: 15, bestOf: 5 } },
+    { week: 15, matchType: MATCH_TYPE.DOUBLES, size: 8, courtCount: 4, format: { gamePoints: 21, bestOf: 3 } },
   ];
 
   const events = [];
@@ -692,7 +700,7 @@ function generateSeed(options = {}) {
       }
     }
 
-    matches.push(...eventMatches);
+    matches.push(...withCourts(eventMatches, plan.courtCount));
     events.push({
       _id: eventId,
       title,
@@ -702,6 +710,7 @@ function generateSeed(options = {}) {
       discipline: plan.discipline || null,
       pool: MATCH_TYPE_TO_POOL[plan.matchType],
       location: '学校体育馆 1 号场',
+      courtCount: plan.courtCount,
       startTime,
       endTime: addDays(startTime, 1),
       // quota 一律按「人数」计。双打 8 支队伍即 16 人，
@@ -739,6 +748,9 @@ function generateSeed(options = {}) {
     discipline: LEG_DISCIPLINE.MS,
     pool: MATCH_TYPE_TO_POOL[MATCH_TYPE.SINGLES],
     location: '学校体育馆 1 号场',
+    // 这场是演示的主角：八进四正好 4 场对 4 块场地，一人一块；半决赛 2 场
+    // 用 1、2 号场。点进赛事详情就能看到「场地分配」表按场号分好组
+    courtCount: 4,
     startTime: openStart,
     endTime: addDays(openStart, 1),
     // 名额按人数计，与已结束的赛事同一口径
@@ -846,7 +858,9 @@ function generateSeed(options = {}) {
     byes: [],
   };
 
-  matches.push(...openMatches);
+  // 统一走与正式抽签同一个分配函数：八进四 4 场拿 1~4 号场，半决赛 2 场
+  // 拿 1、2 号场（轮次不同即不同池，可以复用场号）
+  matches.push(...withCourts(openMatches, openEvent.courtCount));
 
   // 八人已报名且已签到：名单、状态与「已报 8/8」都对得上
   const openSignups = openEntries.map((member, index) => ({

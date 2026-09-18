@@ -26,6 +26,8 @@ const {
   MATCH_TYPE_LABEL,
   TIE_STATUS,
   requiredGendersOf,
+  courtNoTextOf,
+  courtCountTextOf,
 } = require('../utils/constants.js');
 const { formatDate, formatDateTime, formatScore, formatPlacement } = require('../utils/format.js');
 const { formatMatchFormat } = require('../utils/match-format.js');
@@ -367,6 +369,8 @@ async function loadCollegeEventDetailView(eventId, options = {}) {
     rosterText: event ? rosterRangeTextOf(event) : '',
     startTimeText: event ? formatDate(event.startTime) : '',
     location: event ? event.location || '' : '',
+    // 场地数：一个大场占一块场地，所以这里报的是「同时能开几个大场」
+    courtCountText: courtCountTextOf(event && event.courtCount),
     tieAlgoLabel: eventRow ? eventRow.tieAlgoLabel : '',
     tieNetModeLabel: eventRow ? eventRow.tieNetModeLabel : '',
     // 抽签与开赛同门槛（管理员），共用一个布尔量给模板用
@@ -725,6 +729,8 @@ async function loadCollegeMatchView(matchId, options = {}) {
     formatText: formatMatchFormat({ gamePoints: record.gamePoints, bestOf: record.bestOf }),
     matchTimeText: formatDateTime(record.matchTime),
     location: record.location || '',
+    // 小场自己带场号（开赛时由大场下推），单独打开这一页也看得到在哪块场
+    courtText: courtNoTextOf(record.courtNo),
     status: record.status,
     statusLabel: tag.label,
     statusClass: tag.className,

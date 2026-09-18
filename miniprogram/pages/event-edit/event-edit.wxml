@@ -191,6 +191,18 @@
       <view wx:if="{{errors.location}}" class="field-error">{{errors.location}}</view>
 
       <view class="field-row">
+        <view class="field-label">场地数</view>
+        <input
+          class="field-input"
+          type="number"
+          value="{{form.courtCount}}"
+          placeholder="本场可用场地总数，如 3 表示 1/2/3 号场"
+          bindinput="onInputCourtCount"
+        />
+      </view>
+      <view wx:if="{{errors.courtCount}}" class="field-error">{{errors.courtCount}}</view>
+
+      <view class="field-row">
         <view class="field-label">名额</view>
         <input
           class="field-input"

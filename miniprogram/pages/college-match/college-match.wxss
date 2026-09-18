@@ -28,6 +28,15 @@
   color: var(--color-text-secondary);
 }
 
+.court-tag {
+  margin-left: var(--space-xs);
+  padding: 0 8rpx;
+  border-radius: 4rpx;
+  font-size: var(--font-xs);
+  background-color: var(--color-bg-subtle, #f0f2f5);
+  color: var(--color-text-secondary);
+}
+
 .field-hint {
   margin-top: var(--space-sm);
   font-size: var(--font-xs);

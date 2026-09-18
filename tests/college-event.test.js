@@ -64,6 +64,7 @@ function draft(overrides = {}) {
     allowMultiEntry: true,
     rosterMin: 4,
     rosterMax: 20,
+    courtCount: 4,
     tieAlgo: TIE_ALGO.FULL_POINTS,
     tieNetMode: TIE_NET_MODE.WIN_DIFF,
     location: '学校体育馆',

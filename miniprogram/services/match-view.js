@@ -23,7 +23,14 @@
  * ============================================================
  */
 
-const { MATCH_STATUS, MATCH_STATUS_LABEL, MATCH_TYPE_LABEL, ROLE, ROLE_LABEL } = require('../utils/constants.js');
+const {
+  MATCH_STATUS,
+  MATCH_STATUS_LABEL,
+  MATCH_TYPE_LABEL,
+  ROLE,
+  ROLE_LABEL,
+  courtNoTextOf,
+} = require('../utils/constants.js');
 const { formatDateTime, formatScore } = require('../utils/format.js');
 const { formatMatchFormat } = require('../utils/match-format.js');
 const { createNameResolver } = require('../utils/stats.js');
@@ -175,6 +182,8 @@ function buildRecordRow(record, ctx = {}) {
     formatText: formatMatchFormat({ gamePoints: record.gamePoints, bestOf: record.bestOf }),
     dateText: formatDateTime(record.matchTime),
     locationText: record.location || '',
+    // 约球没有场号，老赛事的记录也没有——空串由模板挡掉
+    courtText: courtNoTextOf(record.courtNo),
     teamAText: joinNames(record.teamA, nameOf),
     teamBText: joinNames(record.teamB, nameOf),
     teamAList: memberList(record.teamA, nameOf),
