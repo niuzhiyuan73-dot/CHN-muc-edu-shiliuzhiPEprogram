@@ -67,6 +67,7 @@ const MANIFEST = [
   'services/format-plan.js',
   'services/profile.js',
   'services/permission.js',
+  'services/season.js',
   'services/auth.js',
 ];
 

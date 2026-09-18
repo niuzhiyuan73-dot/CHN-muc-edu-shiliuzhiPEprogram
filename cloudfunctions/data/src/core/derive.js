@@ -122,7 +122,11 @@ async function buildDataset(repo, season) {
     matches: activeOnly,
     events,
     // 锚点由赛季文档钉死；还没定下时传 null，回放会退回「流水里最早一场」。
-    options: { seasonStart: season.anchorTime },
+    // 赛季分界点同样落库，回放据此把分界之前的赛事积分排除在本赛季之外。
+    options: {
+      seasonStart: season.anchorTime,
+      resetTime: season.resetTime || null,
+    },
   });
 
   const replayedById = new Map(replayed.matches.map((match) => [match._id, match]));
@@ -164,6 +168,9 @@ async function getDataset(ctx) {
     // 旧缓存，新算法要等到下一次写操作才生效。带上常量，加一即失效。
     ALGO_VERSION,
     season.anchorTime ? new Date(season.anchorTime).getTime() : 'n',
+    // 赛季分界也算缓存键的一部分：开始新赛季时版本号已经 +1，这里再显式
+    // 带上，是为了让「改了分界点却没动版本号」这种意外不至于命中旧缓存。
+    season.resetTime ? new Date(season.resetTime).getTime() : 'n',
   ].join(':');
 
   const cached = memoByRepo.get(ctx.repo);

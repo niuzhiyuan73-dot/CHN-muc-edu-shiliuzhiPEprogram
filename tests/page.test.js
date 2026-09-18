@@ -689,14 +689,14 @@ test('我的页 —— 退出登录后 onShow 会把公告管理入口一并收�
   assert.strictEqual(page.data.adminEntry.visible, false, '权限没了，入口不能还挂着');
 });
 
-test('我的页 —— 赛季管理入口不复存在，管理员也看不到', async () => {
+test('我的页 —— 赛季管理入口已移除，管理员也看不到', async () => {
   resetSession();
   app.globalData.userInfo = fakeMember({ role: 2, _id: 'u01', nickName: '巴特尔' });
 
   const page = instantiate(profileConfig);
   await page.onLoad({});
 
-  // 赛季软重置整项能力已移除，小程序内当然也找不到入口
+  // 赛季更新改为在云控制台手动操作，小程序内不再提供入口
   assert.strictEqual(page.data.seasonEntry, undefined);
   assert.strictEqual(typeof page.onGoSeasonManage, 'undefined');
 });
@@ -4800,6 +4800,6 @@ test('实时计分台 —— 打满两局可定稿，定稿后退回上一页', 
 /* ============================================================
  * 赛季管理
  * ============================================================
- * 赛季软重置整项能力（页面 / 云函数 / mock）均已移除，
- * 只保留 season-anchor.test.js 覆盖的赛季锚点。
+ * 页面已从「我的」移除，赛季更新改为在云控制台手动操作；
+ * 云端 resetSeason 能力与 mock 数据源的行为仍由 season-reset.test.js 覆盖。
  * ============================================================ */

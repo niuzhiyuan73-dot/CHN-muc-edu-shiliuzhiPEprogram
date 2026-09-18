@@ -274,16 +274,18 @@ function planInitialRatings({ members, observations, seasonStart, config = DEFAU
  * 他的名次被决定的时刻——半决赛输的人记在半决赛，冠军记在决赛。这样
  * 「逐场明细之和 == 个人总分」这条不变式仍然成立。
  *
- * 【为什么只认已结束的单打赛事】
+ * 【为什么跳过双打与往届赛事】
  *   双打 —— 决策 3：双打赛事不计分。
- *   未结束 —— 名次还没录，没有可结算的结果。
+ *   往届 —— 2.6：积分每个赛季清零，只统计本赛季内已结束的赛事。
  * @param {Object} params
  * @param {Map<string, Object>} params.roster 会员工作副本
  * @param {Array<Object>} params.replayed 已回放的比赛（时间升序，带逐人明细）
  * @param {Array<Object>} params.events 赛事列表
  * @param {Object} params.config 积分配置
+ * @param {number} params.resetMs 赛季分界时间戳；NaN 表示从未重置
+ * @param {boolean} params.resetApplies 是否真的有分界点
  */
-function applyEventPoints({ roster, replayed, events, config }) {
+function applyEventPoints({ roster, replayed, events, config, resetMs, resetApplies }) {
   // 「会员 + 赛事」→ 该赛事最后一场在 replayed 里的下标
   const lastMatchIndex = new Map();
   replayed.forEach((match, index) => {
@@ -299,6 +301,14 @@ function applyEventPoints({ roster, replayed, events, config }) {
     const isDoubles =
       event.matchType === MATCH_TYPE.DOUBLES || event.pool === RATING_POOL.DOUBLES;
     if (isDoubles) continue;
+
+    // 赛季分界之前的赛事属于上一个赛季，不计入本赛季积分。
+    // 「赛事什么时候结束」以录入名次那一刻（finishedAt）为准：app 里发布的
+    // 赛事只有计划开赛时间 startTime，拿它当结束时间会把赛程与赛季对错——
+    // 恰好跨在分界点两边的赛事会算进错误的赛季。历史 / 种子赛事没有
+    // finishedAt，退回它的 endTime，再退回 startTime。
+    const endedAt = new Date(event.finishedAt || event.endTime || event.startTime).getTime();
+    if (resetApplies && Number.isFinite(endedAt) && endedAt < resetMs) continue;
 
     for (const result of event.results || []) {
       const user = roster.get(result.userId);
@@ -336,6 +346,7 @@ function applyEventPoints({ roster, replayed, events, config }) {
  * @param {Object} params.elo 已合并默认值的 ELO 配置
  * @param {Map<string, Map<string, number>>} params.presets 预先定好的初始分
  * @param {boolean} params.collectPlacement 是否采集定级观察
+ * @param {string|Date|null} [params.resetTime] 赛季分界点，只用来切积分；不传表示从未重置
  * @returns {{users:Array, matches:Array, events:Array, meta:Object, observations:Map}}
  */
 function runReplay({
@@ -346,6 +357,7 @@ function runReplay({
   pointConfig,
   presets,
   collectPlacement,
+  resetTime = null,
 }) {
   // ---------- 1. 准备工作副本 ----------
   // 所有运算都在副本上进行，调用方的数据一个字节都不会被改动。
@@ -363,6 +375,9 @@ function runReplay({
       settled: {}, // 记录各池是否已经完成「定级」
     });
   }
+
+  const resetMs = resetTime ? new Date(resetTime).getTime() : NaN;
+  const resetApplies = Number.isFinite(resetMs);
 
   /**
    * 赛事等级表：eventId → level，供逐场回放时取赛事的固定 K（决策 13）。
@@ -574,7 +589,7 @@ function runReplay({
 
   // ---------- 2.5 结算赛事积分 ----------
   // 积分只能等所有比赛回放完才结：名次是赛事的最终结果，不逐场发（2.5）。
-  applyEventPoints({ roster, replayed, events, config: pointConfig });
+  applyEventPoints({ roster, replayed, events, config: pointConfig, resetMs, resetApplies });
 
   // ---------- 3. 整理输出 ----------
   // 内部模拟字段不进对外数据，否则「隐藏实力」就白藏了。
@@ -620,6 +635,7 @@ function runReplay({
  * @param {Object} [params.options.eloConfig] 覆盖 ELO 参数（K 值、初始分等）
  * @param {Object} [params.options.pointConfig] 覆盖积分规则
  * @param {string|Date} [params.options.seasonStart] 钉死的赛季锚点；不传则取流水里最早一场
+ * @param {string|Date|null} [params.options.resetTime] 赛季分界点，用来切积分；不传表示从未重置
  * @returns {{
  *   users: Array<Object>,
  *   matches: Array<Object>,
@@ -646,6 +662,7 @@ function replaySeason({ members, matches, events = [], announcements = [], optio
     eloConfig,
     pointConfig = DEFAULT_POINT_CONFIG,
     seasonStart,
+    resetTime = null,
   } = options;
 
   // 先把 ELO 参数合并成一份完整配置再使用。
@@ -653,7 +670,7 @@ function replaySeason({ members, matches, events = [], announcements = [], optio
   // 调用方以为改了初始分，实际上所有人还是从默认值起步。
   const elo = { ...DEFAULT_CONFIG, ...(eloConfig || {}) };
 
-  const base = { members, matches, events, elo, pointConfig };
+  const base = { members, matches, events, elo, pointConfig, resetTime };
 
   // 第一遍：所有人从初始分起步，采集新人的定级依据
   const probe = runReplay({ ...base, presets: new Map(), collectPlacement: true });
@@ -689,6 +706,8 @@ function replaySeason({ members, matches, events = [], announcements = [], optio
       ...final.meta,
       // 实际使用的赛季锚点，可能是调用方钉死的，也可能是流水里最早一场
       seasonStart: resolvedSeasonStart,
+      // 赛季分界点，界面据此说明「本赛季从哪一刻起算」
+      resetTime: resetTime || null,
       // 定级结果对外公开，界面可以解释「你的初始分是怎么来的」
       placements: Object.fromEntries(
         [...presets].map(([userId, pools]) => [userId, Object.fromEntries(pools)])

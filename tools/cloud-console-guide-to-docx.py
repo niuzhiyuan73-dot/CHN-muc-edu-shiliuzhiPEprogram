@@ -175,7 +175,7 @@ def build():
     tagline = doc.add_paragraph()
     tagline.alignment = WD_ALIGN_PARAGRAPH.CENTER
     tagline.paragraph_format.space_after = Pt(12)
-    run = tagline.add_run("建集合 / 审核会员 / 调整角色 / 重置赛季 / 数据救急 / 更新云函数")
+    run = tagline.add_run("建集合 / 审核会员 / 调整角色 / 赛季更新 / 数据救急 / 更新云函数")
     set_font(run, size=11, color=MUTED)
 
     table(
@@ -186,7 +186,7 @@ def build():
             ["云环境 ID", ENV_ID],
             ["云函数", "data（本环境唯一云函数，承载全部读写接口）"],
             ["最容易忘", "改完代码务必重新「上传并部署」cloudfunctions/data；忘了就会报「未知的操作：xxx」（详见第九节）"],
-            ["核心原则", "小程序端不直接读写数据库；一切写操作都经云函数 data 完成，控制台只用于初始化、审核、提权、赛季重置与救急"],
+            ["核心原则", "小程序端不直接读写数据库；一切写操作都经云函数 data 完成，控制台只用于初始化、审核、提权、赛季更新与救急"],
             ["集合规模", "个人赛 7 个 + 学院赛 4 个（college_events / college_entries / ties / lineups）；学院赛与个人赛互不共用集合"],
         ],
         widths=[3.0, 13.2],
@@ -237,7 +237,7 @@ def build():
             ["events", "个人赛事", "是", "_id、title、matchType、format、level、groupCount、advancePerGroup、status(0/1/2)、results、draw"],
             ["event_signups", "赛事报名与签到", "是", "_id、eventId、userId、status(0已取消/1已报名/2已签到)、signTime、checkInTime"],
             ["announcements", "公告", "是", "_id、title、content、category、pinned、status('published'/'archived')、publishTime"],
-            ["seasons", "赛季锚点，只需要一条 _id='current' 的记录", "是", "_id、anchorTime、version、algoVersion"],
+            ["seasons", "赛季锚点，只需要一条 _id='current' 的记录", "是", "_id、anchorTime、resetTime、seasonNumber、version、algoVersion"],
             ["rankings", "排行榜快照，一条 _id='current' 的记录（纯缓存，删了会自动重算）", "是", "_id、key、algoVersion、savedAt、data（整份数据集）"],
             ["audit_logs", "写操作留痕（预留，当前不写入）", "可选", "—"],
         ],
@@ -363,29 +363,60 @@ def build():
     callout(doc, "role 改高了但 status 不是 1（比如还是待审核），权限照样不通过——这是最常见的「我明明设成管理员了怎么还不能发布」的原因。", "注意")
     callout(doc, "学院负责人也可以在小程序里「会员审核」页由管理员任免（对应云函数 setCollegeLeader），控制台改 role + college 是等效的兜底手段。", "提示")
 
-    # ---------------- 六、赛季锚点 ----------------
-    heading(doc, "六、赛季锚点（只读；赛季软重置已移除）", 1)
-    callout(doc, "「赛季软重置」（把全俱乐部分数按比例压向锚定分）已整项删除，云函数里再没有 resetSeason 这个动作。这里只说留下的赛季锚点。", "关键")
+    # ---------------- 六、赛季更新 ----------------
+    heading(doc, "六、日常操作三：赛季更新（只能在控制台做）", 1)
+    callout(doc, "小程序里已经没有任何赛季管理入口。赛季更新是「管理员在云控制台手动执行一次云函数」的动作，没有定时任务，也不会自动发生。", "关键")
 
-    heading(doc, "6.1 留下的只有锚点", 2)
-    para(doc, "seasons 集合里 _id='current' 那条文档只承担一件事：钉死赛季锚点 anchorTime。它决定谁是「创始会员」（锚点之前就在打）、谁是「中途入会者」（锚点之后才入会，要按前五场对手定级）。")
-    para(doc, "锚点首次写入后不再改动——否则撤销最早一场比赛会让锚点后移，把一批创始会员重新判定成中途入会者，多人分数静默改变。")
+    heading(doc, "6.1 赛季更新会做什么", 2)
+    para(doc, "赛季更新是「切一个分界时刻」：不删数据、不清比赛，只记下这一刻，并把赛季号加一。分界之前结束的赛事积分不再计入本赛季，赛季积分榜从零开始。历史比赛与历史名次全部保留，可以随时回看。")
+    para(doc, "等级分（ELO）不参与赛季更新，跨赛季连续累计——一个人上赛季末是多少分，新赛季第一天还是多少分，不会因为一次赛季更新而改变。")
 
-    heading(doc, "6.2 字段一览", 2)
+    heading(doc, "6.2 操作步骤", 2)
+    numbered(doc, "云开发控制台 → 云函数 → 选择 data。")
+    numbered(doc, "切到「云端测试」标签页。")
+    numbered(doc, "测试参数填下面这段 JSON（payload 为空对象）：")
+    code(doc, '{"action": "resetSeason", "payload": {}}')
+    numbered(doc, "点「调用」。调试身份必须是 role=2 且 status=1 的账号，否则返回「只有管理员可以开始新赛季」。")
+    numbered(doc, "返回 {ok:true, season:{...}} 即成功，seasonNumber 会比原来 +1。")
+    callout(doc, "这一步没有「撤销」。调用一次就多一个赛季（版本号 +1），无法回退。请在赛季确实结束时、全组知会之后再做。", "关键")
+
+    heading(doc, "6.3 什么会变、什么不会变", 2)
     table(
         doc,
-        ["字段", "含义"],
+        ["项目", "赛季更新后会怎样"],
         [
-            ["anchorTime", "赛季锚点，首次写入后钉死"],
-            ["version", "内部版本号；每次写操作 +1，也是让云函数缓存失效的开关"],
-            ["algoVersion", "算法版本；调参时手动 +1，容器缓存随之作废"],
+            ["赛季积分", "清零重来。分界之前结束的赛事不计入本赛季，积分榜从零开始。"],
+            ["等级分（ELO）", "完全不变。跨赛季连续累计，新赛季第一天还是上赛季末的分数。"],
+            ["进步榜起点分", "不变。只在会员首次入池时写一次，不随赛季刷新。"],
+            ["历史比赛 / 名次", "全部保留，随时可回看。"],
         ],
         widths=[4.0, 12.2],
     )
+    para(doc, "赛事归属按「结束时刻」判：一场赛事可能计划开赛时间在分界之前、管理员却在分界之后才录入名次收尾，这种按实际收尾时间算进新赛季，不会凭空消失。", muted=True)
 
-    heading(doc, "6.3 想改锚点怎么办", 2)
-    para(doc, "只有在确实需要时才做：直接编辑 seasons/current 的 anchorTime，然后把它与 version 一并调整。")
-    callout(doc, "改完必须把 version 加 1，否则云函数还会用缓存里的旧结果，改了等于没改。改锚点会改变一批人的定级归属，改前请想清楚。", "注意")
+    heading(doc, "6.4 seasons 集合里发生了什么", 2)
+    table(
+        doc,
+        ["字段", "变化", "含义"],
+        [
+            ["seasonNumber", "+1", "赛季号，小程序里显示为「第 N 赛季」"],
+            ["version", "+1", "内部版本号；也是让云函数缓存失效的开关"],
+            ["resetTime", "= 调用时刻", "赛季分界线，赛事积分以此切分"],
+            ["anchorTime", "不变", "赛季体系的起始锚点"],
+        ],
+        widths=[3.4, 5.6, 7.2],
+    )
+    para(doc, "对应的就是 seasons 集合里 _id='current' 那一条文档。想核对结果，直接看它即可。")
+
+    heading(doc, "6.5 验证", 2)
+    bullet(doc, "小程序赛事页或排行榜会显示新的「第 N 赛季」。")
+    bullet(doc, "赛季积分榜上的人应当全部归零，等着新赛季重新挣分。")
+    bullet(doc, "同一位会员的等级分与赛季更新前**完全一致**——若变了，说明改动出了问题。")
+    bullet(doc, "若页面仍是旧赛季，退出重进一次小程序；仍不对则检查 users 里该账号 status 是否为 1。")
+
+    heading(doc, "6.6 高级：手工调整赛季参数", 2)
+    para(doc, "只有在确实需要时才做。直接编辑 seasons/current 的 anchorTime，或手工把 resetTime / seasonNumber 改成别的值。")
+    callout(doc, "手工改完必须把 version 加 1，否则云函数还会用缓存里的旧结果，改了等于没改。", "注意")
 
     # ---------------- 七、数据救急 ----------------
     heading(doc, "七、日常操作四：数据救急（直接改库）", 1)
@@ -470,7 +501,7 @@ def build():
             ["干事交不了本院名单 / 排阵", "该账号的 college 为空或不是学院全名", "在 users 里把 college 改成 26 所学院之一的全名"],
             ["学院赛找不到某个学院", "该学院名单不是「已通过」状态", "在 college_entries 里把 status 改成 1（已通过），或让管理员在小程序里通过"],
             ["大场点「开始」不生效", "双方排阵未齐", "确认 ties 里 lineupA/lineupB 都为 true；缺的一方补交排阵"],
-            ["重置赛季被拒绝", "调试身份的 OpenID 不是管理员", "改用 role=2 且 status=1 的账号登录开发者工具再调用"],
+            ["开始新赛季被拒绝", "调试身份的 OpenID 不是管理员", "改用 role=2 且 status=1 的账号登录开发者工具再调用"],
             ["赛季显示不对", "seasons/current 的 seasonNumber 或 version 异常", "直接编辑该文档，并把 version 加 1"],
         ],
         widths=[4.4, 4.8, 7.0],
@@ -517,6 +548,7 @@ def build():
             ["forfeitMatch", "个人赛本人弃权（对手晋级，不计 ELO）", "本场参赛者本人；管理员可替任意一方"],
             ["finishEvent", "录入名次并结束赛事（唯一结算入口）", "管理员"],
             ["publishAnnouncement / archiveAnnouncement", "发布 / 下架公告", "仅管理员"],
+            ["resetSeason", "开始新赛季（清赛季积分、不动等级分）", "管理员"],
             ["getCollegeEvents / getCollegeEvent", "读取学院赛列表 / 详情", "登录"],
             ["getCollegeEntries / getCollegeTies / getCollegeLineups", "读取学院名单 / 大场 / 排阵", "登录"],
             ["publishCollegeEvent", "发布学院赛", "管理员"],
@@ -542,6 +574,8 @@ def build():
             ["设为管理员", "users", "role → 2（并确保 status=1）"],
             ["设为干事", "users", "role → 1（并确保 status=1）"],
             ["降回会员", "users", "role → 0"],
+            ["开启新赛季", "（云函数 data）", "调用 resetSeason"],
+            ["手工调赛季号", "seasons", "seasonNumber、version +1"],
             ["让分数立即重算", "seasons", "version +1"],
             ["作废一场比赛", "matches", "status → 2"],
             ["改赛事名次", "events", "results"],
