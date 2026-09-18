@@ -123,13 +123,6 @@ const archiveAnnouncement = (id, actor) => request('archiveAnnouncement', { id, 
 const updateProfile = (patch, actor) => request('updateProfile', { patch, actor });
 
 /*
- * 赛季管理。软重置会按公式改动全俱乐部每个人的分数，权限门槛高于发布
- * 公告：服务端按 OpenID 判定必须为管理员。actor 同样只是「谁点的按钮」
- * 的线索，前端说了不算。
- */
-const resetSeason = (actor) => request('resetSeason', { actor });
-
-/*
  * 赛事闭环：发布 / 开始 / 报名 / 退赛 / 签到 / 录入名次。
  *
  * 与审核、公告同一纪律：actor 只是「谁点的按钮」的线索，发布权、签到权
@@ -247,7 +240,6 @@ module.exports = {
   publishAnnouncement,
   archiveAnnouncement,
   updateProfile,
-  resetSeason,
   getEventSignups,
   publishEvent,
   startEvent,

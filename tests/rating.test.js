@@ -12,7 +12,6 @@ const {
   getPoolRating,
   applyMatchResult,
   revertMatchResult,
-  applySeasonalResetToUser,
   hasPlayedPool,
   summarizeCareer,
 } = require('../miniprogram/utils/rating.js');
@@ -279,70 +278,6 @@ describe('revertMatchResult —— 撤销比赛', () => {
     // 双打回到初始，单打保持不变
     assert.equal(reverted[RATING_POOL.DOUBLES].elo, 1500);
     assert.equal(reverted[RATING_POOL.SINGLES].elo, 1512);
-  });
-});
-
-describe('applySeasonalResetToUser —— 赛季软重置', () => {
-  test('只重置打过球的池，未参赛的池保持初始分', () => {
-    const user = newUser();
-    user.ratings[RATING_POOL.SINGLES].elo = 1400;
-    user.ratings[RATING_POOL.SINGLES].matchCount = 30;
-    // 双打从未参赛，分数仍是 1500
-
-    const reset = applySeasonalResetToUser(user.ratings, {
-      resetFn: (elo) => Math.round(elo * 0.75 + 1500 * 0.25),
-    });
-
-    assert.equal(reset[RATING_POOL.SINGLES].elo, 1425); // 1400 → 1425
-    assert.equal(reset[RATING_POOL.DOUBLES].elo, 1500); // 未参赛，不变
-  });
-
-  test('重置只动分数，场次统计原样保留', () => {
-    const user = newUser();
-    user.ratings[RATING_POOL.SINGLES].elo = 1400;
-    user.ratings[RATING_POOL.SINGLES].matchCount = 30;
-
-    const reset = applySeasonalResetToUser(user.ratings, {
-      resetFn: (elo) => Math.round(elo * 0.75 + 1500 * 0.25),
-    });
-
-    assert.equal(reset[RATING_POOL.SINGLES].matchCount, 30);
-  });
-
-  test('起点分随重置后的分数一起刷新（进步榜不能把上赛季积累算进来）', () => {
-    const user = newUser();
-    user.ratings[RATING_POOL.SINGLES].elo = 1400;
-    user.ratings[RATING_POOL.SINGLES].startElo = 1500;
-    user.ratings[RATING_POOL.SINGLES].matchCount = 30;
-
-    const reset = applySeasonalResetToUser(user.ratings, {
-      resetFn: (elo) => Math.round(elo * 0.75 + 1500 * 0.25),
-    });
-
-    assert.equal(reset[RATING_POOL.SINGLES].elo, 1425);
-    // 只改 elo 不改 startElo 的话，新赛季第一天就会显示「已进步 75 分」
-    assert.equal(reset[RATING_POOL.SINGLES].startElo, 1425);
-  });
-
-  test('未参赛的池连起点分也不动', () => {
-    const user = newUser();
-    user.ratings[RATING_POOL.SINGLES].elo = 1400;
-    user.ratings[RATING_POOL.SINGLES].startElo = 1500;
-    user.ratings[RATING_POOL.SINGLES].matchCount = 30;
-
-    const reset = applySeasonalResetToUser(user.ratings, {
-      resetFn: (elo) => Math.round(elo * 0.75 + 1500 * 0.25),
-    });
-
-    assert.equal(reset[RATING_POOL.DOUBLES].startElo, 1500);
-    assert.equal(reset[RATING_POOL.DOUBLES].elo, 1500);
-  });
-
-  test('未传 resetFn 时抛出错误', () => {
-    assert.throws(
-      () => applySeasonalResetToUser(createEmptyRatings(), {}),
-      /需要传入 resetFn/
-    );
   });
 });
 

@@ -42,7 +42,7 @@ const READ_ACTIONS = [
   'getLiveScores',
 ];
 
-/** 写接口（35 个）。这些要走事务，权限一律在服务端判定。 */
+/** 写接口（34 个）。这些要走事务，权限一律在服务端判定。 */
 const WRITE_ACTIONS = [
   'submitMatch',
   'confirmMatch',
@@ -58,7 +58,6 @@ const WRITE_ACTIONS = [
   'publishAnnouncement',
   'archiveAnnouncement',
   'updateProfile',
-  'resetSeason',
   'publishEvent',
   'startEvent',
   'setEventPinned',
@@ -84,7 +83,7 @@ const WRITE_ACTIONS = [
   'finishLiveScore',
 ];
 
-/** 全部 63 个操作 */
+/** 全部 62 个操作 */
 const ALL_ACTIONS = [...READ_ACTIONS, ...WRITE_ACTIONS];
 
 module.exports = { READ_ACTIONS, WRITE_ACTIONS, ALL_ACTIONS };

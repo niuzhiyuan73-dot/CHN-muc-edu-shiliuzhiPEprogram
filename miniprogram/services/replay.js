@@ -40,7 +40,6 @@ const {
 const {
   calculateMatchRatings,
   calculatePlacementRating,
-  applySeasonalReset,
   initialRatingFor,
   DEFAULT_CONFIG,
 } = require('../utils/elo.js');
@@ -275,18 +274,16 @@ function planInitialRatings({ members, observations, seasonStart, config = DEFAU
  * 他的名次被决定的时刻——半决赛输的人记在半决赛，冠军记在决赛。这样
  * 「逐场明细之和 == 个人总分」这条不变式仍然成立。
  *
- * 【为什么跳过双打与往届赛事】
+ * 【为什么只认已结束的单打赛事】
  *   双打 —— 决策 3：双打赛事不计分。
- *   往届 —— 2.6：积分每个赛季清零，只统计本赛季内已结束的赛事。
+ *   未结束 —— 名次还没录，没有可结算的结果。
  * @param {Object} params
  * @param {Map<string, Object>} params.roster 会员工作副本
  * @param {Array<Object>} params.replayed 已回放的比赛（时间升序，带逐人明细）
  * @param {Array<Object>} params.events 赛事列表
  * @param {Object} params.config 积分配置
- * @param {number} params.resetMs 赛季分界时间戳；NaN 表示从未重置
- * @param {boolean} params.resetApplies 是否真的有分界点
  */
-function applyEventPoints({ roster, replayed, events, config, resetMs, resetApplies }) {
+function applyEventPoints({ roster, replayed, events, config }) {
   // 「会员 + 赛事」→ 该赛事最后一场在 replayed 里的下标
   const lastMatchIndex = new Map();
   replayed.forEach((match, index) => {
@@ -302,14 +299,6 @@ function applyEventPoints({ roster, replayed, events, config, resetMs, resetAppl
     const isDoubles =
       event.matchType === MATCH_TYPE.DOUBLES || event.pool === RATING_POOL.DOUBLES;
     if (isDoubles) continue;
-
-    // 赛季分界之前的赛事属于上一个赛季，不计入本赛季积分。
-    // 「赛事什么时候结束」以录入名次那一刻（finishedAt）为准：app 里发布的
-    // 赛事只有计划开赛时间 startTime，拿它当结束时间会把赛程与赛季对错——
-    // 恰好跨在分界点两边的赛事会算进错误的赛季。历史 / 种子赛事没有
-    // finishedAt，退回它的 endTime，再退回 startTime。
-    const endedAt = new Date(event.finishedAt || event.endTime || event.startTime).getTime();
-    if (resetApplies && Number.isFinite(endedAt) && endedAt < resetMs) continue;
 
     for (const result of event.results || []) {
       const user = roster.get(result.userId);
@@ -347,8 +336,6 @@ function applyEventPoints({ roster, replayed, events, config, resetMs, resetAppl
  * @param {Object} params.elo 已合并默认值的 ELO 配置
  * @param {Map<string, Map<string, number>>} params.presets 预先定好的初始分
  * @param {boolean} params.collectPlacement 是否采集定级观察
- * @param {string|Date|null} [params.resetTime] 赛季软重置的分界点；不传表示从未重置
- * @param {Object|null} [params.resetPolicy] 软重置参数 {anchorRating, retentionFactor}
  * @returns {{users:Array, matches:Array, events:Array, meta:Object, observations:Map}}
  */
 function runReplay({
@@ -359,8 +346,6 @@ function runReplay({
   pointConfig,
   presets,
   collectPlacement,
-  resetTime = null,
-  resetPolicy = null,
 }) {
   // ---------- 1. 准备工作副本 ----------
   // 所有运算都在副本上进行，调用方的数据一个字节都不会被改动。
@@ -376,13 +361,8 @@ function runReplay({
       points: 0,
       ratings: createEmptyRatings({ initialElo: baseElo }),
       settled: {}, // 记录各池是否已经完成「定级」
-      settledAt: {}, // 各池首次登场的时刻，用来判断是否在软重置之前就已入池
-      resetApplied: {}, // 各池是否已经跨过软重置的分界
     });
   }
-
-  const resetMs = resetTime ? new Date(resetTime).getTime() : NaN;
-  const resetApplies = Number.isFinite(resetMs);
 
   /**
    * 赛事等级表：eventId → level，供逐场回放时取赛事的固定 K（决策 13）。
@@ -435,9 +415,8 @@ function runReplay({
    *
    * @param {Object} user 会员工作副本
    * @param {string} poolName 等级分池
-   * @param {string|Date} matchTime 本场时间，用来判断入池发生在软重置之前还是之后
    */
-  function settleInitial(user, poolName, matchTime) {
+  function settleInitial(user, poolName) {
     if (user.settled[poolName]) return;
 
     const memberPresets = presets.get(user._id);
@@ -458,42 +437,6 @@ function runReplay({
       },
     };
     user.settled[poolName] = true;
-    user.settledAt[poolName] = new Date(matchTime).getTime();
-  }
-
-  /**
-   * 在赛季分界处对某个池做软重置：分数向锚定分回归，且**起点分同步刷新**。
-   *
-   * 【为什么起点分也要刷新】
-   * 进步榜比的是「相对赛季初涨了多少分」。重置后若起点分还停在入池时的
-   * 老分数，涨幅就会把上一个赛季的积累一并算进去——赛季初人人"暴涨"。
-   * 把起点刷成重置后的分数，新赛季的进步才从这一刻重新起算。
-   *
-   * 【为什么要挡住两类人】
-   *   - 从没在这个池出过场：分数就是初始分，重置它没有意义；
-   *   - 分界之后才首次入池：他的起点本来就是本赛季的分数，再压一次等于扣分。
-   *
-   * @param {Object} user 会员工作副本
-   * @param {string} poolName 等级分池
-   */
-  function applySeasonReset(user, poolName) {
-    if (!resetApplies) return;
-    if (user.resetApplied[poolName]) return;
-    user.resetApplied[poolName] = true;
-
-    const rating = user.ratings[poolName];
-    if (!rating || rating.matchCount === 0) return;
-    if (!(user.settledAt[poolName] < resetMs)) return;
-
-    const squashed = applySeasonalReset(rating.elo, {
-      anchorRating: resetPolicy ? resetPolicy.anchorRating : undefined,
-      retentionFactor: resetPolicy ? resetPolicy.retentionFactor : undefined,
-    });
-
-    user.ratings = {
-      ...user.ratings,
-      [poolName]: { ...rating, elo: squashed, startElo: squashed },
-    };
   }
 
   // ---------- 2. 按时间顺序逐场回放 ----------
@@ -521,14 +464,7 @@ function runReplay({
 
     // 首次登场者先定级，再参与本场计算
     for (const user of [...teamA, ...teamB]) {
-      settleInitial(user, poolName, match.matchTime);
-    }
-
-    // 跨过赛季分界的第一场：先做软重置，再算本场。
-    // 顺序不能反——必须等 settleInitial 记下入池时刻，才能分清谁是
-    // 「重置前就在打」的老会员，谁是「本赛季才入池」的新人。
-    if (resetApplies && new Date(match.matchTime).getTime() >= resetMs) {
-      for (const user of [...teamA, ...teamB]) applySeasonReset(user, poolName);
+      settleInitial(user, poolName);
     }
 
     // 赛前快照：必须在使用 applyMatchResult 之前取，否则会被覆盖
@@ -636,19 +572,9 @@ function runReplay({
     });
   }
 
-  // 重置之后一场没打的人也要压分：否则「赛季初人人回归锚定分」这条规则
-  // 只对继续参赛的人生效，停了几个月的老会员反倒躲过了重置。
-  if (resetApplies) {
-    for (const user of roster.values()) {
-      for (const poolName of Object.keys(user.ratings)) {
-        applySeasonReset(user, poolName);
-      }
-    }
-  }
-
   // ---------- 2.5 结算赛事积分 ----------
   // 积分只能等所有比赛回放完才结：名次是赛事的最终结果，不逐场发（2.5）。
-  applyEventPoints({ roster, replayed, events, config: pointConfig, resetMs, resetApplies });
+  applyEventPoints({ roster, replayed, events, config: pointConfig });
 
   // ---------- 3. 整理输出 ----------
   // 内部模拟字段不进对外数据，否则「隐藏实力」就白藏了。
@@ -658,8 +584,6 @@ function runReplay({
       delete clean[field];
     }
     delete clean.settled;
-    delete clean.settledAt;
-    delete clean.resetApplied;
     return clean;
   });
 
@@ -696,8 +620,6 @@ function runReplay({
  * @param {Object} [params.options.eloConfig] 覆盖 ELO 参数（K 值、初始分等）
  * @param {Object} [params.options.pointConfig] 覆盖积分规则
  * @param {string|Date} [params.options.seasonStart] 钉死的赛季锚点；不传则取流水里最早一场
- * @param {string|Date|null} [params.options.resetTime] 赛季软重置分界点；不传表示从未重置
- * @param {Object|null} [params.options.resetPolicy] 软重置参数 {anchorRating, retentionFactor}
  * @returns {{
  *   users: Array<Object>,
  *   matches: Array<Object>,
@@ -724,8 +646,6 @@ function replaySeason({ members, matches, events = [], announcements = [], optio
     eloConfig,
     pointConfig = DEFAULT_POINT_CONFIG,
     seasonStart,
-    resetTime = null,
-    resetPolicy = null,
   } = options;
 
   // 先把 ELO 参数合并成一份完整配置再使用。
@@ -733,7 +653,7 @@ function replaySeason({ members, matches, events = [], announcements = [], optio
   // 调用方以为改了初始分，实际上所有人还是从默认值起步。
   const elo = { ...DEFAULT_CONFIG, ...(eloConfig || {}) };
 
-  const base = { members, matches, events, elo, pointConfig, resetTime, resetPolicy };
+  const base = { members, matches, events, elo, pointConfig };
 
   // 第一遍：所有人从初始分起步，采集新人的定级依据
   const probe = runReplay({ ...base, presets: new Map(), collectPlacement: true });
@@ -769,8 +689,6 @@ function replaySeason({ members, matches, events = [], announcements = [], optio
       ...final.meta,
       // 实际使用的赛季锚点，可能是调用方钉死的，也可能是流水里最早一场
       seasonStart: resolvedSeasonStart,
-      // 软重置分界点，界面据此说明「本赛季从哪一刻起算」
-      resetTime: resetTime || null,
       // 定级结果对外公开，界面可以解释「你的初始分是怎么来的」
       placements: Object.fromEntries(
         [...presets].map(([userId, pools]) => [userId, Object.fromEntries(pools)])

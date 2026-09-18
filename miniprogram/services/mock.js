@@ -26,12 +26,10 @@ const eventStore = require('./event-store.js');
 const collegeStore = require('./college-store.js');
 const profileStore = require('./profile-store.js');
 const roleStore = require('./role-store.js');
-const seasonStore = require('./season-store.js');
 const liveStore = require('./live-store.js');
 const { installCollegeDemo } = require('./college-demo.js');
 const { register: registerAccount } = require('./auth.js');
 const { canManage } = require('./permission.js');
-const { DEFAULT_RESET_POLICY, canResetSeason } = require('./season.js');
 const { REVIEW_ACTION, validateReview, validateCollegeLeader } = require('./member-review.js');
 const {
   canConfirm,
@@ -314,20 +312,12 @@ function buildCache() {
   // 3. 回放名单 = 种子会员 + 已通过审核的本地账号。
   //    注意 replaySeason 的参数名是 members（不是 users）：它返回的
   //    replayed.users 才是「回放后的会员」。
-  // 本次会话若做过赛季软重置，把分界点交给回放：引擎会在该处统一压分，
-  // 并把起点分刷成压分后的值（见 replay.js 的 applySeasonReset）。
-  const reset = seasonStore.getReset();
-
   const replayed = replaySeason({
     ...seed,
     members: seed.members.concat(approved),
     matches: activeOnly,
     // 赛事进回放：等级表决定赛事比赛用哪个 K，积分只发给已结束的那些
     events: eventLedger,
-    options: {
-      resetTime: reset ? reset.resetTime : null,
-      resetPolicy: reset ? reset.policy : null,
-    },
   });
 
   const replayedById = new Map(replayed.matches.map((match) => [match._id, match]));
@@ -417,8 +407,6 @@ function resetCache() {
   profileStore.reset();
   // 角色任免同理：管理员把谁设成了干事也是临时写入
   roleStore.reset();
-  // 赛季重置同理：分界点必须一起清，否则下一轮生成的分数还是被压过的
-  seasonStore.reset();
   // 实时比分同理：逐球流水是临时写入，复位后不该再看到上一轮的比分
   liveStore.reset();
   // 学院赛演示场景也一并关掉：复位是测试专用动作，之后各用例要的是干净
@@ -1586,49 +1574,18 @@ async function archiveAnnouncement(id, actor) {
   return { ok: true, record, message: '' };
 }
 
-/* ---------- 赛季管理 ---------- */
+/* ---------- 赛季状态 ---------- */
 
 /**
  * 读取当前赛季状态。
  *
- * mock 没有云端那份赛季文档，锚点直接取回放给出「赛季首场」，
- * 重置记录则来自本次会话的 seasonStore。形状与云端保持一致，
- * 管理页与视图模型两边共用。
+ * mock 没有云端那份赛季文档，锚点直接取回放给出「赛季首场」。
+ * 形状与云端保持一致，视图模型两边共用。
  *
  * @returns {Promise<Object>}
  */
 async function getSeasonState() {
-  const reset = seasonStore.getReset();
-  return {
-    anchorTime: load().meta.seasonStart || null,
-    resetTime: reset ? reset.resetTime : null,
-    // 从未重置时也给默认策略，界面照样能说明「重置后会怎么压分」
-    policy: reset ? reset.policy : { ...DEFAULT_RESET_POLICY },
-    // 赛季编号只由「开始新赛季」递增，与其它写入无关，形状与云端一致
-    seasonNumber: seasonStore.getSeasonNumber(),
-    version: reset ? 1 : 0,
-  };
-}
-
-/**
- * 执行一次赛季软重置。
- *
- * 权限判定与云端同源（services/season.js）：只有管理员可以执行。
- * 种子里 u01 巴特尔就是管理员（见 seed.js 的 MEMBER_SEED），演示时把
- * 当前账号切到 u01 即可。只记分界点与策略，压分交给回放引擎。
- *
- * @param {string} actor 操作者编号
- * @returns {Promise<{ok:boolean, season:Object|null, message:string}>}
- */
-async function resetSeason(actor) {
-  const account = accountOf(actor);
-  if (!canResetSeason(account)) {
-    return { ok: false, season: null, message: '只有管理员可以执行赛季重置' };
-  }
-
-  seasonStore.setReset({ resetTime: new Date(), policy: DEFAULT_RESET_POLICY });
-  cache = null;
-  return { ok: true, season: await getSeasonState(), message: '' };
+  return { anchorTime: load().meta.seasonStart || null };
 }
 
 /* ---------- 个人资料 ---------- */
@@ -2481,7 +2438,6 @@ module.exports = {
   publishAnnouncement,
   archiveAnnouncement,
   updateProfile,
-  resetSeason,
   publishEvent,
   startEvent,
   setEventPinned,

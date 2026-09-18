@@ -1,91 +1,36 @@
 /**
- * 赛季管理写/读接口：查看赛季状态、执行软重置
+ * 赛季读接口：查看赛季状态
  * ============================================================
- * 【为什么重置要落库而不是客户端算】
- * 软重置会改变全俱乐部每个人的分数。若让客户端自己压一遍再上送，
- * 改一个分数就能凭空多出几百点；而且每台设备算出来的还不一样。
- * 所以服务端只认两件事：谁在操作（OpenID 回查）、现在几点（服务端时钟）。
- * 压分本身由回放引擎统一做，结果自然一致。
+ * 赛季锚点决定谁是「创始会员」、谁是「中途入会者」（见 season.js），
+ * 界面据此说明「本赛季从哪一刻起算」。赛事页的赛季文案读这里。
  *
- * 【为什么分界点用服务端此刻】
- * 重置 = 「从这一刻起新赛季」。用客户端时钟的话，一台走慢一天的手机
- * 就会把分界点设到过去，上一批比赛被错误地算进新赛季。
- *
- * 【为什么权限门槛是 ADMIN】
- * 见 services/season.js 的说明：重置的影响面比发一条公告大得多。
+ * 与其它读接口（read-handlers.js）一致：不拦未登录，也不把权限结论
+ * 混进返回值。
  * ============================================================
  */
 
-const { ok, fail } = require('../envelope.js');
-const { callerError } = require('./context.js');
-const { loadSeason, writeSeasonReset } = require('./season.js');
-const { DEFAULT_RESET_POLICY, canResetSeason } = require('../../lib/services/season.js');
-
-/* ============================================================
- * 读接口：getSeasonState
- *
- * 「谁能重置」不在这里判定，只回报赛季本身的状态。
- * 与其它读接口（read-handlers.js）一致：不拦未登录，也不把权限结论
- * 混进返回值。小程序内的赛季管理页已移除，重置改为管理员在云控制台
- * 手动调用 resetSeason；读接口仍供赛事页显示「第 N 赛季」。
- * ============================================================ */
+const { ok } = require('../envelope.js');
+const { loadSeason } = require('./season.js');
 
 /**
  * 把赛季文档整形成界面要的形状，绝不漏字段给渲染层。
  * @param {Object} season
- * @returns {{anchorTime:*, resetTime:*, policy:Object, seasonNumber:number, version:number}}
+ * @returns {{anchorTime:*}}
  */
 function shapeSeason(season) {
-  return {
-    anchorTime: season.anchorTime || null,
-    resetTime: season.resetTime || null,
-    // 从未重置过时返回默认策略，界面照样能说明「重置后会怎么压分」
-    policy: season.resetPolicy || DEFAULT_RESET_POLICY,
-    // 界面上的「第 N 赛季」读这个编号，读到的绝不是写缓存用的 version
-    seasonNumber: Number(season.seasonNumber || 1),
-    version: Number(season.version || 0),
-  };
+  return { anchorTime: season.anchorTime || null };
 }
 
 /**
- * 读取当前赛季状态。管理页据此显示锚点、上次重置时间与压分策略。
+ * 读取当前赛季状态。
  *
  * @param {Object} payload
  * @param {Object} ctx
- * @returns {Promise<Object>} {anchorTime, resetTime, policy, seasonNumber, version}
+ * @returns {Promise<Object>} {anchorTime}
  */
 async function getSeasonState(payload = {}, ctx) {
   const season = await loadSeason(ctx.repo);
   return ok(shapeSeason(season));
 }
 
-/**
- * 执行一次赛季软重置。
- *
- * 只写分界点与策略，不直接改任何人的分数——分数是派生数据，下一次读取
- * 时由回放引擎在分界处统一压分，并把起点分一起刷新（见 replay.js）。
- *
- * @param {Object} payload
- * @param {Object} ctx
- * @returns {Promise<Object>} {ok, season, message}
- */
-async function resetSeason(payload = {}, ctx) {
-  const guard = callerError(ctx);
-  if (guard) return fail(guard);
-
-  if (!canResetSeason(ctx.actor, { isMock: false })) {
-    return ok({ ok: false, season: null, message: '只有管理员可以执行赛季重置' });
-  }
-
-  const season = await ctx.repo.transaction(async (tx) =>
-    writeSeasonReset(tx, {
-      resetTime: ctx.now,
-      policy: DEFAULT_RESET_POLICY,
-      now: ctx.now,
-    })
-  );
-
-  return ok({ ok: true, season: shapeSeason(season), message: '' });
-}
-
-module.exports = { getSeasonState, resetSeason };
+module.exports = { getSeasonState };

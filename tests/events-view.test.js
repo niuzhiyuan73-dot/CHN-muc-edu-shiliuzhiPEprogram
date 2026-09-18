@@ -108,13 +108,10 @@ test('countEvents —— 空输入返回空 Map', () => {
   assert.strictEqual(countEvents([]).size, 0);
 });
 
-test('describeSeason —— 有锚点写起算日，有重置再补一句', () => {
+test('describeSeason —— 有锚点写起算日，没有则退回「当前赛季」', () => {
   assert.strictEqual(describeSeason({}), '当前赛季');
+  assert.strictEqual(describeSeason(), '当前赛季');
   assert.strictEqual(describeSeason({ anchorTime: '2026-04-08T18:00:00' }), '本赛季自 4月8日 起');
-  assert.strictEqual(
-    describeSeason({ anchorTime: '2026-04-08T18:00:00', resetTime: '2026-06-01T00:00:00' }),
-    '本赛季自 4月8日 起，6月1日 已重置'
-  );
 });
 
 test('buildPointsRows —— 滤掉 0 分的人，按积分降序并重新编号', () => {

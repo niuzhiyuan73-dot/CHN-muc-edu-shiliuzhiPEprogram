@@ -564,60 +564,6 @@ describe('replaySeason —— 积分', () => {
     assert.equal(userOf(result, 'a').points, 0);
   });
 
-  test('赛季分界之前的赛事属于上个赛季，不计入本赛季', () => {
-    const members = [{ _id: 'a' }];
-    const result = replaySeason({
-      members,
-      matches: [],
-      events: [
-        // 重置日 6月1日；这场赛事 5月10日结束，早于分界
-        event('e_old', MATCH_TYPE.SINGLES, [{ userId: 'a', placement: 1 }]),
-        event(
-          'e_new',
-          MATCH_TYPE.SINGLES,
-          [{ userId: 'a', placement: 1 }],
-          { endTime: new Date('2026-06-05T18:00:00') }
-        ),
-      ],
-      options: { resetTime: '2026-06-01T00:00:00' },
-    });
-    // 只有分界之后那场算数
-    assert.equal(userOf(result, 'a').points, 22);
-  });
-
-  test('赛事归属按结束时刻（finishedAt）算，不被计划开赛时间带偏', () => {
-    const members = [{ _id: 'a' }];
-    const result = replaySeason({
-      members,
-      matches: [],
-      events: [
-        // 计划 5/20 开赛（早于 6/1 分界），实际 6/3 才录入名次收尾。
-        // app 里发布的赛事只有计划开赛时间，若拿它当结束时间，这场就被
-        // 错算进上个赛季——积分凭空消失。
-        event('e01', MATCH_TYPE.SINGLES, [{ userId: 'a', placement: 1 }], {
-          startTime: new Date('2026-05-20T18:00:00'),
-          finishedAt: new Date('2026-06-03T18:00:00'),
-        }),
-      ],
-      options: { resetTime: '2026-06-01T00:00:00' },
-    });
-    assert.equal(userOf(result, 'a').points, 22);
-  });
-
-  test('历史 / 种子赛事没有 finishedAt，退回 endTime 判归属', () => {
-    const members = [{ _id: 'a' }];
-    const result = replaySeason({
-      members,
-      matches: [],
-      events: [
-        // 只有 endTime（5/10），早于 6/1 分界 → 属于上个赛季
-        event('e_old', MATCH_TYPE.SINGLES, [{ userId: 'a', placement: 1 }]),
-      ],
-      options: { resetTime: '2026-06-01T00:00:00' },
-    });
-    assert.equal(userOf(result, 'a').points, 0);
-  });
-
   test('同一赛事打多轮，积分只结在最后一场（2.5）', () => {
     const members = [{ _id: 'a' }, { _id: 'b' }, { _id: 'c' }];
     const result = replaySeason({

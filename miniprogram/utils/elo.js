@@ -326,60 +326,6 @@ function calculateMatchRatings({ teamA, teamB, winner, config: userConfig, event
  * ============================================================ */
 
 /**
- * 赛季软重置。
- *
- * 【为什么需要】
- * 在零和体系里，分数长期打下去会逐渐固化：强者互相交手时分数只在小范围
- * 内交换，落后者即使进步也追不上；高分会员毕业离校又会带走分数。久而久之，
- * 榜单失去活力。软重置相当于给所有人一次「重新开始」的机会，
- * 同时保留历史水平的大部分痕迹（不会一夜清零）。
- *
- * 【公式】
- *   R_new = R_old × 保留系数 + 锚定分 × (1 - 保留系数)
- *
- * 保留系数 0.75 时（锚定分 1450）：1900 分 → 1788 分，1200 分 → 1263 分。
- * 所有人都在向 1450 分靠拢，但强者依然明显高于弱者，相对顺序不变。
- *
- * @param {number} currentRating 当前等级分
- * @param {Object} [options]
- * @param {number} [options.anchorRating=1450] 锚定分，即向哪个分数回归
- * @param {number} [options.retentionFactor=0.75] 保留系数，取值 [0, 1]
- * @returns {number} 重置后的等级分（整数）
- *
- * @example
- * applySeasonalReset(1900);                    // => 1788
- * applySeasonalReset(1200);                    // => 1263
- * applySeasonalReset(1900, { retentionFactor: 0.5 }); // => 1675（拉得更猛）
- */
-function applySeasonalReset(currentRating, options = {}) {
-  const {
-    anchorRating = DEFAULT_CONFIG.initialRating,
-    retentionFactor = 0.75,
-  } = options;
-
-  if (typeof currentRating !== 'number' || !Number.isFinite(currentRating)) {
-    throw new Error('applySeasonalReset 的 currentRating 必须是有效数字');
-  }
-  // 【为什么先判「是不是数字」，再判范围】
-  // null 过得去范围比较：`null < 0` 与 `null > 1` 都是假。放它进来，
-  // 1900 × null = 0，于是全员分数被悄悄压成锚定分——一次重置抹平整张榜，
-  // 且一声不吭。NaN 同理（任何比较都为假）。所以范围之前先排除非数字。
-  // 这两个参数来自落库的赛季文档（见 season.js 的 resetPolicy），
-  // 手工改库或老数据都可能给到 null；宁可在这里炸出来，也别静默算错分。
-  if (typeof retentionFactor !== 'number' || !Number.isFinite(retentionFactor)) {
-    throw new Error('retentionFactor 必须是有效数字');
-  }
-  if (retentionFactor < 0 || retentionFactor > 1) {
-    throw new Error('retentionFactor 必须位于 0 到 1 之间');
-  }
-  if (typeof anchorRating !== 'number' || !Number.isFinite(anchorRating)) {
-    throw new Error('anchorRating 必须是有效数字');
-  }
-
-  return normalizeZero(Math.round(currentRating * retentionFactor + anchorRating * (1 - retentionFactor)));
-}
-
-/**
  * 把分数向下取到步长的整数倍。1450 向下取 50 的倍数仍是 1450，1783 → 1750。
  *
  * @param {number} value
@@ -447,7 +393,6 @@ module.exports = {
   teamAverageRating,
   normalizeZero,
   calculateMatchRatings,
-  applySeasonalReset,
   floorToStep,
   calculatePlacementRating,
 };

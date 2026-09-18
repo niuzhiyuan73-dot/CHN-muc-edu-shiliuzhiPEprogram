@@ -197,11 +197,8 @@ function countEvents(events) {
  * @returns {string}
  */
 function describeSeason(season = {}) {
-  const parts = [];
-  if (season.anchorTime) parts.push(`自 ${formatDate(season.anchorTime)} 起`);
-  if (season.resetTime) parts.push(`${formatDate(season.resetTime)} 已重置`);
-  if (parts.length === 0) return '当前赛季';
-  return `本赛季${parts.join('，')}`;
+  if (!season.anchorTime) return '当前赛季';
+  return `本赛季自 ${formatDate(season.anchorTime)} 起`;
 }
 
 /* ============================================================

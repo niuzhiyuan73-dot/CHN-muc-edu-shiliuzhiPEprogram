@@ -156,44 +156,6 @@ function revertMatchResult({ user, pool, delta, isWin }) {
 }
 
 /**
- * 对某个池执行赛季软重置。
- *
- * @param {Object} ratings 用户当前的 ratings 对象
- * @param {Object} [options]
- * @param {Function} [options.resetFn] 重置函数，签名 (elo) => newElo
- * @param {boolean} [options.onlyPlayed=true] 是否只重置打过球的池。
- *        默认 true——没参加过的池本来就是初始分，重置它没有意义。
- * @returns {Object} 重置后的 ratings 对象
- */
-function applySeasonalResetToUser(ratings, { resetFn, onlyPlayed = true } = {}) {
-  if (typeof resetFn !== 'function') {
-    throw new Error('applySeasonalResetToUser 需要传入 resetFn');
-  }
-
-  const result = { ...ratings };
-  for (const pool of ALL_RATING_POOLS) {
-    const current = ratings[pool];
-    if (!current) continue;
-    if (onlyPlayed && current.matchCount === 0) continue;
-
-    const nextElo = resetFn(current.elo);
-
-    result[pool] = {
-      ...current,
-      elo: nextElo,
-      // 【起点分必须一起刷新】进步榜算的是「相对赛季初涨了多少」。
-      // 若只改 elo 不动 startElo，重置后的涨幅会把上一个赛季的积累也
-      // 算进来，进步榜会在赛季初集体虚高一大截。
-      startElo: nextElo,
-      // 新赛季重新计数？不。场次是生涯统计，跨赛季保留，
-      // 否则「定级期」判定会在每个赛季初被误触发。
-      matchCount: current.matchCount,
-    };
-  }
-  return result;
-}
-
-/**
  * 判断某位会员是否打过某个池。
  * 用于界面上决定「是否展示该池的分数」——从没打过双打的人，
  * 展示他的双打初始分没有意义，反而让人困惑。
@@ -241,7 +203,6 @@ module.exports = {
   getPoolRating,
   applyMatchResult,
   revertMatchResult,
-  applySeasonalResetToUser,
   hasPlayedPool,
   summarizeCareer,
 };

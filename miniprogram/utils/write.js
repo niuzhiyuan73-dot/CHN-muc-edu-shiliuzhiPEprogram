@@ -46,9 +46,8 @@ const WRITE_ACTIONS = [
   // 公告发布与下架
   'publishAnnouncement',
   'archiveAnnouncement',
-  // 个人资料与赛季
+  // 个人资料
   'updateProfile',
-  'resetSeason',
   // 赛事闭环
   'publishEvent',
   'startEvent',
