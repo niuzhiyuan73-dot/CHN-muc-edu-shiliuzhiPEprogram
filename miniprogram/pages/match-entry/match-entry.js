@@ -25,6 +25,7 @@ const {
   getMembers,
   getHomeSummary,
   getMatchRecords,
+  getSeasonPairCounts,
   submitMatch,
   isMock,
 } = require('../../services/index.js');
@@ -166,6 +167,12 @@ Page({
         this.nameById[item._id] = item.nickName || item._id;
       });
 
+      // 本赛季与每个人已交手的场次，选对手面板上那个数字取自它。
+      // 放在这里取一次就够：整张单子期间它只用于展示，不参与任何判定
+      // （真正拦人的是提交时服务端的闸门）。取不到也不影响录入。
+      // 补录签表比赛时对阵已经排定、格子全是锁的（面板打不开），不必白跑一趟。
+      this.pairInfo = user && !this.matchId ? await this.loadPairCounts(user._id) : null;
+
       // 带着 matchId 进来 = 给签表里排定的比赛补录比分。
       // 对阵与赛制取自那条记录，页面不给改（见 match-entry-view.scheduledForm）。
       let form;
@@ -209,6 +216,20 @@ Page({
     } catch (err) {
       console.error('[match-entry] 初始化失败', err);
       this.setData({ loading: false, error: '页面加载失败，请返回重试' });
+    }
+  },
+
+  /**
+   * 本赛季与每个人已交手的场次。
+   * 失败就返回 null——徽标是提示，不该因为它读不到而让整页打不开。
+   */
+  async loadPairCounts(userId) {
+    try {
+      const result = await getSeasonPairCounts(userId);
+      return { counts: (result && result.counts) || {}, limit: result && result.limit };
+    } catch (err) {
+      console.error('[match-entry] 交手场次读取失败', err);
+      return null;
     }
   },
 
@@ -312,7 +333,9 @@ Page({
     const rows = buildPickerRows(
       this.data.members,
       keyword,
-      this.selectedIdOf(this.data.pickerSide, this.data.pickerSlot)
+      this.selectedIdOf(this.data.pickerSide, this.data.pickerSlot),
+      // 只有对手那一侧带场次：名额只数跨队相对的人，同队的搭档之间不算一对
+      this.data.pickerSide === 'B' ? this.pairInfo : null
     );
     this.setData({
       pickerKeyword: String(keyword == null ? '' : keyword).trim(),

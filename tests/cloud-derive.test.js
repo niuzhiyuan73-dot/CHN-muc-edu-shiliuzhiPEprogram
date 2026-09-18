@@ -592,3 +592,77 @@ test('防刷分 —— 已撤销的场次不占名额，名额让给后面的比
   assert.equal(dataset.matches.length, 1, '撤销的场次把名额还了回来');
   assert.ok(dataset.matches.some((m) => m._id === 'c16'));
 });
+
+/* ---------- 防刷分：提交闸门 ---------- */
+
+/**
+ * 把赛季锚点留在四月。
+ *
+ * 录入的时间下界取自「已知最早一场」（见 match-handlers），而下面这些
+ * 用例把种子换成了清一色的五月流水。锚点跟着飘到五月之后，MATCH_FORM
+ * 那个 05-01 就会被判成「早于本赛季首场」——测的就不是闸门了。
+ */
+const APRIL_ANCHOR = [singles('base', 'u03', 'u04', '2026-04-08T18:00:00')];
+
+test('防刷分 —— 打满名额后提交当场被拒，库里不留痕', async () => {
+  // u01 与 u02 恰好打满 RATED_PAIR_LIMIT 场日常约球
+  const repo = createFixtureRepo({
+    matches: APRIL_ANCHOR.concat(singlesStreak(RATED_PAIR_LIMIT, 16)),
+  });
+  const ctx = await contextFor(repo, 'openid-u01');
+
+  const before = (await repo.matches.list()).length;
+  const res = await dispatch('submitMatch', MATCH_FORM, ctx);
+
+  assert.equal(res.ok, true, '业务失败要装在 data 里，不能变成顶层故障');
+  assert.equal(res.data.ok, false);
+  assert.equal(res.data.match, null);
+  assert.ok(res.data.firstError.includes('上限'), res.data.firstError);
+  assert.equal((await repo.matches.list()).length, before, '被拦下的比赛不该落库');
+});
+
+test('防刷分 —— 没打满的一对照常能录', async () => {
+  const repo = createFixtureRepo({
+    matches: APRIL_ANCHOR.concat(singlesStreak(RATED_PAIR_LIMIT - 1, 16)),
+  });
+  const ctx = await contextFor(repo, 'openid-u01');
+
+  const res = await dispatch('submitMatch', MATCH_FORM, ctx);
+
+  assert.equal(res.data.ok, true, res.data.firstError);
+  assert.equal(res.data.match.status, 0, '照常以「待确认」入账');
+});
+
+test('防刷分 —— 重试先于闸门：已经录进去的那场，再提交一次仍算成功', async () => {
+  // 前 14 场 + 这次提交 = 第 15 场，正好把名额用满
+  const repo = createFixtureRepo({
+    matches: APRIL_ANCHOR.concat(singlesStreak(RATED_PAIR_LIMIT - 1, 16)),
+  });
+  const ctx = await contextFor(repo, 'openid-u01');
+
+  const first = await dispatch('submitMatch', MATCH_FORM, ctx);
+  assert.equal(first.data.ok, true, first.data.firstError);
+
+  // 名额此刻已经满了。若闸门跑在重试判断之前，这次重试会被误判成「名额已满」
+  // ——用户看到失败、库里却明明有这条，他多半会换个对手再录一次。
+  const again = await dispatch('submitMatch', MATCH_FORM, ctx);
+  assert.equal(again.data.ok, true, '重试必须幂等，不能被闸门挡住');
+  assert.equal(again.data.match._id, first.data.match._id);
+});
+
+test('getSeasonPairCounts —— 与服务端闸门同一份口径', async () => {
+  const repo = createFixtureRepo({
+    matches: singlesStreak(3).concat([
+      { ...singles('p1', 'u01', 'u02', '2026-05-10T18:00:00'), status: 0 },
+    ]),
+  });
+  const ctx = await contextFor(repo, 'openid-u01');
+
+  const res = await dispatch('getSeasonPairCounts', { userId: 'u01' }, ctx);
+
+  assert.equal(res.data.limit, RATED_PAIR_LIMIT);
+  // 三场已生效 + 一场待确认。待确认的也占名额，面板上的数字必须把它算进去，
+  // 否则用户会「按面板显示的数字录到第 15 场却被拦下」。
+  assert.equal(res.data.counts.u02, 4);
+  assert.equal(res.data.counts.u03, undefined, '没交过手的人不出现，而不是给 0');
+});

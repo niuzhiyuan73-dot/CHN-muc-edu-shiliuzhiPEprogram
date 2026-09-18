@@ -11,10 +11,9 @@
  *   - 「自行录入」= 没有 eventId / collegeEventId / tieId（见 isCasualMatch）；
  *   - 双打按**跨队无序对**算：一队两人对对手两人，四组组合各记一场，
  *     且 (甲,乙) 与 (乙,甲) 是同一个人对，不重复计数；
- *   - 超限的比赛**照常记在台账里**（比赛记录页仍查得到），但不进等级分，
- *     也不出现在成绩公示与逐场战绩里——与弃权同一路数。防刷分要防的是分数
- *     被刷高，不是否认这场球发生过；可只要进了流水就会带出一条分数变化，
- *     所以「不计分」与「不入流水」在这里是同一件事。
+ *   - 超限的场次**不让录入**（见 checkSubmitAllowed）。已经在册的（历史导入、
+ *     直接改库、规则生效前录的）另有 findCappedMatchIds 兜底：留在台账里，
+ *     但不进等级分、不进成绩公示与逐场战绩——与弃权同一路数。
  *
  * 【为什么是「整个赛季」】
  * 赛季分界点（season.resetTime）之前的场次属于上一个赛季，不占本赛季名额。
@@ -25,10 +24,17 @@
  * 只数已生效的话，两个人可以连录 15 场等对手逐一确认，全部生效后上限就被
  * 绕过去了。因此提交即占名额，被驳回或撤销（REVOKED）才释放。
  *
+ * 【为什么提交时挡一道，回放前还要再筛一道】
+ * 提交时的闸门管的是「以后」：它拦得住新录的比赛，拦不住已经在库里的。
+ * 历史成绩导入、控制台直接改库、以及本规则上线之前录下的场次，都会绕过
+ * 闸门。回放前那道筛子（findCappedMatchIds）保证无论流水怎么来的，
+ * 一对会员最多只有 15 场计入等级分。两道各管一段，缺一不可。
+ *
  * 【为什么在回放之前算，而不是边回放边算】
  * 「哪些比赛算数」这一类判断全部集中在数据层（derive.js / mock.js 的
  * activeOnly），与 isEloEligibleMatch 并列。回放引擎只管拿到比赛算分数，
- * 不必知道防刷分这件事，改规则也不会碰算法代码。
+ * 不必知道防刷分这件事，改规则也不会碰算法代码。提交闸门同样落在数据层，
+ * 前端算出来的数字只用于展示，不作数。
  *
  * 【纯函数】
  * 不碰 wx、不读数据库、不看当前时间；同样的输入永远给同样的输出。
@@ -76,16 +82,118 @@ function pairKey(a, b) {
  * @returns {string[]} 无序对键列表；队伍数据不完整时返回空数组
  */
 function crossPairs(match) {
+  return crossPairList(match).map((pair) => pair.key);
+}
+
+/**
+ * 跨队对，连同两边的人是谁。
+ *
+ * 与 crossPairs 同源，只是多带回编号：要说出「你和谁已经打满」就得知道
+ * 对子里是哪两个人，而从 '甲|乙' 这样的键里把编号切回来，一旦编号里含
+ * 分隔符就会错。宁可从队伍数组直接取。
+ *
+ * @param {Object} match
+ * @returns {Array<{key: string, a: string, b: string}>}
+ */
+function crossPairList(match) {
   const teamA = (match && match.teamA) || [];
   const teamB = (match && match.teamB) || [];
-  const keys = [];
+  const list = [];
   for (const a of teamA) {
     for (const b of teamB) {
       if (a === undefined || a === null || b === undefined || b === null) continue;
-      keys.push(pairKey(String(a), String(b)));
+      list.push({ key: pairKey(String(a), String(b)), a: String(a), b: String(b) });
     }
   }
-  return keys;
+  return list;
+}
+
+/**
+ * 挑出「占名额」的比赛，按回放同款顺序排好。
+ *
+ * 三条判据缺一不可：没被撤销（撤销即释放名额）、是日常约球（赛事不占名额）、
+ * 落在本赛季（分界点之前的归上个赛季）。时间不可解析的直接跳过——录不进来
+ * 的脏数据不该吃掉别人的名额。
+ *
+ * @param {Array<Object>} matches 全量比赛流水（含待确认与已撤销）
+ * @param {string|Date|null} seasonStart 本赛季分界点
+ * @returns {Array<Object>} 升序排列的新数组
+ */
+function countedMatches(matches, seasonStart) {
+  if (!Array.isArray(matches) || matches.length === 0) return [];
+
+  const startMs =
+    seasonStart === null || seasonStart === undefined ? NaN : new Date(seasonStart).getTime();
+  const hasSeasonStart = Number.isFinite(startMs);
+
+  return matches
+    .filter((match) => {
+      if (!match || match.status === MATCH_STATUS.REVOKED) return false;
+      if (!isCasualMatch(match)) return false;
+      const timeMs = new Date(match.matchTime).getTime();
+      if (!Number.isFinite(timeMs)) return false;
+      if (hasSeasonStart && timeMs < startMs) return false;
+      return crossPairs(match).length > 0;
+    })
+    .sort(compareForReplay);
+}
+
+/**
+ * 本赛季每对会员已经打过的场次。
+ *
+ * 这是「名额用了多少」的唯一算法，提交闸门与录分页上显示的数字都取自它，
+ * 因此面板里写「已交手 3 场」时，闸门数的也是 3。
+ *
+ * 会超过上限：历史导入或规则生效前录下的场次不会因为超限就消失，如实数
+ * 出来（18 就是 18），由调用方决定怎么显示——把数字截到 15 反而藏了信息。
+ *
+ * @param {Array<Object>} matches 全量比赛流水
+ * @param {Object} [options]
+ * @param {string|Date|null} [options.seasonStart] 本赛季分界点；不传表示从未开始过新赛季
+ * @returns {Map<string, number>} 无序对键 → 场次
+ */
+function tallyPairUsage(matches, { seasonStart = null } = {}) {
+  const usage = new Map();
+  for (const match of countedMatches(matches, seasonStart)) {
+    // 同一场内不重复计：一队两人对对手两人，四组对两两不同，去重是给
+    // 「同一人出现在两队」这种脏数据兜底，宁可少算不可多算
+    for (const key of new Set(crossPairs(match))) {
+      usage.set(key, (usage.get(key) || 0) + 1);
+    }
+  }
+  return usage;
+}
+
+/**
+ * 某位会员本赛季与每个人的交手场次。
+ *
+ * 只数「隔网相对」的场次——同队的搭档不算交手，那正是名额的算法
+ * （见 tallyPairUsage）。录分页的选对手面板据此显示每个人后面的数字。
+ *
+ * @param {string} userId
+ * @param {Array<Object>} matches 全量比赛流水
+ * @param {Object} [options]
+ * @param {string|Date|null} [options.seasonStart] 本赛季分界点
+ * @returns {Object<string, number>} 对方编号 → 场次；一场没打的人不出现
+ */
+function seasonPairCounts(userId, matches, { seasonStart = null } = {}) {
+  const counts = {};
+  const me = userId === null || userId === undefined ? '' : String(userId);
+  if (!me) return counts;
+
+  for (const match of countedMatches(matches, seasonStart)) {
+    const teamA = (match.teamA || []).map(String);
+    const teamB = (match.teamB || []).map(String);
+    const inA = teamA.includes(me);
+    const inB = teamB.includes(me);
+    // 不在场上，或两边都有我（脏数据）——都算不出「和谁交手」
+    if (inA === inB) continue;
+    for (const other of inA ? teamB : teamA) {
+      if (other === me) continue;
+      counts[other] = (counts[other] || 0) + 1;
+    }
+  }
+  return counts;
 }
 
 /**
@@ -95,6 +203,12 @@ function crossPairs(match) {
  * 是否还有剩余，还有就正常记账并扣名额，没有就判为超限。
  * 顺序必须与回放一致——否则「哪一场是被挤掉的那一场」会随排序抖动，
  * 同一天的先后会不稳定。
+ *
+ * 【什么时候用得上】
+ * 提交闸门（checkSubmitAllowed）管的是「以后」；这个函数管「已经在库里的」。
+ * 历史成绩导入、控制台直接改库、本规则上线前录下的场次，都绕过闸门，
+ * 只能在这里筛掉。它就是「一对会员最多 15 场计入等级分」这条不变式的
+ * 最后一道保证。
  *
  * 【双打为什么整场作废】
  * 四组对里只要有一组已经打满，这场就不能计分：一队的分数变动是四人共用
@@ -109,46 +223,107 @@ function crossPairs(match) {
  */
 function findCappedMatchIds(matches, { seasonStart = null, limit = RATED_PAIR_LIMIT } = {}) {
   const capped = new Set();
-  if (!Array.isArray(matches) || matches.length === 0) return capped;
   if (!Number.isFinite(limit) || limit <= 0) return capped;
-
-  const startMs =
-    seasonStart === null || seasonStart === undefined ? NaN : new Date(seasonStart).getTime();
-  const hasSeasonStart = Number.isFinite(startMs);
 
   /** 无序对键 → 本赛季已占用的名额 */
   const used = new Map();
 
-  for (const match of [...matches].sort(compareForReplay)) {
-    // 撤销 / 驳回的场次不占名额，也不参与计数——名额被释放出来给后来的场次
-    if (!match || match.status === MATCH_STATUS.REVOKED) continue;
-
-    // 赛事不设上限，也不占日常的名额
-    if (!isCasualMatch(match)) continue;
-
-    const timeMs = new Date(match.matchTime).getTime();
-    if (!Number.isFinite(timeMs)) continue;
-    // 分界点之前的场次属于上一个赛季
-    if (hasSeasonStart && timeMs < startMs) continue;
-
+  for (const match of countedMatches(matches, seasonStart)) {
     const pairs = crossPairs(match);
-    if (pairs.length === 0) continue;
-
     const exceeded = pairs.some((key) => (used.get(key) || 0) >= limit);
     if (exceeded) {
       capped.add(String(match._id));
       continue;
     }
-
     for (const key of pairs) used.set(key, (used.get(key) || 0) + 1);
   }
 
   return capped;
 }
 
+/**
+ * 提交前的一道闸门：这场球还占得到名额吗。
+ *
+ * 一对会员打满上限之后，他们之间的比赛**不再让录入**。这是有意的选择——
+ * 让比赛入账却不计分，会让「这场为什么没加分」变成一个没人解释得清的状态；
+ * 当场拒掉，用户立刻知道该换对手。
+ *
+ * 【双打为什么整场拦下】
+ * 四组对里只要有一组满额，这场就计不了分。既然计不了分，就没有理由让它
+ * 入账——与 findCappedMatchIds 的整场作废同一口径。
+ *
+ * 【为什么用 ≥ 而不是 >】
+ * 名额指「还能再打几场」。已打满 15 场（usage === 15）时第 16 场就该被拦，
+ * 所以判据是 usage >= limit，不是 usage > limit。
+ *
+ * 【赛事比赛直接放行】
+ * 这条上限只管日常约球（见 isCasualMatch）。赛事有名次、有赛程、有裁判，
+ * 刷不出来，本来就不设限。调用方目前都走「按编号补录」那条路进来，压根
+ * 到不了这里；这一句是让函数自己守住自己的规则——将来多一条调用路径时，
+ * 不至于把一场决赛拦在「你和对手已经打了 15 场」上。
+ *
+ * @param {Object} match 待提交的记录（buildMatchRecord 的产物）
+ * @param {Array<Object>} matches 已有流水（含待确认与已撤销）
+ * @param {Object} [options]
+ * @param {string|Date|null} [options.seasonStart] 本赛季分界点
+ * @param {number} [options.limit=RATED_PAIR_LIMIT] 每对每赛季的上限
+ * @param {Function} [options.nameOf] 编号 → 昵称，用来把话说清楚；不给就用编号
+ * @returns {{ok: boolean, pairs: Array<{key: string, a: string, b: string}>, message: string}}
+ *          ok 为 false 时 pairs 是已满额的那些对
+ */
+function checkSubmitAllowed(match, matches, options = {}) {
+  const {
+    seasonStart = null,
+    limit = RATED_PAIR_LIMIT,
+    nameOf = null,
+  } = options;
+
+  const allow = { ok: true, pairs: [], message: '' };
+  if (!match) return allow;
+  if (!isCasualMatch(match)) return allow;
+  if (!Number.isFinite(limit) || limit <= 0) return allow;
+
+  const usage = tallyPairUsage(matches, { seasonStart });
+
+  // 同一对在一场双打里可能出现两次（两队各有交集时），去重后只报一次
+  const seen = new Set();
+  const full = [];
+  for (const pair of crossPairList(match)) {
+    if (seen.has(pair.key)) continue;
+    seen.add(pair.key);
+    if ((usage.get(pair.key) || 0) >= limit) {
+      full.push({ ...pair, count: usage.get(pair.key) || 0 });
+    }
+  }
+  if (full.length === 0) return allow;
+
+  const name = (id) => {
+    if (typeof nameOf !== 'function') return id;
+    return nameOf(id) || id;
+  };
+
+  // 只报第一对：一场双打最多两组对满额，全报出来是一句读不完的话
+  const first = full[0];
+  const extra = full.length > 1 ? `（另有 ${full.length - 1} 对也已满额）` : '';
+
+  return {
+    ok: false,
+    pairs: full,
+    message:
+      `本赛季 ${name(first.a)} 与 ${name(first.b)} 已经打了 ${first.count} 场，` +
+      `达到上限（${limit} 场），这场比赛不能再录入${extra}。` +
+      '请换一位对手，或等下个赛季。',
+  };
+}
+
 module.exports = {
   isCasualMatch,
   pairKey,
   crossPairs,
+  crossPairList,
+  countedMatches,
+  tallyPairUsage,
+  seasonPairCounts,
   findCappedMatchIds,
+  checkSubmitAllowed,
 };

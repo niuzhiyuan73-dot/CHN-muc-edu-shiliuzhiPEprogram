@@ -466,12 +466,17 @@ def build():
     bullet(doc, "学院名次不计个人分，因此改 college_events.results 不需要动 seasons.version；但若改了学院赛小场的比分，需要把 version 加 1 让 ELO 重算。")
     bullet(doc, "弃权的小场（outcome='forfeit'）与双打小场都不计 ELO，改这些场次不会影响任何人的等级分。")
 
-    heading(doc, "7.6 防刷分超限的比赛不见了", 2)
-    para(doc, "有一类比赛「在 matches 集合里查得到，却不进成绩公示、也查不到分数变化」：同一对会员在一个赛季里已经打过 15 场日常约球，多出来的那几场。")
-    bullet(doc, "这不是数据丢了，是算出来的。上限写在代码里（miniprogram/utils/constants.js 的 RATED_PAIR_LIMIT），没有存在库里的「已超限」标记，改库改不掉。")
+    heading(doc, "7.6 防刷分：同一对会员一个赛季最多 15 场", 2)
+    para(doc, "日常约球没有门槛，两个人一周互录二十场，赢的那个的等级分就被同一份对阵反复推高。所以：一对会员在一个赛季里，最多 15 场日常约球计入等级分。")
+    bullet(doc, "录分时就被拦下，不是事后静默不计分：打满之后两人再录，小程序会直接报「本赛季 X 与 Y 已经打了 15 场，达到上限」。录分页选对手的名单里，每个人后面也标着本赛季已经和他打了多少场，打满的标红。")
     bullet(doc, "只有日常约球受这条限制：带 eventId（赛事）或 collegeEventId + tieId（学院赛小场）的比赛一律不受限、也不占日常名额。")
-    bullet(doc, "双打按跨队无序对算：一队两人对对手两人算四组对，任一组满额整场就不计分。")
-    bullet(doc, "赛季分界点（seasons/current.resetTime）之前的场次属于上一个赛季，不占本赛季名额。")
+    bullet(doc, "双打按跨队无序对算：一队两人对对手两人算四组对，任一组满额整场就录不进去。同队的搭档之间不算一对。")
+    bullet(doc, "待确认的场次也占名额，被驳回或撤销（REVOKED）之后名额才还回来。赛季分界点（seasons/current.resetTime）之前的场次属于上一个赛季，不占本赛季名额。")
+    bullet(doc, "上限写在代码里（miniprogram/utils/constants.js 的 RATED_PAIR_LIMIT），库里没有「已超限」这种标记可供直接改。要临时放开某两人，只能改常量并重新上传云函数。")
+    heading(doc, "7.7 有比赛在 matches 里查得到，却不进成绩公示", 2)
+    para(doc, "导入历史成绩、在控制台直接改库、或者这条规则上线之前录下的场次，都绕过了提交时的闸门。它们会被算出来「超限」：比赛留在 matches 集合里，但不进成绩公示、也查不到分数变化。")
+    bullet(doc, "这不是数据丢了，是算出来的，没有存在库里的「已超限」标记。")
+    bullet(doc, "同一路数的还有弃权（outcome = forfeit）与待确认（status = 0）的比赛：记录在案，但不计分。")
     callout(doc, "要放宽或收紧这条规则，得改 RATED_PAIR_LIMIT 并重新上传云函数，同时把 season.js 的 ALGO_VERSION 加 1 —— 否则容器里缓存的旧分数不会重算，改了等于没改。", "注意")
 
     # ---------------- 八、导入历史成绩 ----------------

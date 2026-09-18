@@ -376,3 +376,77 @@ test('pickerEmptyText —— 有搜索词时把词写进提示，没有时给通
   assert.strictEqual(pickerEmptyText(''), '还没有可选的会员');
   assert.strictEqual(pickerEmptyText(null), '还没有可选的会员');
 });
+
+test('buildPickerRows —— 不传交手场次时每行都是 0，与从前一样', () => {
+  const rows = buildPickerRows(ROSTER, '', '');
+
+  assert.deepStrictEqual(
+    rows.map((row) => row.pairCount),
+    [0, 0, 0, 0],
+    '没传就当作一场没打过，不凭空编数字'
+  );
+  assert.ok(rows.every((row) => row.pairFull === false), '没满额就不该标红');
+});
+
+test('buildPickerRows —— 打过的挂上场次，没打过的不挂', () => {
+  const rows = buildPickerRows(ROSTER, '', '', {
+    counts: { u01: 3, u03: 15 },
+    limit: 15,
+  });
+  const byId = Object.fromEntries(rows.map((row) => [row.id, row]));
+
+  assert.strictEqual(byId.u01.pairCount, 3);
+  assert.strictEqual(byId.u01.pairFull, false);
+  assert.strictEqual(byId.u02.pairCount, 0, '一场没打过就是 0，模板据此不渲染徽标');
+  assert.strictEqual(byId.u02.pairFull, false);
+});
+
+test('buildPickerRows —— 打满上限的那一行标成满额，好先劝住用户', () => {
+  const rows = buildPickerRows(ROSTER, '', '', { counts: { u03: 15 }, limit: 15 });
+  const full = rows.find((row) => row.id === 'u03');
+
+  assert.strictEqual(full.pairCount, 15);
+  assert.strictEqual(full.pairFull, true, '满了就该标红——选了他也提交不上去');
+});
+
+test('buildPickerRows —— 超限的历史数据照样标满额', () => {
+  // 历史导入或规则生效前录下的场次会超过上限，如实显示 18，不截到 15
+  const rows = buildPickerRows(ROSTER, '', '', { counts: { u03: 18 }, limit: 15 });
+  const row = rows.find((item) => item.id === 'u03');
+
+  assert.strictEqual(row.pairCount, 18);
+  assert.strictEqual(row.pairFull, true);
+});
+
+test('buildPickerRows —— 上限缺失或不可用时绝不误标满额', () => {
+  // 没有入场次表：一场没打过
+  const none = buildPickerRows(ROSTER, '', '', null).find((item) => item.id === 'u03');
+  assert.strictEqual(none.pairCount, 0);
+  assert.strictEqual(none.pairFull, false);
+
+  for (const pairInfo of [{ counts: { u03: 15 } }, { counts: { u03: 15 }, limit: 0 }]) {
+    const row = buildPickerRows(ROSTER, '', '', pairInfo).find((item) => item.id === 'u03');
+    assert.strictEqual(row.pairCount, 15);
+    assert.strictEqual(row.pairFull, false, '连上限都不知道，就不能说人家打满了');
+  }
+});
+
+test('buildPickerRows —— 场次表里的杂数据不会污染行', () => {
+  // 编号对不上的人（比如已离校的）不会凭空多出一行；坏数字当作没打过
+  const rows = buildPickerRows(ROSTER, '', '', {
+    counts: { u01: 'x', u02: null, ghost: 5 },
+    limit: 15,
+  });
+
+  assert.strictEqual(rows.length, ROSTER.length);
+  assert.strictEqual(rows.find((row) => row.id === 'u01').pairCount, 0);
+  assert.strictEqual(rows.find((row) => row.id === 'u02').pairCount, 0);
+  assert.ok(!rows.some((row) => row.id === 'ghost'));
+});
+
+test('buildPickerRows —— 交手场次跟着搜索筛选走，不会串到别人身上', () => {
+  const rows = buildPickerRows(ROSTER, '张', '', { counts: { u03: 7 }, limit: 15 });
+
+  assert.deepStrictEqual(rows.map((row) => row.id), ['u03']);
+  assert.strictEqual(rows[0].pairCount, 7);
+});

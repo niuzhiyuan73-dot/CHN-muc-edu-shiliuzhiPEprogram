@@ -23,6 +23,7 @@ const { callerError } = require('./context.js');
 const { getDataset } = require('./derive.js');
 const { bumpSeason } = require('./season.js');
 const { matchNaturalKey } = require('./idempotency.js');
+const { checkSubmitAllowed } = require('../../lib/services/rating-cap.js');
 // 学院赛小场确认后，把结果写回大场并推进轮次（单向依赖，无环）
 const {
   advanceCollegeAfterLeg,
@@ -275,6 +276,24 @@ async function submitMatch(payload = {}, ctx) {
 
   // 自然键直接当主键：重复提交会撞上同一个 _id，事务里读一下就知道了
   const _id = matchNaturalKey(result.record);
+
+  // 重试必须先于闸门。上一轮若已经把这场写进去了，名额此刻已经算上它，
+  // 再拿「名额已满」把这次重试挡回去，用户就会看到「失败」而库里其实有这条
+  // ——幂等被破坏，且他多半会换个对手再录一次。事务里那道检查仍然保留：
+  // 两次请求挤在一起时，只有事务能兜住。
+  const already = await ctx.repo.matches.getById(_id);
+  if (already) return ok({ ok: true, match: already, errors: {}, scoreErrors: [], firstError: '' });
+
+  // 防刷分闸门：一对会员本赛季打满上限之后，他们之间的比赛不再让录
+  // （见 rating-cap.checkSubmitAllowed）。判据取完整台账——待确认的场次
+  // 也占名额，否则连录 15 场等对手逐一确认就把上限绕过去了。
+  const gate = checkSubmitAllowed(result.record, dataset.ledger, {
+    seasonStart: dataset.meta.resetTime,
+    nameOf: dataset.nameOf,
+  });
+  if (!gate.ok) {
+    return ok({ ok: false, match: null, errors: {}, scoreErrors: [], firstError: gate.message });
+  }
 
   const match = await ctx.repo.transaction(async (tx) => {
     const existing = await tx.matches.getById(_id);

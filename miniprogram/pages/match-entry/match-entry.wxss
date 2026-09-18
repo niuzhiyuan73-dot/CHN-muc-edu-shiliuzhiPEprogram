@@ -316,8 +316,26 @@
   font-size: var(--font-md);
 }
 
+/* 本赛季与这个人已交手的场次。没交过手的人不挂徽标，不占位置 */
+.picker-pair {
+  flex-shrink: 0;
+  margin-left: var(--space-sm);
+  padding: 2rpx var(--space-xs);
+  border-radius: var(--radius-sm);
+  background: var(--color-divider);
+  font-size: var(--font-xs);
+  color: var(--color-text-secondary);
+}
+
+/* 打满名额：选了他也提交不上去，先用颜色说清楚 */
+.picker-pair.is-full {
+  background: var(--color-accent-light);
+  color: var(--color-accent);
+}
+
 .picker-check {
   flex-shrink: 0;
+  margin-left: var(--space-sm);
   font-size: var(--font-md);
   color: var(--color-primary);
 }

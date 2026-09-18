@@ -10,7 +10,7 @@
  * ============================================================
  */
 
-/** 只读接口（28 个） */
+/** 只读接口（29 个） */
 const READ_ACTIONS = [
   'getCurrentUser',
   'getMembers',
@@ -29,6 +29,7 @@ const READ_ACTIONS = [
   'getEventRecord',
   'getRatingHistory',
   'getForm',
+  'getSeasonPairCounts',
   'getMyProjects',
   'getHomeSummary',
   'getMatchRecords',
@@ -84,7 +85,7 @@ const WRITE_ACTIONS = [
   'finishLiveScore',
 ];
 
-/** 全部 63 个操作 */
+/** 全部 64 个操作 */
 const ALL_ACTIONS = [...READ_ACTIONS, ...WRITE_ACTIONS];
 
 module.exports = { READ_ACTIONS, WRITE_ACTIONS, ALL_ACTIONS };

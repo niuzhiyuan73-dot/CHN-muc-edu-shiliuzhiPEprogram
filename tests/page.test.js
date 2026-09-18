@@ -35,6 +35,7 @@ const {
   EVENT_PLACEMENT_MODE,
   COLLEGE_EVENT_STATUS,
   COLLEGE_ENTRY_STATUS,
+  RATED_PAIR_LIMIT,
 } = require('../miniprogram/utils/constants.js');
 
 /* ============================================================
@@ -2755,6 +2756,55 @@ test('录入页 —— 点格子打开找人面板，默认列出全部会员', 
   assert.strictEqual(page.data.pickerSide, 'B');
   assert.strictEqual(page.data.pickerKeyword, '');
   assert.strictEqual(page.data.pickerRows.length, page.data.members.length);
+});
+
+test('录入页 —— 选对手时每个人后面带上本赛季已交手的场次', async () => {
+  resetSession();
+  app.globalData.userInfo = activeMember();
+
+  const page = instantiate(matchEntryConfig);
+  await page.onLoad();
+
+  assert.ok(page.pairInfo, '加载时应当取到交手场次');
+  assert.strictEqual(page.pairInfo.limit, RATED_PAIR_LIMIT);
+
+  page.onOpenPicker({ currentTarget: { dataset: { side: 'B', slot: 0 } } });
+
+  // 面板上的数字与服务端闸门同一份：行上的场次就是 pairInfo 里那个人对应的数字
+  for (const row of page.data.pickerRows) {
+    assert.strictEqual(row.pairCount, page.pairInfo.counts[row.id] || 0);
+  }
+  assert.ok(
+    page.data.pickerRows.some((row) => row.pairCount > 0),
+    '演示流水里当前会员应当已经和某些人打过球，否则这条测试验不出东西'
+  );
+});
+
+test('录入页 —— 选搭档时不带交手场次（名额只数隔网相对的人）', async () => {
+  resetSession();
+  app.globalData.userInfo = activeMember();
+
+  const page = instantiate(matchEntryConfig);
+  await page.onLoad();
+  page.onPickMatchType({ currentTarget: { dataset: { value: MATCH_TYPE.DOUBLES } } });
+  page.onOpenPicker({ currentTarget: { dataset: { side: 'A', slot: 1 } } });
+
+  assert.strictEqual(page.data.pickerSide, 'A');
+  assert.ok(
+    page.data.pickerRows.every((row) => row.pairCount === 0),
+    '搭档不算一对：在搭档面板上显示场次会让人以为「跟他搭档也占名额」'
+  );
+});
+
+test('录入页 —— 未登录时取不到交手场次，面板照常能开', async () => {
+  resetSession();
+  const page = instantiate(matchEntryConfig);
+  await page.onLoad();
+
+  assert.strictEqual(page.pairInfo, null, '没有身份就没有「我本赛季」可言');
+  page.onOpenPicker({ currentTarget: { dataset: { side: 'B', slot: 0 } } });
+  assert.strictEqual(page.data.pickerRows.length, page.data.members.length);
+  assert.ok(page.data.pickerRows.every((row) => row.pairCount === 0));
 });
 
 test('录入页 —— 面板里输入名字后只剩命中的人', async () => {

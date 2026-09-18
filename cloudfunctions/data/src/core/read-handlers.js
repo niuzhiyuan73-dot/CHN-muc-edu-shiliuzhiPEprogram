@@ -13,12 +13,14 @@ const { ok } = require('../envelope.js');
 const { getDataset } = require('./derive.js');
 const { canManage } = require('../../lib/services/permission.js');
 const { liveKey, liveScoreOf } = require('../../lib/services/live-score.js');
+const { seasonPairCounts } = require('../../lib/services/rating-cap.js');
 const { getPoolRating } = require('../../lib/utils/rating.js');
 const {
   RANK_PROJECT_LABEL,
   ALL_RANK_PROJECTS,
   RANK_PROJECT_CONFIG,
   MATCH_STATUS,
+  RATED_PAIR_LIMIT,
 } = require('../../lib/utils/constants.js');
 const {
   buildProjectLeaderboard,
@@ -238,6 +240,27 @@ async function getForm(payload = {}, ctx) {
 }
 
 /**
+ * 某位会员本赛季与每个人的交手场次，给录分页的选对手面板用。
+ *
+ * 【为什么读台账而不是 matches】
+ * 面板上的数字必须与提交闸门数的同一个口径，否则用户会「按显示的数字录到
+ * 第 15 场却被拦下」。闸门按完整台账算（待确认的场次也占名额），这里
+ * 就也得按台账算——matches 是已生效的流水，会少算待确认的那几场。
+ *
+ * 【为什么不像 getHeadToHead 那样顺手给名字】
+ * 面板手里本来就有完整会员名单（它按名单渲染），再来一份名称只是多一处
+ * 可能对不上的副本。这里只给数字。
+ */
+async function getSeasonPairCounts(payload = {}, ctx) {
+  const { userId } = payload;
+  const { ledger, meta } = await getDataset(ctx);
+  return ok({
+    counts: seasonPairCounts(userId, ledger, { seasonStart: meta.resetTime }),
+    limit: RATED_PAIR_LIMIT,
+  });
+}
+
+/**
  * 「我的」顶部卡片：各项目的分数、排名与百分位。
  * 只返回打过球的项目——没打过就展示初始分，只会让人误以为自己很差。
  */
@@ -378,6 +401,7 @@ module.exports = {
   getEventRecord,
   getRatingHistory,
   getForm,
+  getSeasonPairCounts,
   getMyProjects,
   getHomeSummary,
   getMatchRecords,

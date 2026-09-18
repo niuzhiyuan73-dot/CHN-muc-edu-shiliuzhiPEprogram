@@ -69,6 +69,9 @@ const getPartnerRecord = (userId, options) => request('getPartnerRecord', { user
 const getEventRecord = (userId, options) => request('getEventRecord', { userId, options });
 const getRatingHistory = (userId, pool) => request('getRatingHistory', { userId, pool });
 const getForm = (userId, options) => request('getForm', { userId, options });
+// 本赛季与每个人已交手的场次（防刷分名额）。录分页选对手面板上那个数字取自它，
+// 与服务端的提交闸门同一份算法，显示的数字不会与真正的上限对不上。
+const getSeasonPairCounts = (userId) => request('getSeasonPairCounts', { userId });
 const getMyProjects = (userId) => request('getMyProjects', { userId });
 const getHomeSummary = () => request('getHomeSummary');
 
@@ -232,6 +235,7 @@ module.exports = {
   getEventRecord,
   getRatingHistory,
   getForm,
+  getSeasonPairCounts,
   getMyProjects,
   getHomeSummary,
   getMatchRecords,

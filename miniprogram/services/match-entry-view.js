@@ -201,14 +201,26 @@ function toSubmitParams(form) {
  * 「明宇」）。只按昵称搜，输入「赵」就找不到人。两个都匹配，输入昵称或
  * 真名都能定位到同一个人；真实姓名只用于匹配，面板上显示的仍是昵称。
  *
+ * 【为什么还要把本赛季的交手场次带出来】
+ * 防刷分对「同一对会员一个赛季」有名额上限，满了就不让再录（见 rating-cap.js
+ * 的 checkSubmitAllowed）。用户看到名单时就该知道谁快打满了，而不是填完比分
+ * 提交时才被拦下。数字由 getSeasonPairCounts 给出，与服务端闸门同一份算法。
+ *
+ * 只有选对手那一边传 pairInfo：名额只数跨队相对的人，同队的搭档之间不算一对，
+ * 在搭档面板上显示场次只会让人以为「跟他搭档也算名额」。
+ *
  * @param {Array<{id: string, name: string, realName?: string}>} members 完整会员名单
  * @param {string} keyword 搜索词
  * @param {string} selectedId 这一格已经选的人，用来打勾
- * @returns {Array<Object>} 命中的行，含展示用的首字与选中标记
+ * @param {Object|null} [pairInfo] { counts: {会员编号: 场次}, limit: 上限 }
+ * @returns {Array<Object>} 命中的行，含展示用的首字、选中标记与交手场次
  */
-function buildPickerRows(members, keyword, selectedId) {
+function buildPickerRows(members, keyword, selectedId, pairInfo = null) {
   const list = Array.isArray(members) ? members : [];
   const needle = String(keyword == null ? '' : keyword).trim().toLowerCase();
+  const counts = (pairInfo && pairInfo.counts) || {};
+  const limit = Number(pairInfo && pairInfo.limit);
+
   return list
     .filter((item) => {
       if (!needle) return true;
@@ -216,13 +228,20 @@ function buildPickerRows(members, keyword, selectedId) {
         String(name || '').toLowerCase().includes(needle)
       );
     })
-    .map((item) => ({
-      id: item.id,
-      name: item.name,
-      // 没有头像，用名字首字当一块占位的圆牌
-      avatarText: (item.name || '?').slice(0, 1),
-      selected: item.id === selectedId,
-    }));
+    .map((item) => {
+      // 一场没打过的不挂徽标：名单里大多数人都是 0，全标出来只是噪音
+      const count = Number(counts[item.id]) || 0;
+      return {
+        id: item.id,
+        name: item.name,
+        // 没有头像，用名字首字当一块占位的圆牌
+        avatarText: (item.name || '?').slice(0, 1),
+        selected: item.id === selectedId,
+        pairCount: count,
+        // 打满的标红：选了他也提交不上去，先说清楚
+        pairFull: count > 0 && Number.isFinite(limit) && limit > 0 && count >= limit,
+      };
+    });
 }
 
 /**

@@ -32,7 +32,7 @@ const { installCollegeDemo } = require('./college-demo.js');
 const { register: registerAccount } = require('./auth.js');
 const { canManage } = require('./permission.js');
 const { canResetSeason } = require('./season.js');
-const { findCappedMatchIds } = require('./rating-cap.js');
+const { findCappedMatchIds, checkSubmitAllowed, seasonPairCounts } = require('./rating-cap.js');
 const { REVIEW_ACTION, validateReview, validateCollegeLeader } = require('./member-review.js');
 const {
   canConfirm,
@@ -129,6 +129,7 @@ const {
   ALL_RANK_PROJECTS,
   RANK_PROJECT_CONFIG,
   MATCH_STATUS,
+  RATED_PAIR_LIMIT,
   USER_STATUS,
   ANNOUNCEMENT_STATUS,
   EVENT_STATUS,
@@ -656,6 +657,30 @@ async function getForm(userId, options = {}) {
 }
 
 /**
+ * 某位会员本赛季与每个人的交手场次，给录分页的选对手面板用。
+ *
+ * 【为什么取台账而不是 getMatches】
+ * 字段名单里显示的必须是「还剩几个名额」，而名额是按完整台账算的——
+ * 待确认的场次也占名额（见 rating-cap.js）。若读已生效的流水，
+ * 面板会少算待确认的那几场，用户按显示的数字录到第 15 场就被拦下，
+ * 那时他会觉得是程序算错了。
+ *
+ * 【为什么不像 getHeadToHead 那样顺手给名字】
+ * 面板那边手里已经有完整会员名单（它本来就是按名单渲染的），再来一份
+ * 名称反而多一处可能对不上的副本。这里只给数字。
+ *
+ * @param {string} userId
+ * @returns {Promise<{counts: Object<string, number>, limit: number}>}
+ */
+async function getSeasonPairCounts(userId) {
+  const { ledger, meta } = load();
+  return {
+    counts: seasonPairCounts(userId, ledger, { seasonStart: meta.resetTime }),
+    limit: RATED_PAIR_LIMIT,
+  };
+}
+
+/**
  * 「我的」页面顶部那张卡片：各项目的分数、排名与百分位。
  *
  * 只返回打过球的项目——从没打过双打的人，展示他的双打初始分
@@ -796,7 +821,7 @@ async function getMatchRecords(options = {}) {
  * @returns {Promise<{ok:boolean, match:Object|null, errors:Object, scoreErrors:string[], firstError:string}>}
  */
 async function submitMatch(params = {}) {
-  const { users, meta } = load();
+  const { users, meta, ledger } = load();
   const { now, id, actor, ...fields } = params;
 
   // 抽签生成的比赛已经有主：补录比分，而不是另立一条新记录
@@ -891,6 +916,19 @@ async function submitMatch(params = {}) {
         firstError: '只有参赛者、本学院干事或管理员可以录入这场比赛的成绩',
       };
     }
+  }
+
+  // 防刷分闸门：一对会员本赛季打满上限之后，他们之间的比赛不再让录
+  // （见 rating-cap.checkSubmitAllowed）。放在权限校验之后、落账之前，
+  // 「单子填错了」「轮不到你录」「名额已满」三种拒绝各有各的话说。
+  // 判据取完整台账——待确认的场次也占名额，否则连录 15 场等对手逐一
+  // 确认就把上限绕过去了。抽签比赛走上面 id 那条路，不受这道闸门管。
+  const gate = checkSubmitAllowed(result.record, ledger, {
+    seasonStart: meta.resetTime,
+    nameOf: (memberId) => (users.find((u) => u._id === memberId) || {}).nickName,
+  });
+  if (!gate.ok) {
+    return { ok: false, match: null, errors: {}, scoreErrors: [], firstError: gate.message };
   }
 
   const match = matchStore.addMatch(result.record);
@@ -2532,6 +2570,7 @@ module.exports = {
   getEventRecord,
   getRatingHistory,
   getForm,
+  getSeasonPairCounts,
   getMyProjects,
   getHomeSummary,
 };
