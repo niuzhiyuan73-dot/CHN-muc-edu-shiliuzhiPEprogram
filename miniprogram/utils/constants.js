@@ -25,6 +25,34 @@ const ROLE_LABEL = {
   [ROLE.ADMIN]: '管理员',
 };
 
+/**
+ * 协会角色（「某人在某协会」的身份）。
+ *
+ * 【为什么与 ROLE 分开】
+ * ROLE 是**全局角色**，记在账号上；协会角色是「进了这个协会才有的身份」，
+ * 记在 memberships 集合里，一人可在不同协会担任不同角色。取值用字符串：
+ * 它们只活在这一张稀疏表里，不参与数值比较，可读性优先。
+ */
+const ASSOC_ROLE = {
+  STAFF: 'staff', // 学院负责人：在本协会内、按学院
+  LEADER: 'leader', // 协会负责人：在本协会内等同管理员
+};
+
+const ASSOC_ROLE_LABEL = {
+  [ASSOC_ROLE.STAFF]: '学院负责人',
+  [ASSOC_ROLE.LEADER]: '协会负责人',
+};
+
+/**
+ * 协会启用状态。
+ * 协会定义在代码注册表 `utils/associations.js` 里，此枚举只描述其 status 取值。
+ * 停用而非删除：停用后仍保留其历史数据，只是不再进入、不再写入。
+ */
+const ASSOCIATION_STATUS = {
+  ACTIVE: 'active', // 启用：可选择，可读写其内容
+  DISABLED: 'disabled', // 停用：保留历史数据，不再进入
+};
+
 /** 用户账号状态 */
 const USER_STATUS = {
   PENDING: 0, // 待审核：刚注册，尚未通过实名审核
@@ -633,6 +661,9 @@ const COLLECTION = {
   // 实时比分一场一条（_id = 'ls_' + matchId），重启不堆记录。
   // 只存「正在逐球计分」的过程态，定稿后转成 matches 里的正式比分
   LIVE_SCORES: 'live_scores',
+  // 协会角色表：只在某人于某协会获得学院负责人/协会负责人时才有行，
+  // 无行即普通会员。会员资格是隐式的，不逐条登记（见 utils/associations.js）。
+  MEMBERSHIPS: 'memberships',
 };
 
 /** 本地缓存键名 */
@@ -1031,6 +1062,9 @@ const COLLEGE_LEG_FORMAT = { gamePoints: 11, bestOf: 1 };
 module.exports = {
   ROLE,
   ROLE_LABEL,
+  ASSOC_ROLE,
+  ASSOC_ROLE_LABEL,
+  ASSOCIATION_STATUS,
   COLLEGES,
   USER_STATUS,
   USER_STATUS_LABEL,
