@@ -101,10 +101,14 @@ const approveMember = (applicationId, actor, initialElo) =>
   request('approveMember', { applicationId, actor, initialElo });
 const rejectMember = (applicationId, actor, reason) =>
   request('rejectMember', { applicationId, actor, reason });
-// 任免学院负责人。目标角色由服务端的 validateCollegeLeader 算出，前端只传「是谁」
-// 与「设还是撤」。actor 同样不被信任，只为日志留个线索。
+// 任免本协会的学院负责人。服务端据「是谁」「设还是撤」写本协会的成员行，
+// 前端只传这两项。actor 同样不被信任，只为日志留个线索。
 const setCollegeLeader = (userId, actor, makeLeader) =>
   request('setCollegeLeader', { userId, actor, makeLeader });
+// 任免本协会的协会负责人。**仅全局管理员**可做（服务端只认全局角色，不走
+// canManage）——协会负责人的有效角色也是管理员，用 canManage 区分不出来。
+const setAssociationLeader = (userId, actor, makeLeader) =>
+  request('setAssociationLeader', { userId, actor, makeLeader });
 
 /*
  * 公告发布与下架。
@@ -248,6 +252,7 @@ module.exports = {
   approveMember,
   rejectMember,
   setCollegeLeader,
+  setAssociationLeader,
   publishAnnouncement,
   archiveAnnouncement,
   updateProfile,

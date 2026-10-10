@@ -50,6 +50,10 @@ async function publishAnnouncement(payload = {}, ctx) {
     return ok({ ok: false, record: null, errors: built.errors, firstError: built.firstError });
   }
 
+  // 盖章协会：写进文档供读路径过滤，同时并入自然键——同一条公告内容
+  // 在两个协会发出来就是两条，互不顶替
+  built.record.association = ctx.association;
+
   const _id = announcementNaturalKey(built.record);
 
   const record = await ctx.repo.transaction(async (tx) => {

@@ -192,7 +192,12 @@ async function advanceAfterConfirm(ctx, eventId) {
     for (const draft of drafts) {
       const existing = await tx.matches.getById(draft._id);
       if (existing) continue; // 排过的轮次不覆盖，也就不会抹掉已录的比分
-      await tx.matches.insert({ ...draft, status: MATCH_STATUS.PENDING, createdAt: ctx.now });
+      await tx.matches.insert({
+        ...draft,
+        status: MATCH_STATUS.PENDING,
+        createdAt: ctx.now,
+        association: ctx.association,
+      });
       inserted = true;
     }
     if (inserted) {
@@ -274,6 +279,10 @@ async function submitMatch(payload = {}, ctx) {
       firstError: '只有参赛者、本学院负责人或管理员可以录入这场比赛的成绩',
     });
   }
+
+  // 盖章协会：写进文档供读路径过滤，同时并入自然键——同样的对阵内容
+  // 在两个协会录出来就是两场，不会互相顶掉
+  result.record.association = ctx.association;
 
   // 自然键直接当主键：重复提交会撞上同一个 _id，事务里读一下就知道了
   const _id = matchNaturalKey(result.record);

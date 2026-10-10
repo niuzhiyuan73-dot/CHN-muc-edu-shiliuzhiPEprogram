@@ -1606,6 +1606,40 @@ async function setCollegeLeader(targetId, actor, makeLeader) {
 }
 
 /**
+ * 把某位会员设为 / 撤销为**协会负责人**。
+ *
+ * 本地模拟只有单一「协会」语境，因此协会负责人直接落成管理员角色；
+ * 云端则由全局管理员写 `memberships.role='leader'`（见 role-handlers.js）。
+ * 两处只求「谁有资格、结果如何」一致，存储形态留给各自的数据源。
+ *
+ * @param {string} targetId
+ * @param {string} actor
+ * @param {boolean} makeLeader
+ * @returns {Promise<{ok:boolean, account:Object|null, message:string}>}
+ */
+async function setAssociationLeader(targetId, actor, makeLeader) {
+  const me = accountOf(actor);
+  if (!canManage(me, { minRole: ROLE.ADMIN })) {
+    return { ok: false, account: null, message: '只有管理员可以任免协会负责人' };
+  }
+  const target = accountOf(targetId);
+  if (!target) return { ok: false, account: null, message: '找不到这位会员' };
+  if (me && target._id === me._id) {
+    return { ok: false, account: null, message: '不能给自己任免角色' };
+  }
+  if (Number(target.role || 0) >= ROLE.ADMIN) {
+    return { ok: false, account: null, message: '不能改变管理员的角色' };
+  }
+  if (target.status !== USER_STATUS.ACTIVE) {
+    return { ok: false, account: null, message: '只有在册会员才能设为协会负责人' };
+  }
+
+  roleStore.setRole(target._id, makeLeader ? ROLE.ADMIN : ROLE.MEMBER);
+  cache = null;
+  return { ok: true, account: accountOf(target._id), message: '' };
+}
+
+/**
  * 发布一条公告。
  *
  * 校验复用 announcement.buildAnnouncementRecord（纯函数），本函数只负责
@@ -2556,6 +2590,7 @@ module.exports = {
   approveMember,
   rejectMember,
   setCollegeLeader,
+  setAssociationLeader,
   publishAnnouncement,
   archiveAnnouncement,
   updateProfile,

@@ -22,11 +22,7 @@ const { getDataset } = require('./derive.js');
 const { bumpSeason } = require('./season.js');
 const { memberKey } = require('./idempotency.js');
 const { register: registerAccount } = require('../../lib/services/auth.js');
-const {
-  REVIEW_ACTION,
-  validateReview,
-  validateCollegeLeader,
-} = require('../../lib/services/member-review.js');
+const { REVIEW_ACTION, validateReview } = require('../../lib/services/member-review.js');
 const { buildProfilePatch } = require('../../lib/services/profile.js');
 const { ROLE, USER_STATUS } = require('../../lib/utils/constants.js');
 
@@ -150,44 +146,6 @@ async function rejectMember(payload = {}, ctx) {
 }
 
 /**
- * 把某位会员设为 / 撤销为学院负责人。
- *
- * 【改的是角色，不是状态】
- * 与审核分开一条通路：审核动 status，任免只动 role。请求体里只认 userId
- * 与 makeLeader，目标角色（学院负责人还是普通会员）由服务端的 validateCollegeLeader
- * 算出来，前端塞一个 role:2 也没用。
- *
- * 【为什么任免也要动赛季版本号】
- * 角色与学院虽然不进回放计算，却要经 getDataset 下发（会员主页、权限判定
- * 都读它）。不 +1 的话容器里还是旧缓存，被设为学院负责人的人刷新后仍是普通会员。
- *
- * @param {Object} payload { userId, makeLeader }
- * @param {Object} ctx
- * @returns {Promise<Object>} {ok, account, message}
- */
-async function setCollegeLeader(payload = {}, ctx) {
-  const guard = callerError(ctx);
-  if (guard) return fail(guard);
-
-  const target = await ctx.repo.users.getById(payload.userId);
-  // 严格口径：管理员才能任免，不能改自己，被任免者须有确定的学院且状态正常
-  const verdict = validateCollegeLeader(ctx.actor, target, Boolean(payload.makeLeader));
-  if (!verdict.ok) return ok({ ok: false, account: null, message: verdict.message });
-
-  const patched = await ctx.repo.transaction(async (tx) => {
-    const current = await tx.users.getById(target._id);
-    if (!current) return null;
-    const next = { ...current, role: verdict.role };
-    await tx.users.set(target._id, next);
-    await bumpSeason(tx, { association: ctx.association, anchorTime: null, now: ctx.now });
-    return next;
-  });
-
-  if (!patched) return ok({ ok: false, account: null, message: '找不到这位会员' });
-  return ok({ ok: true, account: patched, message: '' });
-}
-
-/**
  * 修改自己的昵称与头像。
  *
  * 【改的是谁，我说了不算】
@@ -237,6 +195,5 @@ module.exports = {
   registerMember,
   approveMember,
   rejectMember,
-  setCollegeLeader,
   updateProfile,
 };

@@ -62,6 +62,7 @@ const {
 const { advanceCollegeAfterLeg } = require('./college-advance.js');
 const { buildLineupRecord } = require('../../lib/services/college-lineup.js');
 const { REVIEW_ACTION } = require('../../lib/services/member-review.js');
+const { belongsToAssociation } = require('../../lib/utils/associations.js');
 const {
   COLLEGE_EVENT_STATUS,
   COLLEGE_ENTRY_STATUS,
@@ -71,6 +72,25 @@ const {
   TEAM,
   USER_STATUS,
 } = require('../../lib/utils/constants.js');
+
+/* ============================================================
+ * 协会归属守卫
+ * ============================================================
+ * 学院赛体系的集合（college_events / college_entries / college_ties /
+ * college_lineups）不走 getDataset，读的是集合直取。按编号直取前必须
+ * 判归属，否则带着别家协会的编号一样能开赛、审名单、开大场。
+ * 「查无此物」与「不属于本协会」表现一致，不泄露别家协会的存在。
+ */
+
+async function collegeEventInScope(ctx, id) {
+  const event = await ctx.repo.collegeEvents.getById(id);
+  return belongsToAssociation(event, ctx.association) ? event : null;
+}
+
+async function tieInScope(ctx, id) {
+  const tie = await ctx.repo.ties.getById(id);
+  return belongsToAssociation(tie, ctx.association) ? tie : null;
+}
 
 /* ============================================================
  * 读接口
@@ -83,7 +103,8 @@ const {
  * @returns {Promise<Object>} 学院赛数组
  */
 async function getCollegeEvents(payload = {}, ctx) {
-  return ok(await ctx.repo.collegeEvents.list());
+  const rows = await ctx.repo.collegeEvents.list();
+  return ok(rows.filter((row) => belongsToAssociation(row, ctx.association)));
 }
 
 /**
@@ -93,7 +114,7 @@ async function getCollegeEvents(payload = {}, ctx) {
  * @returns {Promise<Object>} 学院赛或 null
  */
 async function getCollegeEvent(payload = {}, ctx) {
-  return ok(await ctx.repo.collegeEvents.getById(payload.id));
+  return ok(await collegeEventInScope(ctx, payload.id));
 }
 
 /**
@@ -108,8 +129,10 @@ async function getCollegeEvent(payload = {}, ctx) {
  */
 async function getCollegeEntries(payload = {}, ctx) {
   const { eventId } = payload;
-  if (eventId) return ok(await ctx.repo.collegeEntries.listByEvent(eventId));
-  return ok(await ctx.repo.collegeEntries.list());
+  const rows = eventId
+    ? await ctx.repo.collegeEntries.listByEvent(eventId)
+    : await ctx.repo.collegeEntries.list();
+  return ok(rows.filter((row) => belongsToAssociation(row, ctx.association)));
 }
 
 /**
@@ -120,8 +143,10 @@ async function getCollegeEntries(payload = {}, ctx) {
  */
 async function getCollegeTies(payload = {}, ctx) {
   const { eventId } = payload;
-  if (eventId) return ok(await ctx.repo.ties.listByEvent(eventId));
-  return ok(await ctx.repo.ties.list());
+  const rows = eventId
+    ? await ctx.repo.ties.listByEvent(eventId)
+    : await ctx.repo.ties.list();
+  return ok(rows.filter((row) => belongsToAssociation(row, ctx.association)));
 }
 
 /**
@@ -137,8 +162,10 @@ async function getCollegeTies(payload = {}, ctx) {
  */
 async function getCollegeLineups(payload = {}, ctx) {
   const { eventId } = payload;
-  if (eventId) return ok(await ctx.repo.lineups.listByEvent(eventId));
-  return ok(await ctx.repo.lineups.list());
+  const rows = eventId
+    ? await ctx.repo.lineups.listByEvent(eventId)
+    : await ctx.repo.lineups.list();
+  return ok(rows.filter((row) => belongsToAssociation(row, ctx.association)));
 }
 
 /* ============================================================
@@ -173,6 +200,10 @@ async function publishCollegeEvent(payload = {}, ctx) {
     return ok({ ok: false, record: null, errors: built.errors, firstError: built.firstError });
   }
 
+  // 盖章协会：写进文档供读路径过滤，同时并入自然键——同样的学院赛内容
+  // 在两个协会发出来就是两场，不会互相顶掉
+  built.record.association = ctx.association;
+
   // 自然键当 _id：弱网重试不会发出两场一模一样的学院赛
   const _id = collegeEventNaturalKey(built.record);
 
@@ -202,7 +233,7 @@ async function submitCollegeEntry(payload = {}, ctx) {
   const guard = callerError(ctx);
   if (guard) return fail(guard);
 
-  const event = await ctx.repo.collegeEvents.getById(payload.eventId);
+  const event = await collegeEventInScope(ctx, payload.eventId);
   const { members } = await getDataset(ctx);
 
   const built = buildCollegeEntryRecord(payload, {
@@ -218,7 +249,7 @@ async function submitCollegeEntry(payload = {}, ctx) {
   const _id = collegeEntryNaturalKey(built.record.eventId, built.record.college);
 
   const record = await ctx.repo.transaction(async (tx) => {
-    const doc = { ...built.record, _id };
+    const doc = { ...built.record, _id, association: ctx.association };
     const existing = await tx.collegeEntries.getById(_id);
     // 重交覆盖同一条：不保留上一版，避免事务里做集合查询找旧记录
     if (existing) await tx.collegeEntries.update(_id, doc);
@@ -243,7 +274,9 @@ async function reviewCollegeEntry(payload = {}, ctx) {
   const guard = callerError(ctx);
   if (guard) return fail(guard);
 
-  const entry = await ctx.repo.collegeEntries.getById(payload.entryId);
+  const found = await ctx.repo.collegeEntries.getById(payload.entryId);
+  // 名单直读集合，先判归属；不属于本协会视同不存在
+  const entry = belongsToAssociation(found, ctx.association) ? found : null;
   const checked = validateEntryReview(ctx.actor, entry, payload.action, payload.reason);
   if (!checked.ok) {
     return ok({ ok: false, record: null, message: checked.message });
@@ -281,7 +314,7 @@ async function drawCollegeEvent(payload = {}, ctx) {
   const guard = callerError(ctx);
   if (guard) return fail(guard);
 
-  const event = await ctx.repo.collegeEvents.getById(payload.eventId);
+  const event = await collegeEventInScope(ctx, payload.eventId);
   if (!event) return ok({ ok: false, record: null, message: '找不到这场学院赛' });
 
   const entries = await ctx.repo.collegeEntries.listByEvent(payload.eventId);
@@ -325,7 +358,7 @@ async function startCollegeEvent(payload = {}, ctx) {
   const guard = callerError(ctx);
   if (guard) return fail(guard);
 
-  const event = await ctx.repo.collegeEvents.getById(payload.eventId);
+  const event = await collegeEventInScope(ctx, payload.eventId);
   if (!event) return ok({ ok: false, record: null, ties: [], message: '找不到这场学院赛' });
 
   if (!canStartCollegeEvent(event, ctx.actor)) {
@@ -349,7 +382,7 @@ async function startCollegeEvent(payload = {}, ctx) {
     for (const tie of ties) {
       const existing = await tx.ties.getById(tie._id);
       if (existing) continue; // 只补不覆盖，与 startTie 同一纪律
-      await tx.ties.insert(tie);
+      await tx.ties.insert({ ...tie, association: ctx.association });
     }
     await tx.collegeEvents.update(payload.eventId, patch);
     return { ...event, ...patch };
@@ -374,7 +407,7 @@ async function setCollegeEventPinned(payload = {}, ctx) {
   const guard = callerError(ctx);
   if (guard) return fail(guard);
 
-  const event = await ctx.repo.collegeEvents.getById(payload.eventId);
+  const event = await collegeEventInScope(ctx, payload.eventId);
   if (!event) return ok({ ok: false, record: null, message: '找不到这场学院赛' });
 
   if (!canManageCollegeEvent(ctx.actor, { isMock: false })) {
@@ -405,15 +438,16 @@ async function submitLineup(payload = {}, ctx) {
   const guard = callerError(ctx);
   if (guard) return fail(guard);
 
-  const tie = await ctx.repo.ties.getById(payload.tieId);
+  const tie = await tieInScope(ctx, payload.tieId);
   if (!tie) return ok({ ok: false, record: null, message: '找不到这个大场' });
 
-  const event = await ctx.repo.collegeEvents.getById(tie.eventId);
+  const event = await collegeEventInScope(ctx, tie.eventId);
   const college = String(payload.college || (ctx.actor && ctx.actor.college) || '').trim();
   // 排阵的人必须出自本学院已通过审核的名单：名单本身由自然键取回
-  const entry = await ctx.repo.collegeEntries.getById(
+  const foundEntry = await ctx.repo.collegeEntries.getById(
     collegeEntryNaturalKey(tie.eventId, college)
   );
+  const entry = belongsToAssociation(foundEntry, ctx.association) ? foundEntry : null;
   // 排阵要按小项核对上场队员性别，得先拿到全量会员档案（含 gender）
   const { members } = await getDataset(ctx);
 
@@ -430,7 +464,7 @@ async function submitLineup(payload = {}, ctx) {
     const existing = await tx.lineups.getById(_id);
     // update 只传业务字段，避免把 _id 带进云开发的 update（会被拒）
     if (existing) await tx.lineups.update(_id, built.record);
-    else await tx.lineups.insert({ ...built.record, _id });
+    else await tx.lineups.insert({ ...built.record, _id, association: ctx.association });
     await tx.ties.update(tie._id, { [side]: true });
     return { ...built.record, _id };
   });
@@ -454,7 +488,7 @@ async function startTie(payload = {}, ctx) {
   const guard = callerError(ctx);
   if (guard) return fail(guard);
 
-  const tie = await ctx.repo.ties.getById(payload.tieId);
+  const tie = await tieInScope(ctx, payload.tieId);
   if (!tie) return ok({ ok: false, record: null, legs: [], message: '找不到这个大场' });
 
   if (!canStartTie(tie, ctx.actor)) {
@@ -467,7 +501,7 @@ async function startTie(payload = {}, ctx) {
     return ok({ ok: false, record: null, legs: [], message: '只有管理员可以开始大场' });
   }
 
-  const event = await ctx.repo.collegeEvents.getById(tie.eventId);
+  const event = await collegeEventInScope(ctx, tie.eventId);
   // 事务内不允许条件读取，排阵在事务外一次取全
   const lineups = await ctx.repo.lineups.listByEvent(tie.eventId);
   const built = buildLegMatchDrafts({ event, tie, lineups, now: ctx.now });
@@ -484,7 +518,7 @@ async function startTie(payload = {}, ctx) {
     for (const draft of built.drafts) {
       const existing = await tx.matches.getById(draft._id);
       // 重开同一大场时编号相同，只补不覆盖，免得冲掉已录的比分
-      if (!existing) await tx.matches.insert(draft);
+      if (!existing) await tx.matches.insert({ ...draft, association: ctx.association });
     }
     await tx.ties.update(tie._id, patch);
     // 小场落的是 matches 集合，它经 dataset 读（按赛季版本号缓存）。
@@ -519,7 +553,7 @@ async function recordForfeit(payload = {}, ctx) {
     return ok({ ok: false, match: null, message: '只有管理员可以记录弃权' });
   }
 
-  const tie = await ctx.repo.ties.getById(payload.tieId);
+  const tie = await tieInScope(ctx, payload.tieId);
   if (!tie) return ok({ ok: false, match: null, message: '找不到这个大场' });
   if (tie.status === TIE_STATUS.FINISHED) {
     return ok({ ok: false, match: null, message: '这个大场已经结束' });
@@ -624,7 +658,7 @@ async function finishCollegeEvent(payload = {}, ctx) {
     return ok({ ok: false, record: null, message: '只有管理员可以录入名次' });
   }
 
-  const event = await ctx.repo.collegeEvents.getById(payload.id);
+  const event = await collegeEventInScope(ctx, payload.id);
   if (!event) return ok({ ok: false, record: null, message: '找不到这场学院赛' });
   if (event.status === COLLEGE_EVENT_STATUS.FINISHED) {
     return ok({ ok: false, record: null, message: '这场学院赛已经结束了' });
@@ -686,7 +720,7 @@ async function assignTieReferee(payload = {}, ctx) {
     return ok({ ok: false, record: null, matches: [], message: '只有管理员可以指派裁判' });
   }
 
-  const tie = await ctx.repo.ties.getById(payload.tieId);
+  const tie = await tieInScope(ctx, payload.tieId);
   if (!tie) return ok({ ok: false, record: null, matches: [], message: '找不到这个大场' });
   if (!canAssignTieReferee(tie)) {
     return ok({ ok: false, record: null, matches: [], message: '这个大场已经结束，不能再改派裁判' });

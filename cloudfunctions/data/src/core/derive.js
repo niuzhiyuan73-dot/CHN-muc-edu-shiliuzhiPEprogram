@@ -39,6 +39,7 @@ const {
   isMemberStatus,
 } = require('../../lib/utils/constants.js');
 const { loadSeason, ALGO_VERSION } = require('./season.js');
+const { effectiveRole } = require('./context.js');
 const { belongsToAssociation } = require('../../lib/utils/associations.js');
 
 /**
@@ -126,11 +127,14 @@ function fromSnapshot(payload) {
  * @returns {Promise<Object>}
  */
 async function buildDataset(repo, season, association) {
-  const [allUsers, allMatches, allEvents, allAnnouncements] = await Promise.all([
+  const [allUsers, allMatches, allEvents, allAnnouncements, allMemberships] = await Promise.all([
     repo.users.list(),
     repo.matches.list(),
     repo.events.list(),
     repo.announcements.list(),
+    repo.memberships && typeof repo.memberships.list === 'function'
+      ? repo.memberships.list()
+      : Promise.resolve([]),
   ]);
 
   // 内容数据按协会过滤；账号是全局的一份，不过滤（改造前缺 association 的
@@ -183,15 +187,30 @@ async function buildDataset(repo, season, association) {
     (item) => item.status !== ANNOUNCEMENT_STATUS.ARCHIVED
   );
 
+  // 会员名单上的 role 要按本协会的成员行换成**有效角色**：账号上的全局 role
+  // 只有 MEMBER / ADMIN，学院负责人的身份记在 memberships 里。不下发这一步，
+  // 界面上的身份标签与权限入口就与 ctx 里算出来的有效角色对不上。
+  const membershipByUser = new Map();
+  for (const row of allMemberships) {
+    if (belongsToAssociation(row, association) && row.userId) {
+      membershipByUser.set(row.userId, row);
+    }
+  }
+  const membersWithRole = replayed.users.map((user) => {
+    const row = membershipByUser.get(user._id);
+    return row ? { ...user, role: effectiveRole(user.role, row) } : user;
+  });
+
   return {
     ...replayed,
+    users: membersWithRole,
     // replayed.users 已带上分数与场次，给它一个与 mock 一致的名字
-    members: replayed.users,
+    members: membersWithRole,
     applications,
     ledger,
     announcements,
     announcementLedger,
-    nameOf: createNameResolver(replayed.users),
+    nameOf: createNameResolver(membersWithRole),
   };
 }
 

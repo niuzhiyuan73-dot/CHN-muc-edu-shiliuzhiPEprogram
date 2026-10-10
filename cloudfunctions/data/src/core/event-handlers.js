@@ -26,6 +26,7 @@ const { callerError } = require('./context.js');
 const { bumpSeason } = require('./season.js');
 const { getDataset } = require('./derive.js');
 const { eventNaturalKey, signupNaturalKey } = require('./idempotency.js');
+const { belongsToAssociation } = require('../../lib/utils/associations.js');
 const {
   canManageEvent,
   canStartEvent,
@@ -50,6 +51,23 @@ const {
 const { buildInitialMatches } = require('../../lib/services/format-plan.js');
 const { EVENT_STATUS, SIGNUP_STATUS, MATCH_STATUS } = require('../../lib/utils/constants.js');
 
+/**
+ * 取一场本协会的赛事。
+ *
+ * 【为什么直接 getById 的读也要挡】
+ * 事务外按编号取赛事走的是集合直读，不像 getDataset 那样已经按协会筛过。
+ * 若不判归属，A 协会的人拿着 B 协会的赛事编号一样能开赛、抽签、录名次。
+ * 「查无此赛事」与真的不存在表现一致，不泄露别家协会的存在。
+ *
+ * @param {Object} ctx
+ * @param {string} id
+ * @returns {Promise<Object|null>}
+ */
+async function eventInScope(ctx, id) {
+  const event = await ctx.repo.events.getById(id);
+  return belongsToAssociation(event, ctx.association) ? event : null;
+}
+
 /* ============================================================
  * 读接口
  * ============================================================ */
@@ -64,8 +82,12 @@ const { EVENT_STATUS, SIGNUP_STATUS, MATCH_STATUS } = require('../../lib/utils/c
  */
 async function getEventSignups(payload = {}, ctx) {
   const { eventId } = payload;
-  if (eventId) return ok(await ctx.repo.eventSignups.listByEvent(eventId));
-  return ok(await ctx.repo.eventSignups.list());
+  const rows = eventId
+    ? await ctx.repo.eventSignups.listByEvent(eventId)
+    : await ctx.repo.eventSignups.list();
+  // 报名记录直读集合，不像 getDataset 那样已按协会筛过——这里补齐这道过滤，
+  // 否则带上别家协会的赛事编号就能把对方的报名名单整个读走
+  return ok(rows.filter((row) => belongsToAssociation(row, ctx.association)));
 }
 
 /* ============================================================
@@ -100,6 +122,10 @@ async function publishEvent(payload = {}, ctx) {
     return ok({ ok: false, record: null, errors: built.errors, firstError: built.firstError });
   }
 
+  // 盖章协会：写进文档供读路径过滤，同时并入自然键——同样的赛事内容
+  // 在两个协会发出来就是两场，不会互相顶掉
+  built.record.association = ctx.association;
+
   // 自然键当 _id：弱网重试不会发出两场一模一样的赛事
   const _id = eventNaturalKey(built.record);
 
@@ -128,7 +154,7 @@ async function startEvent(payload = {}, ctx) {
   const guard = callerError(ctx);
   if (guard) return fail(guard);
 
-  const event = await ctx.repo.events.getById(payload.id);
+  const event = await eventInScope(ctx, payload.id);
   if (!event) return ok({ ok: false, record: null, message: '找不到这场赛事' });
 
   if (!canStartEvent(event, ctx.actor, { isMock: false })) {
@@ -173,7 +199,7 @@ async function setEventPinned(payload = {}, ctx) {
   const guard = callerError(ctx);
   if (guard) return fail(guard);
 
-  const event = await ctx.repo.events.getById(payload.id);
+  const event = await eventInScope(ctx, payload.id);
   if (!event) return ok({ ok: false, record: null, message: '找不到这场赛事' });
 
   if (!canManageEvent(ctx.actor, { isMock: false })) {
@@ -202,7 +228,7 @@ async function signUpEvent(payload = {}, ctx) {
   const guard = callerError(ctx);
   if (guard) return fail(guard);
 
-  const event = await ctx.repo.events.getById(payload.id);
+  const event = await eventInScope(ctx, payload.id);
   if (!event) return ok({ ok: false, record: null, message: '找不到这场赛事' });
 
   const signups = await ctx.repo.eventSignups.listByEvent(payload.id);
@@ -229,7 +255,7 @@ async function signUpEvent(payload = {}, ctx) {
       });
       return { ...existing, status: SIGNUP_STATUS.SIGNED, signTime: ctx.now, checkInTime: null };
     }
-    const doc = { ...built.record, _id };
+    const doc = { ...built.record, _id, association: ctx.association };
     await tx.eventSignups.insert(doc);
     return doc;
   });
@@ -266,7 +292,7 @@ async function cancelSignupEvent(payload = {}, ctx) {
   const guard = callerError(ctx);
   if (guard) return fail(guard);
 
-  const event = await ctx.repo.events.getById(payload.id);
+  const event = await eventInScope(ctx, payload.id);
   if (!event) return ok({ ok: false, record: null, message: '找不到这场赛事' });
 
   const _id = signupNaturalKey(payload.id, ctx.actorId);
@@ -297,7 +323,7 @@ async function checkInEvent(payload = {}, ctx) {
   const guard = callerError(ctx);
   if (guard) return fail(guard);
 
-  const event = await ctx.repo.events.getById(payload.id);
+  const event = await eventInScope(ctx, payload.id);
   if (!event) return ok({ ok: false, record: null, message: '找不到这场赛事' });
 
   const userId = payload.userId;
@@ -339,7 +365,7 @@ async function finishEvent(payload = {}, ctx) {
   const guard = callerError(ctx);
   if (guard) return fail(guard);
 
-  const event = await ctx.repo.events.getById(payload.id);
+  const event = await eventInScope(ctx, payload.id);
   if (!event) {
     return ok({ ok: false, record: null, errors: {}, firstError: '找不到这场赛事' });
   }
@@ -418,7 +444,7 @@ async function drawEvent(payload = {}, ctx) {
   const guard = callerError(ctx);
   if (guard) return fail(guard);
 
-  const event = await ctx.repo.events.getById(payload.id);
+  const event = await eventInScope(ctx, payload.id);
   if (!event) {
     return ok({ ok: false, record: null, draw: null, matches: [], message: '找不到这场赛事' });
   }
@@ -480,7 +506,12 @@ async function drawEvent(payload = {}, ctx) {
 
     const docs = [];
     for (const draft of drafts) {
-      const doc = { ...draft, status: MATCH_STATUS.PENDING, createdAt: ctx.now };
+      const doc = {
+        ...draft,
+        status: MATCH_STATUS.PENDING,
+        createdAt: ctx.now,
+        association: ctx.association,
+      };
       const found = await tx.matches.getById(draft._id);
       if (found) await tx.matches.update(draft._id, doc);
       else await tx.matches.insert(doc);

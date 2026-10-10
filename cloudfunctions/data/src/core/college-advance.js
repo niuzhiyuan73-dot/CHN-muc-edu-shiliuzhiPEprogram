@@ -85,7 +85,7 @@ async function advanceCollegeAfterLeg(ctx, legMatch) {
       for (const draft of nextTies) {
         const existing = await tx.ties.getById(draft._id);
         if (existing) continue; // 排过的轮次不覆盖
-        await tx.ties.insert(draft);
+        await tx.ties.insert({ ...draft, association: ctx.association });
       }
     });
   }

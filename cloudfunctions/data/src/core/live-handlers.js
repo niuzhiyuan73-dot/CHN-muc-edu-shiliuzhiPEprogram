@@ -25,6 +25,7 @@ const { getDataset } = require('./derive.js');
 // 定稿把逐球流水转成正式比分后，交给现有的录分链路（单向依赖，无环）
 const { submitMatch } = require('./match-handlers.js');
 const { canRecordScore } = require('../../lib/services/match-record.js');
+const { belongsToAssociation } = require('../../lib/utils/associations.js');
 const {
   LIVE_STATUS,
   SIDE,
@@ -110,8 +111,10 @@ async function startLiveScore(payload = {}, ctx) {
     if (existing) return existing;
 
     const state = createLive(target.match, { actorId: ctx.actorId, now: ctx.now });
-    await tx.liveScores.insert(state);
-    return state;
+    // 盖章协会：实时态直读集合，读路径按协会过滤时要靠这个字段
+    const doc = { ...state, association: ctx.association };
+    await tx.liveScores.insert(doc);
+    return doc;
   });
 
   return ok({ ok: true, live, message: '' });
@@ -288,7 +291,8 @@ async function getLiveScores(payload = {}, ctx) {
   const out = [];
   for (const matchId of ids) {
     const state = await ctx.repo.liveScores.getById(liveKey(matchId));
-    if (state) out.push(liveScoreOf(state));
+    // 编号由调用方给，直读集合前判一次归属——别家协会的实时比分同样读不到
+    if (state && belongsToAssociation(state, ctx.association)) out.push(liveScoreOf(state));
   }
   return ok(out);
 }

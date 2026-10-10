@@ -16,6 +16,7 @@ const { fail } = require('../envelope.js');
 const readHandlers = require('./read-handlers.js');
 const matchHandlers = require('./match-handlers.js');
 const memberHandlers = require('./member-handlers.js');
+const roleHandlers = require('./role-handlers.js');
 const announcementHandlers = require('./announcement-handlers.js');
 const seasonHandlers = require('./season-handlers.js');
 const eventHandlers = require('./event-handlers.js');
@@ -27,6 +28,7 @@ const HANDLERS = {
   ...readHandlers,
   ...matchHandlers,
   ...memberHandlers,
+  ...roleHandlers,
   ...announcementHandlers,
   ...seasonHandlers,
   ...eventHandlers,
