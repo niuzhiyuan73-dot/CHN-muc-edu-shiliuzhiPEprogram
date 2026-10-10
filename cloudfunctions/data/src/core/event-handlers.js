@@ -110,7 +110,7 @@ async function publishEvent(payload = {}, ctx) {
     const doc = { ...built.record, _id, status: EVENT_STATUS.SIGNUP };
     await tx.events.insert(doc);
     // 赛事进了回放输入，缓存必须失效，否则列表页看不到刚发的这场
-    await bumpSeason(tx, { anchorTime: null, now: ctx.now });
+    await bumpSeason(tx, { association: ctx.association, anchorTime: null, now: ctx.now });
     return doc;
   });
 
@@ -151,7 +151,7 @@ async function startEvent(payload = {}, ctx) {
     const fresh = await tx.events.getById(payload.id);
     if (!fresh || fresh.status !== EVENT_STATUS.SIGNUP) return null;
     await tx.events.update(payload.id, patch);
-    await bumpSeason(tx, { anchorTime: null, now: ctx.now });
+    await bumpSeason(tx, { association: ctx.association, anchorTime: null, now: ctx.now });
     return { ...fresh, ...patch };
   });
 
@@ -183,7 +183,7 @@ async function setEventPinned(payload = {}, ctx) {
   const patch = { pinned: Boolean(payload.pinned), actor: ctx.actorId, actedAt: ctx.now };
   const record = await ctx.repo.transaction(async (tx) => {
     await tx.events.update(payload.id, patch);
-    await bumpSeason(tx, { anchorTime: null, now: ctx.now });
+    await bumpSeason(tx, { association: ctx.association, anchorTime: null, now: ctx.now });
     return { ...event, ...patch };
   });
 
@@ -388,7 +388,7 @@ async function finishEvent(payload = {}, ctx) {
     if (!fresh || fresh.status !== EVENT_STATUS.ONGOING) return null;
     await tx.events.update(payload.id, patch);
     // 名次落定就要重算积分，缓存必须失效
-    await bumpSeason(tx, { anchorTime: null, now: ctx.now });
+    await bumpSeason(tx, { association: ctx.association, anchorTime: null, now: ctx.now });
     return { ...fresh, ...patch };
   });
 
@@ -489,7 +489,7 @@ async function drawEvent(payload = {}, ctx) {
 
     // 签表与首轮比赛都进了回放输入（getEvents / getMatches 读的是缓存），
     // 不失效缓存，页面上就看不到刚抽的签
-    await bumpSeason(tx, { anchorTime: null, now: ctx.now });
+    await bumpSeason(tx, { association: ctx.association, anchorTime: null, now: ctx.now });
     return { record: { ...event, draw }, docs };
   });
 

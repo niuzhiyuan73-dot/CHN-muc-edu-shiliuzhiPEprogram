@@ -181,9 +181,10 @@ function createFixtureRepo(overrides) {
  * @param {Object} repo
  * @param {string|null} openId 传 null 表示未登录（查不到账号）
  * @param {Date} [now]
+ * @param {string} [association] 协会 id；缺省走兜底协会（pkb）
  */
-function contextFor(repo, openId, now = NOW) {
-  return buildContext({ repo, openId: openId || '', now });
+function contextFor(repo, openId, now = NOW, association = '') {
+  return buildContext({ repo, openId: openId || '', now, association });
 }
 
 module.exports = {

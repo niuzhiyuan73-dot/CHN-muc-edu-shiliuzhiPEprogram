@@ -166,10 +166,38 @@ function defaultAssociationId() {
   return first ? first.id : '';
 }
 
+/**
+ * 多协会改造之前唯一存在的协会 id。
+ *
+ * 【为什么要有它】
+ * 改造前的内容文档没有 association 字段。迁移脚本会批量回填为这个值，但在
+ * 回填完成之前（以及测试夹具里），读取必须把「缺字段」等同于它，否则旧数据
+ * 一条都读不出来。**只对缺字段生效**：字段存在但与请求协会不符，一律挡住。
+ */
+const LEGACY_ASSOCIATION_ID = 'pkb';
+
+/**
+ * 一条内容文档是否属于某个协会。
+ *
+ * 读路径的统一谓词：字段缺省视作 LEGACY_ASSOCIATION_ID（旧数据），字段存在
+ * 则要求严格相等——「旧数据归匹克球、新数据各归各协会」一条规则说清。
+ *
+ * @param {Object|null} doc
+ * @param {string} association
+ * @returns {boolean}
+ */
+function belongsToAssociation(doc, association) {
+  if (!doc) return false;
+  const owner = doc.association || LEGACY_ASSOCIATION_ID;
+  return owner === association;
+}
+
 module.exports = {
   allAssociations,
   activeAssociations,
   getAssociation,
   isKnownAssociation,
   defaultAssociationId,
+  LEGACY_ASSOCIATION_ID,
+  belongsToAssociation,
 };

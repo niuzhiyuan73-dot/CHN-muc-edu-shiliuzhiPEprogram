@@ -40,6 +40,7 @@ function emptyStore() {
     lineups: new Map(),
     liveScores: new Map(),
     announcements: new Map(),
+    memberships: new Map(),
     seasons: new Map(),
     rankings: new Map(),
     auditLogs: [],
@@ -240,6 +241,23 @@ function createMemoryRepo(seed = {}) {
           const current = target.announcements.get(id);
           if (!current) throw new Error(`更新失败：找不到公告 ${id}`);
           target.announcements.set(id, { ...current, ...patch });
+        },
+      },
+
+      memberships: {
+        list: () => list('memberships'),
+        listByUser: (userId) => {
+          if (inTx) throw new Error('事务内不允许条件读取（memberships），请改用 get');
+          return [...target.memberships.values()]
+            .filter((doc) => doc.userId === userId)
+            .map(clone);
+        },
+        get: (id) => read('memberships', id),
+        set: async (id, doc) => {
+          target.memberships.set(id, { ...doc, _id: id });
+        },
+        remove: async (id) => {
+          target.memberships.delete(id);
         },
       },
 

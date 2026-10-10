@@ -234,6 +234,19 @@ function buildCollections(scope, inTx) {
       update: (id, patch) => col('announcements').doc(id).update({ data: withoutId(patch) }),
     },
 
+    // 按协会的高配角色行（无行 = 普通会员，见施工方案 §3.2）。只在任免
+    // 学院负责人 / 协会负责人时按自然键写一行或删一行，没有整表读的需求。
+    memberships: {
+      list: () => list('memberships'),
+      listByUser: (userId) => {
+        if (inTx) throw new Error('事务内不允许条件读取（memberships），请改用 get');
+        return readWhere(scope, COLLECTIONS.memberships, { userId });
+      },
+      get: (id) => readDoc(scope, COLLECTIONS.memberships, id),
+      set: (id, doc) => col('memberships').doc(id).set({ data: withoutId(doc) }),
+      remove: (id) => col('memberships').doc(id).remove(),
+    },
+
     seasons: {
       get: (id) => readDoc(scope, COLLECTIONS.seasons, id),
       set: (id, doc) => col('seasons').doc(id).set({ data: withoutId(doc) }),

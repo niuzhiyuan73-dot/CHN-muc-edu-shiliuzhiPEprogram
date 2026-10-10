@@ -58,7 +58,7 @@ async function publishAnnouncement(payload = {}, ctx) {
 
     const doc = { ...built.record, _id, status: ANNOUNCEMENT_STATUS.PUBLISHED };
     await tx.announcements.insert(doc);
-    await bumpSeason(tx, { anchorTime: null, now: ctx.now });
+    await bumpSeason(tx, { association: ctx.association, anchorTime: null, now: ctx.now });
     return doc;
   });
 
@@ -98,7 +98,7 @@ async function archiveAnnouncement(payload = {}, ctx) {
       actedAt: ctx.now,
     };
     await tx.announcements.update(payload.id, patch);
-    await bumpSeason(tx, { anchorTime: null, now: ctx.now });
+    await bumpSeason(tx, { association: ctx.association, anchorTime: null, now: ctx.now });
     return { ...current, ...patch };
   });
 

@@ -68,7 +68,7 @@ async function registerMember(payload = {}, ctx) {
       joinDate: ctx.now,
     };
     await tx.users.set(_id, record);
-    await bumpSeason(tx, { anchorTime: null, now: ctx.now });
+    await bumpSeason(tx, { association: ctx.association, anchorTime: null, now: ctx.now });
     return record;
   });
 
@@ -125,7 +125,7 @@ async function reviewMember(applicationId, action, reason, ctx, initialElo) {
     }
 
     await tx.users.set(applicationId, { ...current, ...patch });
-    await bumpSeason(tx, { anchorTime: null, now: ctx.now });
+    await bumpSeason(tx, { association: ctx.association, anchorTime: null, now: ctx.now });
     return { ...current, ...patch };
   });
 
@@ -179,7 +179,7 @@ async function setCollegeLeader(payload = {}, ctx) {
     if (!current) return null;
     const next = { ...current, role: verdict.role };
     await tx.users.set(target._id, next);
-    await bumpSeason(tx, { anchorTime: null, now: ctx.now });
+    await bumpSeason(tx, { association: ctx.association, anchorTime: null, now: ctx.now });
     return next;
   });
 
@@ -220,7 +220,7 @@ async function updateProfile(payload = {}, ctx) {
     if (!current) return null;
     const next = { ...current, ...built.patch };
     await tx.users.set(ctx.actorId, next);
-    await bumpSeason(tx, { anchorTime: null, now: ctx.now });
+    await bumpSeason(tx, { association: ctx.association, anchorTime: null, now: ctx.now });
     return next;
   });
 

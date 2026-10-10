@@ -13,10 +13,14 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { dispatch } = require('../cloudfunctions/data/src/core/dispatch.js');
-const { getDataset, resetMemo } = require('../cloudfunctions/data/src/core/derive.js');
-const { SEASON_ID } = require('../cloudfunctions/data/src/core/season.js');
+const { getDataset, resetMemo, rankingSnapshotId } = require('../cloudfunctions/data/src/core/derive.js');
+const { seasonId } = require('../cloudfunctions/data/src/core/season.js');
 const { USERS, MATCHES, NOW, createFixtureRepo, contextFor } = require('./helpers/cloud-fixture.js');
 const { RATED_PAIR_LIMIT } = require('../miniprogram/utils/constants.js');
+
+/** 夹具内容都归属默认协会 pkb，赛季/快照单例随之带 pkb 后缀 */
+const SEASON_ID = seasonId('pkb');
+const RANKING_ID = rankingSnapshotId('pkb');
 
 const MATCH_FORM = {
   matchType: 1,
@@ -258,7 +262,7 @@ test('读一次就把排行榜快照落库，冷启动不必再全表读 + 重�
   const ctx = await contextFor(repo, 'openid-u01');
 
   const first = await getDataset(ctx);
-  const snapshot = await repo.rankings.get('current');
+  const snapshot = await repo.rankings.get(RANKING_ID);
   assert.ok(snapshot, '读过一次之后，rankings 里应留下快照');
   assert.ok(!snapshot.data.nameOf, 'nameOf 是函数，落不了库，快照里不该有它');
   assert.equal(snapshot.data.ledger.length, first.ledger.length);
@@ -285,15 +289,15 @@ test('快照键对不上就重算，不会拿旧分数糊弄', async () => {
   const ctx = await contextFor(repo, 'openid-u01');
 
   await getDataset(ctx);
-  const stale = await repo.rankings.get('current');
+  const stale = await repo.rankings.get(RANKING_ID);
   // 把键改坏，等价于「数据变了但快照没跟着更新」这种最坏情况
-  await repo.rankings.set('current', { ...stale, key: 'bogus' });
+  await repo.rankings.set(RANKING_ID, { ...stale, key: 'bogus' });
 
   resetMemo(repo);
   const dataset = await getDataset(ctx);
 
   assert.equal(dataset.ledger.length, 4, '键对不上就必须重放，不能沿用旧快照');
-  const refreshed = await repo.rankings.get('current');
+  const refreshed = await repo.rankings.get(RANKING_ID);
   assert.notEqual(refreshed.key, 'bogus', '重算后要把正确的快照写回');
 });
 
@@ -302,9 +306,9 @@ test('快照被改坏时退回重放，而不是把读接口带崩', async () =>
   const ctx = await contextFor(repo, 'openid-u01');
 
   await getDataset(ctx);
-  const good = await repo.rankings.get('current');
+  const good = await repo.rankings.get(RANKING_ID);
   // 缺了必备字段，等价于控制台里被人手改坏
-  await repo.rankings.set('current', { ...good, data: { users: null, ledger: null } });
+  await repo.rankings.set(RANKING_ID, { ...good, data: { users: null, ledger: null } });
 
   resetMemo(repo);
   const dataset = await getDataset(ctx);
@@ -317,7 +321,7 @@ test('写操作让快照作废，冷启动后读到的仍是新流水', async ()
   const ctx = await contextFor(repo, 'openid-u01');
 
   await getDataset(ctx);
-  const before = await repo.rankings.get('current');
+  const before = await repo.rankings.get(RANKING_ID);
 
   await dispatch('submitMatch', MATCH_FORM, ctx);
 
@@ -325,7 +329,7 @@ test('写操作让快照作废，冷启动后读到的仍是新流水', async ()
   const after = await getDataset(ctx);
 
   assert.equal(after.ledger.length, 5, '新录的比赛必须出现在快照重算后的台账里');
-  const snapshot = await repo.rankings.get('current');
+  const snapshot = await repo.rankings.get(RANKING_ID);
   assert.notEqual(snapshot.key, before.key, '版本号变了，快照的键也必须跟着变');
 });
 

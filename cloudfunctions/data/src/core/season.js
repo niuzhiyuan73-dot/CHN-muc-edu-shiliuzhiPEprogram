@@ -24,8 +24,26 @@
  * ============================================================
  */
 
-/** 赛季文档固定用这个 _id：一个俱乐部同时只有一个当前赛季 */
+/**
+ * 改造前唯一赛季文档的 _id。多协会改造后，每个协会各有自己的当前赛季，
+ * _id 取 `current_<assoc>`；仅在协会缺省时（旧数据 / 旧调用）才落回它。
+ */
 const SEASON_ID = 'current';
+
+/**
+ * 某个协会的当前赛季文档 _id。
+ *
+ * 【为什么带协会后缀】
+ * 赛季锚点、版本号、赛季编号都是「每协会各一份」——乒乓球的第 3 赛季与
+ * 羽毛球毫无关系。若共用一个 `current`，一个协会开新赛季会把另一个协会的
+ * 缓存全部冲掉（版本号 +1），读取也会串到一起。
+ *
+ * @param {string} [association]
+ * @returns {string}
+ */
+function seasonId(association) {
+  return association ? `current_${association}` : SEASON_ID;
+}
 
 /**
  * 算法版本。改动 ELO 参数、K 值、积分规则、定级规则时都要 +1，
@@ -44,9 +62,9 @@ const ALGO_VERSION = 7;
  * 这样读接口不必先写库就能正常工作。
  * @returns {Object}
  */
-function defaultSeason() {
+function defaultSeason(association = '') {
   return {
-    _id: SEASON_ID,
+    _id: seasonId(association),
     anchorTime: null,
     // 最近一次赛季分界点。null 表示从未开始过新赛季。
     // 参与回放：分界之前的赛事积分不计入本赛季。等级分不受影响。
@@ -61,11 +79,12 @@ function defaultSeason() {
 /**
  * 读赛季文档（缺省时返回默认值，不写库）。
  * @param {Object} repo
+ * @param {string} [association] 协会 id；缺省落回旧单例 `current`
  * @returns {Promise<Object>}
  */
-async function loadSeason(repo) {
-  const doc = await repo.seasons.get(SEASON_ID);
-  return doc || defaultSeason();
+async function loadSeason(repo, association = '') {
+  const doc = await repo.seasons.get(seasonId(association));
+  return doc || defaultSeason(association);
 }
 
 /**
@@ -73,13 +92,15 @@ async function loadSeason(repo) {
  *
  * @param {Object} tx 事务内的仓储
  * @param {Object} [params]
+ * @param {string} [params.association] 协会 id；缺省落回旧单例 `current`
  * @param {Date|string|null} [params.anchorTime] 候选锚点（通常是当前最早一场比赛的时间）
  * @param {Date} [params.now]
  * @returns {Promise<Object>} 写入后的赛季文档
  */
-async function bumpSeason(tx, { anchorTime = null, now = new Date() } = {}) {
-  const existing = await tx.seasons.get(SEASON_ID);
-  const base = existing || defaultSeason();
+async function bumpSeason(tx, { association = '', anchorTime = null, now = new Date() } = {}) {
+  const id = seasonId(association);
+  const existing = await tx.seasons.get(id);
+  const base = existing || defaultSeason(association);
 
   const next = {
     ...base,
@@ -92,7 +113,7 @@ async function bumpSeason(tx, { anchorTime = null, now = new Date() } = {}) {
     updatedAt: now,
   };
 
-  await tx.seasons.set(SEASON_ID, next);
+  await tx.seasons.set(id, next);
   return next;
 }
 
@@ -107,13 +128,15 @@ async function bumpSeason(tx, { anchorTime = null, now = new Date() } = {}) {
  *
  * @param {Object} tx 事务内的仓储
  * @param {Object} [params]
+ * @param {string} [params.association] 协会 id；缺省落回旧单例 `current`
  * @param {Date|string} [params.resetTime] 分界点，通常是服务端此刻
  * @param {Date} [params.now]
  * @returns {Promise<Object>} 写入后的赛季文档
  */
-async function writeSeasonReset(tx, { resetTime, now = new Date() } = {}) {
-  const existing = await tx.seasons.get(SEASON_ID);
-  const base = existing || defaultSeason();
+async function writeSeasonReset(tx, { association = '', resetTime, now = new Date() } = {}) {
+  const id = seasonId(association);
+  const existing = await tx.seasons.get(id);
+  const base = existing || defaultSeason(association);
 
   const next = {
     ...base,
@@ -126,12 +149,13 @@ async function writeSeasonReset(tx, { resetTime, now = new Date() } = {}) {
     updatedAt: now,
   };
 
-  await tx.seasons.set(SEASON_ID, next);
+  await tx.seasons.set(id, next);
   return next;
 }
 
 module.exports = {
   SEASON_ID,
+  seasonId,
   ALGO_VERSION,
   defaultSeason,
   loadSeason,

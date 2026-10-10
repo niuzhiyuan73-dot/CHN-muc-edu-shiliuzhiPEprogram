@@ -33,7 +33,9 @@ const {
   TIE_STATUS,
   LEG_DISCIPLINE,
   DOUBLES_DISCIPLINES,
+  ASSOC_ROLE,
 } = require('../miniprogram/utils/constants.js');
+const { membershipKey } = require('../cloudfunctions/data/src/core/idempotency.js');
 
 /** 用一份全新的夹具调一次接口 */
 async function call(action, payload = {}, openId = 'openid-u01') {
@@ -865,11 +867,16 @@ describe('云函数 —— 学院赛闭环', () => {
   const collegeFixtureRepo = () =>
     createFixtureRepo({
       users: USERS.map((user) => {
-        if (user._id === 'u02') return { ...user, role: ROLE.STAFF, college: '信息工程学院' };
+        // 学院负责人不再是「账号上的全局角色」，而是 memberships 里的一行
+        // （见施工方案 §3.2）；账号本身仍是普通会员。
+        if (user._id === 'u02') return { ...user, college: '信息工程学院' };
         if (user._id === 'u03') return { ...user, college: '信息工程学院' };
         if (user._id === 'u04') return { ...user, college: '体育学院' };
         return user;
       }),
+      memberships: [
+        { _id: membershipKey('u02', 'pkb'), userId: 'u02', association: 'pkb', role: ASSOC_ROLE.STAFF },
+      ],
     });
 
   /** 在同一份仓储上换个身份再调一次 */

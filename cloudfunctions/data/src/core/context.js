@@ -14,7 +14,35 @@
  * ============================================================
  */
 
-const { ROLE, USER_STATUS } = require('../../lib/utils/constants.js');
+const { ROLE, USER_STATUS, ASSOC_ROLE } = require('../../lib/utils/constants.js');
+const { membershipKey } = require('./idempotency.js');
+const { defaultAssociationId } = require('../../lib/utils/associations.js');
+
+/**
+ * 由「账号全局角色」与「本协会成员角色」解出本次调用的**有效角色**。
+ *
+ * 【为什么协会负责人算作 ADMIN】
+ * 协会负责人「管理本协会全部内容」，与管理员在本协会内同权。把它的有效角色
+ * 直接算成 ADMIN，既有 `canManage(actor, { minRole: ADMIN })` 一行不用改就放行。
+ * 真正需要区分「全局管理员 / 协会负责人」的地方（任免协会负责人）只认
+ * `ctx.globalRole`，绝不走 `canManage`——见施工方案 §3.4 的安全红线。
+ *
+ * 【为什么账号上的 STAFF 不再直接生效】
+ * 改造后 `users.role` 只承载全局角色（MEMBER / ADMIN）；学院负责人改记在
+ * `memberships` 里。改造前的旧账号（role=1）由迁移脚本拆成成员行，拆完之前
+ * 它们在云端一律按会员处理——这不会误伤线上，因为 P1–P6 是同批上线。
+ *
+ * @param {number} globalRole 账号原始全局角色
+ * @param {Object|null} membership 本协会成员行（可空）
+ * @returns {number} ROLE.MEMBER / ROLE.STAFF / ROLE.ADMIN
+ */
+function effectiveRole(globalRole, membership) {
+  if (Number(globalRole) >= ROLE.ADMIN) return ROLE.ADMIN;
+  const role = membership && membership.role;
+  if (role === ASSOC_ROLE.LEADER) return ROLE.ADMIN;
+  if (role === ASSOC_ROLE.STAFF) return ROLE.STAFF;
+  return ROLE.MEMBER;
+}
 
 /**
  * 组装一次调用的上下文。
@@ -23,18 +51,35 @@ const { ROLE, USER_STATUS } = require('../../lib/utils/constants.js');
  * @param {Object} params.repo 仓储
  * @param {string} [params.openId] 微信 OpenID
  * @param {Date} [params.now] 当前时间，便于测试注入
+ * @param {string} [params.association] 本次调用的协会 id；缺省取兜底协会
  * @returns {Promise<Object>} 上下文对象
  */
-async function buildContext({ repo, openId = '', now = new Date() }) {
+async function buildContext({ repo, openId = '', now = new Date(), association = '' }) {
   const actor = openId ? await repo.users.getByOpenId(openId) : null;
+  const assoc = association || defaultAssociationId();
+
+  // 成员行只在「该账号在本协会有高配角色」时存在（见施工方案 §3.2）；
+  // 无行 = 普通会员。仓储没有 memberships 时（老夹具）按无行处理。
+  let membership = null;
+  if (actor && repo.memberships && typeof repo.memberships.get === 'function') {
+    membership = (await repo.memberships.get(membershipKey(actor._id, assoc))) || null;
+  }
+
+  const globalRole = actor ? Number(actor.role || 0) : ROLE.MEMBER;
+  const role = effectiveRole(globalRole, membership);
 
   return {
     repo,
     openId,
     now,
-    actor: actor || null,
+    association: assoc,
+    // 覆盖为有效角色，既有 canManage / managesCollege 调用零改动即按新语义运行
+    actor: actor ? { ...actor, role } : null,
     actorId: actor ? actor._id : '',
-    role: actor ? Number(actor.role || 0) : ROLE.MEMBER,
+    role,
+    globalRole,
+    membership,
+    isGlobalAdmin: globalRole >= ROLE.ADMIN,
     // 云端永不放宽权限，这个字段存在是为了让共享的纯逻辑函数能收到一个
     // 明确的值，而不是 undefined
     isMock: false,
@@ -76,4 +121,4 @@ function callerError(ctx) {
   return '';
 }
 
-module.exports = { buildContext, callerError };
+module.exports = { buildContext, callerError, effectiveRole };

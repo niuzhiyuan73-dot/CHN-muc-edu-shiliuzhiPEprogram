@@ -27,6 +27,8 @@ const { fail } = require('./src/envelope.js');
 const { dispatch } = require('./src/core/dispatch.js');
 const { buildContext } = require('./src/core/context.js');
 const { createRepo } = require('./src/adapters/cloud-repo.js');
+const { isKnownAssociation, getAssociation } = require('./lib/utils/associations.js');
+const { ASSOCIATION_STATUS } = require('./lib/utils/constants.js');
 
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 
@@ -39,13 +41,40 @@ function getRepo() {
 }
 
 /**
+ * 解析并校验请求携带的协会 id。
+ *
+ * 【为什么带错协会要当场拒绝，而不是静默退回默认】
+ * 请求里的协会决定了这次读写落在哪个协会名下。若 id 打错还默默用兜底
+ * 协会，数据就会被写进另一个协会而无人察觉。宁可明确失败，让前端去修。
+ * 空值（未携带）才允许走默认——那是「首次进入尚未选协会」的正常情形。
+ *
+ * @param {*} association
+ * @returns {{ id: string, error: string }}
+ */
+function resolveAssociation(association) {
+  if (association === undefined || association === null || association === '') {
+    return { id: '', error: '' };
+  }
+  if (!isKnownAssociation(association)) {
+    return { id: '', error: `未知的协会：${association}` };
+  }
+  if (getAssociation(association).status !== ASSOCIATION_STATUS.ACTIVE) {
+    return { id: '', error: '该协会已停用' };
+  }
+  return { id: association, error: '' };
+}
+
+/**
  * 云函数入口。
- * @param {Object} event { action, payload }
+ * @param {Object} event { action, payload, association }
  * @returns {Promise<Object>} 回包信封
  */
 exports.main = async (event = {}) => {
   try {
     const { action, payload } = event;
+
+    const assoc = resolveAssociation(event.association);
+    if (assoc.error) return fail(assoc.error);
 
     // OPENID 由微信注入，客户端伪造不了——这正是身份可信的唯一来源
     const { OPENID } = cloud.getWXContext();
@@ -54,6 +83,7 @@ exports.main = async (event = {}) => {
       repo: getRepo(),
       openId: OPENID,
       now: new Date(),
+      association: assoc.id,
     });
 
     return await dispatch(action, payload, ctx);

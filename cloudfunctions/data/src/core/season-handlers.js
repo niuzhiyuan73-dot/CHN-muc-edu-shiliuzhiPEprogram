@@ -52,7 +52,7 @@ function shapeSeason(season) {
  * @returns {Promise<Object>} {anchorTime, resetTime, seasonNumber, version}
  */
 async function getSeasonState(payload = {}, ctx) {
-  const season = await loadSeason(ctx.repo);
+  const season = await loadSeason(ctx.repo, ctx.association);
   return ok(shapeSeason(season));
 }
 
@@ -76,7 +76,7 @@ async function resetSeason(payload = {}, ctx) {
   }
 
   const season = await ctx.repo.transaction(async (tx) =>
-    writeSeasonReset(tx, { resetTime: ctx.now, now: ctx.now })
+    writeSeasonReset(tx, { association: ctx.association, resetTime: ctx.now, now: ctx.now })
   );
 
   return ok({ ok: true, season: shapeSeason(season), message: '' });

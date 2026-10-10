@@ -33,6 +33,26 @@ function digest(parts) {
 }
 
 /**
+ * 把协会并进摘要输入。
+ *
+ * 【为什么并进摘要、而不是给主键加前缀】
+ * 给主键加 `{assoc}_` 前缀会让代码里长出「某些协会带前缀、某些不带」的分支，
+ * 还要把旧数据的 _id 全部重排。并进摘要输入则前缀一律不变，跨协会同名内容
+ * 因摘要不同而永不碰撞，旧文档的 _id 也原样保留。
+ *
+ * 【为什么缺字段时不并入】
+ * 改造前的旧文档没有 association。对它们保持旧算法（摘要输入不变），_id 就
+ * 与历史一致；写过之后带上 association 的文档，摘要多一段、自然是新键。
+ *
+ * @param {Array<*>} parts
+ * @param {string} [association]
+ * @returns {Array<*>}
+ */
+function withAssociation(parts, association) {
+  return association ? [...parts, association] : parts;
+}
+
+/**
  * 比赛的自然键。
  * 队伍成员先排序，避免「A 队里两人顺序不同」被误判成两场不同的比赛。
  *
@@ -40,15 +60,20 @@ function digest(parts) {
  * @returns {string} 可直接用作 _id
  */
 function matchNaturalKey(record) {
-  return `m_${digest([
-    record.pool,
-    [...record.teamA].sort().join(','),
-    [...record.teamB].sort().join(','),
-    record.scoreA.join(','),
-    record.scoreB.join(','),
-    new Date(record.matchTime).toISOString(),
-    record.recorder || '',
-  ])}`;
+  return `m_${digest(
+    withAssociation(
+      [
+        record.pool,
+        [...record.teamA].sort().join(','),
+        [...record.teamB].sort().join(','),
+        record.scoreA.join(','),
+        record.scoreB.join(','),
+        new Date(record.matchTime).toISOString(),
+        record.recorder || '',
+      ],
+      record.association
+    )
+  )}`;
 }
 
 /**
@@ -57,7 +82,9 @@ function matchNaturalKey(record) {
  * @returns {string} 可直接用作 _id
  */
 function announcementNaturalKey(record) {
-  return `a_${digest([record.publisherId || '', record.title, record.content])}`;
+  return `a_${digest(
+    withAssociation([record.publisherId || '', record.title, record.content], record.association)
+  )}`;
 }
 
 /**
@@ -79,11 +106,26 @@ function memberKey(openId) {
  * @returns {string} 可直接用作 _id
  */
 function eventNaturalKey(record) {
-  return `e_${digest([
-    record.publisherId || '',
-    record.title,
-    new Date(record.startTime).toISOString(),
-  ])}`;
+  return `e_${digest(
+    withAssociation(
+      [record.publisherId || '', record.title, new Date(record.startTime).toISOString()],
+      record.association
+    )
+  )}`;
+}
+
+/**
+ * 协会角色行的主键：「某人在某协会」压成一个 _id。
+ *
+ * 一人可负责多个协会，因此键里必须同时有 userId 与 association——只按人
+ * 取键会让「这个人换了协会任职」覆盖掉上一处。
+ *
+ * @param {string} userId
+ * @param {string} association
+ * @returns {string} 可直接用作 _id
+ */
+function membershipKey(userId, association) {
+  return `mb_${digest([userId, association])}`;
 }
 
 /**
@@ -109,11 +151,12 @@ function signupNaturalKey(eventId, userId) {
  * @returns {string} 可直接用作 _id
  */
 function collegeEventNaturalKey(record) {
-  return `ce_${digest([
-    record.publisherId || '',
-    record.title,
-    new Date(record.startTime).toISOString(),
-  ])}`;
+  return `ce_${digest(
+    withAssociation(
+      [record.publisherId || '', record.title, new Date(record.startTime).toISOString()],
+      record.association
+    )
+  )}`;
 }
 
 /**
@@ -151,6 +194,7 @@ module.exports = {
   announcementNaturalKey,
   eventNaturalKey,
   memberKey,
+  membershipKey,
   signupNaturalKey,
   collegeEventNaturalKey,
   collegeEntryNaturalKey,

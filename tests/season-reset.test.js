@@ -35,6 +35,7 @@ const {
   defaultSeason,
   bumpSeason,
   writeSeasonReset,
+  seasonId,
   SEASON_ID,
 } = require('../cloudfunctions/data/src/core/season.js');
 const { createFixtureRepo, contextFor, NOW } = require('./helpers/cloud-fixture.js');
@@ -194,8 +195,8 @@ describe('云函数 —— 赛季状态与开始新赛季', () => {
     assert.equal(res.data.season.seasonNumber, 2);
     assert.equal(new Date(res.data.season.resetTime).getTime(), NOW.getTime());
 
-    // 必须真落库，否则缓存永远不会失效
-    const doc = await repo.seasons.get('current');
+    // 必须真落库，否则缓存永远不会失效（dispatch 默认协会 pkb → current_pkb）
+    const doc = await repo.seasons.get(seasonId('pkb'));
     assert.equal(new Date(doc.resetTime).getTime(), NOW.getTime());
   });
 

@@ -143,6 +143,7 @@ async function submitScheduledMatch(id, scores, { dataset, ctx, now }) {
     };
     await tx.matches.update(id, patch);
     await bumpSeason(tx, {
+      association: ctx.association,
       anchorTime: anchorCandidate(dataset, current.matchTime),
       now: ctx.now,
     });
@@ -195,7 +196,7 @@ async function advanceAfterConfirm(ctx, eventId) {
       inserted = true;
     }
     if (inserted) {
-      await bumpSeason(tx, { anchorTime: null, now: ctx.now });
+      await bumpSeason(tx, { association: ctx.association, anchorTime: null, now: ctx.now });
     }
   });
 }
@@ -307,6 +308,7 @@ async function submitMatch(payload = {}, ctx) {
     };
     await tx.matches.insert(record);
     await bumpSeason(tx, {
+      association: ctx.association,
       anchorTime: anchorCandidate(dataset, record.matchTime),
       now: ctx.now,
     });
@@ -360,6 +362,7 @@ async function confirmMatch(payload = {}, ctx) {
     };
     await tx.matches.update(id, patch);
     await bumpSeason(tx, {
+      association: ctx.association,
       anchorTime: anchorCandidate(dataset, current.matchTime),
       now: ctx.now,
     });
@@ -420,6 +423,7 @@ async function forfeitMatch(payload = {}, ctx) {
 
     await tx.matches.update(id, patch);
     await bumpSeason(tx, {
+      association: ctx.association,
       anchorTime: anchorCandidate(dataset, current.matchTime),
       now: ctx.now,
     });
@@ -473,6 +477,7 @@ async function rejectMatch(payload = {}, ctx) {
     };
     await tx.matches.update(id, patch);
     await bumpSeason(tx, {
+      association: ctx.association,
       anchorTime: anchorCandidate(dataset, current.matchTime),
       now: ctx.now,
     });
@@ -549,6 +554,7 @@ async function revokeMatch(payload = {}, ctx) {
     };
     await tx.matches.update(id, patch);
     await bumpSeason(tx, {
+      association: ctx.association,
       anchorTime: anchorCandidate(dataset, current.matchTime),
       now: ctx.now,
     });
@@ -623,7 +629,7 @@ async function assignMatchReferee(payload = {}, ctx) {
     await tx.matches.update(payload.matchId, patch);
     // 裁判是从 dataset 读的（见上面说明），不 +1 就「指派了看不见」，
     // 且权限收窄不生效
-    await bumpSeason(tx, { anchorTime: null, now: ctx.now });
+    await bumpSeason(tx, { association: ctx.association, anchorTime: null, now: ctx.now });
     return { ...current, ...patch };
   });
 

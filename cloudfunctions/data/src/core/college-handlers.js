@@ -490,7 +490,7 @@ async function startTie(payload = {}, ctx) {
     // 小场落的是 matches 集合，它经 dataset 读（按赛季版本号缓存）。
     // 不 +1，刚生成的场次在下一次读里就查不到——录分与开台计分都会
     // 报「找不到这场比赛」，要等某次无关写入才「自己好了」。
-    await bumpSeason(tx, { anchorTime: null, now: ctx.now });
+    await bumpSeason(tx, { association: ctx.association, anchorTime: null, now: ctx.now });
     return { ...tie, ...patch };
   });
 
@@ -588,7 +588,7 @@ async function recordForfeit(payload = {}, ctx) {
 
     await tx.matches.update(leg.matchId, patch);
     // 台账变了（比赛从待确认转生效），让回放缓存失效
-    await bumpSeason(tx, { anchorTime: null, now: ctx.now });
+    await bumpSeason(tx, { association: ctx.association, anchorTime: null, now: ctx.now });
     return { ...current, ...patch };
   });
 
@@ -721,7 +721,7 @@ async function assignTieReferee(payload = {}, ctx) {
     }
     await tx.ties.update(payload.tieId, patch);
     // 小场的 referee 从 dataset 读，必须让缓存失效（见上面说明）
-    await bumpSeason(tx, { anchorTime: null, now: ctx.now });
+    await bumpSeason(tx, { association: ctx.association, anchorTime: null, now: ctx.now });
     return { record: { ...currentTie, ...patch }, matches };
   });
 

@@ -50,6 +50,11 @@
  *   repo.announcements.getById(id)      → Promise<Object|null>
  *   repo.announcements.insert(doc)      → Promise<Object>
  *   repo.announcements.update(id, patch)→ Promise<void>
+ *   repo.memberships.list()             → Promise<Array<Object>>  按协会的高配角色行（无行=普通会员）
+ *   repo.memberships.listByUser(uid)    → Promise<Array<Object>>
+ *   repo.memberships.get(id)            → Promise<Object|null>    _id = mb_<md5(userId|assoc)>
+ *   repo.memberships.set(id, doc)       → Promise<void>           按 _id 整体写入（upsert）
+ *   repo.memberships.remove(id)         → Promise<void>
  *   repo.seasons.get(id)                → Promise<Object|null>
  *   repo.seasons.set(id, doc)           → Promise<void>
  *   repo.rankings.get(id)               → Promise<Object|null>
@@ -78,6 +83,7 @@ const COLLECTIONS = {
   lineups: COLLECTION.COLLEGE_LINEUPS,
   liveScores: COLLECTION.LIVE_SCORES,
   announcements: COLLECTION.ANNOUNCEMENTS,
+  memberships: COLLECTION.MEMBERSHIPS,
   seasons: COLLECTION.SEASONS,
   rankings: COLLECTION.RANKINGS,
   auditLogs: COLLECTION.AUDIT_LOGS,

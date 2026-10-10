@@ -39,15 +39,42 @@ const {
   isMemberStatus,
 } = require('../../lib/utils/constants.js');
 const { loadSeason, ALGO_VERSION } = require('./season.js');
-
-/** 仓储 → { key, dataset } */
-const memoByRepo = new WeakMap();
+const { belongsToAssociation } = require('../../lib/utils/associations.js');
 
 /**
- * 排行榜快照在 rankings 集合里的固定 _id：一个俱乐部同时只有一份。
- * 快照只是缓存的落库版，随时可以删；删了下一次读会重新算并写回。
+ * 仓储 → (协会 → { key, dataset })。
+ *
+ * 【为什么每个协会各存一份】
+ * 容器热起来后同一份仓储要同时服务多个协会。若只留一份缓存，乒乓球的读
+ * 会顶掉匹克球的缓存，两边轮流失效、次次重放。按协会分开，各自命中各自
+ * 的。仓储本身仍是 WeakMap 的键，测试造很多仓储也不会串味。
+ */
+const memoByRepo = new WeakMap();
+
+/** 取（或新建）某仓储的「按协会」缓存表 */
+function memoFor(repo) {
+  let byAssoc = memoByRepo.get(repo);
+  if (!byAssoc) {
+    byAssoc = new Map();
+    memoByRepo.set(repo, byAssoc);
+  }
+  return byAssoc;
+}
+
+/**
+ * 改造前唯一排行榜快照的 _id。多协会改造后每个协会各一份，取
+ * `current_<assoc>`；仅在协会缺省时落回它。
  */
 const RANKING_SNAPSHOT_ID = 'current';
+
+/**
+ * 某个协会的排行榜快照 _id（快照只是缓存的落库版，随时可删）。
+ * @param {string} [association]
+ * @returns {string}
+ */
+function rankingSnapshotId(association) {
+  return association ? `current_${association}` : RANKING_SNAPSHOT_ID;
+}
 
 /**
  * 快照单文档的体积上限。
@@ -95,15 +122,24 @@ function fromSnapshot(payload) {
  *
  * @param {Object} repo
  * @param {Object} season
+ * @param {string} association 数据所属协会
  * @returns {Promise<Object>}
  */
-async function buildDataset(repo, season) {
-  const [allUsers, allMatches, events, announcementDocs] = await Promise.all([
+async function buildDataset(repo, season, association) {
+  const [allUsers, allMatches, allEvents, allAnnouncements] = await Promise.all([
     repo.users.list(),
     repo.matches.list(),
     repo.events.list(),
     repo.announcements.list(),
   ]);
+
+  // 内容数据按协会过滤；账号是全局的一份，不过滤（改造前缺 association 的
+  // 旧文档视作 pkb，见 associations.belongsToAssociation）。
+  const events = allEvents.filter((event) => belongsToAssociation(event, association));
+  const announcementDocs = allAnnouncements.filter((doc) =>
+    belongsToAssociation(doc, association)
+  );
+  const scopedMatches = allMatches.filter((match) => belongsToAssociation(match, association));
 
   // 「在册」= 正常 + 已离校。离校的人不能再上榜、不能报名，但历史比赛
   // 还在流水里，回放名单少了他会直接抛错——所以名单按 isMemberStatus 取，
@@ -112,7 +148,7 @@ async function buildDataset(repo, season) {
   const applications = allUsers.filter((user) => !isMemberStatus(user.status));
 
   // 复制一份再动：就地改数据库读回来的对象，会让调用方看到意外变化
-  const staged = allMatches.map((match) => ({ ...match }));
+  const staged = scopedMatches.map((match) => ({ ...match }));
   // 进回放的只有「计个人等级分」的比赛：已生效、非弃权，且学院赛里只有
   // 单打小场（双打小场只汇总大场，见 college-tie.isEloEligibleMatch）。
   // 台账仍是完整的 staged，录分页按编号取小场不受影响。
@@ -165,8 +201,10 @@ async function buildDataset(repo, season) {
  * @returns {Promise<Object>}
  */
 async function getDataset(ctx) {
-  const season = await loadSeason(ctx.repo);
+  const association = ctx.association || '';
+  const season = await loadSeason(ctx.repo, association);
   const key = [
+    association,
     season._id,
     Number(season.version || 0),
     season.algoVersion,
@@ -181,20 +219,21 @@ async function getDataset(ctx) {
     season.resetTime ? new Date(season.resetTime).getTime() : 'n',
   ].join(':');
 
-  const cached = memoByRepo.get(ctx.repo);
+  const memo = memoFor(ctx.repo);
+  const cached = memo.get(association);
   if (cached && cached.key === key) return cached.dataset;
 
   // 容器内存缓存没命中，再退一步看落库的快照。云函数冷启动时内存缓存
   // 一定是空的，这一层才是「省掉全表读 + 两遍回放」的地方。
-  const stored = await readSnapshot(ctx.repo, key);
+  const stored = await readSnapshot(ctx.repo, key, association);
   if (stored) {
-    memoByRepo.set(ctx.repo, { key, dataset: stored });
+    memo.set(association, { key, dataset: stored });
     return stored;
   }
 
-  const dataset = await buildDataset(ctx.repo, season);
-  memoByRepo.set(ctx.repo, { key, dataset });
-  await writeSnapshot(ctx.repo, key, dataset);
+  const dataset = await buildDataset(ctx.repo, season, association);
+  memo.set(association, { key, dataset });
+  await writeSnapshot(ctx.repo, key, dataset, association);
   return dataset;
 }
 
@@ -204,12 +243,13 @@ async function getDataset(ctx) {
  *
  * @param {Object} repo
  * @param {string} key
+ * @param {string} [association]
  * @returns {Promise<Object|null>}
  */
-async function readSnapshot(repo, key) {
+async function readSnapshot(repo, key, association = '') {
   if (!repo.rankings || typeof repo.rankings.get !== 'function') return null;
   try {
-    const doc = await repo.rankings.get(RANKING_SNAPSHOT_ID);
+    const doc = await repo.rankings.get(rankingSnapshotId(association));
     // 除了键，还要看必备字段在不在：一条被手工改坏的快照不该让读接口崩
     if (!doc || doc.key !== key || !doc.data) return null;
     if (!Array.isArray(doc.data.users) || !Array.isArray(doc.data.ledger)) return null;
@@ -226,14 +266,15 @@ async function readSnapshot(repo, key) {
  * @param {Object} repo
  * @param {string} key
  * @param {Object} dataset
+ * @param {string} [association]
  * @returns {Promise<void>}
  */
-async function writeSnapshot(repo, key, dataset) {
+async function writeSnapshot(repo, key, dataset, association = '') {
   if (!repo.rankings || typeof repo.rankings.set !== 'function') return;
   try {
     const data = toSnapshot(dataset);
     if (JSON.stringify(data).length > SNAPSHOT_MAX_BYTES) return;
-    await repo.rankings.set(RANKING_SNAPSHOT_ID, {
+    await repo.rankings.set(rankingSnapshotId(association), {
       key,
       algoVersion: ALGO_VERSION,
       savedAt: new Date(),
@@ -252,4 +293,4 @@ function resetMemo(repo) {
   memoByRepo.delete(repo);
 }
 
-module.exports = { buildDataset, getDataset, resetMemo };
+module.exports = { buildDataset, getDataset, resetMemo, rankingSnapshotId };
