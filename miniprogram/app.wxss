@@ -7,14 +7,14 @@
  */
 
 page {
-  /* ---------- 主色：取自匹克球场地常用的场地绿 ---------- */
-  --color-primary: #1e7a55;
-  --color-primary-dark: #166041;
-  --color-primary-light: #e8f4ef;
+  /* ---------- 主色：石榴红（与协会无关的界面，如首页顶栏） ---------- */
+  --color-primary: #b23a2e;
+  --color-primary-dark: #8e2c23;
+  --color-primary-light: #f7e9e7;
 
-  /* ---------- 强调色：球体橙色，用于关键行动按钮与高亮 ---------- */
-  --color-accent: #ff7a45;
-  --color-accent-light: #fff1eb;
+  /* ---------- 强调色：石榴籽金，用于关键行动按钮与高亮 ---------- */
+  --color-accent: #c9a227;
+  --color-accent-light: #fbf3e0;
 
   /* ---------- 中性色 ---------- */
   --color-bg: #f5f6f8;
@@ -373,26 +373,26 @@ page {
   --color-primary: #b23a2e;
   --color-primary-dark: #8e2c23;
   --color-primary-light: #f7e9e7;
-  --color-accent: #1e7a55;
+  --color-accent: #c9a227;
 }
 
 .assoc-pkb {
-  --color-primary: #1e7a55;
-  --color-primary-dark: #166041;
-  --color-primary-light: #e8f4ef;
+  --color-primary: #1565c0;
+  --color-primary-dark: #0d47a1;
+  --color-primary-light: #e3f0fb;
   --color-accent: #ff7a45;
 }
 
 .assoc-tt {
-  --color-primary: #1d6fb8;
-  --color-primary-dark: #155a96;
-  --color-primary-light: #e6f0fa;
-  --color-accent: #f2994a;
+  --color-primary: #004d40;
+  --color-primary-dark: #00332b;
+  --color-primary-light: #e0f0ec;
+  --color-accent: #c9a227;
 }
 
 .assoc-bd {
-  --color-primary: #c2410c;
-  --color-primary-dark: #9a3309;
-  --color-primary-light: #fbeae1;
-  --color-accent: #1d6fb8;
+  --color-primary: #6a1b9a;
+  --color-primary-dark: #4a148c;
+  --color-primary-light: #f3e8f7;
+  --color-accent: #f2994a;
 }

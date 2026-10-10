@@ -2,7 +2,7 @@
   发布学院赛
   表单的校验在 services/college-event.js，这里只渲染，并把用户的操作交回去。
 -->
-<view class="page-container">
+<view class="page-container {{themeClass}}">
 
   <!-- 没有发布权时不给表单：填完再被拒，比一开始就说清楚糟得多 -->
   <view wx:if="{{blockReason}}" class="empty-state">

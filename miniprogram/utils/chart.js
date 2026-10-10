@@ -143,8 +143,8 @@ function computeChartGeometry(values, options = {}) {
  * @param {CanvasRenderingContext2D} ctx
  * @param {Object} geometry computeChartGeometry 的返回值
  * @param {Object} [style]
- * @param {string} [style.lineColor='#1e7a55']
- * @param {string} [style.fillColor='rgba(30,122,85,0.10)']
+ * @param {string} [style.lineColor='#b23a2e']
+ * @param {string} [style.fillColor='rgba(178,58,46,0.10)']
  * @param {string} [style.gridColor='#e5e7eb']
  * @param {string} [style.textColor='#9ca3af']
  * @param {string} [style.font='10px sans-serif']
@@ -155,8 +155,8 @@ function drawLineChart(ctx, geometry, style = {}) {
   if (!ctx || !geometry || geometry.empty) return;
 
   const {
-    lineColor = '#1e7a55',
-    fillColor = 'rgba(30, 122, 85, 0.10)',
+    lineColor = '#b23a2e',
+    fillColor = 'rgba(178, 58, 46, 0.10)',
     gridColor = '#e5e7eb',
     textColor = '#9ca3af',
     font = '10px sans-serif',

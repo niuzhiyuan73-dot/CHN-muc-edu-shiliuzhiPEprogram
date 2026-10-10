@@ -121,3 +121,44 @@ test('云端镜像能加载，且协会 id 清单与源文件一致', () => {
     allAssociations().map((a) => a.id)
   );
 });
+
+/* ============================================================
+ * 五、主题配色（界面按协会上色的依据）
+ * ============================================================ */
+
+test('各协会主色按约定：匹克球蓝、乒乓深绿 #004D40、羽球紫', () => {
+  // 这三个色是产品口径，写死在用例里，改了就该红：绿/橙/蓝等旧配色会被挡下
+  assert.strictEqual(getAssociation('pkb').theme.primary, '#1565C0', '匹克球用蓝');
+  assert.strictEqual(getAssociation('tt').theme.primary, '#004D40', '乒乓用深绿（RGB 0,77,64）');
+  assert.strictEqual(getAssociation('bd').theme.primary, '#6A1B9A', '羽球用紫');
+});
+
+test('branding —— 主题类名：已知协会 assoc-<id>，未知与空都落中性', () => {
+  const { themeClassOf, NEUTRAL_BRAND } = require('../miniprogram/services/branding.js');
+  assert.strictEqual(themeClassOf('tt'), 'assoc-tt');
+  assert.strictEqual(themeClassOf('bd'), 'assoc-bd');
+  assert.strictEqual(themeClassOf(''), NEUTRAL_BRAND.rootClass);
+  assert.strictEqual(themeClassOf('nope'), NEUTRAL_BRAND.rootClass);
+  // 中性品牌是石榴红
+  assert.strictEqual(NEUTRAL_BRAND.theme.primary.toLowerCase(), '#b23a2e');
+});
+
+test('app.wxss 的协会主题块与注册表镜像一致，JS 与 CSS 不许分叉', () => {
+  const fs = require('node:fs');
+  const css = fs.readFileSync(path.join(__dirname, '..', 'miniprogram', 'app.wxss'), 'utf8');
+  const { NEUTRAL_BRAND } = require('../miniprogram/services/branding.js');
+
+  for (const a of activeAssociations()) {
+    const block = css.match(new RegExp(`\\.assoc-${a.id}\\s*\\{([\\s\\S]*?)\\}`));
+    assert.ok(block, `app.wxss 里缺少 .assoc-${a.id}`);
+    assert.ok(
+      block[1].toLowerCase().includes(a.theme.primary.toLowerCase()),
+      `.assoc-${a.id} 的 --color-primary 未与注册表的 ${a.theme.primary} 对齐`
+    );
+  }
+
+  // 中性块的主色要与 NEUTRAL_BRAND 一致
+  const neutral = css.match(/\.assoc-neutral\s*\{([\s\S]*?)\}/);
+  assert.ok(neutral, 'app.wxss 里缺少 .assoc-neutral');
+  assert.ok(neutral[1].toLowerCase().includes(NEUTRAL_BRAND.theme.primary.toLowerCase()));
+});

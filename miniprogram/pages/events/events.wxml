@@ -4,7 +4,7 @@
   榜单行与搜索框的样式来自 templates/rank-board.wxss，与「排行榜」页共用。
   积分榜只列前 10 名，「我的排名」卡不受截断影响，其余名次靠搜索框定位。
 -->
-<view class="page-container">
+<view class="page-container {{themeClass}}">
 
   <!-- 加载中。必须排在出错之前，否则首屏会一闪而过地报错 -->
   <view wx:if="{{loading}}" class="loading">正在加载…</view>

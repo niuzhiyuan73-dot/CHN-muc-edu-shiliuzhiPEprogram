@@ -65,6 +65,11 @@ Page({
   onShow() {
     resetBranding();
     this.syncEntries();
+    // 【为什么单独同步一次徽章】当前协会是首页与本页共用的同一个全局，可能在
+    // 首页被切走；而本页内容跨协会聚合、不随它变，下面那行指纹比较常常直接
+    // 跳过 refresh——refresh 是唯一写 associationId 的地方。不同步的话，就会
+    // 出现「首页显示 tt、我的还显示 pkb」的两张皮（需求整理 §11.2）。
+    this.syncAssociationBadge();
 
     const key = this.sessionKey(this.currentUser());
     if (key !== (this.loadedForKey || null)) return this.refresh();
@@ -108,6 +113,15 @@ Page({
     const app = getApp();
     if (app && typeof app.setAssociation === 'function') return app.setAssociation(id);
     return facade.setAssociation(id);
+  },
+
+  /**
+   * 把徽章上的协会对齐到当前全局协会。
+   * 只在真的变了时才 setData，免得每次 onShow 都触发一次无谓的重渲染。
+   */
+  syncAssociationBadge() {
+    const id = this.currentAssociation();
+    if (id !== this.data.associationId) this.setData({ associationId: id });
   },
 
   /**

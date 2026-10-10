@@ -551,6 +551,29 @@ test('我的页 —— 切换协会只改全局，本页内容不重取', async 
   }
 });
 
+test('我的页 —— 首页切了协会再回来，徽章跟着全局走（不再两张皮）', async () => {
+  loginAs();
+  const globalBefore = facade.getAssociation();
+  facade.setAssociation('pkb');
+  try {
+    const page = instantiate(profileConfig);
+    await page.onLoad({});
+    assert.strictEqual(page.data.associationId, 'pkb', '首屏徽章是当前全局协会');
+
+    // 模拟在首页把全局协会切到 tt，再切回「我的」tab——tab 切换只走 onShow。
+    // 本页内容是跨协会聚合的、不随它变，会话指纹没变，refresh 会被跳过；
+    // 若不在 onShow 里单独同步徽章，这里就会停在 pkb，与首页显示的两张皮。
+    const viewBefore = page.data.view;
+    facade.setAssociation('tt');
+    await page.onShow();
+
+    assert.strictEqual(page.data.associationId, 'tt', '徽章必须跟上全局协会');
+    assert.strictEqual(page.data.view, viewBefore, '切协会不该重取本页内容');
+  } finally {
+    facade.setAssociation(globalBefore);
+  }
+});
+
 test('我的页 —— 下拉刷新会收起刷新动画', async () => {
   const page = instantiate(profileConfig);
   await page.onLoad({});
@@ -3291,7 +3314,7 @@ test('首页 —— 点公告卡片跳到公告列表页', async () => {
   assert.deepStrictEqual(calls.navigations, ['/pages/announcements/announcements']);
 });
 
-test('公告列表页 —— 未登录也能看，置顶排最前且绝无管理按钮', async () => {
+test('公告列表页 —— 未登录也能看，跨协会分栏，置顶排最前且绝无管理按钮', async () => {
   resetSession();
 
   const page = instantiate(announcementsConfig);
@@ -3299,11 +3322,16 @@ test('公告列表页 —— 未登录也能看，置顶排最前且绝无管理
 
   assert.strictEqual(page.data.loading, false);
   assert.strictEqual(page.data.error, '');
-  assert.strictEqual(page.data.view.total, 6);
-  assert.strictEqual(page.data.view.rows[0].pinned, true);
+  // 三个协会的公告都在，且按协会分栏
+  assert.strictEqual(page.data.view.total, 14);
+  assert.deepStrictEqual(
+    page.data.view.groups.map((group) => group.associationId),
+    ['pkb', 'tt', 'bd']
+  );
+  assert.strictEqual(page.data.view.groups[0].rows[0].pinned, true);
   // 公开页的每一行都不带管理按钮——视图模型给的是 actor: null
-  for (const row of page.data.view.rows) {
-    assert.strictEqual(row.canArchive, false);
+  for (const group of page.data.view.groups) {
+    for (const row of group.rows) assert.strictEqual(row.canArchive, false);
   }
 });
 
@@ -3316,9 +3344,11 @@ test('公告列表页 —— 点分类标签整页换成该分类，别的分类
   await page.onSwitchTab({ currentTarget: { dataset: { tab: '赛事' } } });
 
   assert.strictEqual(page.data.view.activeTab, '赛事');
-  assert.strictEqual(page.data.view.rows.length, 2);
-  for (const row of page.data.view.rows) assert.strictEqual(row.category, '赛事');
-  assert.strictEqual(page.data.view.tabs.find((t) => t.tab === '通知').count, 2);
+  assert.strictEqual(page.data.view.visibleCount, 4);
+  for (const group of page.data.view.groups) {
+    for (const row of group.rows) assert.strictEqual(row.category, '赛事');
+  }
+  assert.strictEqual(page.data.view.tabs.find((t) => t.tab === '通知').count, 6);
 });
 
 test('公告列表页 —— 重复点当前标签不做无谓的重新加载', async () => {

@@ -48,6 +48,7 @@ const {
 const { GAME_POINTS_OPTIONS, BEST_OF_OPTIONS } = require('../../utils/match-format.js');
 const { hasReferee, canRecordScore } = require('../../services/match-record.js');
 const { ROLE } = require('../../utils/constants.js');
+const { currentThemeClass } = require('../../services/branding.js');
 
 /** 把 Date 变成 picker 要的 2026-05-01 */
 function toDateText(date) {
@@ -67,6 +68,8 @@ Page({
     loading: true,
     /** 加载失败时的提示 */
     error: '',
+    /** 当前协会的主题类，挂在页面根节点上 */
+    themeClass: '',
     /** 提交中，防止连点重复提交 */
     submitting: false,
     /** 当前登录态 */
@@ -173,6 +176,7 @@ Page({
       this.setData({
         referee,
         blockReason: this.describeBlock(this.data.auth) || this.describeRecordBlock(record, user),
+        themeClass: currentThemeClass(),
       });
       this.applyForm(scheduledForm(record));
     } catch (err) {
@@ -217,7 +221,7 @@ Page({
         const records = await getMatchRecords({ id: this.matchId });
         const record = records && records[0];
         if (!record) {
-          this.setData({ loading: false, error: '这场比赛不存在，或已被删除' });
+          this.setData({ loading: false, error: '这场比赛不存在，或已被删除', themeClass: currentThemeClass() });
           return;
         }
         form = scheduledForm(record);
@@ -248,13 +252,14 @@ Page({
           seasonStart,
           referee,
           blockReason: this.describeBlock(auth) || recordBlock || this.refereeBlock(referee),
+          themeClass: currentThemeClass(),
         },
         () => this.applyForm(form)
       );
       this._loaded = true;
     } catch (err) {
       console.error('[match-entry] 初始化失败', err);
-      this.setData({ loading: false, error: '页面加载失败，请返回重试' });
+      this.setData({ loading: false, error: '页面加载失败，请返回重试', themeClass: currentThemeClass() });
     }
   },
 

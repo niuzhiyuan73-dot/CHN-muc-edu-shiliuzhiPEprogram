@@ -18,6 +18,7 @@
 
 const { loadCollegeEntryView } = require('../../services/college-view.js');
 const { submitCollegeEntry } = require('../../services/index.js');
+const { currentThemeClass } = require('../../services/branding.js');
 
 Page({
   data: {
@@ -25,6 +26,8 @@ Page({
     loading: true,
     /** 加载失败时的提示 */
     error: '',
+    /** 当前协会的主题类，挂在页面根节点上 */
+    themeClass: '',
     /** 提交中，防止连点重复提交 */
     submitting: false,
     /** 视图模型，形状见 services/college-view.js */
@@ -79,11 +82,12 @@ Page({
         view,
         memberIds: view.candidates.filter((item) => item.checked).map((item) => item.memberId),
         remark: view.remark,
+        themeClass: currentThemeClass(),
       });
     } catch (err) {
       console.error('[college-entry] 加载失败', err);
       this.loaded = true;
-      this.setData({ loading: false, error: '名单页加载失败，请返回重试' });
+      this.setData({ loading: false, error: '名单页加载失败，请返回重试', themeClass: currentThemeClass() });
     }
   },
 

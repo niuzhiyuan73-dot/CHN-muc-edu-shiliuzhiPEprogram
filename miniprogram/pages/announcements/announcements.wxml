@@ -2,6 +2,10 @@
   公告列表
   数据形状见 services/announcement-view.js 的 loadAnnouncementListView。
   这一页不判权限：视图模型给每行的 canArchive 恒为假，不会冒出管理按钮。
+
+  公告是**跨协会聚合**的：每个协会一段（.assoc-section），段头带该协会的
+  徽标与条数。段容器挂上该协会的主题类（.assoc-pkb / .assoc-tt / .assoc-bd），
+  段内标签与徽标便自动取该协会的配色，一眼分得清归属。
 -->
 <view class="page-container">
 
@@ -31,18 +35,34 @@
       </view>
     </view>
 
-    <!-- ========== 公告列表 ========== -->
-    <view class="card">
-      <view wx:if="{{view.rows.length === 0}}" class="empty-note">{{view.emptyText}}</view>
+    <!-- ========== 公告列表：按协会分栏 ========== -->
 
-      <view wx:for="{{view.rows}}" wx:key="id" class="notice-row">
-        <view class="notice-head">
-          <text class="tag notice-category">{{item.category}}</text>
-          <text wx:if="{{item.pinned}}" class="tag notice-pin">置顶</text>
-          <text class="notice-date">{{item.publishText}}</text>
+    <!-- 当前分类下一条都没有时，给一句话而不是留白 -->
+    <view wx:if="{{view.visibleCount === 0}}" class="card">
+      <view class="empty-note">{{view.emptyText}}</view>
+    </view>
+
+    <view
+      wx:for="{{view.groups}}"
+      wx:key="associationId"
+      class="assoc-section {{item.themeClass}}"
+    >
+      <view class="assoc-section-head">
+        <view class="assoc-badge">{{item.associationGlyph}}</view>
+        <text class="assoc-section-name">{{item.associationName}}</text>
+        <text class="assoc-section-count">{{item.count}}</text>
+      </view>
+
+      <view class="card">
+        <view wx:for="{{item.rows}}" wx:for-item="notice" wx:key="id" class="notice-row">
+          <view class="notice-head">
+            <text class="tag notice-category">{{notice.category}}</text>
+            <text wx:if="{{notice.pinned}}" class="tag notice-pin">置顶</text>
+            <text class="notice-date">{{notice.publishText}}</text>
+          </view>
+          <view class="notice-title">{{notice.title}}</view>
+          <view class="notice-content">{{notice.content}}</view>
         </view>
-        <view class="notice-title">{{item.title}}</view>
-        <view class="notice-content">{{item.content}}</view>
       </view>
     </view>
 

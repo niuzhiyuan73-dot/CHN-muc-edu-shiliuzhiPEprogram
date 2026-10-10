@@ -13,6 +13,7 @@
 
 const { loadRankView, describeSearch } = require('../../services/rank-view.js');
 const { isMock } = require('../../services/index.js');
+const { currentThemeClass } = require('../../services/branding.js');
 
 Page({
   data: {
@@ -20,6 +21,8 @@ Page({
     loading: true,
     /** 加载失败时的提示 */
     error: '',
+    /** 当前协会的主题类，挂在页面根节点上 */
+    themeClass: '',
     /** 切换项目时给个淡淡的反馈 */
     switching: false,
     // 视图模型，形状见 services/rank-view.js。
@@ -79,7 +82,7 @@ Page({
       // 完整榜单另存一份。它不参与渲染，只当筛选的数据源，
       // 所以不用塞进 data——省一次 setData 的开销。
       this.view = view;
-      this.setData({ loading: false, error: '', switching: false, view });
+      this.setData({ loading: false, error: '', switching: false, view, themeClass: currentThemeClass() });
       // 切项目/榜单时保留搜索词：搜姓「张」的人，切到女单榜也该还是「张」
       this.applyKeyword(this.data.keyword);
     } catch (err) {
@@ -88,6 +91,7 @@ Page({
         loading: false,
         switching: false,
         error: '排行榜加载失败，请下拉重试',
+        themeClass: currentThemeClass(),
       });
     } finally {
       // 失败也置真：让后续 onShow 还能再试一次，否则一次抖动就再也不刷新了

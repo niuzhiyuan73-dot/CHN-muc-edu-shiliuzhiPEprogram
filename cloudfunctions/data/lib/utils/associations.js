@@ -73,9 +73,10 @@ const ASSOCIATIONS = [
     shortName: '民大匹克球',
     logoGlyph: '匹',
     theme: {
-      primary: '#1E7A55',
-      primaryDark: '#166041',
-      primaryLight: '#E8F4EF',
+      // 匹克球 → 蓝
+      primary: '#1565C0',
+      primaryDark: '#0D47A1',
+      primaryLight: '#E3F0FB',
       accent: '#FF7A45',
     },
     ...baseRules(),
@@ -87,10 +88,11 @@ const ASSOCIATIONS = [
     shortName: '民大乒乓',
     logoGlyph: '乒',
     theme: {
-      primary: '#1D6FB8',
-      primaryDark: '#155A96',
-      primaryLight: '#E6F0FA',
-      accent: '#F2994A',
+      // 乒乓球 → 深绿（RGB 0,77,64）
+      primary: '#004D40',
+      primaryDark: '#00332B',
+      primaryLight: '#E0F0EC',
+      accent: '#C9A227',
     },
     ...baseRules(),
     status: ASSOCIATION_STATUS.ACTIVE,
@@ -101,10 +103,11 @@ const ASSOCIATIONS = [
     shortName: '民大羽球',
     logoGlyph: '羽',
     theme: {
-      primary: '#C2410C',
-      primaryDark: '#9A3309',
-      primaryLight: '#FBEAE1',
-      accent: '#1D6FB8',
+      // 羽毛球 → 紫
+      primary: '#6A1B9A',
+      primaryDark: '#4A148C',
+      primaryLight: '#F3E8F7',
+      accent: '#F2994A',
     },
     ...baseRules(),
     status: ASSOCIATION_STATUS.ACTIVE,

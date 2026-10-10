@@ -48,6 +48,7 @@ const {
   canManageEvent,
 } = require('../../services/event.js');
 const { publishEvent, isMock } = require('../../services/index.js');
+const { currentThemeClass } = require('../../services/branding.js');
 
 /** 赛事等级下拉的取值与文案。顺序固定为 一级 → 二级 → 三级 */
 const LEVELS = [1, 2, 3];
@@ -126,6 +127,8 @@ Page({
     /** 提交中，防止连点重复提交 */
     submitting: false,
     isMock,
+    /** 当前协会的主题类，挂在页面根节点上 */
+    themeClass: '',
 
     /** 没有发布权时的原因，非空就在页面上顶掉整张表单 */
     blockReason: '',
@@ -200,7 +203,7 @@ Page({
   onLoad() {
     const user = this.currentUser();
     const allowed = canManageEvent(user, { isMock });
-    this.setData({ blockReason: this.describeBlock(allowed, user) });
+    this.setData({ blockReason: this.describeBlock(allowed, user), themeClass: currentThemeClass() });
   },
 
   /** 不能发布的原因。能发布时返回空串 */

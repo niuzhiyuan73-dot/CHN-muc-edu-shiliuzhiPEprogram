@@ -32,6 +32,7 @@ const {
   getMembers,
   isMock,
 } = require('../../services/index.js');
+const { currentThemeClass } = require('../../services/branding.js');
 
 Page({
   data: {
@@ -39,6 +40,8 @@ Page({
     loading: true,
     /** 加载失败时的提示 */
     error: '',
+    /** 当前协会的主题类，挂在页面根节点上 */
+    themeClass: '',
     /** 视图模型，形状见 services/events-view.js */
     view: {},
     /** 开发期标注模拟数据 */
@@ -152,13 +155,13 @@ Page({
     try {
       const view = await loadEventDetailView(this.eventId, { user, isMock });
       this.loaded = true;
-      this.setData({ loading: false, error: '', view });
+      this.setData({ loading: false, error: '', view, themeClass: currentThemeClass() });
       // 首屏若已有正在计分的场次（读接口已带上 live），才挂轮询取增量
       this.syncLiveWatch();
     } catch (err) {
       console.error('[event-detail] 赛事详情加载失败', err);
       this.loaded = true;
-      this.setData({ loading: false, error: '赛事详情加载失败，请下拉重试' });
+      this.setData({ loading: false, error: '赛事详情加载失败，请下拉重试', themeClass: currentThemeClass() });
     }
   },
 

@@ -30,6 +30,7 @@ const {
   getMembers,
   isMock,
 } = require('../../services/index.js');
+const { currentThemeClass } = require('../../services/branding.js');
 
 Page({
   data: {
@@ -37,6 +38,8 @@ Page({
     loading: true,
     /** 加载失败时的提示 */
     error: '',
+    /** 当前协会的主题类，挂在页面根节点上 */
+    themeClass: '',
     /** 视图模型，形状见 services/college-view.js */
     view: {},
     /** 开发期标注模拟数据 */
@@ -124,13 +127,14 @@ Page({
         view,
         seeds,
         seedRows: buildSeedRows(approved, seeds),
+        themeClass: currentThemeClass(),
       });
       // 首屏若已有正在计分的小场（读接口已带上 live），才挂轮询取增量
       this.syncLiveWatch();
     } catch (err) {
       console.error('[college-event-detail] 加载失败', err);
       this.loaded = true;
-      this.setData({ loading: false, error: '学院赛详情页加载失败，请返回重试' });
+      this.setData({ loading: false, error: '学院赛详情页加载失败，请返回重试', themeClass: currentThemeClass() });
     }
   },
 

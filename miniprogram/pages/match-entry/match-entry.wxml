@@ -3,7 +3,7 @@
   表单的纯逻辑在 services/match-entry-view.js，校验在 services/match-record.js。
   这里只渲染，并把用户的操作交回去。
 -->
-<view class="page-container">
+<view class="page-container {{themeClass}}">
 
   <view wx:if="{{loading}}" class="loading">正在加载…</view>
 

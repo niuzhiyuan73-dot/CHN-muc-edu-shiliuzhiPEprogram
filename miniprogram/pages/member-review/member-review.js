@@ -30,6 +30,7 @@
 const { loadMemberReviewView } = require('../../services/member-review-view.js');
 const { validateInitialElo, INITIAL_ELO_MIN, INITIAL_ELO_MAX } = require('../../services/member-review.js');
 const { approveMember, rejectMember, isMock } = require('../../services/index.js');
+const { currentThemeClass } = require('../../services/branding.js');
 
 /** 通过面板的文案。初始分是选填项 */
 const APPROVE_TEXT = {
@@ -51,6 +52,8 @@ Page({
     loading: true,
     /** 加载失败时的提示 */
     error: '',
+    /** 当前协会的主题类，挂在页面根节点上 */
+    themeClass: '',
     /** 切标签时给个淡淡的反馈，避免点了没反应 */
     switching: false,
     /** 视图模型，形状见 services/member-review-view.js。初值给空对象，WXML 展开才不会出错 */
@@ -122,7 +125,7 @@ Page({
       const view = await loadMemberReviewView({ user, tab: this.currentTab });
 
       this.loaded = true;
-      this.setData({ loading: false, error: '', switching: false, view });
+      this.setData({ loading: false, error: '', switching: false, view, themeClass: currentThemeClass() });
     } catch (err) {
       console.error('[member-review] 会员审核页加载失败', err);
       this.loaded = true;
@@ -130,6 +133,7 @@ Page({
         loading: false,
         switching: false,
         error: '入会申请加载失败，请下拉重试',
+        themeClass: currentThemeClass(),
       });
     }
   },

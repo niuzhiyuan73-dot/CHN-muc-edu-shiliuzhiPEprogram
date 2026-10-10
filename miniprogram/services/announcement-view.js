@@ -20,12 +20,21 @@
  * 【公开列表为什么不分权限】
  * 公告本就是公开内容，访客也能看。这里给每一行传 actor: null，
  * 于是 canArchive 恒为假，页面上不会冒出管理按钮。
+ *
+ * 【公开列表为什么跨协会、按协会分栏】
+ * 公告页回答的是「最近各协会都发了什么」，与首页公告栏同一口径——把全部
+ * 启用协会的公告都摆出来，按协会分栏，每条标注归属。要只看某个协会，
+ * 切到该协会即可（§11.3）。首页与列表页共用 collectAnnouncements 的同一
+ * 套聚合思路：串行逐协会取数（见 association-scope.mapActiveAssociations），
+ * 每个协会各成一组。
  * ============================================================
  */
 
 const { ANNOUNCEMENT_CATEGORIES } = require('../utils/constants.js');
 const { sortAnnouncements, buildAnnouncementRow, canPublish } = require('./announcement.js');
 const { getAnnouncements, getAnnouncementRecords } = require('./index.js');
+const { brandOf } = require('./branding.js');
+const scope = require('./association-scope.js');
 
 /** 「全部」标签：不分分类 */
 const ALL_TAB = 'all';
@@ -52,7 +61,15 @@ function categoryTabs(rows, activeTab) {
 }
 
 /**
- * 装载公开公告列表。
+ * 装载公开公告列表——跨全部启用协会聚合，按协会分栏。
+ *
+ * 【返回值形状】
+ *   groups  可见的协会分组（当前分类下一条都没有的协会整组略去），
+ *           每组带 associationId / associationName / associationGlyph /
+ *           themeClass / count / rows
+ *   tabs    分类标签（计数按全部协会的并集算）
+ *   total   全部协会的公告总数（不随当前分类变化）
+ *   visibleCount 当前分类下实际展示的条数
  *
  * @param {Object} [options]
  * @param {string} [options.tab] 当前分类，非法值退回「全部」
@@ -62,17 +79,47 @@ async function loadAnnouncementListView(options = {}) {
   const { tab = ALL_TAB } = options;
   const activeTab = VALID_TABS.includes(tab) ? tab : ALL_TAB;
 
-  const items = await getAnnouncements();
-  // actor 传 null：公开页不给任何管理按钮
-  const ordered = sortAnnouncements(items).map((item) =>
-    buildAnnouncementRow(item, { actor: null })
-  );
+  // 串行逐协会取：当前协会是模块级单例，只能一个协会一个协会地切过去取。
+  // 每组自带协会信息与主题类，模板据此分栏、按协会上色。
+  const groups = await scope.mapActiveAssociations(async (assoc) => {
+    const items = await getAnnouncements();
+    // actor 传 null：公开页不给任何管理按钮
+    const rows = sortAnnouncements(items).map((item) => ({
+      ...buildAnnouncementRow(item, { actor: null }),
+      association: assoc.id,
+      associationName: assoc.shortName,
+      associationGlyph: assoc.logoGlyph,
+    }));
+    return {
+      associationId: assoc.id,
+      associationName: assoc.shortName,
+      associationGlyph: assoc.logoGlyph,
+      themeClass: brandOf(assoc.id).rootClass,
+      rows,
+    };
+  });
+
+  const allRows = groups.flatMap((group) => group.rows);
+
+  const visibleGroups = groups
+    .map((group) => ({
+      ...group,
+      rows:
+        activeTab === ALL_TAB
+          ? group.rows
+          : group.rows.filter((row) => row.category === activeTab),
+    }))
+    .map((group) => ({ ...group, count: group.rows.length }))
+    .filter((group) => group.rows.length > 0);
+
+  const visibleCount = visibleGroups.reduce((total, group) => total + group.rows.length, 0);
 
   return {
     activeTab,
-    tabs: categoryTabs(ordered, activeTab),
-    rows: activeTab === ALL_TAB ? ordered : ordered.filter((row) => row.category === activeTab),
-    total: ordered.length,
+    tabs: categoryTabs(allRows, activeTab),
+    groups: visibleGroups,
+    total: allRows.length,
+    visibleCount,
     emptyText:
       activeTab === ALL_TAB ? '暂时还没有公告' : `「${activeTab}」分类下暂时没有公告`,
   };

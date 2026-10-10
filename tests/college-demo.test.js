@@ -33,6 +33,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const facade = require('../miniprogram/services/index.js');
+const scope = require('../miniprogram/services/association-scope.js');
 const {
   ROLE,
   COLLEGE_EVENT_STATUS,
@@ -249,5 +250,29 @@ test('学院赛模拟场景 —— 学院负责人能替本学院排八进四，
   for (const leg of view.legs) {
     assert.notStrictEqual(leg.pickedText, '未排人', '已沿用上一轮人选');
     assert.ok(leg.pickedText.length > 0, `第 ${leg.legNo} 项列出了沿用的人选`);
+  }
+});
+
+test('学院赛演示场景按协会命名 —— 乒乓 / 羽球各用各的项目，不再全叫「匹克球」', async () => {
+  // 先把默认协会（匹克球）的场景裁好——顺带确认默认协会仍是「匹克球」那套
+  const base = await demo();
+  assert.strictEqual(base.event.title, '2026 院际匹克球团体赛');
+
+  const original = scope.getAssociation();
+  try {
+    scope.setAssociation('tt');
+    const tt = (await facade.getCollegeEvents()).find((item) => item.title.includes('团体赛'));
+    assert.ok(tt, 'tt 应当有自己的学院赛演示场景');
+    assert.strictEqual(tt.title, '2026 院际乒乓球团体赛');
+    assert.ok(!tt.title.includes('匹克球'), 'tt 的学院赛不该带「匹克球」');
+
+    scope.setAssociation('bd');
+    const bd = (await facade.getCollegeEvents()).find((item) => item.title.includes('团体赛'));
+    assert.ok(bd, 'bd 应当有自己的学院赛演示场景');
+    assert.strictEqual(bd.title, '2026 院际羽毛球团体赛');
+    assert.ok(!bd.title.includes('匹克球'), 'bd 的学院赛不该带「匹克球」');
+  } finally {
+    // 当前协会是模块级单例，别把改动漏给后面的用例
+    scope.setAssociation(original);
   }
 });

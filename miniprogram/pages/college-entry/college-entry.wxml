@@ -3,7 +3,7 @@
   数据形状见 services/college-view.js 的 loadCollegeEntryView。
   校验在 services/college-entry.js，这里只渲染，并把勾选交回去。
 -->
-<view class="page-container">
+<view class="page-container {{themeClass}}">
 
   <view wx:if="{{loading}}" class="loading">正在加载…</view>
 

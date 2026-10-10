@@ -31,6 +31,9 @@ const liveStore = require('./live-store.js');
 // 当前协会（会话作用域）：缓存按它分份，各台账按它分桶
 const scope = require('./association-scope.js');
 const { allAssociations } = require('../utils/associations.js');
+// 各协会的模拟数据口味（起始日期 / 赛事标题前缀 / 公告种子 / 学院赛命名）。
+// 纯 mock 概念，云端没有对应物，故与种子生成参数一起只走这一条路。
+const { flavorOf } = require('./association-flavor.js');
 const { installCollegeDemo } = require('./college-demo.js');
 const { register: registerAccount } = require('./auth.js');
 const { canManage } = require('./permission.js');
@@ -198,16 +201,26 @@ function invalidate() {
  * 某个协会的种子生成参数。
  *
  * 默认协会（注册表里第一位）沿用 SEED_OPTIONS，与改造前的行为逐字节一致；
- * 其余协会按注册表次序把 seed 错开，于是各协会的模拟比赛/赛事数据各不相同
- * ——这正是「各协会数据互不可见、又各自能演示」的来源。注意会员身份仍是
- * 共享的那 24 位：账号是全局的（见 associations.js），因协会而异的是内容。
+ * 其余协会先按注册表次序把 seed 错开，再叠加它在 association-flavor.js 里
+ * 登记的「口味」——起始日期、赛事标题前缀、公告种子。于是各协会不仅数据
+ * 互不可见，看上去也各是各的一摊：赛事月份不同、标题认得出归属、公告
+ * 提到的是自己的项目。注意会员身份仍是共享的那 24 位：账号是全局的
+ * （见 associations.js），因协会而异的是内容。
+ *
+ * 【为什么只叠加 flavors，不直接改 weeks / casualPerWeek / eventPlan】
+ * 那三项会改变取随机数的次序，进而改写每位会员的比赛场数——而「当前协会」
+ * 恰恰是按比赛场数算出来的（见 association-usage.js）。为了把界面拉开差异
+ * 去动它们，会顺手改掉默认协会落在哪，得不偿失。起始日期与标题前缀不碰
+ * 随机序列，改了场数分毫不动。
  *
  * @param {string} association
  * @returns {Object} generateSeed 的参数
  */
 function seedOptionsFor(association) {
   const index = Math.max(0, allAssociations().findIndex((a) => a.id === association));
-  return { ...SEED_OPTIONS, seed: SEED_OPTIONS.seed + index };
+  const flavor = flavorOf(association) || {};
+  // flavor 里的 college 是给学院赛演示场景用的，generateSeed 不认这个键，会忽略
+  return { ...SEED_OPTIONS, seed: SEED_OPTIONS.seed + index, ...flavor };
 }
 
 /**
@@ -246,9 +259,14 @@ function ensureCollegeDemo() {
   const association = scope.getAssociation();
   if (!collegeDemoEnabled || collegeDemoInstalled.has(association)) return;
   collegeDemoInstalled.add(association);
+  // 学院赛演示场景按协会命名：默认协会沿用「匹克球」那套，其余协会用自己
+  // 的运动项目（见 association-flavor.js 的 college）。不这样做，切到乒乓、
+  // 羽球看到的仍是「院际匹克球团体赛」，一眼就是穿帮。
+  const flavor = flavorOf(association) || {};
   try {
     installCollegeDemo({
       load,
+      options: flavor.college || {},
       actions: {
         registerMember,
         approveMember,

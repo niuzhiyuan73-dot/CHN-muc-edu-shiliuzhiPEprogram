@@ -16,6 +16,7 @@
  */
 
 const { getAssociation: lookup, isKnownAssociation } = require('../utils/associations.js');
+const scope = require('./association-scope.js');
 
 /**
  * 中性品牌：首页与导航栏的兜底外观。首页是跨协会的，不套任何协会品牌。
@@ -30,7 +31,7 @@ const NEUTRAL_BRAND = {
     primary: '#B23A2E',
     primaryDark: '#8E2C23',
     primaryLight: '#F7E9E7',
-    accent: '#1E7A55',
+    accent: '#C9A227',
   },
   // 页面根节点挂这个类，app.wxss 的 .assoc-neutral 覆盖 CSS 变量为中性配色
   rootClass: 'assoc-neutral',
@@ -100,10 +101,34 @@ function applyCurrentBranding() {
   return applyBranding(id);
 }
 
+/**
+ * 协会 id → 页面根节点要挂的主题类名（app.wxss 的 .assoc-<id>）。
+ * 未知 / 空 id 一律落到中性类——与 brandOf 同一口径，绝不悄悄套别的协会。
+ *
+ * @param {string} id
+ * @returns {string} 如 'assoc-pkb' / 'assoc-neutral'
+ */
+function themeClassOf(id) {
+  return brandOf(id).rootClass;
+}
+
+/**
+ * 当前全局协会对应的主题类名，供随协会切换的页面在装载/显示时写进 data，
+ * WXML 里挂在页面根容器上（`class="page-container {{themeClass}}"`），
+ * 于是子节点上的 var(--color-primary) 等自动变成该协会的配色。
+ *
+ * @returns {string}
+ */
+function currentThemeClass() {
+  return themeClassOf(scope.getAssociation());
+}
+
 module.exports = {
   NEUTRAL_BRAND,
   brandOf,
   applyBranding,
   applyCurrentBranding,
   resetBranding,
+  themeClassOf,
+  currentThemeClass,
 };

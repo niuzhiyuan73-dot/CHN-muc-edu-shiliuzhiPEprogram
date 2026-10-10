@@ -3,7 +3,7 @@
   数据形状见 services/match-view.js 的 loadMatchView。
   canConfirm / canRevoke 是视图模型算好的，这里不做任何权限推导。
 -->
-<view class="page-container">
+<view class="page-container {{themeClass}}">
 
   <!-- 加载中。必须排在出错之前，否则首屏会一闪而过地报错 -->
   <view wx:if="{{loading}}" class="loading">正在加载…</view>

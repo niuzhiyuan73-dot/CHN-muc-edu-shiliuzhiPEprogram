@@ -3,7 +3,7 @@
   数据形状见 services/events-view.js 的 loadEventDetailView。
   名单行与名次行复用 templates/rank-board.wxss 的样式，与榜单同一副面孔。
 -->
-<view class="page-container">
+<view class="page-container {{themeClass}}">
 
   <!-- 加载中。必须排在出错之前，否则首屏会一闪而过地报错 -->
   <view wx:if="{{loading}}" class="loading">正在加载…</view>

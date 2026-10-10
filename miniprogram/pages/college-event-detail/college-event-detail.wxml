@@ -3,7 +3,7 @@
   数据形状见 services/college-view.js 的 loadCollegeEventDetailView。
   权限布尔量与文案都在视图模型里算好，这里只渲染。
 -->
-<view class="page-container">
+<view class="page-container {{themeClass}}">
 
   <view wx:if="{{loading}}" class="loading">正在加载…</view>
 

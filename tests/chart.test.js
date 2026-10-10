@@ -215,7 +215,7 @@ test('drawLineChart —— 折线的每个点都被连起来', () => {
   // 折线本体那一笔用的是主题色，可以据此从若干次 stroke 里认出它
   const polyline = ctx
     .byName('stroke')
-    .find((call) => call.strokeStyle === '#1e7a55' && call.lineWidth === 2);
+    .find((call) => call.strokeStyle === '#b23a2e' && call.lineWidth === 2);
   assert.ok(polyline, '应当有一笔用默认主题色、2px 线宽画出的折线');
 });
 

@@ -3,7 +3,7 @@
   数据形状见 services/college-view.js 的 loadCollegePlacementView。
   权限判定在视图模型里算好（canSubmit / blockReason），模板只渲染。
 -->
-<view class="page-container">
+<view class="page-container {{themeClass}}">
 
   <!-- 加载中。必须排在出错之前，否则首屏会一闪而过地报错 -->
   <view wx:if="{{loading}}" class="loading">正在加载…</view>

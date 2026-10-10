@@ -24,6 +24,7 @@
 
 const { loadAnnouncementManageView } = require('../../services/announcement-view.js');
 const { archiveAnnouncement, isMock } = require('../../services/index.js');
+const { currentThemeClass } = require('../../services/branding.js');
 
 /** 下架前的二次确认文案 */
 const ARCHIVE_CONFIRM = '下架后这条公告不再对会员显示，但仍会留在台账里，确定下架吗？';
@@ -34,6 +35,8 @@ Page({
     loading: true,
     /** 加载失败时的提示 */
     error: '',
+    /** 当前协会的主题类，挂在页面根节点上 */
+    themeClass: '',
     /** 视图模型，形状见 services/announcement-view.js */
     view: {},
     /** 开发期标注模拟数据 */
@@ -111,11 +114,11 @@ Page({
     try {
       const view = await loadAnnouncementManageView({ user });
       this.loaded = true;
-      this.setData({ loading: false, error: '', view });
+      this.setData({ loading: false, error: '', view, themeClass: currentThemeClass() });
     } catch (err) {
       console.error('[announcement-manage] 公告加载失败', err);
       this.loaded = true;
-      this.setData({ loading: false, error: '公告加载失败，请下拉重试' });
+      this.setData({ loading: false, error: '公告加载失败，请下拉重试', themeClass: currentThemeClass() });
     }
   },
 

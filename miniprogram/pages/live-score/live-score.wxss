@@ -124,7 +124,7 @@ page {
 }
 
 .btn-finish {
-  background: #1e7a55;
+  background: var(--color-primary);
 }
 
 .btn-exit {

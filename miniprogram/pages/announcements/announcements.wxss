@@ -19,6 +19,50 @@
   color: #ffffff;
 }
 
+/* ==================== 协会分栏 ==================== */
+/* 每个协会一段。段容器挂 .assoc-<id>，段内这些元素的 var() 就取该协会颜色 */
+
+.assoc-section {
+  margin-bottom: var(--space-md);
+}
+
+.assoc-section-head {
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-xs);
+  margin-bottom: var(--space-sm);
+}
+
+/* 徽标用协会主色，是整段里最醒目的一处，归属一眼可辨 */
+.assoc-badge {
+  width: 48rpx;
+  height: 48rpx;
+  line-height: 48rpx;
+  text-align: center;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-sm);
+  font-weight: 600;
+  background: var(--color-primary);
+  color: #ffffff;
+}
+
+.assoc-section-name {
+  margin-left: var(--space-sm);
+  font-size: var(--font-md);
+  font-weight: 600;
+}
+
+.assoc-section-count {
+  margin-left: var(--space-xs);
+  padding: 0 12rpx;
+  height: 36rpx;
+  line-height: 36rpx;
+  border-radius: 18rpx;
+  font-size: var(--font-xs);
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+}
+
 /* ==================== 一条公告 ==================== */
 
 .notice-row {

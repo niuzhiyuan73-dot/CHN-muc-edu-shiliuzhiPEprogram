@@ -28,6 +28,7 @@ const {
   MATCH_TYPE,
   EVENT_LEVEL,
   EVENT_BRONZE_MODE,
+  EVENT_STATUS,
   SEED_MODE,
   ROLE,
 } = require('../miniprogram/utils/constants.js');
@@ -167,6 +168,43 @@ describe('mock —— 各协会数据互不可见', () => {
       pkbMembers.map((m) => m.ratings),
       ttMembers.map((m) => m.ratings),
       '各协会的模拟战绩不该完全一致'
+    );
+  });
+
+  test('各协会的赛事与公告各是各的（前缀 / 月份 / 文案都拉开）', async () => {
+    scope.setAssociation(PKB);
+    const pkbEvents = await facade.getEvents();
+    const pkbAnnouncements = await facade.getAnnouncements();
+
+    scope.setAssociation(TT);
+    const ttEvents = await facade.getEvents();
+    const ttAnnouncements = await facade.getAnnouncements();
+
+    scope.setAssociation(BD);
+    const bdEvents = await facade.getEvents();
+    const bdAnnouncements = await facade.getAnnouncements();
+
+    // 默认协会标题不带前缀，仍由实际月份推导，逐字节不变
+    assert.ok(pkbEvents.every((e) => !e.title.includes('·')), 'pkb 标题不带协会前缀');
+    // 其余协会标题带自己的前缀，一眼认得出归属
+    assert.ok(ttEvents.every((e) => e.title.startsWith('乒乓球·')), 'tt 标题带乒乓前缀');
+    assert.ok(bdEvents.every((e) => e.title.startsWith('羽毛球·')), 'bd 标题带羽球前缀');
+
+    // 正在进行的那场各协会落在不同月份（曾反馈过「每个协会都是九月单打赛」）
+    const ongoingMonthOf = (list) => {
+      const ongoing = list.find((e) => e.status === EVENT_STATUS.ONGOING);
+      assert.ok(ongoing, '每个协会都该有一场进行中的赛事');
+      return new Date(ongoing.startTime).getMonth() + 1;
+    };
+    const months = [ongoingMonthOf(pkbEvents), ongoingMonthOf(ttEvents), ongoingMonthOf(bdEvents)];
+    assert.equal(new Set(months).size, 3, `三个协会的进行中赛事应落在不同月份，实为 ${months}`);
+
+    // 公告各说各的项目
+    assert.ok(ttAnnouncements.some((a) => a.title.includes('乒乓球')), 'tt 公告提到乒乓球');
+    assert.ok(bdAnnouncements.some((a) => a.title.includes('羽毛球')), 'bd 公告提到羽毛球');
+    assert.ok(
+      !pkbAnnouncements.some((a) => a.title.includes('乒乓球') || a.title.includes('羽毛球')),
+      'pkb 公告不提乒乓/羽球'
     );
   });
 

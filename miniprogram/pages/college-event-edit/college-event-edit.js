@@ -45,6 +45,7 @@ const {
   canManageCollegeEvent,
 } = require('../../services/college-event.js');
 const { publishCollegeEvent, isMock } = require('../../services/index.js');
+const { currentThemeClass } = require('../../services/branding.js');
 
 /** 大场胜负算法下拉。顺序：打满比净胜 → 先到 N 场胜 */
 const TIE_ALGOS = [TIE_ALGO.FULL_POINTS, TIE_ALGO.FIRST_TO_N];
@@ -101,6 +102,8 @@ Page({
     /** 提交中，防止连点重复提交 */
     submitting: false,
     isMock,
+    /** 当前协会的主题类，挂在页面根节点上 */
+    themeClass: '',
 
     /** 没有发布权时的原因，非空就在页面上顶掉整张表单 */
     blockReason: '',
@@ -156,7 +159,7 @@ Page({
   onLoad() {
     const user = this.currentUser();
     const allowed = canManageCollegeEvent(user, { isMock });
-    this.setData({ blockReason: this.describeBlock(allowed, user) });
+    this.setData({ blockReason: this.describeBlock(allowed, user), themeClass: currentThemeClass() });
   },
 
   /** 不能发布的原因。能发布时返回空串 */

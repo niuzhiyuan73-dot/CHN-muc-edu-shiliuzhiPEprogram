@@ -3,7 +3,7 @@
   赛事页「查看全部」的落点。同一页靠 type 分两种列表，行样式与赛事页共用
   templates/event-list.wxss。数据形状见 services/events-view.js 的 loadEventsView。
 -->
-<view class="page-container">
+<view class="page-container {{themeClass}}">
 
   <!-- 加载中。必须排在出错之前，否则首屏会一闪而过地报错 -->
   <view wx:if="{{loading}}" class="loading">正在加载…</view>

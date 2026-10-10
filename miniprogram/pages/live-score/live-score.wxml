@@ -1,5 +1,5 @@
 <!-- 实时计分台：横屏，左右两块大按钮。布局以「点得到、看得清」为准 -->
-<view class="page">
+<view class="page {{themeClass}}">
   <view wx:if="{{loading}}" class="hint">加载中…</view>
   <view wx:elif="{{error}}" class="hint">{{error}}</view>
   <view wx:elif="{{blockReason}}" class="hint">{{blockReason}}</view>

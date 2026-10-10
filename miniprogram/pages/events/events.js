@@ -30,6 +30,7 @@ const {
   setCollegeEventPinned,
   isMock,
 } = require('../../services/index.js');
+const { currentThemeClass } = require('../../services/branding.js');
 
 Page({
   data: {
@@ -37,6 +38,8 @@ Page({
     loading: true,
     /** 加载失败时的提示 */
     error: '',
+    /** 当前协会的主题类，挂在页面根节点上 */
+    themeClass: '',
     // 视图模型，形状见 services/events-view.js。
     // 初值给空对象而不是 null，WXML 里的 {{view.xxx}} 才不会报错。
     view: {},
@@ -100,13 +103,13 @@ Page({
       // 整个视图模型另存一份。里面的完整榜 allRows 不参与渲染，
       // 只当筛选的数据源，所以不用塞进 data——省一次 setData 的开销。
       this.view = view;
-      this.setData({ loading: false, error: '', view });
+      this.setData({ loading: false, error: '', view, themeClass: currentThemeClass() });
       // 重新装载后保留搜索词，重新算一遍要显示的行
       this.applyKeyword(this.data.keyword);
     } catch (err) {
       console.error('[events] 加载失败', err);
       this.loaded = true;
-      this.setData({ loading: false, error: '赛事页加载失败，请下拉重试' });
+      this.setData({ loading: false, error: '赛事页加载失败，请下拉重试', themeClass: currentThemeClass() });
     }
   },
 

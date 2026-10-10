@@ -23,6 +23,7 @@
 
 const { loadEventPlacementView } = require('../../services/events-view.js');
 const { finishEvent, isMock } = require('../../services/index.js');
+const { currentThemeClass } = require('../../services/branding.js');
 
 Page({
   data: {
@@ -30,6 +31,8 @@ Page({
     loading: true,
     /** 加载失败时的提示 */
     error: '',
+    /** 当前协会的主题类，挂在页面根节点上 */
+    themeClass: '',
     /** 视图模型，形状见 services/events-view.js */
     view: {},
     /** 开发期标注模拟数据 */
@@ -83,10 +86,10 @@ Page({
 
     try {
       const view = await loadEventPlacementView(this.eventId, { user, isMock });
-      this.setData({ loading: false, error: '', view, errorText: '' });
+      this.setData({ loading: false, error: '', view, errorText: '', themeClass: currentThemeClass() });
     } catch (err) {
       console.error('[event-placement] 名次页加载失败', err);
-      this.setData({ loading: false, error: '名次录入页加载失败，请下拉重试' });
+      this.setData({ loading: false, error: '名次录入页加载失败，请下拉重试', themeClass: currentThemeClass() });
     }
   },
 

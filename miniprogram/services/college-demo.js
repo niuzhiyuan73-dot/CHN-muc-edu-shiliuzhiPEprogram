@@ -87,11 +87,17 @@ const DEMO_MEMBERS = [
  * @param {Function} deps.load 数据源内部的 load()，同步取回当前缓存（含 members）
  * @param {Object} deps.actions mock 的动作函数（只为产生写入，返回值一律忽略）
  * @param {Object} deps.stores 台账：collegeStore / matchStore / userStore
+ * @param {Object} [deps.options] 场景的主题，用来贴合装载它的协会：
+ *        title 赛事名、location 场地。缺省即默认协会的「匹克球」那套，
+ *        这样默认协会的演示数据逐字节不变；其余协会由 mock 传自己的项目进来。
  * @returns {Object|null} 装好的赛事记录；中途放弃时返回 null
  */
 function installCollegeDemo(deps) {
-  const { load, actions, stores } = deps;
+  const { load, actions, stores, options = {} } = deps;
   const { collegeStore, matchStore, userStore } = stores;
+  // 默认协会（不传 options）沿用原文案，保持既有测试与界面对齐
+  const demoTitle = options.title || '2026 院际匹克球团体赛';
+  const demoLocation = options.location || '学校体育馆';
 
   /** 当前在册会员（每次回读，因为前面的写入会重建缓存） */
   const members = () => load().members;
@@ -215,7 +221,7 @@ function installCollegeDemo(deps) {
   // 3. 发布学院赛：团体单败，一场大场打男单 + 女单
   actions.publishCollegeEvent(
     {
-      title: '2026 院际匹克球团体赛',
+      title: demoTitle,
       description: '16 所学院单败淘汰；当前进度：16 进 8 已打完，八进四进行中',
       legPlan: [LEG_DISCIPLINE.MS, LEG_DISCIPLINE.WS],
       allowMultiEntry: true,
@@ -225,7 +231,7 @@ function installCollegeDemo(deps) {
       tieAlgo: TIE_ALGO.FULL_POINTS,
       tieNetMode: TIE_NET_MODE.WIN_DIFF,
       startTime: '2026-09-20T09:00:00',
-      location: '学校体育馆',
+      location: demoLocation,
       // 八进四那一轮有 4 个大场，正好摆得下 4 块场地
       courtCount: 4,
     },

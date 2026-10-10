@@ -28,6 +28,7 @@ const {
   revokeMatch,
 } = require('../../services/index.js');
 const { winnerOf, toScoreRows } = require('../../services/match-entry-view.js');
+const { currentThemeClass } = require('../../services/branding.js');
 
 Page({
   data: {
@@ -35,6 +36,8 @@ Page({
     loading: true,
     /** 加载失败时的提示 */
     error: '',
+    /** 当前协会的主题类，挂在页面根节点上 */
+    themeClass: '',
     /** 提交中，防止连点重复提交 */
     submitting: false,
     /** 正在处理的按钮标识，防止连点 */
@@ -95,13 +98,13 @@ Page({
         scoreB.push(view.scoreB[i] === undefined || view.scoreB[i] === null ? '' : view.scoreB[i]);
       }
       this.loaded = true;
-      this.setData({ loading: false, error: '', view, form: { scoreA, scoreB } }, () =>
+      this.setData({ loading: false, error: '', view, form: { scoreA, scoreB }, themeClass: currentThemeClass() }, () =>
         this.applyScores()
       );
     } catch (err) {
       console.error('[college-match] 加载失败', err);
       this.loaded = true;
-      this.setData({ loading: false, error: '小场录分页加载失败，请返回重试' });
+      this.setData({ loading: false, error: '小场录分页加载失败，请返回重试', themeClass: currentThemeClass() });
     }
   },
 

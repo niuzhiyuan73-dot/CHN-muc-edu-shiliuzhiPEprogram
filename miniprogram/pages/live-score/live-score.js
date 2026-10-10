@@ -42,6 +42,7 @@ const { applyRally, liveScoreOf, LIVE_STATUS } = require('../../services/live-sc
 const { canRecordScore, hasReferee } = require('../../services/match-record.js');
 const { formatMatchFormat } = require('../../utils/match-format.js');
 const { MATCH_COMPETITION, MATCH_STATUS, ROLE } = require('../../utils/constants.js');
+const { currentThemeClass } = require('../../services/branding.js');
 
 Page({
   data: {
@@ -49,6 +50,8 @@ Page({
     loading: true,
     /** 加载失败时的提示 */
     error: '',
+    /** 当前协会的主题类，挂在页面根节点上 */
+    themeClass: '',
     /** 不能计分的原因，非空就顶掉整个计分台 */
     blockReason: '',
     /** 操作过程中的提示（判球失败、撤销失败等），成功一次新的判球就清掉 */
@@ -92,6 +95,11 @@ Page({
     /** 页面是否已销毁。销毁后队列里的回调不再 setData / navigateBack */
     this.destroyed = false;
     return this.init();
+  },
+
+  /** 进页与回到前台时刷新根节点主题类。本页没有 refresh，就在这里写一次 */
+  onShow() {
+    this.setData({ themeClass: currentThemeClass() });
   },
 
   /**

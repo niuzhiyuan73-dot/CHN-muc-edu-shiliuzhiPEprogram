@@ -16,7 +16,7 @@
 
 const { loadMemberView, DEFAULT_HISTORY_LIMIT } = require('../services/profile-view.js');
 const { setCollegeLeader } = require('../services/index.js');
-const { applyBranding } = require('../services/branding.js');
+const { applyBranding, themeClassOf } = require('../services/branding.js');
 const { activeAssociations } = require('../utils/associations.js');
 const scope = require('../services/association-scope.js');
 const { renderEloChart } = require('../utils/chart-view.js');
@@ -50,6 +50,8 @@ function createMemberPage(options = {}) {
       showSwitch: false,
       /** 切换徽章当前值：本页正在看的协会 id */
       switchValue: '',
+      /** 页面根节点的协会主题类（本页按页内协会套色，见 §11.7） */
+      themeClass: '',
       // 视图模型，形状见 services/profile-view.js。
       // 初值给空对象而不是 null，WXML 里的 {{...view}} 展开才不会出错。
       view: {},
@@ -106,6 +108,8 @@ function createMemberPage(options = {}) {
             view,
             showSwitch: localAssociation && this.canSwitchAssociation(),
             switchValue: association || '',
+            // 页内协会决定整页配色：本页所属协会的主题类挂到根容器上
+            themeClass: themeClassOf(association || scope.getAssociation()),
             // 拿「已加载条数」和「该项目总场次」比，而不是和 historyLimit 比：
             // 后者在总场次恰好等于上限时会多出一个点了没反应的「加载更多」
             hasMore: view.found && Boolean(view.summary) && view.history.length < view.summary.matchCount,

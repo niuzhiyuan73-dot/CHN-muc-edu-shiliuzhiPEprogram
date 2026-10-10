@@ -22,6 +22,7 @@
 
 const { loadCollegeLineupView } = require('../../services/college-view.js');
 const { submitLineup } = require('../../services/index.js');
+const { currentThemeClass } = require('../../services/branding.js');
 
 Page({
   data: {
@@ -29,6 +30,8 @@ Page({
     loading: true,
     /** 加载失败时的提示 */
     error: '',
+    /** 当前协会的主题类，挂在页面根节点上 */
+    themeClass: '',
     /** 提交中，防止连点重复提交 */
     submitting: false,
     /** 视图模型，形状见 services/college-view.js */
@@ -71,11 +74,11 @@ Page({
         eventId: this.eventId,
       });
       this.loaded = true;
-      this.setData({ loading: false, error: '', view });
+      this.setData({ loading: false, error: '', view, themeClass: currentThemeClass() });
     } catch (err) {
       console.error('[college-lineup] 加载失败', err);
       this.loaded = true;
-      this.setData({ loading: false, error: '排阵页加载失败，请返回重试' });
+      this.setData({ loading: false, error: '排阵页加载失败，请返回重试', themeClass: currentThemeClass() });
     }
   },
 

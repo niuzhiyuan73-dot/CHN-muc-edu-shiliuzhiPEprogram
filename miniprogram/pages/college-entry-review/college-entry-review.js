@@ -21,6 +21,7 @@ const { loadCollegeEntryReviewView } = require('../../services/college-view.js')
 const { reviewCollegeEntry, isMock } = require('../../services/index.js');
 // 审核动作与入会审核共用同一套取值，直接复用，免得两处各写一份字符串
 const { REVIEW_ACTION } = require('../../services/member-review.js');
+const { currentThemeClass } = require('../../services/branding.js');
 
 Page({
   data: {
@@ -28,6 +29,8 @@ Page({
     loading: true,
     /** 加载失败时的提示 */
     error: '',
+    /** 当前协会的主题类，挂在页面根节点上 */
+    themeClass: '',
     /** 视图模型，形状见 services/college-view.js */
     view: {},
     /** 开发期标注模拟数据 */
@@ -80,11 +83,11 @@ Page({
     try {
       const view = await loadCollegeEntryReviewView(this.eventId, { user: this.currentUser() });
       this.loaded = true;
-      this.setData({ loading: false, error: '', view });
+      this.setData({ loading: false, error: '', view, themeClass: currentThemeClass() });
     } catch (err) {
       console.error('[college-entry-review] 加载失败', err);
       this.loaded = true;
-      this.setData({ loading: false, error: '名单审核页加载失败，请返回重试' });
+      this.setData({ loading: false, error: '名单审核页加载失败，请返回重试', themeClass: currentThemeClass() });
     }
   },
 

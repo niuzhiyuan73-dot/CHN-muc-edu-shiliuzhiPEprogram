@@ -3,7 +3,7 @@
   数据形状见 services/college-view.js 的 loadCollegeMatchView。
   对阵与赛制由排阵锁定，这里只收局分；弃权入口只给管理员。
 -->
-<view class="page-container">
+<view class="page-container {{themeClass}}">
 
   <view wx:if="{{loading}}" class="loading">正在加载…</view>
 

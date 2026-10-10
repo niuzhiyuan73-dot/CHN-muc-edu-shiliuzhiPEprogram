@@ -138,10 +138,12 @@ const ANNOUNCEMENT_SEED = [
  * 生成公告列表。
  *
  * @param {Date} baseDate 赛季起始时刻
+ * @param {Array<Object>} [items] 公告种子，缺省用 ANNOUNCEMENT_SEED。
+ *        各协会可用自己的一套（见 services/association-flavor.js）。
  * @returns {Array<Object>} 按发布时间倒序（最新的在前）
  */
-function buildAnnouncements(baseDate) {
-  return ANNOUNCEMENT_SEED.map((item, index) => {
+function buildAnnouncements(baseDate, items = ANNOUNCEMENT_SEED) {
+  return items.map((item, index) => {
     const publishTime = addDays(baseDate, item.week * 7);
     // 公告在中午发布，与晚上的比赛时间错开，时间线上不会挤在一起
     publishTime.setHours(12, 0, 0, 0);
@@ -502,6 +504,11 @@ function simulateBracket({ entries, random, startTime, matchType, eventId, forma
  * @param {number} [options.mixedRatio] 单打里男女对打的占比，默认值见 SINGLES_MIXED_RATIO。
  *        单独开这个口子是为了做「混打比例 → 男女分数可比性」的对照实验：
  *        把比例调到 0 就能看到两个性别组各自封闭时会是什么结果。
+ * @param {Array<Object>} [options.eventPlan] 赛事编排，缺省用内置那一套。
+ *        各协会可用自己的编排错开赛事构成（见 services/association-flavor.js）。
+ * @param {string} [options.eventTitlePrefix] 赛事标题前缀，用来标注归属协会。
+ *        默认协会留空，标题仍由实际月份推导（见下方赛事段落）。
+ * @param {Array<Object>} [options.announcements] 公告种子，缺省用 ANNOUNCEMENT_SEED。
  * @returns {{members:Array, matches:Array, events:Array, meta:Object}}
  */
 function generateSeed(options = {}) {
@@ -511,10 +518,15 @@ function generateSeed(options = {}) {
     weeks = 20,
     casualPerWeek = 30,
     mixedRatio = SINGLES_MIXED_RATIO,
+    eventPlan: eventPlanOption = null,
+    eventTitlePrefix = '',
+    announcements: announcementSeed = null,
   } = options;
 
   const random = createSeededRandom(seed);
   const baseDate = new Date(startDate + 'T18:00:00');
+  // 赛事标题的协会前缀（默认协会为空串，标题逐字节不变）
+  const titlePrefix = eventTitlePrefix;
 
   // ---------- 1. 会员 ----------
   const members = MEMBER_SEED.map((item, index) => ({
@@ -642,7 +654,10 @@ function generateSeed(options = {}) {
   // 8 人签表第 1 轮有 4 场，给 4 块场地就是「一人一块」的理想情况，给 2 块
   // 就得排第二批（同一批内仍然不重号，见 services/court.js）。两种情形都要
   // 有样本，验收时才知道分批那条分支到底走不走得通。
-  const eventPlan = [
+  // 默认协会用内置那一套；其余协会可在 flavor 里给自己的编排（见
+  // services/association-flavor.js），把赛事月份与项目拉开，不至于每个
+  // 协会的赛事页看上去都是同一份。不传则逐字节照旧。
+  const eventPlan = eventPlanOption || [
     { week: 3, matchType: MATCH_TYPE.SINGLES, gender: 'M', discipline: LEG_DISCIPLINE.MS, size: 8, courtCount: 4, format: { gamePoints: 11, bestOf: 3 } },
     { week: 5, matchType: MATCH_TYPE.SINGLES, gender: 'F', discipline: LEG_DISCIPLINE.WS, size: 8, courtCount: 2, format: { gamePoints: 15, bestOf: 3 } },
     { week: 7, matchType: MATCH_TYPE.DOUBLES, size: 8, courtCount: 4, format: { gamePoints: 11, bestOf: 5 } },
@@ -659,7 +674,9 @@ function generateSeed(options = {}) {
     // 赛事名由实际日期推导，而不是写死「五月」「六月」。
     // 这样改了起始日期或周次安排，标题也会自动跟着对，不会名不副实。
     const scope = plan.gender ? GENDER_LABEL[plan.gender] : '';
-    const title = `${startTime.getMonth() + 1}月${scope}${MATCH_TYPE_LABEL[plan.matchType]}赛`;
+    // titlePrefix 默认空串：默认协会的标题形如「九月男子单打赛」逐字节不变；
+    // 其余协会带上自己的前缀（如「乒乓球·九月男子单打赛」），一眼认得出归属
+    const title = `${titlePrefix}${startTime.getMonth() + 1}月${scope}${MATCH_TYPE_LABEL[plan.matchType]}赛`;
 
     // 挑选参赛者：单打按组别挑人，双打从全体中抽签组队
     let entries;
@@ -735,14 +752,15 @@ function generateSeed(options = {}) {
   //
   // 【为什么是 weeks + 2 而不是更靠后】
   // 开赛日必须落在「现在」之前：签表里的半决赛还要现场录分，而录入校验
-  // 明确拒绝晚于当下的比赛时间；同时它又得排在所有已结束赛事之后，并且
-  // 仍在九月，才配得上「九月单打赛」这个名字。加两周正好落在这两端之间。
+  // 明确拒绝晚于当下的比赛时间；同时它又得排在所有已结束赛事之后。加两周
+  // 正好落在这两端之间。标题里的月份由实际开赛日推导（各协会起始日期不同，
+  // 月份也随之不同），不会名不副实。
   const openWeek = weeks + 2;
   const openStart = addDays(baseDate, openWeek * 7);
   const openSize = 8;
   const openEvent = {
     _id: 'e' + String(eventPlan.length + 1).padStart(2, '0'),
-    title: `${openStart.getMonth() + 1}月男子单打赛`,
+    title: `${titlePrefix}${openStart.getMonth() + 1}月男子单打赛`,
     description: '俱乐部常规赛事，单败淘汰制，取胜者晋级',
     matchType: MATCH_TYPE.SINGLES,
     discipline: LEG_DISCIPLINE.MS,
@@ -882,7 +900,7 @@ function generateSeed(options = {}) {
     matches,
     events,
     signups: openSignups,
-    announcements: buildAnnouncements(baseDate),
+    announcements: buildAnnouncements(baseDate, announcementSeed || ANNOUNCEMENT_SEED),
     meta: {
       seed,
       weeks,

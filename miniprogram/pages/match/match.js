@@ -36,6 +36,7 @@ const {
   getMembers,
   isMock,
 } = require('../../services/index.js');
+const { currentThemeClass } = require('../../services/branding.js');
 
 /** 撤销与驳回的面板文案。两者的终态相同，但要说清楚各自是干什么的 */
 const ACTION_TEXT = {
@@ -57,6 +58,8 @@ Page({
     loading: true,
     /** 加载失败时的提示 */
     error: '',
+    /** 当前协会的主题类，挂在页面根节点上 */
+    themeClass: '',
     /** 切标签时给个淡淡的反馈，避免点了没反应 */
     switching: false,
     /** 视图模型，形状见 services/match-view.js。初值给空对象，WXML 展开才不会出错 */
@@ -164,6 +167,7 @@ Page({
         view,
         auth,
         entryHint: this.describeEntry(auth),
+        themeClass: currentThemeClass(),
       });
       // 首屏若已有正在计分的场次（读接口已带上 live），才挂轮询取增量
       this.syncLiveWatch();
@@ -174,6 +178,7 @@ Page({
         loading: false,
         switching: false,
         error: '比赛数据加载失败，请下拉重试',
+        themeClass: currentThemeClass(),
       });
     }
   },

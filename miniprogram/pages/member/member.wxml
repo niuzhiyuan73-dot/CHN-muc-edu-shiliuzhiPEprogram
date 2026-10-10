@@ -4,7 +4,7 @@
 -->
 <import src="../../templates/member-view.wxml" />
 
-<view class="page-container">
+<view class="page-container {{themeClass}}">
   <template
     is="memberView"
     data="{{...view, loading: loading, error: error, hasMore: hasMore, switching: switching, showSwitch: showSwitch, switchValue: switchValue}}"
