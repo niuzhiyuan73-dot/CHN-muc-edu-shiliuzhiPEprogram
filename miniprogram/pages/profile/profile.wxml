@@ -35,15 +35,17 @@
     OpenID，退出登录之后它照样答得出是谁（见 profile.js 的 refresh）。
   -->
   <block wx:if="{{loggedIn}}">
+    <!-- showSwitch 恒为真（已登录），switchValue 用当前全局协会；
+         点头卡头像进详情页才是看等级分/赛季积分的地方 -->
     <template
       is="profileView"
-      data="{{...view, loading: loading, error: error, hasMore: hasMore, switching: switching}}"
+      data="{{...view, loading: loading, error: error, showSwitch: true, switchValue: associationId}}"
     />
   </block>
 
   <view wx:else class="card guest-card">
     <view class="card-title">还没有登录</view>
-    <view class="card-subtitle">登录后就能看到自己的等级分、排名与逐场战绩</view>
+    <view class="card-subtitle">登录后就能看到自己的荣誉与排名</view>
     <button class="btn btn-primary btn-block guest-btn" bindtap="onGoLogin">登录 / 注册</button>
   </view>
 

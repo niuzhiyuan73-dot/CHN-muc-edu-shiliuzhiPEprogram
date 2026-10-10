@@ -1,0 +1,31 @@
+/* 协会切换徽章。跟随所在页面的主题色（--color-primary），
+   所以首页（中性红）与各协会页（各自主题色）里都能自适应。 */
+.assoc-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6rpx;
+  padding: 6rpx 18rpx;
+  border-radius: 999rpx;
+  background: var(--color-primary-light, #f7e9e7);
+  color: var(--color-primary, #b23a2e);
+  font-size: 26rpx;
+  line-height: 1.4;
+}
+
+.assoc-switch--hover {
+  opacity: 0.7;
+}
+
+.assoc-switch__glyph {
+  font-size: 26rpx;
+  font-weight: 600;
+}
+
+.assoc-switch__name {
+  font-weight: 600;
+}
+
+.assoc-switch__caret {
+  font-size: 22rpx;
+  opacity: 0.75;
+}

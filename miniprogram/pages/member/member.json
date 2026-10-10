@@ -1,5 +1,7 @@
 {
-  "usingComponents": {},
+  "usingComponents": {
+    "association-switch": "/components/association-switch/association-switch"
+  },
   "navigationBarTitleText": "会员主页",
   "enablePullDownRefresh": true,
   "backgroundTextStyle": "dark"

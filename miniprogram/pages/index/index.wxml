@@ -1,9 +1,16 @@
-<!-- 首页：俱乐部公告 + 近期赛事 -->
+<!-- 首页：跨协会聚合的公告 + 近期赛事。顶部套中性品牌 -->
 <view class="page-container">
 
-  <!-- 顶部品牌区 -->
+  <!-- 顶部品牌区（中性名）。登录用户右上角带切协会徽章 -->
   <view class="hero">
-    <view class="hero-title">中央民族大学匹克球俱乐部</view>
+    <view class="hero-head">
+      <view class="hero-title">中央民族大学石榴籽体育管理小程序</view>
+      <association-switch
+        wx:if="{{auth.loggedIn}}"
+        value="{{associationId}}"
+        bind:change="onAssociationChange"
+      />
+    </view>
     <view class="hero-subtitle">会员管理 · 赛事记录 · 积分排名</view>
     <view class="hero-badge">{{dataSourceLabel}}</view>
   </view>
@@ -13,17 +20,21 @@
 
   <block wx:else>
 
-    <!-- ==================== 俱乐部公告 ==================== -->
-    <!-- 整张卡片可点：首屏只放得下三条，想看全的进列表页 -->
-    <view class="card" bindtap="onGoAnnouncements">
+    <!-- ==================== 公告（跨协会聚合） ==================== -->
+    <view class="card">
       <view class="card-head">
-        <view class="card-title">俱乐部公告</view>
-        <view class="card-more" wx:if="{{view.announcements.total > 0}}">
-          共 {{view.announcements.total}} 条 ›
-        </view>
+        <view class="card-title">公告</view>
+        <view class="card-more" bindtap="onGoAnnouncements">看全部公告 ›</view>
       </view>
 
-      <view class="notice-item" wx:for="{{view.announcements.rows}}" wx:key="id">
+      <!-- 每条标注所属协会；点某条若属于别的协会，会先整体切过去 -->
+      <view
+        class="notice-item"
+        wx:for="{{view.announcements.rows}}"
+        wx:key="id"
+        data-association="{{item.association}}"
+        bindtap="onOpenAnnouncement"
+      >
         <view class="notice-head">
           <text class="tag {{item.pinned ? 'tag-danger' : 'tag-primary'}}">
             {{item.pinned ? '置顶' : item.category}}
@@ -31,18 +42,21 @@
           <text class="notice-title">{{item.title}}</text>
         </view>
         <view class="notice-content">{{item.content}}</view>
-        <view class="notice-date">{{item.dateText}}</view>
+        <view class="notice-foot">
+          <text class="assoc-chip">{{item.associationGlyph}} {{item.associationName}}</text>
+          <text class="notice-date">{{item.dateText}}</text>
+        </view>
       </view>
 
       <view wx:if="{{view.announcements.rows.length === 0}}" class="empty-note">暂无公告</view>
       <view wx:elif="{{view.announcements.hasMore}}" class="notice-more">
-        …还有 {{view.announcements.total - view.announcements.rows.length}} 条，点这里看全部 ›
+        …还有 {{view.announcements.total - view.announcements.rows.length}} 条，点上方看全部 ›
       </view>
     </view>
 
-    <!-- ==================== 近期赛事 ==================== -->
+    <!-- ==================== 近期赛事（跨协会聚合，仅登录可见） ==================== -->
     <!-- 报名中 / 进行中的赛事，最近要打的在前。没有也照常出卡，只换空态文案 -->
-    <view class="card">
+    <view class="card" wx:if="{{view.loggedIn}}">
       <view class="card-head">
         <view class="card-title">近期赛事</view>
         <view class="card-more" bindtap="onGoEvents">看全部赛事 ›</view>
@@ -53,6 +67,7 @@
         wx:for="{{view.upcomingEvents}}"
         wx:key="id"
         data-event-id="{{item.id}}"
+        data-association="{{item.association}}"
         bindtap="onOpenEvent"
       >
         <view class="event-head">
@@ -61,7 +76,9 @@
         </view>
         <view class="event-meta">{{item.timeText}}</view>
         <view class="event-meta">
-          <text wx:if="{{item.location}}">{{item.location}} · </text>{{item.quotaText}}
+          <text class="assoc-chip">{{item.associationGlyph}} {{item.associationName}}</text>
+          <text wx:if="{{item.location}}"> · {{item.location}}</text>
+          <text> · {{item.quotaText}}</text>
           <text wx:if="{{item.signedUp}}" class="event-mine"> · 已报名</text>
         </view>
       </view>
@@ -69,11 +86,18 @@
       <view wx:if="{{view.upcomingEvents.length === 0}}" class="empty-note">近期没有比赛</view>
     </view>
 
-    <!-- 俱乐部整体概况 -->
-    <view class="home-stats">
-      {{view.summary.memberCount}} 名会员 · {{view.summary.matchCount}} 场比赛 · {{view.summary.eventCount}} 场赛事
+    <!-- 全部协会整体概况（仅登录可见） -->
+    <block wx:if="{{view.summary}}">
+      <view class="home-stats">
+        {{view.summary.memberCount}} 名会员 · {{view.summary.matchCount}} 场比赛 · {{view.summary.eventCount}} 场赛事
+      </view>
+      <view class="mock-note">赛季 {{view.summary.seasonText}} · {{dataSourceLabel}}</view>
+    </block>
+
+    <!-- 游客：只看得到公告（§11.8） -->
+    <view wx:if="{{!view.loggedIn}}" class="mock-note">
+      登录后可见近期赛事与概况 · {{dataSourceLabel}}
     </view>
-    <view class="mock-note">赛季 {{view.summary.seasonText}} · {{dataSourceLabel}}</view>
 
   </block>
 

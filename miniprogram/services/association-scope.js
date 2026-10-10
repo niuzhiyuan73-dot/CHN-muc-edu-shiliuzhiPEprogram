@@ -18,7 +18,11 @@
  * ============================================================
  */
 
-const { defaultAssociationId, isKnownAssociation } = require('../utils/associations.js');
+const {
+  defaultAssociationId,
+  isKnownAssociation,
+  activeAssociations,
+} = require('../utils/associations.js');
 
 /** 当前协会 id；空串表示尚未设定 */
 let current = '';
@@ -76,9 +80,61 @@ function perAssociation(init) {
   };
 }
 
+/**
+ * 在「指定的协会」作用域里跑一段（可异步的）逻辑，跑完把当前协会还原。
+ *
+ * 【用途】页面局部的切换（个人详情页 / 他人主页）：只想让本页按另一个协会取数，
+ * 不改变全局的当前协会。把「临时切过去—取数—还原」包成一步，调用方不必自己在
+ * 每个出口记得还原。
+ *
+ * 【为什么 finally 里要判 isKnownAssociation】一个启用协会都没有时 getAssociation()
+ * 返回空串；此时还原 setAssociation('') 会抛「未知协会」，把真实的取数结果也带塌。
+ * 空串就不还原（本来也没切过）。
+ *
+ * @param {string} id 目标协会
+ * @param {Function} fn 无参函数，可返回 Promise
+ * @returns {Promise<*>} fn 的返回值
+ */
+async function withAssociation(id, fn) {
+  const saved = getAssociation();
+  setAssociation(id);
+  try {
+    return await fn();
+  } finally {
+    if (isKnownAssociation(saved)) setAssociation(saved);
+  }
+}
+
+/**
+ * 依次在全部启用协会的作用域里跑 fn，收集结果（跨协会聚合读的地基）。
+ *
+ * 【为什么是串行而不是并发】当前协会是模块级单例状态，并发跑会互相串味。
+ * 顺序执行、每次取完还原，是让「聚合」这件事在单例状态上安全成立的最省事做法。
+ * 数据量小（个位数协会），串行的代价可以接受。
+ *
+ * @param {Function} fn (assoc) => result，可返回 Promise
+ * @returns {Promise<Array<*>>} 与启用协会一一对应的结果
+ */
+async function mapActiveAssociations(fn) {
+  const list = activeAssociations();
+  const saved = getAssociation();
+  const results = [];
+  try {
+    for (const assoc of list) {
+      setAssociation(assoc.id);
+      results.push(await fn(assoc));
+    }
+  } finally {
+    if (isKnownAssociation(saved)) setAssociation(saved);
+  }
+  return results;
+}
+
 module.exports = {
   getAssociation,
   setAssociation,
   resetAssociation,
   perAssociation,
+  withAssociation,
+  mapActiveAssociations,
 };

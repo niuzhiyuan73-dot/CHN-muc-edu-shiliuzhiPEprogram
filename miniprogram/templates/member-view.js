@@ -16,6 +16,9 @@
 
 const { loadMemberView, DEFAULT_HISTORY_LIMIT } = require('../services/profile-view.js');
 const { setCollegeLeader } = require('../services/index.js');
+const { applyBranding } = require('../services/branding.js');
+const { activeAssociations } = require('../utils/associations.js');
+const scope = require('../services/association-scope.js');
 const { renderEloChart } = require('../utils/chart-view.js');
 
 /**
@@ -23,12 +26,13 @@ const { renderEloChart } = require('../utils/chart-view.js');
  *
  * @param {Object} [options]
  * @param {Function} [options.resolveUserId] (query) => userId，返回 undefined 表示看自己
- * @param {boolean} [options.titleFromMember=false] 是否把导航栏标题设成会员昵称。
- *        看别人的主页时要开——连点几层之后，得知道自己在看谁。
+ * @param {boolean} [options.localAssociation=false] 是否开启**页面局部**的协会切换。
+ *        个人详情页与他人主页要开：页内切换只改本页展示、不写回全局；导航标题与
+ *        主题色也随之按该协会套。默认按「页面对应用户比赛最多的协会」起（§11.1）。
  * @returns {Object} 可直接交给 Page() 的配置对象
  */
 function createMemberPage(options = {}) {
-  const { resolveUserId, titleFromMember = false } = options;
+  const { resolveUserId, localAssociation = false } = options;
 
   return {
     data: {
@@ -42,6 +46,10 @@ function createMemberPage(options = {}) {
       historyLimit: DEFAULT_HISTORY_LIMIT,
       /** 切项目时给个淡淡的反馈，避免点了没反应 */
       switching: false,
+      /** 页内协会切换：徽章是否显示（仅局部分页、且已登录、且不止一个启用协会） */
+      showSwitch: false,
+      /** 切换徽章当前值：本页正在看的协会 id */
+      switchValue: '',
       // 视图模型，形状见 services/profile-view.js。
       // 初值给空对象而不是 null，WXML 里的 {{...view}} 展开才不会出错。
       view: {},
@@ -67,6 +75,13 @@ function createMemberPage(options = {}) {
      */
     async refresh() {
       try {
+        // 页内切换的协会：首屏按「页面对应用户比赛最多的协会」定一次，之后跟着用户点
+        if (localAssociation && !this.associationResolved) {
+          this.associationResolved = true;
+          this.localAssociation = await this.defaultLocalAssociation();
+        }
+        const association = localAssociation ? this.localAssociation : undefined;
+
         const view = await loadMemberView(this.userId, {
           project: this.currentProject,
           historyLimit: this.data.historyLimit,
@@ -74,11 +89,13 @@ function createMemberPage(options = {}) {
           // 学院负责人。与 loadMatchView 同一约定——问数据源「当前用户是谁」在
           // mock 下永远答 u06，会让未登录的访客也拿到任免入口。
           viewer: this.currentUser(),
+          // 页面局部的作用域：只在本次取数期间切过去，取完由 withAssociation 还原
+          association,
         });
 
-        // 连点几层进来之后，光看内容分不清在看谁，标题里写上名字最省事
-        if (titleFromMember && view.found) {
-          wx.setNavigationBarTitle({ title: view.user.nickName });
+        // 导航栏按当前页内协会套品牌（标题 + 主题色，见 §11.7）
+        if (localAssociation) {
+          applyBranding(association || scope.getAssociation());
         }
 
         this.setData(
@@ -87,6 +104,8 @@ function createMemberPage(options = {}) {
             error: '',
             switching: false,
             view,
+            showSwitch: localAssociation && this.canSwitchAssociation(),
+            switchValue: association || '',
             // 拿「已加载条数」和「该项目总场次」比，而不是和 historyLimit 比：
             // 后者在总场次恰好等于上限时会多出一个点了没反应的「加载更多」
             hasMore: view.found && Boolean(view.summary) && view.history.length < view.summary.matchCount,
@@ -102,6 +121,44 @@ function createMemberPage(options = {}) {
           error: '数据加载失败，请下拉重试',
         });
       }
+    },
+
+    /**
+     * 本页默认看哪个协会：该页面对应用户「比赛最多的协会」（§11.1）。
+     * 他人主页取被查看者，个人详情页取本人。算不出来就沿用全局当前协会。
+     *
+     * @returns {Promise<string>}
+     */
+    async defaultLocalAssociation() {
+      const user = this.currentUser();
+      const ownerId = this.userId || (user ? user._id : '');
+      try {
+        // 延迟取用：避开 member-view → association-usage → 门面的加载期环
+        const { mostPlayedAssociation } = require('../services/association-usage.js');
+        return await mostPlayedAssociation(ownerId);
+      } catch (err) {
+        console.error('[member] 计算默认协会失败，沿用全局', err);
+        return scope.getAssociation();
+      }
+    },
+
+    /** 页内切换徽章是否显示：只有登录用户、且启用协会不止一个时才给 */
+    canSwitchAssociation() {
+      return Boolean(this.currentUser()) && activeAssociations().length > 1;
+    },
+
+    /**
+     * 页内切换协会（个人详情页 / 他人主页）。只改本页展示，**不写回全局**，
+     * 退出即失效（§11.1）。整页数据按新协会重取。
+     */
+    onAssociationChange(event) {
+      if (!localAssociation) return undefined;
+      const id = event && event.detail ? event.detail.id : '';
+      if (!id || id === this.localAssociation) return undefined;
+
+      this.localAssociation = id;
+      this.setData({ switching: true });
+      return this.refresh();
     },
 
     /** 把当前项目的分数序列画成曲线 */

@@ -1,18 +1,20 @@
 /**
  * 个人详情
  * ============================================================
- * 从「我的」页点自己的头像进来。分数走势、逐场战绩、交锋记录、搭档记录
- * 这些一屏看不完的细账都放在这里，「我的」页只留当前分数与赛事荣誉。
+ * 从「我的」页点自己的头像进来。等级分、赛季积分、分数走势、逐场战绩、
+ * 交锋记录、搭档记录这些「随协会变化」的细账都收在这里，「我的」页只留
+ * 全局身份与跨协会聚合的荣誉（§11.4 / §11.5）。
  *
  * 界面与交互全部来自 templates/member-view（profileDetailView），
- * 本文件只管两件事：「看自己」（不传 userId），以及「修改头像」入口。
+ * 本文件只管：「看自己」（不传 userId）、页内协会切换、以及「修改头像」入口。
  * ============================================================
  */
 
 const { createMemberPage } = require('../../templates/member-view.js');
 const { isMock } = require('../../services/index.js');
 
-const memberPage = createMemberPage();
+// 页内切换协会：只切本页，默认「本人比赛最多的协会」，退出即失效（§11.1 / §11.5）
+const memberPage = createMemberPage({ localAssociation: true });
 
 Page({
   ...memberPage,

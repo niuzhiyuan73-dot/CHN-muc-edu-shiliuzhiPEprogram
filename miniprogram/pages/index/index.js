@@ -2,15 +2,26 @@
  * 首页
  * ============================================================
  * 两块内容，自上而下：
- *   1. 俱乐部公告——置顶在前，其余按时间倒序
- *   2. 近期赛事——报名中 / 进行中的赛事，最近要打的在前
+ *   1. 公告——置顶在前，其余按时间倒序（**跨全部协会聚合**）
+ *   2. 近期赛事——报名中 / 进行中的赛事，最近要打的在前（**跨全部协会聚合**）
  *
- * 【为什么取数全在 home-view.js】
- * 页面只做渲染与跳转。取数、算文案都在 services/home-view.js 里，
- * 那边不碰 wx API，能在 Node 里测试。
+ * 【为什么首页是跨协会的】
+ * 首页回答的是「最近俱乐部里有什么事」，不该被「我现在在哪个协会」框住。
+ * 公告与近期赛事把全部协会的都摆出来，每条标注它属于哪个协会（见需求整理
+ * §11.3）。因此首页套**中性品牌**，头图与导航标题都用中性名（§11.7）。
+ *
+ * 【切换按钮为什么只换全局协会、不重刷首页】
+ * 首页上那个切换器改的是「全局当前协会」，作用域是**中间三个界面**
+ * （排行榜 / 比赛 / 赛事），首页自身内容不随它变（§11.2）。所以点了只把
+ * 全局与徽章同步一下，不必重取首页数据。
+ *
+ * 【点某条为什么可能先切协会】
+ * 点公告/赛事进详情时，若那一条属于别的协会，先把全局整体切过去再跳
+ * （§11.3）——否则详情页会按「当前协会」去读，取不到这条数据。
  *
  * 【登录态变化后为什么要刷新】
- * 用户去登录页转一圈回来，赛事卡上的「已报名」标记就该更新。
+ * 用户去登录页转一圈回来，赛事卡上的「已报名」标记就该更新，
+ * 而且登录后才会出现赛事与概况两块（游客只看得到公告，§11.8）。
  * 所以 onShow 里再刷一次——但首屏 onLoad 之后紧跟着的 onShow 要跳过，
  * 否则同一份数据会白算两遍。
  * ============================================================
@@ -18,6 +29,7 @@
 
 const { loadHomeView } = require('../../services/home-view.js');
 const { resolveAuthState } = require('../../services/auth.js');
+const { resetBranding } = require('../../services/branding.js');
 const facade = require('../../services/index.js');
 
 Page({
@@ -30,6 +42,8 @@ Page({
     view: {},
     /** 当前登录态（是否登录、状态标签、能否录成绩） */
     auth: { loggedIn: false },
+    /** 当前全局协会 id，供切换徽章显示；切换器只改全局，不改首页内容 */
+    associationId: '',
     /** 当前数据源，用于页脚提示 */
     dataSourceLabel: '',
     /** 开发期标注模拟数据（onLoad 时按门面实际状态刷新） */
@@ -42,11 +56,17 @@ Page({
    */
   onLoad() {
     this.showDataSource();
+    // 首页套中性品牌。冷启动可能从别的协会页回来，先刷一次保险
+    resetBranding();
     return this.refresh();
   },
 
-  /** 从别的页面返回时刷新一次，登录/退出后才能立刻看到变化 */
+  /**
+   * 从别的页面返回时刷新一次，登录/退出后才能立刻看到变化。
+   * 同时把导航栏刷回中性品牌——中间三个界面把它改成了各自协会的品牌。
+   */
   onShow() {
+    resetBranding();
     // 首次进入时 onLoad 已经加载过，这个紧随其后的 onShow 直接跳过
     if (!this.loaded) return undefined;
     return this.refresh();
@@ -65,6 +85,20 @@ Page({
     return app.globalData ? app.globalData.userInfo : null;
   },
 
+  /** 当前全局协会。真机上由 app 持有，测试环境下回落到门面 */
+  currentAssociation() {
+    const app = getApp();
+    if (app && typeof app.getAssociation === 'function') return app.getAssociation();
+    return facade.getAssociation();
+  },
+
+  /** 切全局协会：优先走 app（它把结果同步进 globalData），否则直接改门面 */
+  setAssociation(id) {
+    const app = getApp();
+    if (app && typeof app.setAssociation === 'function') return app.setAssociation(id);
+    return facade.setAssociation(id);
+  },
+
   /**
    * 重新装载整页数据。
    * @returns {Promise<void>}
@@ -80,6 +114,7 @@ Page({
         error: '',
         view,
         auth: resolveAuthState(user),
+        associationId: this.currentAssociation(),
       });
     } catch (err) {
       console.error('[index] 首页加载失败', err);
@@ -104,26 +139,57 @@ Page({
     });
   },
 
+  /**
+   * 若某条内容属于别的协会，先把全局整体切过去再跳详情（§11.3）。
+   * 切失败不该拦住跳转——顶多是详情页取不到数据，也好过点了没反应。
+   *
+   * @param {string} id 目标协会 id；空或与当前相同则什么都不做
+   */
+  switchTo(id) {
+    if (!id || id === this.currentAssociation()) return;
+    try {
+      this.setAssociation(id);
+      // 徽章跟着变。首页内容不重取（它本来就是跨协会的）
+      this.setData({ associationId: id });
+    } catch (err) {
+      console.error('[index] 自动切换协会失败', err);
+    }
+  },
+
+  /** 切协会徽章的 change 事件：只改全局，供中间三个界面之用 */
+  onAssociationChange(event) {
+    const id = event && event.detail ? event.detail.id : '';
+    this.switchTo(id);
+  },
+
   /** 去登录/注册 */
   onGoLogin() {
     wx.navigateTo({ url: '/pages/login/login' });
   },
 
-  /** 去赛事 tab 看全部赛事 */
+  /** 去赛事 tab 看全部赛事。赛事页按当前全局协会展示，故直接切 tab 即可 */
   onGoEvents() {
     wx.switchTab({ url: '/pages/events/events' });
   },
 
-  /** 看全部公告。首页只放得下三条，其余的去列表页看 */
+  /** 看全部公告 */
   onGoAnnouncements() {
     wx.navigateTo({ url: '/pages/announcements/announcements' });
   },
 
-  /** 点近期赛事的一条，进详情 */
+  /** 点近期赛事的一条：跨协会的先切过去，再进详情 */
   onOpenEvent(event) {
-    const eventId = event.currentTarget.dataset.eventId;
-    if (!eventId) return;
-    wx.navigateTo({ url: `/pages/event-detail/event-detail?eventId=${eventId}` });
+    const { eventId, association } = event.currentTarget.dataset;
+    if (!eventId) return undefined;
+    this.switchTo(association);
+    return wx.navigateTo({ url: `/pages/event-detail/event-detail?eventId=${eventId}` });
+  },
+
+  /** 点公告的一条：跨协会的先切过去，再看该协会的公告列表 */
+  onOpenAnnouncement(event) {
+    const association = event.currentTarget.dataset.association;
+    this.switchTo(association);
+    return wx.navigateTo({ url: '/pages/announcements/announcements' });
   },
 
   /** 去看某个会员的主页 */

@@ -7,6 +7,6 @@
 <view class="page-container">
   <template
     is="memberView"
-    data="{{...view, loading: loading, error: error, hasMore: hasMore, switching: switching}}"
+    data="{{...view, loading: loading, error: error, hasMore: hasMore, switching: switching, showSwitch: showSwitch, switchValue: switchValue}}"
   />
 </view>

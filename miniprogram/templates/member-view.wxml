@@ -31,10 +31,17 @@
       </view>
       <view class="member-meta">{{user.college}} · 加入于 {{user.joinDateText}}</view>
       <view class="member-tags">
-        <!-- 积分每赛季清零，所以是「赛季积分」而不是「累计积分」 -->
-        <text class="tag tag-primary">赛季积分 {{user.points}}</text>
+        <!-- 赛季积分各协会不同（详情页/他人主页按协会取数才显示）；
+             「我的」页是跨协会的，这里关掉（user.showPoints 为假，见 profile-view） -->
+        <text wx:if="{{user.showPoints}}" class="tag tag-primary">赛季积分 {{user.points}}</text>
         <text wx:if="{{user.statusLabel && user.statusLabel !== '正常'}}" class="tag tag-warning">{{user.statusLabel}}</text>
       </view>
+    </view>
+    <!-- 切协会徽章。只有需要它的页面（我的/详情/他人主页）才传 showSwitch。
+         首页与「我的」用全局作用域，详情页/他人主页是页面局部——语义由各页自行处理。
+         外面包一层是为了给它一个可定位、可推到右侧的宿主节点 -->
+    <view wx:if="{{showSwitch}}" class="member-hero-switch">
+      <association-switch value="{{switchValue}}" bind:change="onAssociationChange" />
     </view>
   </view>
 </template>
@@ -224,6 +231,52 @@
   </view>
 </template>
 
+<!-- ========== 我的荣誉（跨协会聚合） ========== -->
+<!-- 「我的」页专用：汇总数字是各协会相加，下面按协会分组列名次；
+     没参加过赛事的协会不出现（分组由 profile-view.loadProfileSummary 只放有记录的） -->
+<template name="profileHonors">
+  <view class="card">
+    <view class="card-title">我的荣誉</view>
+
+    <view wx:if="{{honors.total === 0}}" class="empty-note">还没有参加过赛事</view>
+
+    <block wx:else>
+      <view class="event-summary">
+        <view class="score-cell">
+          <view class="score-cell-value">{{honors.summary.eventCount}}</view>
+          <view class="score-cell-label">参赛</view>
+        </view>
+        <view class="score-cell">
+          <view class="score-cell-value">{{honors.summary.championCount}}</view>
+          <view class="score-cell-label">冠军</view>
+        </view>
+        <view class="score-cell">
+          <view class="score-cell-value">{{honors.summary.topThreeCount}}</view>
+          <view class="score-cell-label">进前三</view>
+        </view>
+        <view class="score-cell">
+          <view class="score-cell-value">{{honors.summary.bestPlacementText}}</view>
+          <view class="score-cell-label">最好成绩</view>
+        </view>
+      </view>
+
+      <block wx:for="{{honors.groups}}" wx:key="associationId" wx:for-item="group" wx:for-index="groupIndex">
+        <view class="divider"></view>
+        <view class="honor-group-head">
+          <text class="assoc-chip">{{group.associationGlyph}} {{group.associationName}}</text>
+        </view>
+        <view class="event-row" wx:for="{{group.records}}" wx:key="eventId">
+          <view class="event-main">
+            <view class="event-title">{{item.title}}</view>
+            <view class="event-meta">{{item.dateText}} · {{item.participantCount}} 人参赛</view>
+          </view>
+          <view class="event-place {{item.isTop ? 'is-top' : ''}}">{{item.placementText}}</view>
+        </view>
+      </block>
+    </block>
+  </view>
+</template>
+
 <!-- ========== 逐场战绩 ========== -->
 <template name="memberHistory">
   <view class="card">
@@ -312,7 +365,7 @@
   </view>
 
   <block wx:else>
-    <template is="memberHero" data="{{user: user}}" />
+    <template is="memberHero" data="{{user: user, showSwitch: showSwitch, switchValue: switchValue}}" />
 
     <!--
       任免学院负责人。只有管理员看别人的主页时才渲染（leader.visible 由
@@ -343,7 +396,7 @@
   </block>
 </template>
 
-<!-- 瘦身版：「我的」页。只留头卡、两张当前分数与赛事名次 -->
+<!-- 瘦身版：「我的」页。只留头卡（全局身份）与跨协会聚合的荣誉 -->
 <template name="profileView">
   <view wx:if="{{loading}}" class="loading">正在加载…</view>
 
@@ -358,16 +411,8 @@
   </view>
 
   <block wx:else>
-    <template is="memberHero" data="{{user: user}}" />
-
-    <view wx:if="{{!hasProject}}" class="card">
-      <template is="memberNoProjectNote" />
-    </view>
-
-    <block wx:else>
-      <template is="memberScoreDuo" data="{{projectTabs: projectTabs, summary: summary, switching: switching}}" />
-      <template is="memberEvents" data="{{events: events}}" />
-    </block>
+    <template is="memberHero" data="{{user: user, showSwitch: showSwitch, switchValue: switchValue}}" />
+    <template is="profileHonors" data="{{honors: honors}}" />
   </block>
 </template>
 
@@ -386,7 +431,7 @@
   </view>
 
   <block wx:else>
-    <template is="memberHero" data="{{user: user}}" />
+    <template is="memberHero" data="{{user: user, showSwitch: showSwitch, switchValue: switchValue}}" />
 
     <view class="card entry-card" bindtap="onGoProfileEdit">
       <view class="entry-card-main">

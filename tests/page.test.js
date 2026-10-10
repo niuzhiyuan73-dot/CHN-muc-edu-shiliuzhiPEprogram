@@ -317,7 +317,7 @@ const ADMIN = { role: 2, _id: 'u01', nickName: '巴特尔' };
  * 首页
  * ============================================================ */
 
-test('首页 —— 首屏给出公告与近期赛事，不再有「我的分数」卡', async () => {
+test('首页 —— 访客只看得到公告，赛事与概况一概不取', async () => {
   resetSession();
   const page = instantiate(indexConfig);
   await page.onLoad();
@@ -328,9 +328,10 @@ test('首页 —— 首屏给出公告与近期赛事，不再有「我的分数
   assert.strictEqual(page.data.auth.loggedIn, false);
   // 个人分数已经收进排行榜与「我的」页，首页不再摆一份
   assert.strictEqual(page.data.view.scoreCard, undefined);
-  // 访客也能看到公告与近期赛事——这两块与登录无关
-  assert.ok(page.data.view.announcements.rows.length > 0);
-  assert.ok(Array.isArray(page.data.view.upcomingEvents));
+  // 游客只看得到公告（需求整理 §11.8）：赛事与概况都不取
+  assert.ok(page.data.view.announcements.rows.length > 0, '访客能看公告');
+  assert.deepStrictEqual(page.data.view.upcomingEvents, [], '访客看不到近期赛事');
+  assert.strictEqual(page.data.view.summary, null, '访客看不到概况');
 });
 
 test('首页 —— 点登录引导跳到登录注册页', async () => {
@@ -345,6 +346,7 @@ test('首页 —— 点登录引导跳到登录注册页', async () => {
 
 test('首页 —— 近期赛事只列报名中/进行中，按开赛时间升序且不超过三条', async () => {
   resetSession();
+  loginAs();
   const page = instantiate(indexConfig);
   await page.onLoad();
 
@@ -367,6 +369,7 @@ test('首页 —— 近期赛事只列报名中/进行中，按开赛时间升�
 
 test('首页 —— 一场近期赛事都没有时照常出卡，由模板写空态', async () => {
   resetSession();
+  loginAs();
   const original = mock.getEvents;
   // 把赛事全换成已结束的：近期赛事应当筛成空数组，但字段仍在
   mock.getEvents = async () => [
@@ -424,6 +427,7 @@ test('首页 —— 待审核的账号能登录，首页照常可看', async () 
 
 test('首页 —— 点近期赛事的一条会进详情', async () => {
   resetSession();
+  loginAs();
   const page = instantiate(indexConfig);
   await page.onLoad();
 
@@ -442,6 +446,7 @@ test('首页 —— 点近期赛事的一条会进详情', async () => {
 
 test('首页 —— 公告与概况都有内容，数据里没有 undefined 或 NaN', async () => {
   resetSession();
+  loginAs();
   const page = instantiate(indexConfig);
   await page.onLoad();
 
@@ -482,7 +487,7 @@ test('我的页 —— 启动后处于加载态，数据来源标注为模拟数
   assert.deepStrictEqual(page.data.view, {}, '初值必须是空对象，WXML 展开才不会出错');
 });
 
-test('我的页 —— onLoad 之后渲染出当前会员的数据', async () => {
+test('我的页 —— onLoad 之后渲染出全局头卡与跨协会聚合的荣誉', async () => {
   loginAs();
   const page = instantiate(profileConfig);
   await page.onLoad({});
@@ -491,7 +496,10 @@ test('我的页 —— onLoad 之后渲染出当前会员的数据', async () =>
   assert.strictEqual(page.data.error, '');
   assert.strictEqual(page.data.view.found, true);
   assert.strictEqual(page.data.view.user.userId, 'u06');
-  assert.ok(page.data.view.projectTabs.length > 0);
+  // 等级分/项目分卡已移入个人详情页，这一页不再有
+  assert.strictEqual(page.data.view.projectTabs, undefined, '「我的」不再摆等级分');
+  assert.strictEqual(page.data.view.user.showPoints, false, '头卡不显示赛季积分标签');
+  assert.ok(page.data.view.honors, '有跨协会聚合的荣誉');
 });
 
 test('我的页 —— 点头卡头像进个人详情页', async () => {
@@ -504,66 +512,43 @@ test('我的页 —— 点头卡头像进个人详情页', async () => {
   assert.deepStrictEqual(calls.navigations, ['/pages/profile-detail/profile-detail']);
 });
 
-test('我的页 —— 单打与双打两张分卡的分数、排名、百分位都取得到', async () => {
+test('我的页 —— 荣誉跨协会聚合：汇总数字等于各分组名次之和', async () => {
   loginAs();
   const page = instantiate(profileConfig);
   await page.onLoad({});
 
-  const tabs = page.data.view.projectTabs;
-  // 赵明宇有男单和双打，正好两张卡；每张都得有分数
-  assert.strictEqual(tabs.length, 2);
-  assert.strictEqual(tabs[0].label, '男单');
-  for (const tab of tabs) {
-    assert.ok(tab.elo, `${tab.label} 要有当前分数`);
+  const honors = page.data.view.honors;
+  assert.ok(Array.isArray(honors.groups), '按协会分组');
+  const summed = honors.groups.reduce((total, group) => total + group.records.length, 0);
+  assert.strictEqual(summed, honors.summary.eventCount, '汇总参赛数 = 各分组记录数之和');
+  assert.strictEqual(honors.total, honors.summary.eventCount);
+  // 未参赛的协会不出现：分组里必须有记录，且都带协会标识
+  for (const group of honors.groups) {
+    assert.ok(group.associationId && group.associationName, '每组要标注所属协会');
+    assert.ok(group.records.length > 0, '没有记录的协会不该建分组');
   }
-  // 排名与百分位取自主项目（默认单打）
-  assert.ok(page.data.view.summary.rankText);
-  assert.ok(page.data.view.summary.beatText);
+  if (honors.total === 0) assert.strictEqual(honors.groups.length, 0);
 });
 
-test('我的页 —— 默认展示单打，且单打标签排在最前', async () => {
+test('我的页 —— 切换协会只改全局，本页内容不重取', async () => {
   loginAs();
   const page = instantiate(profileConfig);
   await page.onLoad({});
 
-  // 双打场次比单打多，默认落到双打是「按出场次数排序」造成的，不是想要的
-  assert.strictEqual(page.data.view.activeProjectLabel, '男单');
-  assert.strictEqual(page.data.view.projectTabs[0].active, true);
-});
+  const before = page.data.view;
+  const globalBefore = facade.getAssociation();
+  const target = globalBefore === 'tt' ? 'pkb' : 'tt';
 
-test('我的页 —— 点双打分卡整页换成双打口径', async () => {
-  loginAs();
-  const page = instantiate(profileConfig);
-  await page.onLoad({});
-
-  const singlesRank = page.data.view.summary.rankText;
-
-  await page.onSwitchProject({ currentTarget: { dataset: { project: 'doubles' } } });
-
-  assert.strictEqual(page.data.view.activeProject, 'doubles');
-  assert.strictEqual(page.data.view.activeProjectLabel, '双打');
-  assert.strictEqual(page.data.view.projectTabs.find((tab) => tab.active).project, 'doubles');
-  assert.strictEqual(page.data.switching, false, '切完要把淡出状态收回');
-  // 排名与百分位要跟着换成双打的，不能还挂着单打那份
-  assert.ok(page.data.view.summary.rankText);
-  assert.ok(page.data.view.summary.beatText);
-  assert.strictEqual(
-    page.data.view.summary.matchCount,
-    page.data.view.summary.wins + page.data.view.summary.losses
-  );
-  assert.ok(singlesRank, '单打那份排名也要是有的，否则上面的切换没意义');
-});
-
-test('我的页 —— 切到双打后还能切回单打', async () => {
-  loginAs();
-  const page = instantiate(profileConfig);
-  await page.onLoad({});
-
-  await page.onSwitchProject({ currentTarget: { dataset: { project: 'doubles' } } });
-  await page.onSwitchProject({ currentTarget: { dataset: { project: 'men_singles' } } });
-
-  assert.strictEqual(page.data.view.activeProject, 'men_singles');
-  assert.strictEqual(page.data.view.activeProjectLabel, '男单');
+  try {
+    await page.onAssociationChange({ detail: { id: target } });
+    // 内容对象没被整体替换，说明没有重新取数——「我的」是跨协会聚合的，不随切换变
+    assert.strictEqual(page.data.view, before, '切协会不该重取本页内容');
+    // 但全局当前协会确实改掉了（作用在中间三个界面）
+    assert.strictEqual(facade.getAssociation(), target);
+  } finally {
+    // 全局协会是模块级单例，别把改动漏给后面的用例
+    facade.setAssociation(globalBefore);
+  }
 });
 
 test('我的页 —— 下拉刷新会收起刷新动画', async () => {
@@ -997,6 +982,25 @@ test('个人详情 —— 详情页里再点头像不跳转', async () => {
   assert.deepStrictEqual(calls.navigations, [], '已经在详情页了，不该再开一层');
 });
 
+test('个人详情 —— 页内默认本人比赛最多的协会，切换只改本页', async () => {
+  loginAs(); // u06，比赛多在匹克球协会
+  const page = instantiate(profileDetailConfig);
+  await page.onLoad({});
+
+  assert.strictEqual(page.data.switchValue, 'pkb', '默认落在本人比赛最多的协会');
+  assert.strictEqual(page.data.showSwitch, true, '已登录且有多协会，给切换徽章');
+  assert.ok(page.data.view.summary, '承接了「我的」移出的等级分');
+
+  const globalBefore = facade.getAssociation();
+  try {
+    await page.onAssociationChange({ detail: { id: 'tt' } });
+    assert.strictEqual(page.data.switchValue, 'tt');
+    assert.strictEqual(facade.getAssociation(), globalBefore, '页内切换不写回全局');
+  } finally {
+    facade.setAssociation(globalBefore);
+  }
+});
+
 /* ============================================================
  * 他人主页
  * ============================================================ */
@@ -1026,12 +1030,28 @@ test('他人主页 —— 查无此人时给出明确提示', async () => {
   assert.strictEqual(page.data.hasMore, false);
 });
 
-test('他人主页 —— 导航栏标题会换成被查看会员的昵称', async () => {
-  // 顺着交锋记录一路点进来会有好几层，标题不写名字就不知道在看谁
+test('他人主页 —— 导航栏按页内协会套品牌（标题 = 协会简称）', async () => {
+  // u01 的比赛多在乒乓协会，页内默认落在 tt，标题随之是它的简称（§11.7）
   const page = instantiate(memberConfig);
   await page.onLoad({ userId: 'u01' });
 
-  assert.strictEqual(calls.titles[calls.titles.length - 1], page.data.view.user.nickName);
+  assert.strictEqual(page.data.switchValue, 'tt');
+  assert.strictEqual(calls.titles[calls.titles.length - 1], '民大乒乓');
+});
+
+test('他人主页 —— 页内切换协会整页重取，但不写回全局', async () => {
+  const page = instantiate(memberConfig);
+  await page.onLoad({ userId: 'u01' }); // 默认 tt
+  const globalBefore = facade.getAssociation();
+
+  try {
+    await page.onAssociationChange({ detail: { id: 'pkb' } });
+    assert.strictEqual(page.data.switchValue, 'pkb');
+    assert.strictEqual(page.data.view.found, true);
+    assert.strictEqual(facade.getAssociation(), globalBefore, '页内切换不写回全局');
+  } finally {
+    facade.setAssociation(globalBefore);
+  }
 });
 
 test('他人主页 —— 头卡是共用的，但点头像不会跳走', async () => {

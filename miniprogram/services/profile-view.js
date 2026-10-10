@@ -37,6 +37,7 @@ const { sortProjectsForDisplay } = require('../utils/leaderboard.js');
 const { formatMatchFormat } = require('../utils/match-format.js');
 const { resolveNameDisplay } = require('./profile.js');
 const { validateCollegeLeader } = require('./member-review.js');
+const scope = require('./association-scope.js');
 const {
   getCurrentUser,
   getMember,
@@ -161,7 +162,16 @@ function buildHistoryRow(row) {
  * @returns {Promise<Object>} 查无此人时返回 { found: false }
  */
 async function loadMemberView(userId, options = {}) {
-  const { project, historyLimit = DEFAULT_HISTORY_LIMIT, viewer = null } = options;
+  const { project, historyLimit = DEFAULT_HISTORY_LIMIT, viewer = null, association } = options;
+
+  // 页面局部的协会切换（个人详情页 / 他人主页）：只想让这一页按另一个协会取数，
+  // 不改变全局的当前协会。递归一次即可——第二次不再带 association，取完由
+  // withAssociation 还原全局作用域。
+  if (association && association !== scope.getAssociation()) {
+    return scope.withAssociation(association, () =>
+      loadMemberView(userId, { ...options, association: undefined })
+    );
+  }
 
   const user = userId ? await getMember(userId) : await getCurrentUser();
   if (!user) {
@@ -221,6 +231,9 @@ async function loadMemberView(userId, options = {}) {
       statusLabel: USER_STATUS_LABEL[user.status] || '',
       joinDateText: formatDate(user.joinDate),
       points: user.points || 0,
+      // 赛季积分各协会不同。「我的」页不套协会，故那里显式关掉这个标签
+      // （见 loadProfileSummary）；详情页与他人主页按协会取数，照常显示。
+      showPoints: true,
     },
     // 项目切换标签。只有出过场的项目才会出现——展示一个从没打过的项目的
     // 初始分没有意义，反而会让人以为自己在那个项目上很差。
@@ -295,6 +308,97 @@ async function loadMemberView(userId, options = {}) {
   };
 }
 
+/**
+ * 装载「我的」页的视图模型。
+ *
+ * 【与 loadMemberView 的分工】「我的」页不套任何协会，因此：
+ *   · 头卡只给全局信息（角色只到「会员 / 管理员」，赛季积分标签关掉）；
+ *   · 赛事荣誉**跨全部协会聚合**——汇总数字各协会相加，下面按协会分组列出名次，
+ *     没参加过赛事的协会不出现。
+ * 等级分、走势、逐场战绩这些「随协会变化」的内容都搬去了个人详情页，
+ * 因此这里一概不算（见需求整理 §11.4）。
+ *
+ * @returns {Promise<Object>} 未登录时返回 { found: false }
+ */
+async function loadProfileSummary() {
+  const user = await getCurrentUser();
+  if (!user) return { found: false };
+
+  const nameDisplay = resolveNameDisplay(user);
+
+  const loaded = await scope.mapActiveAssociations(async (assoc) => ({
+    assoc,
+    record: await getEventRecord(user._id, {}),
+  }));
+
+  let eventCount = 0;
+  let championCount = 0;
+  let topThreeCount = 0;
+  let bestPlacement = 0;
+  const groups = [];
+
+  for (const { assoc, record } of loaded) {
+    if (!record || !Array.isArray(record.records) || record.records.length === 0) continue;
+
+    const records = record.records.map((row) => ({
+      eventId: row.eventId,
+      title: row.title,
+      dateText: formatDate(row.startTime),
+      placement: row.placement,
+      placementText: formatPlacement(row.placement),
+      isTop: row.placement <= 3,
+      participantCount: row.participantCount,
+    }));
+
+    eventCount += record.summary.eventCount;
+    championCount += record.summary.championCount;
+    topThreeCount += record.summary.topThreeCount;
+    const best = record.summary.bestPlacement;
+    if (best > 0 && (bestPlacement === 0 || best < bestPlacement)) bestPlacement = best;
+
+    groups.push({
+      associationId: assoc.id,
+      associationName: assoc.shortName,
+      associationGlyph: assoc.logoGlyph,
+      records,
+    });
+  }
+
+  // 角色徽标只显示全局身份：协会角色（学院负责人 / 协会负责人）按协会各异，
+  // 不属于这一页。全局角色只有会员与管理员两档（STAFF 是协会角色叠加出来的）。
+  const globalRoleLabel =
+    Number(user.role) === ROLE.ADMIN ? ROLE_LABEL[ROLE.ADMIN] : ROLE_LABEL[ROLE.MEMBER];
+
+  return {
+    found: true,
+    user: {
+      userId: user._id,
+      nickName: nameDisplay.nickName,
+      realName: nameDisplay.realName,
+      showRealName: nameDisplay.showRealName,
+      avatarText: (nameDisplay.nickName || '?').slice(0, 1),
+      avatarUrl: user.avatarUrl || '',
+      college: user.college || '',
+      studentId: user.studentId || '',
+      roleLabel: globalRoleLabel,
+      statusLabel: USER_STATUS_LABEL[user.status] || '',
+      joinDateText: formatDate(user.joinDate),
+      points: user.points || 0,
+      showPoints: false,
+    },
+    honors: {
+      summary: {
+        eventCount,
+        championCount,
+        topThreeCount,
+        bestPlacementText: eventCount > 0 ? formatPlacement(bestPlacement) : '',
+      },
+      groups,
+      total: eventCount,
+    },
+  };
+}
+
 module.exports = {
   DEFAULT_HISTORY_LIMIT,
   FORM_LIMIT,
@@ -302,4 +406,5 @@ module.exports = {
   buildChart,
   buildHistoryRow,
   loadMemberView,
+  loadProfileSummary,
 };

@@ -1,67 +1,69 @@
 /**
  * 我的
  * ============================================================
- * 展示当前登录会员的当前分数（单打/双打）与赛事荣誉。
- * 走势、逐场战绩、交锋记录、搭档记录这些细账搬到了个人详情页
- * pages/profile-detail，点头卡头像过去看。
+ * 展示当前登录会员的**全局身份**（头卡）与**跨协会聚合的荣誉**。
  *
- * 界面与交互来自 templates/member-view（profileView），本文件只管两件事：
- * 「看谁的数据」——这里不传 userId，也就是看自己；
- * 以及「看得到哪些入口」——审核权与公告权只在这里算一次。
- * 他人主页 pages/member 用的是同一套模板，只是把 userId 传了进去。
+ * 【为什么这一页不随协会变】
+ * 等级分（男/女单·双打 Elo）、赛季积分这些「各协会不同」的内容都搬进了
+ * 个人详情页（点下方头卡的头像过去看）；这一页只留不随协会变化的东西：
+ * 头卡（只到全局身份「会员 / 管理员」）+ 全部荣誉（各协会相加、按协会分组）。
+ * 因此这里套**中性品牌**、用全局协会切换器（切换只影响中间三个界面，
+ * 本页内容不重取）——见需求整理 §11.2 / §11.4 / §11.7。
  *
  * 【为什么管理入口在这里包一层】
- * templates/member-view 是三个页面共用的。若把审核入口写进模板，
- * 别人的主页上也会冒出一个审核按钮——权限判断于是散到几处。
- * 包一层之后，入口只属于「我的」页。
+ * templates/member-view 是三个页面共用的，审核入口只属于「我的」页；
+ * 包一层之后，别人的主页上不会冒出审核按钮，权限判断也只在这一处。
  * ============================================================
  */
 
-const { createMemberPage } = require('../../templates/member-view.js');
+const { loadProfileSummary } = require('../../services/profile-view.js');
 const { isMock } = require('../../services/index.js');
+const { resetBranding } = require('../../services/branding.js');
 const { canReview } = require('../../services/member-review.js');
 const { canPublish } = require('../../services/announcement.js');
-
-// 先建出公共配置，再把本页独有的字段并进去，
-// 避免为了加一个字段就把 createMemberPage 整个再调一次
-const memberPage = createMemberPage();
+const facade = require('../../services/index.js');
 
 Page({
-  ...memberPage,
   data: {
-    ...memberPage.data,
+    /** 首屏加载中 */
+    loading: true,
+    /** 加载失败时的提示 */
+    error: '',
+    /** 视图模型，形状见 services/profile-view.js 的 loadProfileSummary。
+     *  初值给空对象，WXML 里的 {{...view}} 展开才不会出错 */
+    view: {},
     /** 开发期在页脚标注数据来源，以免把演示数据当成真实成绩 */
     isMock,
-    /** 是否已登录。退出登录按钮据此显隐——没登录时它没有意义 */
+    /** 是否已登录。退出登录按钮与头卡据此显隐 */
     loggedIn: false,
+    /** 当前全局协会 id，供切换徽章显示；切换器只改全局，本页内容不重取 */
+    associationId: '',
     /** 会员审核入口。没有审核权时整张卡不出现，而不是给一个点不动的按钮 */
     reviewEntry: { visible: false, hint: '' },
     /** 公告管理入口。与审核入口同理，没权限就不渲染 */
     adminEntry: { visible: false, hint: '' },
   },
 
-  onLoad(query) {
-    const wait = memberPage.onLoad.call(this, query);
-    // 入口与战绩数据互不依赖，各算各的，不必串成一条链
+  onLoad() {
+    // 「我的」是全局页，套中性品牌（与首页一致）
+    resetBranding();
+    // 入口与荣誉数据互不依赖，各算各的，不必串成一条链
     this.syncEntries();
-    return wait;
+    return this.refresh();
   },
 
   /**
    * 从登录页回来时登录态可能变了，入口要重算、数据要重取。
    *
-   * 【为什么 onShow 里还得取一次数】tabBar 页切回来只走 onShow，不重新 onLoad。
-   * 于是这个页面实例可能是在「未登录」时建出来的，view 一直停在 {found:false}；
-   * 登录成功再切回来，loggedIn 变成 true，模板却拿着那份旧 view 渲染——屏幕上
-   * 就成了「没有找到这位会员」，明明账号好端端地在那儿。退出登录后重新登录、
-   * 或换一个账号登进来，都是这条路径。
-   *
-   * 只在「这次该给谁取数」和「上次取的是谁」不一样时才重取，免得每次切 tab
-   * 都白跑一趟云端。
+   * 【为什么 onShow 里还得比对会话指纹】tabBar 页切回来只走 onShow，不重新 onLoad。
+   * 页面实例可能是在「未登录」时建出来的，view 一直停在 {found:false}；登录成功
+   * 再切回来，loggedIn 变成 true，模板却拿着旧 view 渲染成「没有找到这位会员」。
+   * 改完昵称/头像从编辑页返回也是同一条路径——所以指纹里除了编号还带上昵称与头像。
    *
    * @returns {Promise<void>|undefined}
    */
   onShow() {
+    resetBranding();
     this.syncEntries();
 
     const key = this.sessionKey(this.currentUser());
@@ -69,12 +71,14 @@ Page({
     return undefined;
   },
 
+  /** 下拉刷新：数据都在内存里，重算一遍很快 */
+  onPullDownRefresh() {
+    return this.refresh().then(() => wx.stopPullDownRefresh());
+  },
+
   /**
    * 会话指纹：除了「是谁」，还把昵称与头像算进去。
-   *
-   * 【为什么不能只比编号】改完昵称/头像从编辑页返回时，人还是那个人，编号
-   * 没变。只比编号就不会重取，屏幕上仍挂着旧名字——刚改完却看不到变化，
-   * 用户只会以为没保存上。
+   * 只比编号的话，改完昵称/头像返回时不会重取，屏幕上仍挂着旧名字。
    *
    * @param {Object|null} user
    * @returns {string|null}
@@ -92,21 +96,31 @@ Page({
     return app.globalData ? app.globalData.userInfo : null;
   },
 
+  /** 当前全局协会。真机上由 app 持有，测试环境下回落到门面 */
+  currentAssociation() {
+    const app = getApp();
+    if (app && typeof app.getAssociation === 'function') return app.getAssociation();
+    return facade.getAssociation();
+  },
+
+  /** 切全局协会：优先走 app（它把结果同步进 globalData），否则直接改门面 */
+  setAssociation(id) {
+    const app = getApp();
+    if (app && typeof app.setAssociation === 'function') return app.setAssociation(id);
+    return facade.setAssociation(id);
+  },
+
   /**
    * 装载整页数据。未登录时直接短路。
    *
-   * 【为什么不能让它去问数据源】这一页只有一份数据可看：本地登录态里的
-   * 那个人。而 memberPage 的默认实现会在没传 userId 时调 getCurrentUser()，
-   * 云端那个接口认的是 OpenID（见 context.js），退出登录之后它照样答得出
-   * 是谁——于是刚清掉的账号原地又长回来，页面上还挂着「我」的战绩。
-   * 所以先看本地有没有人，没有就什么都不查。
+   * 【为什么不能让它去问数据源】这一页只有一份数据可看：本地登录态里的那个人。
+   * 云端接口认的是 OpenID（见 context.js），退出登录之后它照样答得出是谁——于是
+   * 刚清掉的账号原地又长回来。所以先看本地有没有人，没有就什么都不查。
    *
-   * 【服务端答「查无此人」是什么意思】本地还留着登录态，getCurrentUser
-   * 却说没这个人，只有两种可能：账号在后台被删了，或者这台设备上的微信号
-   * 与服务端那个账号根本不是同一个（开发者工具与真机的 OpenID 不同，是
-   * 两个微信号）。两种情况下这份缓存都已经对不上号，若照常渲染，页面就
-   * 停在「没有找到这位会员」——一个既进不去也退不出的死角。清掉它退回
-   * 登录引导，才是用户此刻真实的处境。
+   * 【服务端答「查无此人」是什么意思】本地还留着登录态，数据源却说没这个人，只有
+   * 两种可能：账号在后台被删了，或这台设备的微信号与服务端账号不是同一个。两种
+   * 情况下这份缓存都已对不上号，照常渲染就停在「没有找到这位会员」——一个既进不去
+   * 也退不出的死角。清掉它退回登录引导，才是此刻真实的处境。
    *
    * @returns {Promise<void>}
    */
@@ -117,22 +131,33 @@ Page({
       return undefined;
     }
 
-    // 屏幕上已经有这个人的数据时（切项目、加载更多、下拉刷新）就不动加载态，
-    // 整页替成「正在加载…」反而把刚看到的内容抹掉了。其余情况——刚登录换人、
-    // 或者压根还没有数据——必须先挂上加载态：不挂的话，模板会拿着登录前那份
-    // {found:false} 渲染成「没有找到这位会员」，一直挂到云端返回为止。冷启动的
-    // 云函数要等好几秒，看起来就像「必须手动刷新一次才出得来」。
+    // 屏幕上已经有这个人的数据时不挂加载态，否则切 tab 回来会把刚看到的内容
+    // 整页替成「正在加载…」。其余情况（换人、还没数据）先挂上，免得拿旧 view 渲染。
     const key = this.sessionKey(user);
     const hadData = this.loadedForKey === key && this.data.view && this.data.view.found;
     this.loadedForKey = key;
     if (!hadData) this.setData({ loading: true, error: '' });
 
-    await memberPage.refresh.call(this);
+    try {
+      const view = await loadProfileSummary();
+      this.setData({
+        loading: false,
+        error: '',
+        view,
+        associationId: this.currentAssociation(),
+      });
 
-    // 加载报错时 view 还是空的，不能拿它当「查无此人」处理
-    if (!this.data.error && this.data.view && this.data.view.found === false) {
-      this.dropSession();
-      this.showGuest();
+      // 加载报错时 view 还是空的，不能拿它当「查无此人」处理
+      if (!view.found) {
+        this.dropSession();
+        this.showGuest();
+      }
+    } catch (err) {
+      console.error('[profile] 加载失败', err);
+      this.setData({
+        loading: false,
+        error: '数据加载失败，请下拉重试',
+      });
     }
     return undefined;
   },
@@ -144,8 +169,6 @@ Page({
     this.setData({
       loading: false,
       error: '',
-      switching: false,
-      hasMore: false,
       view: { found: false },
     });
   },
@@ -187,16 +210,30 @@ Page({
   },
 
   /**
+   * 切协会徽章的 change 事件。与首页同一套：只改全局当前协会，作用在中间三个
+   * 界面；本页是跨协会聚合的，内容不随它变（§11.2）。
+   */
+  onAssociationChange(event) {
+    const id = event && event.detail ? event.detail.id : '';
+    if (!id || id === this.currentAssociation()) return undefined;
+    try {
+      this.setAssociation(id);
+      this.setData({ associationId: id });
+    } catch (err) {
+      console.error('[profile] 切换协会失败', err);
+    }
+    return undefined;
+  },
+
+  /**
    * 退出登录。
    *
-   * 【为什么退出按钮放在这里】
-   * 登录页那张账号卡片上也有一个，但首页的「登录 / 注册」入口只在未登录时
-   * 才渲染（index.wxml 的 wx:if="{{!auth.loggedIn}}"），所以已登录的人根本
-   * 走不到登录页——那个按钮等于够不着。「我的」是 tabBar 常驻页，把退出放
-   * 在这里才随时找得到。
+   * 【为什么退出按钮放在这里】登录页那张账号卡片上也有一个，但首页的「登录 / 注册」
+   * 入口只在未登录时才渲染，已登录的人根本走不到登录页——那个按钮等于够不着。
+   * 「我的」是 tabBar 常驻页，把退出放在这里才随时找得到。
    *
-   * 退出后回首页：只清本地缓存的话，服务端认 OpenID，getCurrentUser 照样
-   * 答得出是谁，这一页的战绩还会原样挂在那儿，看着像没退掉。
+   * 退出后回首页：只清本地缓存的话，服务端认 OpenID，数据源照样答得出是谁，
+   * 这一页的战绩还会原样挂在那儿，看着像没退掉。
    */
   onLogout() {
     // 顺手把本页也切成未登录的样子：切页动画期间它还留在屏幕上，
@@ -216,15 +253,8 @@ Page({
     wx.navigateTo({ url: '/pages/announcement-manage/announcement-manage' });
   },
 
-  /** 点头卡头像进个人详情页。走势、战绩、交手这些细账都在那边 */
+  /** 点头卡头像进个人详情页。等级分、赛季积分、走势、战绩这些细账都在那边 */
   onGoProfileDetail() {
     wx.navigateTo({ url: '/pages/profile-detail/profile-detail' });
   },
-
-  /**
-   * 收掉工厂里的曲线重绘：本页改渲染 profileView，没有 canvas。
-   * 不覆盖的话，每次 refresh 都会去查一个不存在的节点——虽然查不到会静默跳过，
-   * 但白跑一趟；覆盖成空操作更干净。
-   */
-  drawChart() {},
 });

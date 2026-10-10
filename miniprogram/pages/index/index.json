@@ -1,6 +1,8 @@
 {
-  "usingComponents": {},
-  "navigationBarTitleText": "民大匹克球",
+  "usingComponents": {
+    "association-switch": "/components/association-switch/association-switch"
+  },
+  "navigationBarTitleText": "石榴籽体育管理",
   "enablePullDownRefresh": true,
   "backgroundTextStyle": "dark"
 }

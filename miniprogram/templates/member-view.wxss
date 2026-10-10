@@ -11,6 +11,27 @@
   padding: var(--space-md) 0;
 }
 
+/* 切协会徽章的宿主：推到最右侧，长昵称挤压时也不缩没 */
+.member-hero-switch {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* 内容所属协会的小胶囊（跨协会聚合时每条都得交代来源，见首页与「我的荣誉」） */
+.assoc-chip {
+  display: inline-block;
+  padding: 0 var(--space-xs);
+  border-radius: 8rpx;
+  font-size: var(--font-xs);
+  color: var(--color-text-secondary);
+  background: var(--color-divider);
+}
+
+/* 「我的荣誉」里按协会分组的小标题行 */
+.honor-group-head {
+  padding: var(--space-sm) 0 var(--space-xs);
+}
+
 .member-avatar {
   width: 120rpx;
   height: 120rpx;

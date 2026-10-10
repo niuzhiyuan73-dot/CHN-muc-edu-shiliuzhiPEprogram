@@ -10,7 +10,7 @@
 
 const { STORAGE_KEY, DATA_SOURCE } = require('./utils/constants.js');
 const { CLOUD_ENV_ID } = require('./config.js');
-const { isKnownAssociation, defaultAssociationId } = require('./utils/associations.js');
+const { defaultAssociationId } = require('./utils/associations.js');
 const facade = require('./services/index.js');
 
 App({
@@ -43,8 +43,10 @@ App({
     this.initAssociation();
     this.restoreUserInfo();
     // 故意不 await：启动流程不该被一次网络往返拖住。校正结果落在
-    // globalData 上，下一次页面 onShow 读全局登录态时就会体现出来
-    this.refreshSession();
+    // globalData 上，下一次页面 onShow 读全局登录态时就会体现出来。
+    // 定协会排在后面串起来（不是并发）：当前协会是模块级单例，翻协会读要
+    // 一个一个来，若与 refreshSession 的读并发，会互相读到对方切到的协会
+    this.refreshSession().then(() => this.syncAssociationForUser());
   },
 
   /**
@@ -118,11 +120,12 @@ App({
   },
 
   /**
-   * 复位「当前协会」。
+   * 复位「当前协会」为兜底默认协会。
    *
-   * 【为什么冷启动要读缓存】多协会版本里「我现在在哪个协会」是该跨启动
-   * 保留的会话状态，否则用户每开一次小程序都得重选一遍。缓存里的 id 若不
-   * 是注册表里的已知协会（旧版本没写过、或协会已下架），就退回默认协会。
+   * 【为什么不读缓存】「我在哪个协会」不再跨启动保留——每次进小程序都按
+   * 用户比赛最多的协会重算（见 syncAssociationForUser 与需求整理 §11.1），
+   * 所以冷启动只先把一个确定的兜底协会定下来，好让 refreshSession 在任何
+   * 数据读取之前有一个作用域可依。
    *
    * 【为什么必须在 refreshSession 之前】校正登录态要按当前协会去读会员台账；
    * 协会没定下来，读到的可能是另一份，校正结果就张冠李戴了。
@@ -130,21 +133,48 @@ App({
    * @returns {string} 设定后的协会 id；一个启用协会都没有时为空串
    */
   initAssociation() {
-    let cached = '';
-    try {
-      cached = wx.getStorageSync(STORAGE_KEY.ASSOCIATION);
-    } catch (err) {
-      console.error('[app] 读取本地协会失败', err);
-    }
-
-    const target = isKnownAssociation(cached) ? cached : defaultAssociationId();
+    const target = defaultAssociationId();
     // 一个启用协会都没有：保持未设定，由调用方据空串跳过业务（见 associations.js）
     if (!target) return '';
     return this.setAssociation(target);
   },
 
   /**
-   * 切换当前协会。写门面（决定后续读到哪份数据）与本地缓存，并回写 globalData。
+   * 按登录用户定「当前协会」（需求整理 §11.1）。
+   *
+   * 【默认取比赛最多的协会，不记忆上次选择】每次进小程序都重算：并列最多按
+   * 注册表顺序取第一个；该用户无任何比赛（或未登录）回落 defaultAssociationId。
+   * 因此这里既不读缓存、也不写缓存。
+   *
+   * 【为什么失败要吞掉】这只是「进入时落在哪个协会」，不是业务动作。算不出来
+   * 就沿用 initAssociation 已经设好的兜底协会，绝不因此中断启动或把人踢出去。
+   *
+   * @returns {Promise<string>} 最终生效的协会 id
+   */
+  async syncAssociationForUser() {
+    const user = this.getUserInfo();
+    let target = '';
+    try {
+      // 延迟取用：与 refreshSession 里取 auth 一致，避开 app → 服务 → 门面的加载期环
+      const { mostPlayedAssociation } = require('./services/association-usage.js');
+      target = user ? await mostPlayedAssociation(user._id) : defaultAssociationId();
+    } catch (err) {
+      console.error('[app] 计算默认协会失败，沿用当前协会', err);
+      return this.globalData.association;
+    }
+
+    if (!target || target === this.globalData.association) return this.globalData.association;
+    try {
+      return this.setAssociation(target);
+    } catch (err) {
+      console.error('[app] 切换默认协会失败', err);
+      return this.globalData.association;
+    }
+  },
+
+  /**
+   * 切换当前协会。写门面（决定后续读到哪份数据）并回写 globalData。
+   * 不做持久化——协会每次启动重算，见 syncAssociationForUser。
    *
    * @param {string} id 注册表里的已知协会 id
    * @returns {string} 设定后的 id
@@ -153,11 +183,6 @@ App({
   setAssociation(id) {
     const next = facade.setAssociation(id);
     this.globalData.association = next;
-    try {
-      wx.setStorageSync(STORAGE_KEY.ASSOCIATION, next);
-    } catch (err) {
-      console.error('[app] 写入本地协会失败', err);
-    }
     return next;
   },
 

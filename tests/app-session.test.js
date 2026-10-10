@@ -28,9 +28,10 @@ const { DATA_SOURCE, STORAGE_KEY, ROLE, USER_STATUS } = require('../miniprogram/
 /** 假的 wx.setStorageSync / getStorageSync 后端 */
 let storage = {};
 
-/** wx.cloud.callFunction 的返回值，以及被调用的次数 */
+/** wx.cloud.callFunction 的返回值，以及被调用的次数、按动作名记录的调用序列 */
 let cloudResult = null;
 let cloudCalls = 0;
+let cloudActions = [];
 
 global.wx = {
   getWindowInfo: () => ({
@@ -50,8 +51,9 @@ global.wx = {
   },
   cloud: {
     init: () => {},
-    callFunction: async () => {
+    callFunction: async (options) => {
       cloudCalls += 1;
+      cloudActions.push(options && options.data ? options.data.action : '');
       return { result: cloudResult };
     },
   },
@@ -116,6 +118,7 @@ async function launch({ envId }) {
 beforeEach(() => {
   storage = {};
   cloudCalls = 0;
+  cloudActions = [];
   cloudResult = { ok: true, data: null };
   // 门面是模块级单例，用例之间必须复位，否则上一条的 cloud 会漏给下一条
   facade.setDataSource(DATA_SOURCE.MOCK);
@@ -132,7 +135,13 @@ test('启动时会用服务端的最新状态覆盖本地缓存 —— 后台审
 
   await launch({ envId: 'test-env' });
 
-  assert.strictEqual(cloudCalls, 1, '云端模式下启动应当回查一次');
+  // 启动还会为「比赛最多的协会」各协会读一份项目快照，故总调用数不止一次；
+  // 这里只守「账号回查恰好一次」，别把新的读也算进来
+  assert.strictEqual(
+    cloudActions.filter((action) => action === 'getCurrentUser').length,
+    1,
+    '云端模式下启动应当回查账号一次'
+  );
   assert.strictEqual(appConfig.globalData.userInfo.status, USER_STATUS.ACTIVE);
   assert.strictEqual(appConfig.globalData.userInfo.role, ROLE.ADMIN);
 
@@ -165,7 +174,7 @@ test('云端故障时保留本地登录态，不因为一次抖动把人踢下�
 
   await launch({ envId: 'test-env' });
 
-  assert.strictEqual(cloudCalls, 1);
+  assert.ok(cloudCalls >= 1, '故障也得至少试过一次');
   assert.strictEqual(appConfig.globalData.userInfo, cached, '拉取失败应当沿用缓存');
   assert.strictEqual(storage[STORAGE_KEY.USER_INFO], cached);
 });
@@ -258,45 +267,50 @@ test('基础库没有 wx.cloud 时退回 mock，不抛错', async () => {
 /* ============================================================
  * 当前协会的复位与切换
  * ============================================================
- * 多协会版本里「我在哪个协会」要跨启动保留。冷启动读本地缓存复位会话作用域，
- * 未知的 id（旧版本没写过、协会已下架）退回默认协会，切换时同时写门面与缓存。
+ * 需求整理 §11.1：每次进小程序，中间三个界面默认取「该用户比赛最多的协会」，
+ * **不记忆**上次选择。所以协会既不读缓存、也不写缓存——冷启动先落到兜底默认，
+ * 等登录态校正完再按本人比赛分布重算一次（见 app.syncAssociationForUser）。
  */
 
-test('冷启动把协会复位到默认，并落盘', async () => {
+test('未登录时冷启动把协会复位到兜底默认，且不落盘', async () => {
   await launch({ envId: '' });
 
   assert.strictEqual(facade.getAssociation(), defaultAssociationId());
   assert.strictEqual(appConfig.globalData.association, defaultAssociationId());
-  // 没设定过就落一次盘，下次冷启动才有东西可读
-  assert.strictEqual(storage[STORAGE_KEY.ASSOCIATION], defaultAssociationId());
+  // 不记忆上次选择：协会不再持久化，本地不该多出 association 这个键
+  assert.ok(!('association' in storage), '协会不该落盘');
 });
 
-test('冷启动读取已保存的协会', async () => {
-  storage[STORAGE_KEY.ASSOCIATION] = 'tt';
+test('已登录时按「比赛最多的协会」定默认，不认缓存里的旧协会', async () => {
+  // 同一个人的登录快照；缓存里还留着别的协会——按 §11.1 应被忽略
+  storage[STORAGE_KEY.USER_INFO] = {
+    ...approvedMember(),
+    _id: DEFAULT_CURRENT_USER_ID,
+    role: ROLE.MEMBER,
+    status: USER_STATUS.ACTIVE,
+  };
+  storage.association = 'bd';
+
+  const { mostPlayedAssociation } = require('../miniprogram/services/association-usage.js');
+  const expected = await mostPlayedAssociation(DEFAULT_CURRENT_USER_ID);
 
   await launch({ envId: '' });
 
-  assert.strictEqual(facade.getAssociation(), 'tt');
-  assert.strictEqual(appConfig.globalData.association, 'tt');
+  assert.strictEqual(facade.getAssociation(), expected, '默认取比赛最多的协会');
+  assert.strictEqual(appConfig.globalData.association, expected);
+  // 缓存里那条旧协会原封不动：既没读它，也没写回去
+  assert.strictEqual(storage.association, 'bd');
 });
 
-test('缓存里的协会非法时回落到默认，并把默认写回缓存', async () => {
-  storage[STORAGE_KEY.ASSOCIATION] = 'ghost';
-
-  await launch({ envId: '' });
-
-  assert.strictEqual(facade.getAssociation(), defaultAssociationId());
-  assert.strictEqual(storage[STORAGE_KEY.ASSOCIATION], defaultAssociationId());
-});
-
-test('setAssociation 切换会话、写缓存，未知协会抛错', async () => {
+test('setAssociation 切换会话、不写缓存，未知协会抛错', async () => {
   await launch({ envId: '' });
 
   const next = appConfig.setAssociation('bd');
   assert.strictEqual(next, 'bd');
   assert.strictEqual(facade.getAssociation(), 'bd');
   assert.strictEqual(appConfig.globalData.association, 'bd');
-  assert.strictEqual(storage[STORAGE_KEY.ASSOCIATION], 'bd');
+  // 不持久化：切换只在本次会话生效
+  assert.ok(!('association' in storage), '协会不该落盘');
 
   assert.throws(() => appConfig.setAssociation('nope'), /未知的协会 id/);
   // 抛错后仍停在原协会，不落到半个态

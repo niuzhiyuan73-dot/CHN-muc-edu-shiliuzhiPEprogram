@@ -29,14 +29,14 @@
   ],
   "window": {
     "backgroundTextStyle": "dark",
-    "navigationBarBackgroundColor": "#1E7A55",
-    "navigationBarTitleText": "民大匹克球",
+    "navigationBarBackgroundColor": "#B23A2E",
+    "navigationBarTitleText": "石榴籽体育管理",
     "navigationBarTextStyle": "white",
     "backgroundColor": "#F5F6F8"
   },
   "tabBar": {
     "color": "#8A8F99",
-    "selectedColor": "#1E7A55",
+    "selectedColor": "#B23A2E",
     "backgroundColor": "#FFFFFF",
     "borderStyle": "black",
     "list": [

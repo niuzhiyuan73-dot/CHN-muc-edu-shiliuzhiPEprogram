@@ -12,7 +12,7 @@
 <view class="page-container">
   <template
     is="profileDetailView"
-    data="{{...view, loading: loading, error: error, hasMore: hasMore, switching: switching}}"
+    data="{{...view, loading: loading, error: error, hasMore: hasMore, switching: switching, showSwitch: showSwitch, switchValue: switchValue}}"
   />
 
   <view wx:if="{{isMock}}" class="mock-note">

@@ -12,9 +12,19 @@
   overflow: hidden;
 }
 
+/* 标题与切协会徽章同一行：标题左、徽章右。标题长时换行，徽章不挤扁 */
+.hero-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
 .hero-title {
   font-size: var(--font-lg);
   font-weight: 600;
+  flex: 1;
+  min-width: 0;
   margin-bottom: var(--space-xs);
 }
 
@@ -136,10 +146,27 @@
   margin-top: var(--space-xs);
 }
 
+/* 公告脚注：所属协会在左、日期在右 */
+.notice-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--space-xs);
+}
+
 .notice-date {
   font-size: var(--font-xs);
   color: var(--color-text-tertiary);
-  margin-top: var(--space-xs);
+}
+
+/* 内容所属协会的小胶囊。跨协会聚合时，每条都得交代自己是谁家的 */
+.assoc-chip {
+  display: inline-block;
+  padding: 0 var(--space-xs);
+  border-radius: 8rpx;
+  font-size: var(--font-xs);
+  color: var(--color-text-secondary);
+  background: var(--color-divider);
 }
 
 .notice-more {
