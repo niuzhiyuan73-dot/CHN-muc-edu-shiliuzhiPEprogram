@@ -91,8 +91,14 @@ function getPoolRating(user, pool) {
   // （老数据、后来新增的池），统一补 1450 会让她凭空高出 150 分，榜上排位失真。
   const blank = createEmptyPoolRating(initialRatingFor(user && user.gender));
   if (!bucket) return blank;
-  // 补齐可能缺失的字段，防止老数据缺字段导致后续计算得到 NaN
-  return { ...blank, ...bucket };
+  // 补齐可能缺失的字段，防止老数据缺字段导致后续计算得到 NaN。
+  // 只让 bucket 里「有值」的字段覆盖默认值：直接 spread 会让 bucket 中
+  // 存在但为 null/undefined 的键（如 elo:null）盖掉默认分，把等级分算到 0 附近。
+  const merged = { ...blank };
+  for (const key of Object.keys(bucket)) {
+    if (bucket[key] !== undefined && bucket[key] !== null) merged[key] = bucket[key];
+  }
+  return merged;
 }
 
 /**

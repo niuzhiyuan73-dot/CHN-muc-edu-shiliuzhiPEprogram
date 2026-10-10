@@ -142,7 +142,9 @@ function validateLineup(payload = {}, ctx = {}) {
   const memberMap = members instanceof Map
     ? members
     : new Map((Array.isArray(members) ? members : []).map((member) => [member._id, member]));
-  const canCheckGender = Boolean(members);
+  // 「给了档案」才做性别校验。空集合等于没给（数据未装载），若按 true 处理，
+  // 每个人都会查到空性别，导致所有队伍被误报「性别不符」。
+  const canCheckGender = members instanceof Map ? members.size > 0 : Array.isArray(members) && members.length > 0;
   const legs = Array.isArray(tie.legs) ? tie.legs : [];
   if (legs.length === 0) return failed('这场大场还没有小项，无法排阵');
 

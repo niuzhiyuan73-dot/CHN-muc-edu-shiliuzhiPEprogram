@@ -89,7 +89,24 @@ Page({
     this.pending = 0;
     /** 本地计球编号的自增序，仅用于拼出唯一的 rallyId */
     this.rallySeq = 0;
+    /** 页面是否已销毁。销毁后队列里的回调不再 setData / navigateBack */
+    this.destroyed = false;
     return this.init();
+  },
+
+  /**
+   * 退出页面时立起「已销毁」标：写请求排成串行队列，用户可能在某次请求
+   * 尚未返回时就离开。若不管，迟到的 sendFinish 会再 navigateBack 一次
+   * （多弹一页），或对已销毁的页面 setData。
+   */
+  onUnload() {
+    this.destroyed = true;
+  },
+
+  /** 销毁后不再写界面 */
+  safeSetData(patch) {
+    if (this.destroyed) return;
+    this.setData(patch);
   },
 
   /** 读取全局登录态。app 可能还没初始化好，逐层兜底 */
@@ -264,9 +281,10 @@ Page({
       res = { ok: false, message: '判球失败，请重试' };
     }
     this.pending -= 1;
+    if (this.destroyed) return;
 
     if (!res.ok) {
-      this.setData({ notice: res.message || '判球失败' });
+      this.safeSetData({ notice: res.message || '判球失败' });
       if (this.pending === 0) await this.resync();
       return;
     }
@@ -307,9 +325,10 @@ Page({
       res = { ok: false, message: '撤销失败，请重试' };
     }
     this.pending -= 1;
+    if (this.destroyed) return;
 
     if (!res.ok) {
-      this.setData({ notice: res.message || '撤销失败' });
+      this.safeSetData({ notice: res.message || '撤销失败' });
       if (this.pending === 0) await this.resync();
       return;
     }
@@ -351,6 +370,8 @@ Page({
       console.error('[live-score] 定稿失败', err);
       res = { ok: false, message: '定稿失败，请重试' };
     }
+    // 用户可能已经手动离开：此时既不该再 setData，也不该再退一次页
+    if (this.destroyed) return;
     this.setData({ finishing: false });
 
     if (!res.ok) {

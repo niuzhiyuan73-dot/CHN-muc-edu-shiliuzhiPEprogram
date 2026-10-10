@@ -24,6 +24,7 @@ const {
   validateMatchScore,
 } = require('../utils/match-format.js');
 const { normalizeScores } = require('./match-record.js');
+const { toDate } = require('../utils/format.js');
 
 /** 项目选项。顺序固定：单打在先，与全站默认口径一致 */
 const MATCH_TYPE_OPTIONS = [
@@ -40,6 +41,11 @@ const BEST_OF_LABELS = BEST_OF_OPTIONS.map((value) => BEST_OF_LABEL[value]);
 /** 每队几人。单打 1 人，双打 2 人 */
 function teamSizeOf(matchType) {
   return matchType === MATCH_TYPE.DOUBLES ? 2 : 1;
+}
+
+/** 补两位，用于 09:05 与 2026-05-09 这样的格式 */
+function pad2(value) {
+  return String(value).padStart(2, '0');
 }
 
 /**
@@ -77,8 +83,12 @@ function createForm(user) {
 function scheduledForm(record) {
   const bestOf = Number(record && record.bestOf) || DEFAULT_FORMAT.bestOf;
   const gamePoints = Number(record && record.gamePoints) || DEFAULT_FORMAT.gamePoints;
-  // '2026-05-20T09:00:00' → 日期与时分，交给 picker 的展示格式
-  const [date, clock] = String((record && record.matchTime) || '').split('T');
+  // matchTime 可能是 Date（mock 抽签直接塞 event.startTime），也可能是
+  // ISO 字符串（云库往返后）。统一先转 Date 再格式化——不能对 Date 直接
+  // String().split('T')，那会得到一串「Wed May 20 2026 ...」的乱码。
+  const when = toDate(record && record.matchTime);
+  const date = when ? `${when.getFullYear()}-${pad2(when.getMonth() + 1)}-${pad2(when.getDate())}` : '';
+  const clock = when ? `${pad2(when.getHours())}:${pad2(when.getMinutes())}` : '';
 
   return {
     matchType: (record && record.matchType) || MATCH_TYPE.SINGLES,

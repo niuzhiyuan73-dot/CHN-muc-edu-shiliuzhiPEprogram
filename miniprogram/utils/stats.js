@@ -356,11 +356,15 @@ function summarizeEvents(records) {
     return { eventCount: 0, championCount: 0, topThreeCount: 0, bestPlacement: null };
   }
 
+  // 名次可能缺失（赛事已录成绩但尚未排名次），Math.min(undefined,...) 会得到
+  // NaN 并渲染成「NaN」。只统计有效名次，一个都没有时退回 null（而非 Infinity）。
+  const placements = list.map((r) => r.placement).filter((p) => Number.isFinite(p));
+
   return {
     eventCount: list.length,
     championCount: list.filter((r) => r.placement === 1).length,
     topThreeCount: list.filter((r) => r.placement <= 3).length,
-    bestPlacement: Math.min(...list.map((r) => r.placement)),
+    bestPlacement: placements.length === 0 ? null : Math.min(...placements),
   };
 }
 

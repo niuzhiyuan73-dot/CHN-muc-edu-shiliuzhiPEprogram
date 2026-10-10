@@ -107,6 +107,21 @@ async function poll(target) {
 
   target.last = toMap(list);
   target.onUpdate(list);
+
+  // 已经打完的场次不必再轮询。页面侧的 liveIds 本就排除 finished 的场次，
+  // 但那是订阅那一刻算的；一场比赛是在轮询途中打完的，这里同步把名单缩一缩，
+  // 免得对着一场已经结束的比赛空转。全部打完就直接停表。
+  const finished = new Set(
+    list.filter((view) => view && view.finished && view.matchId).map((view) => view.matchId)
+  );
+  if (finished.size > 0) {
+    const remaining = target.ids.filter((id) => !finished.has(id));
+    if (remaining.length !== target.ids.length) {
+      target.ids = remaining;
+      if (target.last) for (const id of finished) target.last.delete(id);
+      if (remaining.length === 0) clearTimer(target);
+    }
+  }
   return undefined;
 }
 

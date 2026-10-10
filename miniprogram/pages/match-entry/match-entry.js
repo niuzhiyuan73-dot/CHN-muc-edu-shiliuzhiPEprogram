@@ -46,7 +46,7 @@ const {
   pickerEmptyText,
 } = require('../../services/match-entry-view.js');
 const { GAME_POINTS_OPTIONS, BEST_OF_OPTIONS } = require('../../utils/match-format.js');
-const { hasReferee } = require('../../services/match-record.js');
+const { hasReferee, canRecordScore } = require('../../services/match-record.js');
 const { ROLE } = require('../../utils/constants.js');
 
 /** 把 Date 变成 picker 要的 2026-05-01 */
@@ -152,13 +152,48 @@ Page({
     return app.globalData ? app.globalData.userInfo : null;
   },
 
+  /**
+   * 回到本页时（例如从实时计分台返回）刷新签表补录的比分。
+   * 计分台定稿会把比分写回原记录；不刷新，表单还停在计分前的空比分，
+   * 再点提交就会把刚打完的实时结果覆盖掉。日常录入没有记录可刷，跳过。
+   * @returns {Promise<void>|undefined}
+   */
+  onShow() {
+    if (!this.matchId || !this._loaded) return undefined;
+    return this.refreshScheduled();
+  },
+
+  async refreshScheduled() {
+    try {
+      const records = await getMatchRecords({ id: this.matchId });
+      const record = records && records[0];
+      if (!record) return;
+      const user = this.currentUser();
+      const referee = this.describeReferee(record, user);
+      this.setData({
+        referee,
+        blockReason: this.describeBlock(this.data.auth) || this.describeRecordBlock(record, user),
+      });
+      this.applyForm(scheduledForm(record));
+    } catch (err) {
+      console.error('[match-entry] 刷新签表比赛失败', err);
+    }
+  },
+
   async init() {
     const user = this.currentUser();
     const auth = resolveAuthState(user);
 
     try {
       const [members, summary] = await Promise.all([getMembers(), getHomeSummary()]);
-      const seasonStart = toDateText(new Date(summary.seasonRange.from));
+      // 赛季首日仅用于给日期选择器定下界；首场还没打时它是 null，
+      // new Date(null) 会得到 1970，务必退回空串（空串即不设下界）。
+      const seasonStart =
+        summary.seasonRange && summary.seasonRange.from
+          ? toDateText(new Date(summary.seasonRange.from))
+          : '';
+      // 记录原始会员档案（含学院），供补录时的录分权判定查学院
+      this.rawMembers = members;
 
       // 编号 → 昵称的查表放在实例上，applyForm 每渲染一行都要用。
       // 不放 data 是因为它只参与计算，从不直接渲染。
@@ -177,6 +212,7 @@ Page({
       // 对阵与赛制取自那条记录，页面不给改（见 match-entry-view.scheduledForm）。
       let form;
       let referee = { hasReferee: false, name: '', restricted: false };
+      let recordBlock = '';
       if (this.matchId) {
         const records = await getMatchRecords({ id: this.matchId });
         const record = records && records[0];
@@ -186,6 +222,8 @@ Page({
         }
         form = scheduledForm(record);
         referee = this.describeReferee(record, user);
+        // 提前按写入端同一口径判一次录分权：非参赛者别填完整张单子才被拒
+        recordBlock = this.describeRecordBlock(record, user);
       } else {
         // 默认填今天与此刻：绝大多数比赛是刚打完就来录的
         const now = new Date();
@@ -209,10 +247,11 @@ Page({
           })),
           seasonStart,
           referee,
-          blockReason: this.describeBlock(auth) || this.refereeBlock(referee),
+          blockReason: this.describeBlock(auth) || recordBlock || this.refereeBlock(referee),
         },
         () => this.applyForm(form)
       );
+      this._loaded = true;
     } catch (err) {
       console.error('[match-entry] 初始化失败', err);
       this.setData({ loading: false, error: '页面加载失败，请返回重试' });
@@ -258,6 +297,27 @@ Page({
   refereeBlock(referee) {
     if (!referee || !referee.restricted) return '';
     return `本场由 ${referee.name} 裁判执法，仅裁判与管理员可录入比分`;
+  },
+
+  /**
+   * 给签表里排定的比赛补录时，提前判一次「这场轮不轮得到你录」。
+   * 判定与写入端一字不差（match-record.canRecordScore）：参赛者 / 指定裁判 /
+   * 管理员 / 本院干事才放行。不判的话，非参赛者会被给到整张表单，填完比分
+   * 才在服务端被拒——与「别让人填完才被拒」的设计相反。
+   */
+  describeRecordBlock(record, user) {
+    if (!user) return '';
+    const collegeByMember = new Map((this.rawMembers || []).map((item) => [item._id, item.college || '']));
+    const allowed = canRecordScore(record, user._id, {
+      role: Number(user.role) || 0,
+      college: user.college || '',
+      collegeOf: (id) => collegeByMember.get(id) || '',
+    });
+    if (allowed) return '';
+    if (hasReferee(record)) {
+      return `本场由 ${this.nameOf(record.referee) || record.referee} 裁判执法，仅裁判与管理员可录入比分`;
+    }
+    return '这场不是你参加的比赛，无权录入成绩';
   },
 
   /** 编号 → 昵称 */

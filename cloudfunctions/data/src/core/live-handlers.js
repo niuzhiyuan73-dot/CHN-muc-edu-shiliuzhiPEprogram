@@ -226,42 +226,51 @@ async function finishLiveScore(payload = {}, ctx) {
   if (target.error) return ok({ ok: false, live: null, match: null, message: target.error });
 
   const id = liveKey(matchId);
-  const current = await ctx.repo.liveScores.getById(id);
-  if (!current) {
-    return ok({ ok: false, live: null, match: null, message: '这场比赛还没开实时计分台' });
-  }
-  // 已经定稿过就别再交一次：正式比分早已写进比赛记录，重交只会白 bump 一次赛季
-  if (isFinalized(current)) {
-    return ok({ ok: false, live: current, match: null, message: '比赛已经定稿了' });
-  }
-  // 只有分出胜负才能定稿：半局比分（比如 5:2）不是一场合法比赛
-  if (current.status !== LIVE_STATUS.FINISHED) {
-    return ok({ ok: false, live: current, match: null, message: '比赛还没打完，不能定稿' });
-  }
 
-  const { scoreA, scoreB } = toOfficialScores(current);
-  if (scoreA.length === 0) {
-    return ok({ ok: false, live: current, match: null, message: '还没有可提交的比分' });
-  }
+  // 先在事务内复查并盖 finalizedAt 章：两个并发的定稿只可能有一个通过，
+  // 另一个看到章已在直接退出，避免重复走 submitMatch（白 bump 一次赛季）。
+  // 旧写法在事务外读、又在事务外写，两次并发会双双通过守卫、各交一次。
+  const claim = await ctx.repo.transaction(async (tx) => {
+    const current = await tx.liveScores.getById(id);
+    if (!current) return { error: '这场比赛还没开实时计分台', live: null };
+    // 已经定稿过就别再交一次：正式比分早已写进比赛记录，重交只会白 bump 一次赛季
+    if (isFinalized(current)) return { error: '比赛已经定稿了', live: current };
+    // 只有分出胜负才能定稿：半局比分（比如 5:2）不是一场合法比赛
+    if (current.status !== LIVE_STATUS.FINISHED) {
+      return { error: '比赛还没打完，不能定稿', live: current };
+    }
+
+    const { scoreA, scoreB } = toOfficialScores(current);
+    if (scoreA.length === 0) return { error: '还没有可提交的比分', live: current };
+
+    // 实时态留在台账里（status=finished），查看端据此显示终局；盖 finalizedAt
+    // 章：此后 undoRally 一律拒绝，实时态转只读。
+    const claimed = { ...current, finalizedAt: ctx.now, updatedBy: ctx.actorId, updatedAt: ctx.now };
+    await tx.liveScores.update(id, claimed);
+    return { live: claimed, scoreA, scoreB };
+  });
+
+  if (claim.error) return ok({ ok: false, live: claim.live, match: null, message: claim.error });
 
   // 复用现有链路：它负责校验、写回比分、把状态留在待确认并 bumpSeason
-  const submitted = await submitMatch({ id: matchId, scoreA, scoreB }, ctx);
+  const submitted = await submitMatch({ id: matchId, scoreA: claim.scoreA, scoreB: claim.scoreB }, ctx);
   const body = submitted && submitted.data;
   if (!body || !body.ok) {
+    // 定稿没成功：撤掉刚才盖的章，让实时态回到可写、可重试的状态
+    await ctx.repo.liveScores.update(id, {
+      finalizedAt: null,
+      updatedBy: ctx.actorId,
+      updatedAt: ctx.now,
+    });
     return ok({
       ok: false,
-      live: current,
+      live: claim.live,
       match: null,
       message: (body && body.firstError) || '提交失败',
     });
   }
 
-  // 实时态留在台账里（status=finished），查看端据此显示终局；
-  // 正式比分已经写进 matches，回放与积分都由那条走。
-  // 盖 finalizedAt 章：此后 undoRally 一律拒绝，实时态转只读。
-  const done = { ...current, finalizedAt: ctx.now, updatedBy: ctx.actorId, updatedAt: ctx.now };
-  await ctx.repo.liveScores.update(id, done);
-  return ok({ ok: true, live: done, match: body.match, message: '' });
+  return ok({ ok: true, live: claim.live, match: body.match, message: '' });
 }
 
 /**

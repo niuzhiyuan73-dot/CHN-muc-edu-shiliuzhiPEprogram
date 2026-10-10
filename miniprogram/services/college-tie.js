@@ -611,6 +611,19 @@ function summarizeTie({ tie = null, event = null } = {}) {
     const need = Math.floor(legs.length / 2) + 1;
     if (winsA >= need) return decided(TEAM.A, `${winsA}:${winsB}，先到 ${need} 场胜`);
     if (winsB >= need) return decided(TEAM.B, `${winsA}:${winsB}，先到 ${need} 场胜`);
+    // 小项数为偶数时 need 是「过半」，平分（n/2 : n/2）时两边都到不了，
+    // 且全部打完也永远等不到。此时不能再返回 complete:false（会卡在「进行中」
+    // 让整条赛程推不动），而要如实判为未决，交管理员处理。
+    if (legs.length % 2 === 0 && undecided.length === 0) {
+      return {
+        ...base,
+        complete: true,
+        winnerSide: null,
+        winner: null,
+        tied: true,
+        reason: `${winsA}:${winsB}，小项平分、先到 ${need} 场胜无法判定，请管理员处理`,
+      };
+    }
     return {
       ...base,
       complete: false,

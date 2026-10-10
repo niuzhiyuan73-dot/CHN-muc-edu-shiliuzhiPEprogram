@@ -229,8 +229,10 @@ function findCappedMatchIds(matches, { seasonStart = null, limit = RATED_PAIR_LI
   const used = new Map();
 
   for (const match of countedMatches(matches, seasonStart)) {
-    const pairs = crossPairs(match);
-    const exceeded = pairs.some((key) => (used.get(key) || 0) >= limit);
+    // 与 tallyPairUsage 同一口径：同一场内同一对只占一个名额。脏数据里
+    // 同一人出现在两队会让 crossPairs 产出重复键，不去重会多扣名额。
+    const pairs = new Set(crossPairs(match));
+    const exceeded = [...pairs].some((key) => (used.get(key) || 0) >= limit);
     if (exceeded) {
       capped.add(String(match._id));
       continue;

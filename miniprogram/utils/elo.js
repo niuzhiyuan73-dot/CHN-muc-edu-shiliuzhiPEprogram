@@ -169,7 +169,9 @@ function expectedScore(rating, opponentRating, divisor = 400) {
  */
 function resolveEventKFactor(level, config = DEFAULT_CONFIG) {
   const table = config.eventK || {};
-  const k = table[level];
+  // 等级可能是数字，也可能是数字字符串（表单 / JSON 往返常见）。两种都认；
+  // 认不出才退回常规 K，否则一级赛会被静默按常规 K（16）计。
+  const k = table[level] !== undefined ? table[level] : table[Number(level)];
   return Number.isFinite(k) ? k : config.kStandard;
 }
 
@@ -295,8 +297,10 @@ function calculateMatchRatings({ teamA, teamB, winner, config: userConfig, event
   // 零和修正：保证赢家的加分等于输家的减分，俱乐部总分不增不减。
   // 双方 K 相同时 deltaB 本应就是 -deltaA，这里显式取反是为了绕开
   // Math.round 在 .5 上的不对称（round(0.5)=1，round(-0.5)=-0）。
+  // 两队人数通常相同，此时即 -deltaA；人数不等（历史脏数据 / 异常导入）时
+  // 按人数比缩放，否则「A 队合计涨 deltaA、B 队合计跌 2×deltaA」，总分不守恒。
   if (config.zeroSum) {
-    deltaB = normalizeZero(-deltaA);
+    deltaB = normalizeZero(Math.round((-deltaA * teamA.length) / teamB.length));
   }
 
   /**

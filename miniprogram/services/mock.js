@@ -228,6 +228,30 @@ function ensureCollegeDemo() {
 }
 
 /**
+ * 会员名单里不该出现的隐私字段：openId 是账号的唯一识别凭证，phone 是
+ * 联系方式。榜单、选手选择器、会员主页都用不到它们。
+ *
+ * 【为什么 mock 也要摘】
+ * 云端读接口只下发摘掉这两个字段的那一份（见 cloudfunctions/data 的
+ * read-handlers.publicMember）。mock 是演示与测试的默认数据源，若它照发
+ * 手机号与 openId，照着 mock 写页面的人会以为名单里就有这些字段，一上云
+ * 就取不到；更糟的是真把手机号渲染出来。两边同口径，才谈得上「换数据源
+ * 页面一行不用改」。
+ */
+const PRIVATE_MEMBER_FIELDS = ['openId', 'phone'];
+
+/**
+ * 复制一份会员记录并摘掉隐私字段。
+ * @param {Object} user
+ * @returns {Object}
+ */
+function publicMember(user) {
+  const copy = { ...user };
+  for (const field of PRIVATE_MEMBER_FIELDS) delete copy[field];
+  return copy;
+}
+
+/**
  * 组装一份完整数据：种子 + 本地写入 → 回放 → 台账。
  *
  * 【顺序是这个函数存在的全部理由】
@@ -380,9 +404,15 @@ function buildCache() {
 
   return {
     ...replayed,
-    // replayed.users 已经过回放（分数、场次都是最新），再盖上资料补丁
+    // replayed.users 已经过回放（分数、场次都是最新），再盖上资料补丁。
+    // users 保留完整字段：getCurrentUser 认的就是「自己」，与云端一样要
+    // 拿得到手机号等本人资料。
     users: members,
     members,
+    // getMembers 只下发摘掉隐私字段的那一份，与云端 read-handlers 同口径。
+    // 预先算好、缓存住，才能满足「同一份数据被缓存复用」——现算 filter 会让
+    // 引用每次都变。
+    publicMembers: members.map(publicMember),
     // 申请名单同样要盖：审核页要显示申请人改过的昵称头像
     applications: applications.map(patchAccount),
     ledger,
@@ -477,7 +507,8 @@ async function getCurrentUser() {
  * 因而录入页的选手选择器天然选不到他们。
  */
 async function getMembers() {
-  return load().members;
+  // 与云端同口径：名单不带 openId / phone（见 publicMember）
+  return load().publicMembers;
 }
 
 /**

@@ -146,11 +146,16 @@ async function startEvent(payload = {}, ctx) {
 
   const patch = { status: EVENT_STATUS.ONGOING, actor: ctx.actorId, actedAt: ctx.now };
   const record = await ctx.repo.transaction(async (tx) => {
+    // 事务内复查状态：两个并发的开赛请求只有一个能落地，另一个看到已经开始
+    // 就退出，避免重复 bumpSeason。
+    const fresh = await tx.events.getById(payload.id);
+    if (!fresh || fresh.status !== EVENT_STATUS.SIGNUP) return null;
     await tx.events.update(payload.id, patch);
     await bumpSeason(tx, { anchorTime: null, now: ctx.now });
-    return { ...event, ...patch };
+    return { ...fresh, ...patch };
   });
 
+  if (!record) return ok({ ok: false, record: null, message: '这场赛事已经开始了' });
   return ok({ ok: true, record, message: '' });
 }
 
@@ -377,12 +382,19 @@ async function finishEvent(payload = {}, ctx) {
     finishedAt: ctx.now,
   };
   const record = await ctx.repo.transaction(async (tx) => {
+    // 事务内复查状态：两个并发结束（各带一份名次）只有一个能落地，另一个
+    // 看到已结束就退出，避免后写者的 results 静默覆盖前者的名次。
+    const fresh = await tx.events.getById(payload.id);
+    if (!fresh || fresh.status !== EVENT_STATUS.ONGOING) return null;
     await tx.events.update(payload.id, patch);
     // 名次落定就要重算积分，缓存必须失效
     await bumpSeason(tx, { anchorTime: null, now: ctx.now });
-    return { ...event, ...patch };
+    return { ...fresh, ...patch };
   });
 
+  if (!record) {
+    return ok({ ok: false, record: null, errors: {}, firstError: '只有进行中的赛事可以录入名次' });
+  }
   return ok({ ok: true, record, errors: {}, firstError: '' });
 }
 
