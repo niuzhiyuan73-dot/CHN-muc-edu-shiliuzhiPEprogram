@@ -20,9 +20,9 @@ function member(overrides = {}) {
   return { _id: 'u01', nickName: '小林', role: ROLE.MEMBER, status: USER_STATUS.ACTIVE, ...overrides };
 }
 
-/** 一名干事 */
+/** 一名学院负责人 */
 function staff(overrides = {}) {
-  return { _id: 'u02', nickName: '干事', role: ROLE.STAFF, status: USER_STATUS.ACTIVE, ...overrides };
+  return { _id: 'u02', nickName: '学院负责人', role: ROLE.STAFF, status: USER_STATUS.ACTIVE, ...overrides };
 }
 
 /** 一名管理员 */
@@ -86,14 +86,14 @@ describe('canPublish —— 发布权', () => {
     assert.strictEqual(canPublish(admin()), true);
   });
 
-  test('干事不能发公告：公告没有学院可言，收不出范围就只能收归管理员', () => {
-    // 干事是「学院负责人」，权限以学院为界。公告是发给全俱乐部的，
-    // 若干事可发，法学院的干事就能往全校发通知——这类越界没有任何边界可挡。
+  test('学院负责人不能发公告：公告没有学院可言，收不出范围就只能收归管理员', () => {
+    // 学院负责人是「学院负责人」，权限以学院为界。公告是发给全俱乐部的，
+    // 若学院负责人可发，法学院的负责人就能往全校发通知——这类越界没有任何边界可挡。
     assert.strictEqual(canPublish(staff()), false);
     assert.strictEqual(canPublish(staff({ college: '法学院' }), { targetCollege: '法学院' }), false);
   });
 
-  test('显式传更宽的门槛也不会把干事放进来', () => {
+  test('显式传更宽的门槛也不会把学院负责人放进来', () => {
     // 调用方传进来的 minRole 不该能把业务自己的门槛冲掉
     assert.strictEqual(canPublish(staff(), { minRole: ROLE.STAFF }), false);
   });
@@ -192,7 +192,7 @@ describe('buildAnnouncementRecord —— 组装记录', () => {
     assert.strictEqual(result.record.pinned, true);
     assert.strictEqual(result.record.publishTime, now);
     assert.strictEqual(result.record.publisherId, 'u02');
-    assert.strictEqual(result.record.publisherName, '干事');
+    assert.strictEqual(result.record.publisherName, '学院负责人');
     // 记录里不带 _id / status：那是台账落库时才定的
     assert.strictEqual(result.record._id, undefined);
     assert.strictEqual(result.record.status, undefined);
@@ -247,7 +247,7 @@ describe('buildAnnouncementRow —— 整形列表行', () => {
 
   test('管理员且未下架时才能下架', () => {
     assert.strictEqual(buildAnnouncementRow(published, { actor: admin() }).canArchive, true);
-    // 干事与会员一样看不到下架按钮
+    // 学院负责人与会员一样看不到下架按钮
     assert.strictEqual(buildAnnouncementRow(published, { actor: staff() }).canArchive, false);
     // 没有发布权的普通会员看不到下架按钮
     assert.strictEqual(buildAnnouncementRow(published, { actor: member() }).canArchive, false);

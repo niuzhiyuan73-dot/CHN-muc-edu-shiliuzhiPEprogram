@@ -360,7 +360,7 @@ test('弃权 —— 管理员可记，弃权方丢小项、对手晋级且不计
   assert.strictEqual(again.ok, false);
 });
 
-test('弃权 —— 干事无权记录，且不许替非参赛学院记', async () => {
+test('弃权 —— 学院负责人无权记录，且不许替非参赛学院记', async () => {
   const { ties } = await setupOngoing();
   const { tie } = await beginTie(ties[0]);
 

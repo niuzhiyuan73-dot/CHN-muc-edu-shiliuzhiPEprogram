@@ -78,7 +78,7 @@ function isRecorder(match, userId) {
 /**
  * 这场比赛的参赛者里，有没有人属于某个学院。
  *
- * 干事（学院负责人）代录比赛时用它划范围：只有自己学院有人上场的比赛，
+ * 学院负责人代录比赛时用它划范围：只有自己学院有人上场的比赛，
  * 才轮得到他代录。collegeOf 由调用方注入（比赛记录里只有编号，没有学院，
  * 学院存在会员档案里），本模块因此仍是不碰数据源的纯逻辑。
  *
@@ -114,17 +114,17 @@ function hasReferee(match) {
  *   2. 没指定裁判时（含历史数据）：
  *      a. 参赛者本人可以录；
  *      b. 管理员可以代录任意一场；
- *      c. 干事只能代录**本学院有人上场**的比赛——干事是学院负责人，
- *         权限以学院为界，替别的学院录分会把本院的账记到别人名下。
+ *      c. 学院负责人只能代录**本学院有人上场**的比赛——其权限以学院为界，
+ *         替别的学院录分会把本院的账记到别人名下。
  *
  * 判定需要「编号 → 学院」，而比赛记录里只有编号，所以由调用方传入
- * collegeOf。拿不到学院时，干事的代录一律不放行（宁严勿松）。
+ * collegeOf。拿不到学院时，学院负责人的代录一律不放行（宁严勿松）。
  *
  * @param {Object} match
  * @param {string} actorId
  * @param {Object} [options]
  * @param {number} [options.role=ROLE.MEMBER] 操作者角色
- * @param {string} [options.college] 操作者所属学院（干事用）
+ * @param {string} [options.college] 操作者所属学院（学院负责人用）
  * @param {Function} [options.collegeOf] 编号 → 学院
  * @returns {boolean}
  */

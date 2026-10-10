@@ -384,7 +384,7 @@ function sortCollegeEvents(events) {
  * 【一行的入口为什么按人分】
  * 学院赛的报名不是个人点「报名」，而是学院负责人交名单。所以同一行对
  * 不同的人指向不同页面：管理员进详情页（抽签、开赛、大场都在那里，审核
- * 名单在详情页里有入口），干事在报名中直接进本学院的名单页（少走一步），
+ * 名单在详情页里有入口），学院负责人在报名中直接进本学院的名单页（少走一步），
  * 其余人进详情页看签表与对阵。入口布尔量与文案在这里算好，模板不写
  * 业务判断。
  *
@@ -400,7 +400,7 @@ function buildCollegeEventListRows(events, ctx = {}) {
 
   return sortCollegeEvents(events).map((event) => {
     const row = buildCollegeEventRow(event, { actor });
-    // 干事在报名中直接去名单页；管理员与其余人都进详情页，这里只影响文案
+    // 学院负责人在报名中直接去名单页；管理员与其余人都进详情页，这里只影响文案
     const canSubmit = !canReview && canSubmitCollegeEntry(event, actor);
     return {
       ...row,
@@ -460,7 +460,7 @@ function buildSignupRows(signups, memberMap, ctx = {}) {
       const stats = member
         ? `等级分 ${getPoolRating(member, pool).elo} · 积分 ${Number(member.points) || 0}`
         : '';
-      // 干事只能代签本学院的人；档案查不到时传个空对象，让干事被挡下、
+      // 学院负责人只能代签本学院的人；档案查不到时传个空对象，让学院负责人被挡下、
       // 管理员仍可通过（见 event.canCheckIn 的三种取值）
       const mayCheckInThis = mayCheckIn && canCheckIn(event, actor, { target: member || {} });
       return {
@@ -661,10 +661,10 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
   // 会排到第 2 轮的胜者组之前；小组赛的各组也会和淘汰赛同轮号交错
   const stageFirst = grouped || doubleElim;
 
-  // 录分的权限要和真正写入时一致：参赛者本人、管理员，或干事代录本学院
+  // 录分的权限要和真正写入时一致：参赛者本人、管理员，或学院负责人代录本学院
   // 有人上场的比赛（见 match-record.canRecordScore 与 mock.submitMatch）。
   // 这里不按数据源放宽——否则普通会员会在签表上看到一列不属于自己的
-  // 「录分」入口。collegeOf 从会员档案里取，干事因此只能管到本院。
+  // 「录分」入口。collegeOf 从会员档案里取，学院负责人因此只能管到本院。
   const actorId = actor ? actor._id : null;
   const collegeOf = (id) => (id ? (memberMap.get(id) || {}).college || '' : '');
   const recordOptions = {
@@ -931,7 +931,7 @@ async function loadEventsView(options = {}) {
     eventTotal: allEventRows.length,
     hasMoreEvents: allEventRows.length > eventRows.length,
     canPublish,
-    // 学院赛入口：列表按人给出不同去向（管理员审核 / 干事交名单），
+    // 学院赛入口：列表按人给出不同去向（管理员审核 / 学院负责人交名单），
     // 发布入口与个人赛同权限门槛（仅管理员）
     collegeEvents: collegeRows,
     hasCollegeEvents: collegeRows.length > 0,

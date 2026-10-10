@@ -179,12 +179,12 @@ function buildAnnouncements(baseDate) {
  * 隐藏的 trueSkill 上，等级分仍然要靠回放自己长出来。
  *
  * 【role 为什么不再是清一色的普通会员】
- * 权限判定只看角色（见 permission.canManage），种子里必须真的有干事与
+ * 权限判定只看角色（见 permission.canManage），种子里必须真的有学院负责人与
  * 管理员，否则本地演示里审核、发公告、发布赛事、赛季重置这些入口会
  * 一并消失，链路根本走不通。这里正好对应俱乐部的实际分工：
  *   巴特尔（u01）—— 会长，管得了全部
- *   张宇轩（u02）—— 干事，权限以学院为界：本院代签到、本院名单与排阵
- * 干事不是「小号管理员」：公告、入会审核、发布赛事、赛季重置这些俱乐部
+ *   张宇轩（u02）—— 学院负责人，权限以学院为界：本院代签到、本院名单与排阵
+ * 学院负责人不是「小号管理员」：公告、入会审核、发布赛事、赛季重置这些俱乐部
  * 全局的「定盘子」事务都归管理员（见 permission.js 顶部注释）。本地要演示
  * 它们得切到 u01；切到 u02 只看得见签到与学院赛那几处。
  * 其余人 role 缺省为普通会员，界面不会给他们显示任何管理入口。
@@ -528,7 +528,7 @@ function generateSeed(options = {}) {
     college: item.college,
     avatarUrl: '',
     points: 0,
-    // 缺省即普通会员；干事与管理员在 MEMBER_SEED 里点名
+    // 缺省即普通会员；学院负责人与管理员在 MEMBER_SEED 里点名
     role: item.role || ROLE.MEMBER,
     status: 1,
     joinDate: addDays(baseDate, (item.joinWeek || 0) * 7),

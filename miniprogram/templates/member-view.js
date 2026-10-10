@@ -71,7 +71,7 @@ function createMemberPage(options = {}) {
           project: this.currentProject,
           historyLimit: this.data.historyLimit,
           // 登录态由页面明确传入：他人主页要靠「我是谁」才能判断能不能任免
-          // 干事。与 loadMatchView 同一约定——问数据源「当前用户是谁」在
+          // 学院负责人。与 loadMatchView 同一约定——问数据源「当前用户是谁」在
           // mock 下永远答 u06，会让未登录的访客也拿到任免入口。
           viewer: this.currentUser(),
         });
@@ -170,7 +170,7 @@ function createMemberPage(options = {}) {
       }
       return new Promise((resolve) => {
         wx.showModal({
-          title: '任免干事',
+          title: '任免学院负责人',
           content,
           success: (res) => resolve(Boolean(res.confirm)),
           fail: () => resolve(false),
@@ -179,7 +179,7 @@ function createMemberPage(options = {}) {
     },
 
     /**
-     * 把当前主页的会员设为 / 撤销为干事。
+     * 把当前主页的会员设为 / 撤销为学院负责人。
      *
      * 【为什么目标编号取自 view 而不是页面参数】页面上渲染的那个人就是
      * view.user，地址栏里的 userId 可能已被改写；以渲染出来的为准，所见即所改。
@@ -203,8 +203,8 @@ function createMemberPage(options = {}) {
 
       const confirmed = await this.confirm(
         leader.makeLeader
-          ? `将 ${target.nickName} 设为干事，他可代签、代录本学院的比赛`
-          : `撤销 ${target.nickName} 的干事身份，他将失去本学院的管理权限`
+          ? `将 ${target.nickName} 设为学院负责人，他可代签、代录本学院的比赛`
+          : `撤销 ${target.nickName} 的学院负责人身份，他将失去本学院的管理权限`
       );
       if (!confirmed) return undefined;
 
@@ -213,7 +213,7 @@ function createMemberPage(options = {}) {
         this.showToast(result.message || '操作失败');
         return undefined;
       }
-      this.showToast(leader.makeLeader ? '已设为干事' : '已撤销干事', 'success');
+      this.showToast(leader.makeLeader ? '已设为学院负责人' : '已撤销学院负责人', 'success');
       return this.refresh();
     },
 

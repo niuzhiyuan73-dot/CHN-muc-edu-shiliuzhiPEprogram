@@ -21,7 +21,7 @@ const { ROLE, USER_STATUS } = require('../miniprogram/utils/constants.js');
 /** 看审核页的人。审核权只看角色，所以这里得是管理员 */
 const REVIEWER = { _id: 'u01', nickName: '巴特尔', role: ROLE.ADMIN, status: USER_STATUS.ACTIVE };
 
-/** 干事：管得了本院临场事务，但管不到入会审核 */
+/** 学院负责人：管得了本院临场事务，但管不到入会审核 */
 const STAFF = { _id: 'u02', nickName: '张宇轩', role: ROLE.STAFF, status: USER_STATUS.ACTIVE };
 
 /** 已转正但没有审核权的普通会员，用来验证「一行都不下发」 */
@@ -89,7 +89,7 @@ describe('会员审核视图 —— 内容', () => {
     assert.match(view.blockedText, /权限/);
   });
 
-  test('干事同样一行都拿不到：申请单上是全体申请人的实名信息', async () => {
+  test('学院负责人同样一行都拿不到：申请单上是全体申请人的实名信息', async () => {
     const view = await loadMemberReviewView({ user: STAFF });
 
     assert.strictEqual(view.allowed, false);

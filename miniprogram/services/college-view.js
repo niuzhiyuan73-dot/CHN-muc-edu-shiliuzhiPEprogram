@@ -301,8 +301,8 @@ async function loadCollegeEventDetailView(eventId, options = {}) {
 
   const approvedColleges = approvedCollegesOf(entries);
   const canDraw = canDrawCollegeEvent(event, actor);
-  // 干事在本页也能直接去交名单：赛事列表把干事直接送进名单页，但若从
-  // 别的路径进了详情页，这里仍要给一个入口，否则报名期干事无处可去。
+  // 学院负责人在本页也能直接去交名单：赛事列表把学院负责人直接送进名单页，但若从
+  // 别的路径进了详情页，这里仍要给一个入口，否则报名期学院负责人无处可去。
   const canSubmitEntry = canSubmitCollegeEntry(event, actor);
 
   // 大场行：在共用的 buildTieRow 之上补「我能不能排阵 / 该显示什么按钮」
@@ -536,7 +536,7 @@ async function loadCollegeLineupView(tieId, options = {}) {
   } else if (event && event.status !== COLLEGE_EVENT_STATUS.ONGOING) {
     blockReason = '赛事还没开始，不能排阵';
   } else if (!canSubmitLineup(tie, actor, { college, event })) {
-    blockReason = '只有本学院干事或管理员可以排阵';
+    blockReason = '只有本学院负责人或管理员可以排阵';
   } else if (!entry || entry.status !== COLLEGE_ENTRY_STATUS.APPROVED) {
     blockReason = '本学院的名单尚未通过审核，不能排阵';
   }

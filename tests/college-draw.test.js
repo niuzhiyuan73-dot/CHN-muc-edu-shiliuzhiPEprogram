@@ -36,7 +36,7 @@ const {
 /** 管理员 */
 const ADMIN = { _id: 'u01', nickName: '巴特尔', role: ROLE.ADMIN, status: USER_STATUS.ACTIVE };
 
-/** 体育学院的干事 */
+/** 体育学院的负责人 */
 const STAFF = {
   _id: 'u02',
   nickName: '张宇轩',

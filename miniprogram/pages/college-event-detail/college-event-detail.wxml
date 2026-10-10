@@ -34,7 +34,7 @@
       <view wx:if="{{view.currentRound}}" class="field-hint">当前第 {{view.currentRound}} 轮</view>
     </view>
 
-    <!-- ========== 报名中：干事交名单 ========== -->
+    <!-- ========== 报名中：学院负责人交名单 ========== -->
     <view wx:if="{{view.isSignup && view.canSubmitEntry}}" class="card">
       <view class="card-title">本学院名单</view>
       <view class="card-subtitle">名单锁定在抽签那一刻，抽签前都可以修改重交。</view>

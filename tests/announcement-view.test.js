@@ -26,7 +26,7 @@ const { ROLE, USER_STATUS, ANNOUNCEMENT_CATEGORIES } = require('../miniprogram/u
 /** 有发布权的管理员。不再按数据源放宽，只有管理员才看得到台账 */
 const PUBLISHER = { _id: 'u01', nickName: '巴特尔', role: ROLE.ADMIN, status: USER_STATUS.ACTIVE };
 
-/** 一名干事：能管本院的事，但管不到公告 */
+/** 一名学院负责人：能管本院的事，但管不到公告 */
 const STAFF = { _id: 'u02', nickName: '张宇轩', role: ROLE.STAFF, status: USER_STATUS.ACTIVE };
 
 /** 每条用例都从「只有种子公告」的基线开始 */
@@ -136,7 +136,7 @@ describe('公告管理视图 —— 防泄漏', () => {
  * ============================================================ */
 
 describe('公告管理视图 —— 内容', () => {
-  test('干事看不到台账：公告是发给全俱乐部的，干事收不出范围', async () => {
+  test('学院负责人看不到台账：公告是发给全俱乐部的，学院负责人收不出范围', async () => {
     const view = await loadAnnouncementManageView({ user: STAFF });
 
     assert.strictEqual(view.allowed, false);

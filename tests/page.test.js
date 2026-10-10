@@ -306,7 +306,7 @@ function loginAs(overrides) {
 
 /**
  * 演示数据里的两种管理者。
- * 发布 / 抽签 / 开始 / 结束赛事一律只有管理员能做；干事比会员多的只是
+ * 发布 / 抽签 / 开始 / 结束赛事一律只有管理员能做；学院负责人比会员多的只是
  * 「代签到」与「录入比分」——普通会员（默认 u06）与线上一样被挡住。
  * 管理类动作要按对应身份登录，别再拿普通会员顶替。
  */
@@ -621,7 +621,7 @@ test('我的页 —— 管理员看到审核入口，点进去跳转审核页', 
   assert.deepStrictEqual(calls.navigations, ['/pages/member-review/member-review']);
 });
 
-test('我的页 —— 干事看不到审核入口：入会审核是俱乐部全局事务', async () => {
+test('我的页 —— 学院负责人看不到审核入口：入会审核是俱乐部全局事务', async () => {
   resetSession();
   app.globalData.userInfo = fakeMember(STAFF);
 
@@ -667,7 +667,7 @@ test('我的页 —— 管理员看到公告管理入口，点进去跳转公告
   assert.deepStrictEqual(calls.navigations, ['/pages/announcement-manage/announcement-manage']);
 });
 
-test('我的页 —— 干事看不到公告管理入口：公告是发给全俱乐部的', async () => {
+test('我的页 —— 学院负责人看不到公告管理入口：公告是发给全俱乐部的', async () => {
   resetSession();
   app.globalData.userInfo = fakeMember(STAFF);
 
@@ -1044,21 +1044,21 @@ test('他人主页 —— 头卡是共用的，但点头像不会跳走', async 
   assert.deepStrictEqual(calls.navigations, []);
 });
 
-test('他人主页 —— 管理员看到任免入口，点一下把对方设为干事', async () => {
+test('他人主页 —— 管理员看到任免入口，点一下把对方设为学院负责人', async () => {
   // u01 是种子里的管理员；u06 是普通会员、学院确定
   loginAs({ _id: 'u01', role: 2, college: '体育学院', status: 1 });
   const page = instantiate(memberConfig);
   await page.onLoad({ userId: 'u06' });
 
   assert.strictEqual(page.data.view.leader.visible, true);
-  assert.strictEqual(page.data.view.leader.label, '设为干事');
+  assert.strictEqual(page.data.view.leader.label, '设为学院负责人');
 
   calls.toasts.length = 0;
   await page.onSetCollegeLeader();
 
   const after = await facade.getMember('u06');
   assert.strictEqual(after.role, 1, '点击后应当真的写进数据源');
-  assert.ok(calls.toasts.includes('已设为干事'));
+  assert.ok(calls.toasts.includes('已设为学院负责人'));
 });
 
 test('他人主页 —— 普通会员看不到任免入口，也没有可点的按钮', async () => {
@@ -1069,7 +1069,7 @@ test('他人主页 —— 普通会员看不到任免入口，也没有可点的
   assert.strictEqual(page.data.view.leader.visible, false);
   // 即使误触发也没有副作用
   await page.onSetCollegeLeader();
-  assert.strictEqual((await facade.getMember('u02')).role, 1, 'u02 种子里就是干事，不该被改动');
+  assert.strictEqual((await facade.getMember('u02')).role, 1, 'u02 种子里就是学院负责人，不该被改动');
 });
 
 /* ============================================================
@@ -1414,7 +1414,7 @@ test('赛事页 —— 加载失败时给出提示而不是白屏', async () => 
 
 /**
  * 造一场「报名中」的赛事，返回落库后的记录。
- * 发布门槛是干事，这里直接以管理员身份落库，与会话解耦——
+ * 发布门槛是学院负责人，这里直接以管理员身份落库，与会话解耦——
  * 用例想以谁的身份看赛事，自己在 onLoad 前摆登录态即可。
  */
 async function publishTestEvent(overrides = {}) {
@@ -1498,11 +1498,11 @@ test('赛事页 —— 只有管理员才渲染发布入口', async () => {
   allowed.onOpenPublish();
   assert.deepStrictEqual(calls.navigations, ['/pages/event-edit/event-edit']);
 
-  // 干事只多「代签到」与「录入比分」，操盘赛事的入口不给
+  // 学院负责人只多「代签到」与「录入比分」，操盘赛事的入口不给
   loginAs(STAFF);
   const staff = instantiate(eventsConfig);
   await staff.onLoad();
-  assert.strictEqual(staff.data.view.canPublish, false, '干事不给发布入口');
+  assert.strictEqual(staff.data.view.canPublish, false, '学院负责人不给发布入口');
 
   // 普通会员登录也一样看不到：演示数据源不再放宽
   loginAs();
@@ -3096,7 +3096,7 @@ test('会员审核页 —— 待审核账号自己还没转正，不能去审别
   assert.match(page.data.view.blockedText, /权限/);
 });
 
-test('会员审核页 —— 干事被整页挡住：干事是学院范围角色，管不到入会审核', async () => {
+test('会员审核页 —— 学院负责人被整页挡住：学院负责人是学院范围角色，管不到入会审核', async () => {
   resetSession();
   app.globalData.userInfo = fakeMember(STAFF);
 
@@ -3104,7 +3104,7 @@ test('会员审核页 —— 干事被整页挡住：干事是学院范围角色
   await page.onLoad();
 
   assert.strictEqual(page.data.view.allowed, false);
-  assert.deepStrictEqual(page.data.view.rows, [], '干事不该拿到申请人的实名资料');
+  assert.deepStrictEqual(page.data.view.rows, [], '学院负责人不该拿到申请人的实名资料');
   assert.match(page.data.view.blockedText, /权限/);
 });
 
@@ -3339,7 +3339,7 @@ test('公告管理页 —— 访客被整页挡住，一条公告台账都拿不
   assert.match(page.data.view.blockedText, /登录/);
 });
 
-test('公告管理页 —— 干事被整页挡住：公告是发给全俱乐部的，干事没有这个范围', async () => {
+test('公告管理页 —— 学院负责人被整页挡住：公告是发给全俱乐部的，学院负责人没有这个范围', async () => {
   resetSession();
   app.globalData.userInfo = fakeMember(STAFF);
 
@@ -3347,11 +3347,11 @@ test('公告管理页 —— 干事被整页挡住：公告是发给全俱乐部
   await page.onLoad();
 
   assert.strictEqual(page.data.view.allowed, false);
-  assert.deepStrictEqual(page.data.view.rows, [], '干事不该拿到公告台账，尤其是已下架的');
+  assert.deepStrictEqual(page.data.view.rows, [], '学院负责人不该拿到公告台账，尤其是已下架的');
   assert.match(page.data.view.blockedText, /权限/);
 });
 
-test('发布公告页 —— 干事填不了表，整页只给一句提示', async () => {
+test('发布公告页 —— 学院负责人填不了表，整页只给一句提示', async () => {
   resetSession();
   app.globalData.userInfo = fakeMember(STAFF);
 
@@ -3660,13 +3660,13 @@ test('我的页 —— 改完昵称返回后会重取数据，头卡显示新名
  * 学院赛 —— 发布（M2-2）
  * ============================================================ */
 
-test('发布学院赛 —— 只有管理员能进表单，干事与会员被挡', () => {
+test('发布学院赛 —— 只有管理员能进表单，学院负责人与会员被挡', () => {
   loginAs(ADMIN);
   const allowed = instantiate(collegeEventEditConfig);
   allowed.onLoad();
   assert.strictEqual(allowed.data.blockReason, '', '管理员给表单');
 
-  // 干事管的是本学院临场事务，发布学院赛定的是整场规则，门槛收口到管理员
+  // 学院负责人管的是本学院临场事务，发布学院赛定的是整场规则，门槛收口到管理员
   loginAs(STAFF);
   const staff = instantiate(collegeEventEditConfig);
   staff.onLoad();
@@ -3786,7 +3786,7 @@ test('赛事页 —— 学院赛发布入口同样只给管理员', async () => 
   loginAs(STAFF);
   const staff = instantiate(eventsConfig);
   await staff.onLoad();
-  assert.strictEqual(staff.data.view.canManageCollege, false, '干事不给学院赛入口');
+  assert.strictEqual(staff.data.view.canManageCollege, false, '学院负责人不给学院赛入口');
 
   loginAs();
   const member = instantiate(eventsConfig);
@@ -3802,14 +3802,14 @@ test('赛事页 —— 学院赛发布入口同样只给管理员', async () => 
  * 学院赛用例围着这一所学院转：一男一女各一名，排阵才排得出男单 + 女单
  * （单一性别的学院凑不出阵，性别校验在数据层兜底）。
  *
- * 【为什么干事换成了本校会员】
- * 种子里唯一的干事 u02 张宇轩在信息工程学院，而信息工程学院只有两名男
+ * 【为什么学院负责人换成了本校会员】
+ * 种子里唯一的学院负责人 u02 张宇轩在信息工程学院，而信息工程学院只有两名男
  * 会员，排不出女单。权限判定按编号回查台账（见 mock.accountOf），不能拿
- * u02 去管别的学院；所以改由管理员把本校一名男会员任为干事，再用他的
+ * u02 去管别的学院；所以改由管理员把本校一名男会员任为学院负责人，再用他的
  * 身份走完整条链路——与真人被任命的路径一致。
  */
 const STAFF_COLLEGE = '管理学院';
-/** 管理学院的干事：王浩然（u04），发布赛事时现场任命 */
+/** 管理学院的负责人：王浩然（u04），发布赛事时现场任命 */
 const STAFF_ID = 'u04';
 
 /**
@@ -3817,7 +3817,7 @@ const STAFF_ID = 'u04';
  * 用例想以谁的身份看，自己在 onLoad 前摆登录态即可。
  * 默认人数下限压到 1：演示数据里单个学院凑不满默认的 4 人。
  *
- * 顺带把 STAFF_ID 任为 STAFF_COLLEGE 的干事：resetCache 会清掉角色任免，
+ * 顺带把 STAFF_ID 任为 STAFF_COLLEGE 的负责人：resetCache 会清掉角色任免，
  * 而学院赛的写入口一律按编号回查角色，不在每条用例里重新任命就都过不去。
  */
 async function publishTestCollegeEvent(overrides = {}) {
@@ -3836,7 +3836,7 @@ async function publishTestCollegeEvent(overrides = {}) {
   assert.strictEqual(result.ok, true, `发布学院赛失败：${result.firstError}`);
 
   const appointed = await facade.setCollegeLeader(STAFF_ID, ADMIN._id, true);
-  assert.strictEqual(appointed.ok, true, `任命 ${STAFF_COLLEGE} 干事失败：${appointed.message}`);
+  assert.strictEqual(appointed.ok, true, `任命 ${STAFF_COLLEGE} 学院负责人失败：${appointed.message}`);
 
   return result.record;
 }
@@ -3847,7 +3847,7 @@ async function memberIdsOf(college) {
   return members.filter((member) => member.college === college).map((member) => member._id);
 }
 
-test('名单提交 —— 干事只看得到本学院的候选，外院的人不在其中', async () => {
+test('名单提交 —— 学院负责人只看得到本学院的候选，外院的人不在其中', async () => {
   const event = await publishTestCollegeEvent();
   loginAs({ role: 1, _id: STAFF_ID, college: STAFF_COLLEGE });
 
@@ -3866,7 +3866,7 @@ test('名单提交 —— 干事只看得到本学院的候选，外院的人不
   }
 });
 
-test('名单提交 —— 干事提交本学院名单成功，落库为待审核', async () => {
+test('名单提交 —— 学院负责人提交本学院名单成功，落库为待审核', async () => {
   const event = await publishTestCollegeEvent();
   loginAs({ role: 1, _id: STAFF_ID, college: STAFF_COLLEGE });
 
@@ -3926,7 +3926,7 @@ test('名单提交 —— 名单混入外院队员被数据层拒下，不落库
   assert.strictEqual((await facade.getCollegeEntries(event._id)).length, 0, '校验不过不落库');
 });
 
-test('名单提交 —— 干事替别的学院提交被拒', async () => {
+test('名单提交 —— 学院负责人替别的学院提交被拒', async () => {
   const event = await publishTestCollegeEvent();
   const members = await facade.getMembers();
   const otherCollege = members.find((member) => member.college !== STAFF_COLLEGE).college;
@@ -3988,12 +3988,12 @@ test('赛事页 —— 学院赛一行按身份去不同的页', async () => {
     `/pages/college-event-detail/college-event-detail?eventId=${event._id}`,
   ]);
 
-  // 干事：报名中直接进本学院的名单页
+  // 学院负责人：报名中直接进本学院的名单页
   loginAs({ role: 1, _id: STAFF_ID, college: STAFF_COLLEGE });
   const staff = instantiate(eventsConfig);
   await staff.onLoad();
   const staffRow = staff.data.view.collegeEvents[0];
-  assert.strictEqual(staffRow.canReview, false, '干事没有审核权');
+  assert.strictEqual(staffRow.canReview, false, '学院负责人没有审核权');
   assert.strictEqual(staffRow.canSubmit, true);
   assert.strictEqual(staffRow.actionText, '提交名单');
 
@@ -4022,7 +4022,7 @@ test('赛事页 —— 学院赛一行按身份去不同的页', async () => {
   ]);
 });
 
-test('名单审核 —— 只有管理员能进，干事被挡', async () => {
+test('名单审核 —— 只有管理员能进，学院负责人被挡', async () => {
   const event = await publishTestCollegeEvent();
 
   loginAs(ADMIN);
@@ -4184,7 +4184,7 @@ test('学院赛详情 —— 管理员点选种子并抽签，名单就此锁定
   assert.deepStrictEqual(saved.draw.seeds, [OTHER_COLLEGE, STAFF_COLLEGE]);
 });
 
-test('学院赛详情 —— 干事报名中能从详情页进名单页', async () => {
+test('学院赛详情 —— 学院负责人报名中能从详情页进名单页', async () => {
   const event = await publishTestCollegeEvent();
   loginAs({ role: 1, _id: STAFF_ID, college: STAFF_COLLEGE });
 
@@ -4192,7 +4192,7 @@ test('学院赛详情 —— 干事报名中能从详情页进名单页', async 
   await page.onLoad({ eventId: event._id });
 
   assert.strictEqual(page.data.view.canSubmitEntry, true);
-  assert.strictEqual(page.data.view.canManage, false, '干事不该看到抽签入口');
+  assert.strictEqual(page.data.view.canManage, false, '学院负责人不该看到抽签入口');
 
   calls.navigations.length = 0;
   page.onOpenEntry();
@@ -4245,7 +4245,7 @@ test('排阵页 —— 未登录与非本大场的学院都被挡住', async () 
   assert.match(outsider.data.view.blockReason, /不在本大场的参赛学院内/);
 });
 
-test('排阵页 —— 干事按默认值排人并提交，A 侧标记为已排阵', async () => {
+test('排阵页 —— 学院负责人按默认值排人并提交，A 侧标记为已排阵', async () => {
   const { event, ties } = await startTestCollegeEvent();
   const tie = ties[0];
   loginAs({ role: 1, _id: STAFF_ID, college: STAFF_COLLEGE });
@@ -4435,7 +4435,7 @@ test('学院赛详情 —— 管理员在大场上指派裁判，铺到还没开
 test('学院赛详情 —— 只有管理员看得到指派裁判入口', async () => {
   const { event } = await startTestCollegeEvent();
 
-  // 干事：管得了本学院名单，但派不了裁判
+  // 学院负责人：管得了本学院名单，但派不了裁判
   loginAs({ role: 1, _id: STAFF_ID, college: STAFF_COLLEGE });
   const staff = instantiate(collegeEventDetailConfig);
   await staff.onLoad({ eventId: event._id });
@@ -4640,7 +4640,7 @@ test('学院名次页 —— 名次不是正整数时挡下，赛事不结束', 
   );
 });
 
-test('学院名次页 —— 干事与会员整页挡住，一条学院名单都不下发', async () => {
+test('学院名次页 —— 学院负责人与会员整页挡住，一条学院名单都不下发', async () => {
   const { event } = await startTestCollegeEvent();
 
   for (const actor of [{ role: 1, _id: STAFF_ID, college: STAFF_COLLEGE }, { role: 0, _id: 'u06' }]) {

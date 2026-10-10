@@ -233,7 +233,7 @@ Page({
     return this.runWrite((actorId) => startEvent(this.eventId, actorId), '赛事已开始');
   },
 
-  /** 代某位会员签到。只有干事以上能点，按钮与否由视图模型决定 */
+  /** 代某位会员签到。只有学院负责人以上能点，按钮与否由视图模型决定 */
   onCheckIn(event) {
     const userId = event.currentTarget.dataset.userId;
     if (!userId) return undefined;

@@ -95,8 +95,8 @@ async function submitScheduledMatch(id, scores, { dataset, ctx, now }) {
   if (!target) {
     return ok({ ok: false, match: null, errors: {}, scoreErrors: [], firstError: '找不到这场比赛' });
   }
-  // 参赛者本人、管理员，或干事代录本学院有人上场的比赛（见 canRecordScore）。
-  // 干事是学院负责人，权限以学院为界，不能替别的学院录分。
+  // 参赛者本人、管理员，或学院负责人代录本学院有人上场的比赛（见 canRecordScore）。
+  // 学院负责人的权限以学院为界，不能替别的学院录分。
   const mayRecord = canRecordScore(target, ctx.actorId, {
     role: Number(ctx.role),
     college: (ctx.actor && ctx.actor.college) || '',
@@ -108,7 +108,7 @@ async function submitScheduledMatch(id, scores, { dataset, ctx, now }) {
       match: null,
       errors: {},
       scoreErrors: [],
-      firstError: '只有参赛者、本学院干事或管理员可以录入这场比赛的成绩',
+      firstError: '只有参赛者、本学院负责人或管理员可以录入这场比赛的成绩',
     });
   }
 
@@ -212,7 +212,7 @@ async function advanceAfterConfirm(ctx, eventId) {
  *
  * 【为什么还要查「这一场轮不轮得到我录」】
  * 光锁死 recorder 还不够：不是参赛者的人照样可以拿别人的名字编一场比赛。
- * canRecordScore 要求提交者是场上的人、本学院有人上场的干事、或管理员
+ * canRecordScore 要求提交者是场上的人、本学院有人上场的负责人、或管理员
  * （见 match-record.js）。日常约球同样适用——不能替陌生人编一场比赛。
  *
  * @param {Object} payload 见 match-record.buildMatchRecord
@@ -270,7 +270,7 @@ async function submitMatch(payload = {}, ctx) {
       match: null,
       errors: {},
       scoreErrors: [],
-      firstError: '只有参赛者、本学院干事或管理员可以录入这场比赛的成绩',
+      firstError: '只有参赛者、本学院负责人或管理员可以录入这场比赛的成绩',
     });
   }
 

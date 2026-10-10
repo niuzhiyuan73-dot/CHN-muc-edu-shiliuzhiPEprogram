@@ -4,7 +4,7 @@
  * 排阵回答「本大场每个小项谁上」，是名单与比分之间的最后一环。每条边界
  * 都用字面量钉死：
  *
- *   1. 排阵权 —— 干事限本学院、管理员通行；大场已开始或赛事没开始都不行；
+ *   1. 排阵权 —— 学院负责人限本学院、管理员通行；大场已开始或赛事没开始都不行；
  *   2. 提交校验 —— 每个小项必须排满且不超员（D40），人必须出自名单（D37），
  *      禁兼项时同一个人不能出现在两个小项里（D20）；
  *   3. 自动沿用上次 —— 本场已交的优先，其次最近一次，最后空（D30）；
@@ -40,7 +40,7 @@ const {
 /** 管理员 */
 const ADMIN = { _id: 'u01', nickName: '巴特尔', role: ROLE.ADMIN, status: USER_STATUS.ACTIVE };
 
-/** 体育学院的干事 */
+/** 体育学院的负责人 */
 const STAFF = {
   _id: 'u02',
   nickName: '张宇轩',
@@ -49,7 +49,7 @@ const STAFF = {
   college: '体育学院',
 };
 
-/** 信息工程学院的干事 —— 用来验证「他院被拒」 */
+/** 信息工程学院的负责人 —— 用来验证「他院被拒」 */
 const OTHER_STAFF = { ...STAFF, _id: 'u04', college: '信息工程学院' };
 
 /** 普通会员 */
@@ -128,7 +128,7 @@ test('playersPerLeg —— 单打 1 人、双打 2 人', () => {
  * 二、排阵权
  * ============================================================ */
 
-test('canSubmitLineup —— 干事只能给本大场的本学院排阵', () => {
+test('canSubmitLineup —— 学院负责人只能给本大场的本学院排阵', () => {
   assert.strictEqual(canSubmitLineup(tie(), STAFF, { college: '体育学院', event: event() }), true);
   // 大场里没有的学院，谁都不能替他排
   assert.strictEqual(
@@ -362,7 +362,7 @@ test('validateLineup —— 混双必须一男一女，两男 / 两女都被拒'
 
 test('validateLineup —— 同一小项里人数不足先于性别报错，先说清缺几个人', () => {
   // 第 2 场是男双（要 2 男），只排了 1 名男队员：既是人数不足也是性别不齐，
-  // 但先报人数——干事更该先知道「还差一个人」，而不是「性别不对」。
+  // 但先报人数——学院负责人更该先知道「还差一个人」，而不是「性别不对」。
   const result = validateLineup(
     payload({ entries: [{ legNo: 1, players: ['m1'] }, { legNo: 2, players: ['m1'] }, { legNo: 3, players: ['m3', 'm4'] }] }),
     { tie: tie(), event: event(), actor: STAFF, entry: ENTRY, members: ROSTER_MEMBERS }

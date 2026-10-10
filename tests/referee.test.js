@@ -77,7 +77,7 @@ async function ratingsOf(userIds) {
  */
 async function setupSingles(overrides = {}) {
   const members = await facade.getMembers();
-  // 只用普通会员：种子里 u01 是管理员、u02 是干事，把他们当「选手」，
+  // 只用普通会员：种子里 u01 是管理员、u02 是学院负责人，把他们当「选手」，
   // 管理员那套绕过规则会掩盖裁判这道闸门是否真的生效
   const plain = members.filter((member) => member.role === ROLE.MEMBER);
   const players = plain.slice(0, 4).map((member) => member._id);

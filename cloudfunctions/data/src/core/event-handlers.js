@@ -287,7 +287,7 @@ async function cancelSignupEvent(payload = {}, ctx) {
 }
 
 /**
- * 代某位会员签到。只有干事以上能签（决策 4：不做自助签到）。
+ * 代某位会员签到。只有学院负责人以上能签（决策 4：不做自助签到）。
  *
  * @param {Object} payload { id, userId }
  * @param {Object} ctx
@@ -303,7 +303,7 @@ async function checkInEvent(payload = {}, ctx) {
   const userId = payload.userId;
   if (!userId) return ok({ ok: false, record: null, message: '请指定要签到的会员' });
 
-  // 干事只能签本学院的人；管理员通行（见 event.canCheckIn）
+  // 学院负责人只能签本学院的人；管理员通行（见 event.canCheckIn）
   const target = await ctx.repo.users.getById(userId);
   if (!canCheckIn(event, ctx.actor, { isMock: false, target: target || {} })) {
     return ok({ ok: false, record: null, message: '当前账号不能为会员签到' });

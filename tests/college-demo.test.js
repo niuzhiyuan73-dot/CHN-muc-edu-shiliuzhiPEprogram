@@ -16,7 +16,7 @@
  *   · 第一轮「16 进 8」已全部打完
  *   · 第二轮「八进四」进行中，已打完三场，只剩一场没开打
  *   · 演示账号 u06「赵明宇」所在的法学院已进八强
- *   · 赵明宇是法学院的干事，本人不参赛
+ *   · 赵明宇是法学院的负责人，本人不参赛
  *   · 法学院那场八进四还没提交出场名单（大场停在「待排阵」）
  *
  * 怎么看到它：
@@ -47,7 +47,7 @@ const { canSubmitLineup } = require('../miniprogram/services/college-lineup.js')
 // 视图模型不在数据源门面上（门面只透传 mock 的函数），要从 college-view 直接取
 const { loadCollegeLineupView } = require('../miniprogram/services/college-view.js');
 
-/** 演示账号：赵明宇，本场被任命为法学院干事 */
+/** 演示账号：赵明宇，本场被任命为法学院负责人 */
 const LEADER_ID = 'u06';
 const LAW_COLLEGE = '法学院';
 /** 演示赛事的标题，用来在列表里认出这一场 */
@@ -132,7 +132,7 @@ async function scenarioText({ event, entries, round1, round2, lawTie }) {
   lines.push('');
   lines.push(`【法学院视角】${leader.nickName}（${leader.realName} / ${leader._id}）`);
   lines.push(
-    `  身份：${lawEntry ? LAW_COLLEGE : ''}干事（${leader.role === ROLE.STAFF ? '干事' : '非干事'}）　` +
+    `  身份：${lawEntry ? LAW_COLLEGE : ''}负责人（${leader.role === ROLE.STAFF ? '学院负责人' : '非学院负责人'}）　` +
       `是否参赛：否（不在法学院名单内）`
   );
   lines.push(
@@ -198,36 +198,36 @@ test('学院赛模拟场景 —— 16 进 8 已打完、八进四进行中，法
   // ---- 16 所学院都交了名单 ----
   assert.strictEqual(entries.length, 16, '应当正好 16 所学院参赛');
 
-  // ---- 赵明宇：法学院干事，且不参赛 ----
+  // ---- 赵明宇：法学院负责人，且不参赛 ----
   const leader = await facade.getMember(LEADER_ID);
   assert.strictEqual(leader.nickName, '明宇');
   assert.strictEqual(leader.realName, '赵明宇');
-  assert.strictEqual(leader.role, ROLE.STAFF, '赵明宇是干事');
+  assert.strictEqual(leader.role, ROLE.STAFF, '赵明宇是学院负责人');
   assert.strictEqual(leader.college, LAW_COLLEGE);
 
   const lawEntry = entries.find((entry) => entry.college === LAW_COLLEGE);
   assert.ok(lawEntry, '法学院交了名单');
-  assert.ok(!lawEntry.members.includes(LEADER_ID), '干事本人不在参赛名单里');
+  assert.ok(!lawEntry.members.includes(LEADER_ID), '学院负责人本人不在参赛名单里');
 
   // 打印场景，便于人工核对
   console.log(await scenarioText(state));
 });
 
-test('学院赛模拟场景 —— 干事能替本学院排八进四，但发布与开赛仍归管理员', async () => {
+test('学院赛模拟场景 —— 学院负责人能替本学院排八进四，但发布与开赛仍归管理员', async () => {
   const { event, lawTie } = await demo();
   const leader = await facade.getMember(LEADER_ID);
 
-  // 干事能替法学院交这场八进四的排阵
+  // 学院负责人能替法学院交这场八进四的排阵
   assert.strictEqual(
     canSubmitLineup(lawTie, leader, { college: LAW_COLLEGE, event }),
     true,
-    '干事可以替本学院排阵'
+    '学院负责人可以替本学院排阵'
   );
 
   // 但发布学院赛 / 抽签 / 开始大场这些规则性操作只归管理员
-  assert.strictEqual(canManageCollegeEvent(leader), false, '干事不能管理学院赛');
+  assert.strictEqual(canManageCollegeEvent(leader), false, '学院负责人不能管理学院赛');
   const refuseStart = await facade.startTie(lawTie._id, LEADER_ID);
-  assert.strictEqual(refuseStart.ok, false, '干事开不了大场');
+  assert.strictEqual(refuseStart.ok, false, '学院负责人开不了大场');
   assert.match(refuseStart.message, /管理员|排阵/);
 
   // 排阵页视图：站在赵明宇的视角看，这场是可以提交的，且还没排人
@@ -243,7 +243,7 @@ test('学院赛模拟场景 —— 干事能替本学院排八进四，但发布
   assert.strictEqual(view.rosterCount, 2, '法学院名单是孙悦 + 补入的男队员（男单要有男的可派）');
   // 本场确实没交过排阵（hasLineup 为 false），但页面会把上一轮的人沿用成默认值，
   // 所以每个小项显示的是上一轮那位队员，而不是「未排人」——排阵页正是靠这个
-  // 让干事少点几下。想让场景停在「一个人都没排」，得让她上一轮也没上过。
+  // 让学院负责人少点几下。想让场景停在「一个人都没排」，得让她上一轮也没上过。
   assert.match(view.carryHint, /沿用/, '页面提示已沿用上一轮排阵');
   assert.ok(view.legs.length > 0);
   for (const leg of view.legs) {

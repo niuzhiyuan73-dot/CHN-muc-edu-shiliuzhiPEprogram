@@ -7,7 +7,7 @@
  * 这一组测试把每条严格边界钉死：
  *   确认 —— 限对手方，录入方不能给自己盖章
  *   撤销 —— 限管理员（它改写已生效的账本，录入者本人也不行）
- *   审核 / 公告 —— 限管理员（干事是学院范围角色，管不到这两件事），且不能审自己
+ *   审核 / 公告 —— 限管理员（学院负责人是学院范围角色，管不到这两件事），且不能审自己
  * 任何一条被「顺手放宽」，都会在这里变红。
  * ============================================================
  */
@@ -23,7 +23,7 @@ const {
   contextFor,
 } = require('./helpers/cloud-fixture.js');
 
-/** 一位干事，用来验证「干事管不到俱乐部全局事务」这条线 */
+/** 一位学院负责人，用来验证「学院负责人管不到俱乐部全局事务」这条线 */
 const STAFF = { ...USERS[1], _id: 'u_staff', openId: 'openid-staff', role: ROLE.STAFF };
 
 /** 一份合法的录入单：u01 录入，对手是 u02 */
@@ -80,7 +80,7 @@ test('写接口 —— 已停用的账号一律挡下（账号还在，不能只
   assert.equal(res.message, '账号已被停用，请联系管理员');
 });
 
-test('发布公告 —— 干事被挡下（公告是发给全俱乐部的，干事收不出范围）', async () => {
+test('发布公告 —— 学院负责人被挡下（公告是发给全俱乐部的，学院负责人收不出范围）', async () => {
   const repo = createFixtureRepo({ users: [...USERS, STAFF] });
   const ctx = await contextFor(repo, 'openid-staff');
   const res = await dispatch('publishAnnouncement', { form: ANNOUNCEMENT_FORM }, ctx);
@@ -328,9 +328,9 @@ test('入会审核 —— 找不到的申请有明确文案', async () => {
   assert.equal(res.data.message, '找不到这条入会申请');
 });
 
-/* ---------- 任免干事（学院负责人） ---------- */
+/* ---------- 任免学院负责人 ---------- */
 
-test('任免干事 —— 普通会员与干事都没有资格，只有管理员能', async () => {
+test('任免学院负责人 —— 普通会员与学院负责人都没有资格，只有管理员能', async () => {
   const repo = createFixtureRepo();
   const asMember = await contextFor(repo, 'openid-u01');
   const res = await dispatch('setCollegeLeader', { userId: 'u02', makeLeader: true }, asMember);
@@ -338,7 +338,7 @@ test('任免干事 —— 普通会员与干事都没有资格，只有管理员
   assert.equal(res.data.ok, false);
   assert.match(res.data.message, /管理员/);
 
-  // 干事不能互相任命、更不能给别的学院安插人手
+  // 学院负责人不能互相任命、更不能给别的学院安插人手
   await dispatch('setCollegeLeader', { userId: 'u02', makeLeader: true }, await contextFor(repo, 'openid-admin'));
   const asStaff = await contextFor(repo, 'openid-u02');
   const denied = await dispatch('setCollegeLeader', { userId: 'u03', makeLeader: true }, asStaff);
@@ -346,7 +346,7 @@ test('任免干事 —— 普通会员与干事都没有资格，只有管理员
   assert.match(denied.data.message, /管理员/);
 });
 
-test('任免干事 —— 管理员设置后被设者按本学院获权，可再撤销', async () => {
+test('任免学院负责人 —— 管理员设置后被设者按本学院获权，可再撤销', async () => {
   const repo = createFixtureRepo();
   const admin = await contextFor(repo, 'openid-admin');
 
@@ -363,7 +363,7 @@ test('任免干事 —— 管理员设置后被设者按本学院获权，可再
   assert.equal(revoked.data.account.role, ROLE.MEMBER);
 });
 
-test('任免干事 —— 不能改自己，只有状态正常的会员才能被设为干事', async () => {
+test('任免学院负责人 —— 不能改自己，只有状态正常的会员才能被设为学院负责人', async () => {
   const repo = createFixtureRepo();
   const admin = await contextFor(repo, 'openid-admin');
 
@@ -376,7 +376,7 @@ test('任免干事 —— 不能改自己，只有状态正常的会员才能被
   assert.match(pending.data.message, /正常/);
 });
 
-test('任免干事 —— 未登录时顶层失败', async () => {
+test('任免学院负责人 —— 未登录时顶层失败', async () => {
   const ctx = await contextFor(createFixtureRepo(), null);
   const res = await dispatch('setCollegeLeader', { userId: 'u01', makeLeader: true }, ctx);
 

@@ -171,7 +171,7 @@ Page({
     wx.navigateTo({ url: `/pages/event-detail/event-detail?eventId=${eventId}` });
   },
 
-  /** 点一场学院赛：干事在报名中去名单页，其余人进详情页 */
+  /** 点一场学院赛：学院负责人在报名中去名单页，其余人进详情页 */
   onOpenCollegeEvent(event) {
     const { eventId, canSubmit } = event.currentTarget.dataset;
     if (!eventId) return;

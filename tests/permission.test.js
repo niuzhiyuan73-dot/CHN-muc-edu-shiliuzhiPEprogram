@@ -2,8 +2,8 @@
  * 管理权限公共判定的纯逻辑自检
  * ============================================================
  * 这一层是「谁能管什么」的唯一出处：审核、公告、赛季重置、赛事操盘都走它。
- * 新增的 managesCollege 是干事（学院负责人）的权限边界，尤其要钉死——
- * 一条判宽的边界会让一个学院的干事悄悄改到别的学院的名单。
+ * 新增的 managesCollege 是学院负责人的权限边界，尤其要钉死——
+ * 一条判宽的边界会让一个学院的负责人悄悄改到别的学院的名单。
  *
  * 判定只看角色与状态，不碰 wx、不碰数据源，所以全部能在这里跑完。
  * ============================================================
@@ -49,10 +49,10 @@ test('canManage —— 默认门槛是最保守的管理员（忘了声明 minRo
 });
 
 test('canManage —— 显式声明门槛时才按声明的来', () => {
-  // 抬高：任免干事只给管理员
+  // 抬高：任免学院负责人只给管理员
   assert.strictEqual(canManage(actor(ROLE.STAFF), { minRole: ROLE.ADMIN }), false);
   assert.strictEqual(canManage(actor(ROLE.ADMIN), { minRole: ROLE.ADMIN }), true);
-  // 保留给临场事务的干事档（实际业务里都还要再过 managesCollege）
+  // 保留给临场事务的学院负责人档（实际业务里都还要再过 managesCollege）
   assert.strictEqual(canManage(actor(ROLE.STAFF), { minRole: ROLE.STAFF }), true);
   assert.strictEqual(canManage(actor(ROLE.MEMBER), { minRole: ROLE.STAFF }), false);
 });
@@ -72,7 +72,7 @@ test('managesCollege —— 管理员没有学院限制，全校通行', () => {
   assert.strictEqual(managesCollege(actor(ROLE.ADMIN, { college: '' }), '美术学院'), true);
 });
 
-test('managesCollege —— 干事只管本学院', () => {
+test('managesCollege —— 学院负责人只管本学院', () => {
   const leader = actor(ROLE.STAFF, { college: '体育学院' });
   assert.strictEqual(managesCollege(leader, '体育学院'), true);
   assert.strictEqual(managesCollege(leader, '美术学院'), false);

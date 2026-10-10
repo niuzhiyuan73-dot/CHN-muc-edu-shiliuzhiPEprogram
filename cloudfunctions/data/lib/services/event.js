@@ -123,10 +123,10 @@ const VALID_PLACEMENT_MODES = Object.values(EVENT_PLACEMENT_MODE);
 /**
  * 有没有发布 / 修改赛事的资格。**仅管理员**。
  *
- * 【为什么门槛是管理员而不是干事】
+ * 【为什么门槛是管理员而不是学院负责人】
  * 发布、修改、抽签、开始、结束赛事都会决定整场赛事的走向（谁能报、
  * 跟谁打、算不算成绩），一旦出错就是全场的账要重算。这类「定盘子」
- * 的操作收口到管理员；干事只保留两项临场事务：代签到与录入比分。
+ * 的操作收口到管理员；学院负责人只保留两项临场事务：代签到与录入比分。
  *
  * @param {Object|null} actor
  * @param {Object} [options] 透传给 permission.canManage（如 isMock）
@@ -172,19 +172,19 @@ function startBlockedReason(event) {
 }
 
 /**
- * 能不能给某位会员代签。**干事 + 管理员**。
+ * 能不能给某位会员代签。**学院负责人 + 管理员**。
  *
- * 【为什么干事就能签、却不给抽签】
- * 签到是赛事当天最高频、最琐碎的临场事务，交给干事分担；它只记录
+ * 【为什么学院负责人就能签、却不给抽签】
+ * 签到是赛事当天最高频、最琐碎的临场事务，交给学院负责人分担；它只记录
  * 「人到了没有」，改不了赛程也改不了成绩，风险可控。
  *
  * 【为什么只有管理端能签】
  * 决策 4：不做会员自助签到。签到是赛事当天「人到了没有」的凭证，
  * 若本人能点，报名与签到就都成了自说自话，名次与积分的公信力也就没了。
  *
- * 【干事的签到范围为什么是本学院】
- * 干事即学院负责人，权限以学院为界。传了目标（options.target 或
- * options.targetCollege）时，干事只能签自己学院的人，管理员不受限；
+ * 【学院负责人的签到范围为什么是本学院】
+ * 学院负责人的权限以学院为界。传了目标（options.target 或
+ * options.targetCollege）时，学院负责人只能签自己学院的人，管理员不受限；
  * 不传目标时只判「有没有签到资格」，供列表页先算一个总开关。
  *
  * @param {Object} event
@@ -202,8 +202,8 @@ function canCheckIn(event, actor, options = {}) {
   // 未指定对象：只判资格，供列表页先算一个总开关
   if (!target && !targetCollege) return true;
   const college = targetCollege || (target && target.college) || '';
-  // 指定了对象就收口到本学院：管理员通行；干事须同学院；
-  // 对象学院缺失时干事被拒（宁严勿松）
+  // 指定了对象就收口到本学院：管理员通行；学院负责人须同学院；
+  // 对象学院缺失时学院负责人被拒（宁严勿松）
   return managesCollege(actor, college);
 }
 
@@ -403,7 +403,7 @@ function buildSignupRecord(event, actor, ctx = {}) {
  * 「什么时候报的名」。
  *
  * @param {Object} signup 既有报名记录
- * @param {Object} actor 代签的干事
+ * @param {Object} actor 代签的学院负责人
  * @param {Object} [ctx]
  * @param {Date|string|number} [ctx.now=new Date()]
  * @returns {{ok:boolean, patch:Object|null, message:string}}

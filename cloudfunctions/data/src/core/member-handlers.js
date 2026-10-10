@@ -150,16 +150,16 @@ async function rejectMember(payload = {}, ctx) {
 }
 
 /**
- * 把某位会员设为 / 撤销为干事（学院负责人）。
+ * 把某位会员设为 / 撤销为学院负责人。
  *
  * 【改的是角色，不是状态】
  * 与审核分开一条通路：审核动 status，任免只动 role。请求体里只认 userId
- * 与 makeLeader，目标角色（干事还是普通会员）由服务端的 validateCollegeLeader
+ * 与 makeLeader，目标角色（学院负责人还是普通会员）由服务端的 validateCollegeLeader
  * 算出来，前端塞一个 role:2 也没用。
  *
  * 【为什么任免也要动赛季版本号】
  * 角色与学院虽然不进回放计算，却要经 getDataset 下发（会员主页、权限判定
- * 都读它）。不 +1 的话容器里还是旧缓存，被设为干事的人刷新后仍是普通会员。
+ * 都读它）。不 +1 的话容器里还是旧缓存，被设为学院负责人的人刷新后仍是普通会员。
  *
  * @param {Object} payload { userId, makeLeader }
  * @param {Object} ctx

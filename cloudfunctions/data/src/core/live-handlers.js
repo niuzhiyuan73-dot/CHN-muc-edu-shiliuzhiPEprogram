@@ -57,7 +57,7 @@ function findRecord(dataset, id) {
  *
  * @param {Object} match
  * @param {Object} ctx
- * @param {Array<Object>} users 用于解析学院（干事代录的边界）
+ * @param {Array<Object>} users 用于解析学院（学院负责人代录的边界）
  * @returns {boolean}
  */
 function mayRecord(match, ctx, users) {

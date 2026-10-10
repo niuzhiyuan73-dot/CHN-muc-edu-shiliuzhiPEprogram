@@ -94,7 +94,7 @@ test('canConfirm —— 管理员可以确认任意一场（含自己没打的�
     canConfirm({ ...DOUBLES, status: MATCH_STATUS.ACTIVE }, 'u99', { role: ROLE.ADMIN }),
     false
   );
-  // 干事没有这项放宽，仍按对手方口径
+  // 学院负责人没有这项放宽，仍按对手方口径
   assert.strictEqual(canConfirm(DOUBLES, 'u99', { role: ROLE.STAFF }), false);
 });
 
@@ -112,7 +112,7 @@ test('canRevoke —— 录入者本人也不再能撤', () => {
   // 录入者是当事人自己选的，放开就等于「赢了我就把记录删掉」。
   assert.strictEqual(isRecorder(DOUBLES, 'u01'), true, '前提：u01 确实是录入者');
   assert.strictEqual(canRevoke(DOUBLES, 'u01', { role: ROLE.MEMBER }), false);
-  assert.strictEqual(canRevoke(DOUBLES, 'u01', { role: ROLE.STAFF }), false, '干事也不行');
+  assert.strictEqual(canRevoke(DOUBLES, 'u01', { role: ROLE.STAFF }), false, '学院负责人也不行');
   assert.strictEqual(canRevoke(DOUBLES, 'u99', { role: ROLE.MEMBER }), false);
 });
 
@@ -513,7 +513,7 @@ test('fillScheduledMatch —— 没有记录时报找不到', () => {
 /* ============================================================
  * 七、录分权（involvesCollege / canRecordScore）
  * ============================================================
- * 干事是学院负责人，权限以学院为界：只有本学院有人上场的比赛才轮得到他
+ * 学院负责人的权限以学院为界：只有本学院有人上场的比赛才轮得到他
  * 代录。学院不存在比赛记录里（那里只有编号），所以由调用方传入 collegeOf。
  * ============================================================ */
 
@@ -544,7 +544,7 @@ test('canRecordScore —— 管理员可以代录任意一场', () => {
   );
 });
 
-test('canRecordScore —— 干事只能代录本学院有人上场的比赛', () => {
+test('canRecordScore —— 学院负责人只能代录本学院有人上场的比赛', () => {
   const options = { role: ROLE.STAFF, college: '体育学院', collegeOf: COLLEGE_OF };
   assert.strictEqual(canRecordScore(DOUBLES, 's1', options), true);
 
@@ -575,7 +575,7 @@ test('hasReferee —— 没指定或空白串都算「没有裁判」', () => {
 });
 
 test('裁判未指定时录分权与今天完全一致（零回归）', () => {
-  // 参赛者照录，管理员照代录，干事照按学院代录，旁人照挡
+  // 参赛者照录，管理员照代录，学院负责人照按学院代录，旁人照挡
   assert.strictEqual(canRecordScore(DOUBLES, 'u02', { role: ROLE.MEMBER }), true);
   assert.strictEqual(canRecordScore(DOUBLES, 'u99', { role: ROLE.ADMIN }), true);
   assert.strictEqual(
@@ -602,7 +602,7 @@ test('指定裁判后，录分权只认裁判与管理员', () => {
   // 参赛者本人反而录不了——这是「交给他执法」的题中之义
   assert.strictEqual(canRecordScore(judged, 'u01', { role: ROLE.MEMBER }), false);
   assert.strictEqual(canRecordScore(judged, 'u03', { role: ROLE.MEMBER }), false);
-  // 干事也不越过裁判代录
+  // 学院负责人也不越过裁判代录
   assert.strictEqual(
     canRecordScore(judged, 's1', { role: ROLE.STAFF, college: '体育学院', collegeOf: COLLEGE_OF }),
     false

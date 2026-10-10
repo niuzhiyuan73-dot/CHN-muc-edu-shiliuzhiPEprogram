@@ -4,7 +4,7 @@
  * 名单决定「谁能代表这个学院上场」，是学院赛里权限最敏感的一处，所以
  * 每条边界都用字面量钉死：
  *
- *   1. 提交权 —— 干事限本学院，管理员通行，会员与他院干事都不行；
+ *   1. 提交权 —— 学院负责人限本学院，管理员通行，会员与他院学院负责人都不行；
  *      名单锁定（已抽签）后一律不可提交。
  *   2. 名单构成 —— 在册、同学院、不重复、人数落在上下限内。
  *   3. 审核 —— 只有管理员；通过 / 退回各改一个状态；退回必须给理由。
@@ -38,7 +38,7 @@ const {
 } = require('../miniprogram/utils/constants.js');
 const { REVIEW_ACTION } = require('../miniprogram/services/member-review.js');
 
-/** 体育学院的干事 */
+/** 体育学院的负责人 */
 const STAFF = {
   _id: 'u02',
   nickName: '张宇轩',
@@ -47,7 +47,7 @@ const STAFF = {
   college: '体育学院',
 };
 
-/** 信息工程学院的干事 —— 用来验证「他院被拒」 */
+/** 信息工程学院的负责人 —— 用来验证「他院被拒」 */
 const OTHER_STAFF = { ...STAFF, _id: 'u04', college: '信息工程学院' };
 
 /** 管理员 */
@@ -101,7 +101,7 @@ function payload(overrides = {}) {
  * 一、提交权
  * ============================================================ */
 
-test('canSubmitCollegeEntry —— 干事只能提交本学院', () => {
+test('canSubmitCollegeEntry —— 学院负责人只能提交本学院', () => {
   assert.strictEqual(canSubmitCollegeEntry(event(), STAFF, { college: '体育学院' }), true);
   assert.strictEqual(canSubmitCollegeEntry(event(), STAFF, { college: '信息工程学院' }), false);
   assert.strictEqual(canSubmitCollegeEntry(event(), OTHER_STAFF, { college: '体育学院' }), false);
@@ -177,7 +177,7 @@ test('validateCollegeEntry —— 人数超过上限被挡', () => {
   assert.match(result.message, /最多 6 人/);
 });
 
-test('validateCollegeEntry —— 他院干事提交被挡', () => {
+test('validateCollegeEntry —— 他院学院负责人提交被挡', () => {
   const result = validateCollegeEntry(payload(), {
     event: event(),
     actor: OTHER_STAFF,
@@ -294,7 +294,7 @@ test('canReviewCollegeEntry —— 只有管理员', () => {
   assert.strictEqual(canReviewCollegeEntry(null), false);
 });
 
-test('validateEntryReview —— 干事不能审，只有管理员能', () => {
+test('validateEntryReview —— 学院负责人不能审，只有管理员能', () => {
   const result = validateEntryReview(STAFF, PENDING_ENTRY, REVIEW_ACTION.APPROVE, '');
   assert.strictEqual(result.ok, false);
   assert.match(result.message, /管理员/);
@@ -374,10 +374,10 @@ test('buildCollegeEntryRow —— 管理员看到待审核名单的可审标记'
   assert.deepStrictEqual(row.memberNames, ['队员m1', '队员m2', '队员m3', '队员m4']);
 });
 
-test('buildCollegeEntryRow —— 干事只有本学院的名单能改', () => {
+test('buildCollegeEntryRow —— 学院负责人只有本学院的名单能改', () => {
   const row = buildCollegeEntryRow(PENDING_ENTRY, { actor: STAFF, event: event() });
   assert.strictEqual(row.canEdit, true);
-  // 干事不能审核
+  // 学院负责人不能审核
   assert.strictEqual(row.canReview, false);
 
   const other = buildCollegeEntryRow({ ...PENDING_ENTRY, college: '信息工程学院' }, {

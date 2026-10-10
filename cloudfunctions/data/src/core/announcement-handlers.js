@@ -35,7 +35,7 @@ async function publishAnnouncement(payload = {}, ctx) {
   const guard = callerError(ctx);
   if (guard) return fail(guard);
 
-  // 严格口径：仅管理员能发布（干事是学院范围角色，公告没有学院可言）
+  // 严格口径：仅管理员能发布（学院负责人是学院范围角色，公告没有学院可言）
   if (!canPublish(ctx.actor, { isMock: false })) {
     return ok({
       ok: false,

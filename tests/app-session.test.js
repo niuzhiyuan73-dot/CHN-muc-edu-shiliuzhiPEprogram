@@ -188,9 +188,9 @@ test('mock 模式一次云端请求都不发，也不拿演示会员覆盖刚注
   assert.strictEqual(appConfig.globalData.userInfo.status, USER_STATUS.PENDING);
 });
 
-test('mock 模式按 _id 校正角色 —— 数据源把人提为干事，排阵权限不该还停在旧快照', async () => {
-  // 登录快照是更早写下的「普通会员」；数据源里同一人已被提为学院干事。
-  // 不回查的话，界面按快照判权限，干事照样进不了排阵。
+test('mock 模式按 _id 校正角色 —— 数据源把人提为学院负责人，排阵权限不该还停在旧快照', async () => {
+  // 登录快照是更早写下的「普通会员」；数据源里同一人已被提为学院负责人。
+  // 不回查的话，界面按快照判权限，学院负责人照样进不了排阵。
   const stale = {
     _id: DEFAULT_CURRENT_USER_ID,
     nickName: '赵明宇',

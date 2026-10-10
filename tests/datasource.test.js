@@ -34,9 +34,9 @@ const { findCappedMatchIds } = require('../miniprogram/services/rating-cap.js');
 
 /**
  * 管理类写入要由管理员执行。
- * 种子里 u01 巴特尔是管理员、u02 张宇轩是干事；getCurrentUser() 答的是
+ * 种子里 u01 巴特尔是管理员、u02 张宇轩是学院负责人；getCurrentUser() 答的是
  * 普通会员 u06。审核入会、发公告、管理赛事、撤销比赛这些「定盘子」的事
- * 都归管理员（见 permission.js 顶部）——拿干事或普通会员去做都会被挡回来。
+ * 都归管理员（见 permission.js 顶部）——拿学院负责人或普通会员去做都会被挡回来。
  */
 const ADMIN_ID = 'u01';
 const getManager = () => mock.getMember(ADMIN_ID);
@@ -587,7 +587,7 @@ describe('mock 数据源 —— 比赛录入与流转', () => {
   );
 
   test(
-    '撤销只归管理员：录入者本人与干事都撤不动已生效的比赛',
+    '撤销只归管理员：录入者本人与学院负责人都撤不动已生效的比赛',
     withCleanStore(async () => {
       const me = await mock.getCurrentUser();
       const { match } = await mock.submitMatch(singlesDraft());
@@ -599,7 +599,7 @@ describe('mock 数据源 —— 比赛录入与流转', () => {
       assert.equal(byRecorder.ok, false);
       assert.match(byRecorder.message, /无权撤销/);
 
-      // 干事同样不行：撤销不是临场事务，是改写账本
+      // 学院负责人同样不行：撤销不是临场事务，是改写账本
       const staff = (await mock.getMembers()).find((m) => m.role === ROLE.STAFF);
       if (staff) {
         const byStaff = await mock.revokeMatch(match._id, staff._id, '想帮个忙');
@@ -857,7 +857,7 @@ describe('mock 数据源 —— 会员注册与审核', () => {
   );
 });
 
-describe('mock 数据源 —— 任免干事（学院负责人）', () => {
+describe('mock 数据源 —— 任免学院负责人', () => {
   function withCleanStore(fn) {
     return async () => {
       mock.resetCache();
@@ -890,7 +890,7 @@ describe('mock 数据源 —— 任免干事（学院负责人）', () => {
   );
 
   test(
-    '干事自己不能任免别人，只有管理员能',
+    '学院负责人自己不能任免别人，只有管理员能',
     withCleanStore(async () => {
       const staff = await mock.getMember('u02');
       const result = await mock.setCollegeLeader('u06', staff._id, true);

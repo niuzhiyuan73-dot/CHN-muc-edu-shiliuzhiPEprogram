@@ -50,10 +50,10 @@ const APPLICANT = {
 /** 一位审核通过的普通会员 */
 const MEMBER = { _id: 'u01', nickName: '李明', role: ROLE.MEMBER, status: USER_STATUS.ACTIVE };
 
-/** 一位正常在岗的干事，带学院——干事的管理范围全靠它 */
+/** 一位正常在岗的学院负责人，带学院——学院负责人的管理范围全靠它 */
 const STAFF = {
   _id: 'u02',
-  nickName: '王干事',
+  nickName: '王学院负责人',
   role: ROLE.STAFF,
   status: USER_STATUS.ACTIVE,
   college: '信息工程学院',
@@ -62,7 +62,7 @@ const STAFF = {
 /** 一位管理员 */
 const ADMIN = { _id: 'u03', nickName: '张管理', role: ROLE.ADMIN, status: USER_STATUS.ACTIVE };
 
-/** 一位状态正常、学院确定的普通会员，适合被设为干事 */
+/** 一位状态正常、学院确定的普通会员，适合被设为学院负责人 */
 const CANDIDATE = {
   _id: 'u04',
   nickName: '赵四',
@@ -99,15 +99,15 @@ test('canReview —— 仅管理员可审', () => {
   assert.strictEqual(canReview(ADMIN), true);
 });
 
-test('canReview —— 干事没有审核权', () => {
-  // 干事是「学院负责人」，其权限以学院为界；而批下来的是「俱乐部会员」
+test('canReview —— 学院负责人没有审核权', () => {
+  // 学院负责人是「学院负责人」，其权限以学院为界；而批下来的是「俱乐部会员」
   // 这个身份，拿到手就能报名、上榜、算积分，与申请人填的哪个学院无关，
   // 没有可靠的边界可收，只能收归管理员。
   assert.strictEqual(canReview(STAFF), false);
   assert.strictEqual(canReview(STAFF, { isMock: true }), false);
 });
 
-test('canReview —— 调用方传更宽的门槛也放不进干事', () => {
+test('canReview —— 调用方传更宽的门槛也放不进学院负责人', () => {
   assert.strictEqual(canReview(STAFF, { minRole: ROLE.STAFF }), false);
 });
 
@@ -128,7 +128,7 @@ test('canReviewApplication —— 管理员也不能审自己的申请', () => {
   assert.strictEqual(canReviewApplication(ADMIN, mine), false);
 });
 
-test('canReviewApplication —— 普通会员与干事都审不了，管理员能审别人的待审核申请', () => {
+test('canReviewApplication —— 普通会员与学院负责人都审不了，管理员能审别人的待审核申请', () => {
   assert.strictEqual(canReviewApplication(MEMBER, APPLICANT), false);
   assert.strictEqual(canReviewApplication(STAFF, APPLICANT), false);
   assert.strictEqual(canReviewApplication(ADMIN, APPLICANT), true);
@@ -279,7 +279,7 @@ test('buildApplicationRow —— 有权限且不是自己时，两个按钮都�
   assert.strictEqual(row.isSelf, false);
 });
 
-test('buildApplicationRow —— 普通会员与干事那一行都没有任何按钮', () => {
+test('buildApplicationRow —— 普通会员与学院负责人那一行都没有任何按钮', () => {
   for (const actor of [MEMBER, STAFF]) {
     const row = buildApplicationRow(APPLICANT, { actor });
     assert.strictEqual(row.canApprove, false, `${actor._id} 不该能批`);
@@ -326,14 +326,14 @@ test('buildApplicationRow —— 申请时间格式化成中文，未知状态�
 });
 
 /* ============================================================
- * 七、任免干事（学院负责人）
+ * 七、任免学院负责人
  * ============================================================
- * 干事握着「代签本学院」与「代录本学院比赛」两项权限，等于把一个学院的
+ * 学院负责人握着「代签本学院」与「代录本学院比赛」两项权限，等于把一个学院的
  * 临场事务交出去。所以任免权只给管理员，且被任免者必须有确定的学院——
- * 没有学院的人当上干事，范围判定永远不成立，界面会冒出一堆点不动的入口。
+ * 没有学院的人当上学院负责人，范围判定永远不成立，界面会冒出一堆点不动的入口。
  * ============================================================ */
 
-test('canSetCollegeLeader —— 只有管理员，干事与普通会员都不行', () => {
+test('canSetCollegeLeader —— 只有管理员，学院负责人与普通会员都不行', () => {
   assert.strictEqual(canSetCollegeLeader(ADMIN), true);
   assert.strictEqual(canSetCollegeLeader(STAFF), false);
   assert.strictEqual(canSetCollegeLeader(MEMBER), false);
@@ -345,7 +345,7 @@ test('canSetCollegeLeader —— 被禁用的管理员同样没有任免权', ()
   assert.strictEqual(canSetCollegeLeader(banned), false);
 });
 
-test('validateCollegeLeader —— 干事不能任免别人，只有管理员能', () => {
+test('validateCollegeLeader —— 学院负责人不能任免别人，只有管理员能', () => {
   const result = validateCollegeLeader(STAFF, CANDIDATE, true);
   assert.strictEqual(result.ok, false);
   assert.match(result.message, /管理员/);
@@ -371,14 +371,14 @@ test('validateCollegeLeader —— 不能改变管理员的角色', () => {
   assert.match(result.message, /管理员/);
 });
 
-test('validateCollegeLeader —— 只有状态正常的会员才能设为干事', () => {
+test('validateCollegeLeader —— 只有状态正常的会员才能设为学院负责人', () => {
   const pending = { ...CANDIDATE, status: USER_STATUS.PENDING };
   const result = validateCollegeLeader(ADMIN, pending, true);
   assert.strictEqual(result.ok, false);
   assert.match(result.message, /正常/);
 });
 
-test('validateCollegeLeader —— 没有有效学院的人不能当干事', () => {
+test('validateCollegeLeader —— 没有有效学院的人不能当学院负责人', () => {
   // 空学院、过时的「其他」、以及不在 COLLEGES 里的值都不行
   for (const college of ['', '其他', '不存在的学院']) {
     const result = validateCollegeLeader(ADMIN, { ...CANDIDATE, college }, true);
@@ -389,7 +389,7 @@ test('validateCollegeLeader —— 没有有效学院的人不能当干事', () 
   assert.strictEqual(validateCollegeLeader(ADMIN, { ...CANDIDATE, college: COLLEGES[0] }, true).ok, true);
 });
 
-test('validateCollegeLeader —— 设为干事给 STAFF，撤销给 MEMBER', () => {
+test('validateCollegeLeader —— 设为学院负责人给 STAFF，撤销给 MEMBER', () => {
   assert.deepStrictEqual(validateCollegeLeader(ADMIN, CANDIDATE, true), {
     ok: true,
     message: '',

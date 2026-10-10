@@ -23,8 +23,8 @@
  * 的权力收在这里——这是防刷分的第一道闸门。
  *
  * 【审核权只看角色，演示数据源也不放宽】
- * 种子里点明了干事与管理员（见 seed.js 的 MEMBER_SEED），本地与云端都是
- * 「role >= 干事」这一条规则。原先 mock 下放宽为「是会员即可审」，会让
+ * 种子里点明了学院负责人与管理员（见 seed.js 的 MEMBER_SEED），本地与云端都是
+ * 「role >= ROLE.STAFF（学院负责人）」这一条规则。原先 mock 下放宽为「是会员即可审」，会让
  * 普通会员在自己手机上也看到审核入口，与线上不一致，已收回。
  *
  * 【有一条规则 mock 下也不放宽】
@@ -90,13 +90,13 @@ function isSelf(actor, application) {
 /**
  * 有没有审核资格。**仅管理员**。
  *
- * 【为什么门槛是管理员而不是干事】
+ * 【为什么门槛是管理员而不是学院负责人】
  * 审核一条入会申请就是决定「这个人算不算俱乐部的人」，批了之后他能报名、
  * 能上榜、能算积分——一旦批错，账要连同后续成绩一起回滚，属于「定盘子」
  * 的事（与发布赛事、赛季重置同一级别）。
  *
  * 【为什么不像代签到那样收口到本学院】
- * 干事即学院负责人，其权限以学院为界（见 permission.managesCollege）。
+ * 学院负责人，其权限以学院为界（见 permission.managesCollege）。
  * 可入会审核根本没有这条边界可用：批下来的是「俱乐部会员」这个身份，
  * 拿到手就能报名、上榜、算积分，与申请人填的是哪个学院无关；台账也是一份
  * 全校名单，没有按学院分给谁看的口径。收不出范围，就只能收归管理员。
@@ -128,11 +128,11 @@ function canReviewApplication(actor, application, options = {}) {
 }
 
 /**
- * 有没有任免干事的资格。**仅管理员**。
+ * 有没有任免学院负责人的资格。**仅管理员**。
  *
- * 干事是学院负责人，手里握着「代签本学院」与「代录本学院比赛」两项权限，
+ * 学院负责人手里握着「代签本学院」与「代录本学院比赛」两项权限，
  * 等于把一个学院的临场事务交出去。这个决定比审核入会重得多，所以只有
- * 管理员能做，干事不能互相任命、更不能给别的学院安插人手。
+ * 管理员能做，学院负责人不能互相任命、更不能给别的学院安插人手。
  *
  * @param {Object|null} actor
  * @param {Object} [options]
@@ -143,27 +143,27 @@ function canSetCollegeLeader(actor, options = {}) {
 }
 
 /**
- * 校验一次任免：能不能把 target 设为 / 撤销为干事。
+ * 校验一次任免：能不能把 target 设为 / 撤销为学院负责人。
  *
  * 【为什么被任命者必须有确定的学院】
- * 干事的权限全靠 college 划范围（见 permission.managesCollege）。一个
- * 学院为空的账号当上干事，范围判定永远不成立——他有干事的名分，却什么
+ * 学院负责人的权限全靠 college 划范围（见 permission.managesCollege）。一个
+ * 学院为空的账号当上学院负责人，范围判定永远不成立——他有学院负责人的名分，却什么
  * 都管不了，界面上还会显示一堆点下去被拒的入口。与其如此，不如在任命这
  * 一步就挡住，并要求学院取自 constants.COLLEGES（不能是「其他」这类旧值）。
  *
  * 【为什么不能动管理员】
- * 角色是单向的：干事之上是管理员。若允许把管理员「撤销干事」，等于用一次
+ * 角色是单向的：学院负责人之上是管理员。若允许把管理员「撤销学院负责人」，等于用一次
  * 任免把会长降级；这不该藏在会员主页的一个按钮里，需要时由云控制台直接改。
  *
  * @param {Object|null} actor 操作者
  * @param {Object|null} target 被任免的会员
- * @param {boolean} makeLeader true 设为干事，false 撤销干事
+ * @param {boolean} makeLeader true 设为学院负责人，false 撤销学院负责人
  * @param {Object} [options] 透传给 permission.canManage
  * @returns {{ok:boolean, message:string, role:number|null}}
  */
 function validateCollegeLeader(actor, target, makeLeader, options = {}) {
   if (!canSetCollegeLeader(actor, options)) {
-    return { ok: false, message: '只有管理员可以任免干事', role: null };
+    return { ok: false, message: '只有管理员可以任免学院负责人', role: null };
   }
   if (!target) {
     return { ok: false, message: '找不到这位会员', role: null };
@@ -175,7 +175,7 @@ function validateCollegeLeader(actor, target, makeLeader, options = {}) {
     return { ok: false, message: '不能改变管理员的角色', role: null };
   }
   if (target.status !== USER_STATUS.ACTIVE) {
-    return { ok: false, message: '只有状态正常的会员才能设为干事', role: null };
+    return { ok: false, message: '只有状态正常的会员才能设为学院负责人', role: null };
   }
   if (!COLLEGES.includes(target.college)) {
     return { ok: false, message: '该会员没有有效的学院，无法确定管理范围', role: null };

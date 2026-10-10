@@ -130,8 +130,8 @@ function memberList(ids, nameOf) {
  * @param {Object} [ctx]
  * @param {string} [ctx.userId] 当前看页面的会员
  * @param {number} [ctx.role] 当前会员的角色，决定能不能撤销
- * @param {string} [ctx.college] 当前会员的学院，干事代录时划范围
- * @param {Function} [ctx.collegeOf] 编号 → 学院，干事代录时划范围
+ * @param {string} [ctx.college] 当前会员的学院，学院负责人代录时划范围
+ * @param {Function} [ctx.collegeOf] 编号 → 学院，学院负责人代录时划范围
  * @param {Function} [ctx.nameOf] 编号转昵称
  * @param {boolean} [ctx.isMock] 是否放宽确认权
  * @returns {Object}
@@ -208,7 +208,7 @@ function buildRecordRow(record, ctx = {}) {
     confirmRelaxed: relaxedConfirm && !strictConfirm,
     // 还没比分的赛事比赛：给「录分」而不是「确认」
     needsScore: waiting,
-    // 录分权与写入端一致：参赛者、管理员，或干事代录本学院有人上场的比赛
+    // 录分权与写入端一致：参赛者、管理员，或学院负责人代录本学院有人上场的比赛
     // （见 match-record.canRecordScore）。演示数据源不再放宽，免得看到
     // 一个点下去会被拒的入口。
     canRecord: Boolean(waiting && userId && canRecordScore(record, userId, { role, college, collegeOf })),
@@ -284,7 +284,7 @@ async function loadMatchView(options = {}) {
 
   const [members, ledger] = await Promise.all([getMembers(), getMatchRecords()]);
   const nameOf = createNameResolver(members);
-  // 干事代录要按学院划范围：这里把「编号 → 学院」一并算出来
+  // 学院负责人代录要按学院划范围：这里把「编号 → 学院」一并算出来
   const collegeByMember = new Map((members || []).map((m) => [m._id, m.college || '']));
   const collegeOf = (id) => collegeByMember.get(id) || '';
 

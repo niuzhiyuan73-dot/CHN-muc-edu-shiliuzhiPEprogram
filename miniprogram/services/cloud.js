@@ -101,7 +101,7 @@ const approveMember = (applicationId, actor, initialElo) =>
   request('approveMember', { applicationId, actor, initialElo });
 const rejectMember = (applicationId, actor, reason) =>
   request('rejectMember', { applicationId, actor, reason });
-// 任免干事。目标角色由服务端的 validateCollegeLeader 算出，前端只传「是谁」
+// 任免学院负责人。目标角色由服务端的 validateCollegeLeader 算出，前端只传「是谁」
 // 与「设还是撤」。actor 同样不被信任，只为日志留个线索。
 const setCollegeLeader = (userId, actor, makeLeader) =>
   request('setCollegeLeader', { userId, actor, makeLeader });

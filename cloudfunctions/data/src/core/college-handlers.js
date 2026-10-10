@@ -189,7 +189,7 @@ async function publishCollegeEvent(payload = {}, ctx) {
 }
 
 /**
- * 提交本学院的参赛名单。**干事（本学院）+ 管理员**，且仅在报名中。
+ * 提交本学院的参赛名单。**学院负责人（本学院）+ 管理员**，且仅在报名中。
  *
  * 队员身份一律用会员台账回查（不信任 payload 里的 college 与成员身份），
  * 与 accountOf 同一思路。同一赛事同一学院只有一份名单，重交覆盖旧的。
@@ -391,7 +391,7 @@ async function setCollegeEventPinned(payload = {}, ctx) {
 }
 
 /**
- * 提交本大场的排阵。**干事（本学院）+ 管理员**，且大场尚未开始（D37）。
+ * 提交本大场的排阵。**学院负责人（本学院）+ 管理员**，且大场尚未开始（D37）。
  *
  * 【为什么提交后要把大场的 lineupA / lineupB 置真】
  * 大场状态（待排阵 → 待开赛）由「双方是否都交」推出来（college-tie.tieStatusOf）。

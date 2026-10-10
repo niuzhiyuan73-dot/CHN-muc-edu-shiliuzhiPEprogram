@@ -347,7 +347,7 @@ describe('云函数 —— 赛事闭环', () => {
     const started = await on(repo, 'startEvent', { id }, admin);
     assert.equal(started.data.record.status, EVENT_STATUS.ONGOING);
 
-    // 签到：干事代签
+    // 签到：学院负责人代签
     const checked = await on(repo, 'checkInEvent', { id, userId: 'u01' }, admin);
     assert.equal(checked.data.ok, true, checked.data.message);
     assert.equal(checked.data.record.status, SIGNUP_STATUS.CHECKED_IN);
@@ -857,10 +857,10 @@ describe('云函数 —— 赛事闭环', () => {
 describe('云函数 —— 学院赛闭环', () => {
   /**
    * 学院赛要两所学院才测得出跨院权限，夹具默认全在体育学院，这里把
-   * u02 提成信息工程学院的干事、u04 划到体育学院，于是两所学院各有
+   * u02 提成信息工程学院的负责人、u04 划到体育学院，于是两所学院各有
    * 一男一女（一个小项是男单、一个是女单，单性别学院排不出阵）：
    *   体育学院 —— u01（男）、u04（女），管理员兜底名单
-   *   信息工程学院 —— u02（男，干事）、u03（女）
+   *   信息工程学院 —— u02（男，学院负责人）、u03（女）
    */
   const collegeFixtureRepo = () =>
     createFixtureRepo({
@@ -970,11 +970,11 @@ describe('云函数 —— 学院赛闭环', () => {
     assert.deepEqual(event.legPlan, [LEG_DISCIPLINE.MS, LEG_DISCIPLINE.WS]);
   });
 
-  test('提交名单 —— 干事限本学院，重交覆盖同一条', async () => {
+  test('提交名单 —— 学院负责人限本学院，重交覆盖同一条', async () => {
     const repo = collegeFixtureRepo();
     const id = await publishCollege(repo);
 
-    // 会员没有提交权；别院干事也不能替体育学院交
+    // 会员没有提交权；别院学院负责人也不能替体育学院交
     const byMember = await on(
       repo,
       'submitCollegeEntry',
@@ -1125,7 +1125,7 @@ describe('云函数 —— 学院赛闭环', () => {
     const sportsLineup = lineupFrom(tie, ROSTER_SPORTS);
     const infoLineup = lineupFrom(tie, ROSTER_INFO);
 
-    // 未登录 → 顶层失败；会员 / 别院干事 → 业务失败
+    // 未登录 → 顶层失败；会员 / 别院学院负责人 → 业务失败
     const anon = await on(repo, 'submitLineup', { tieId, college: COLLEGE_SPORTS, entries: sportsLineup }, null);
     assert.equal(anon.ok, false);
     assert.equal(anon.message, '请先登录后再操作');

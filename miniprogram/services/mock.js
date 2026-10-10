@@ -191,7 +191,7 @@ let collegeDemoInstalled = false;
  *
  * 【为什么在这两个地方调】
  * load() 是所有「会员 / 等级分」读取的必经之路，装了它演示账号 u06 的
- * 干事身份才立得住；学院赛的列表 / 名单 / 大场 / 排阵是直接读台账的
+ * 学院负责人身份才立得住；学院赛的列表 / 名单 / 大场 / 排阵是直接读台账的
  * （见各 getCollege* 的注释），不经过 load()，所以那几处也要各补一次。
  *
  * 【为什么先置位再装】
@@ -391,7 +391,7 @@ function buildCache() {
   //    两者都盖在回放结果之上。种子会员不在 user-store 里，所以补丁必须
   //    在这里盖。users 与 members 必须是盖过补丁的同一份——否则
   //    getCurrentUser（读 users）与 getMembers（读 members）会在改完角色后
-  //    各说各话（一个还是普通会员，一个已能看到干事入口）。分数、场次仍以
+  //    各说各话（一个还是普通会员，一个已能看到学院负责人入口）。分数、场次仍以
   //    回放结果为准，补丁只覆盖昵称 / 头像 / 角色这几个字段。
   //    角色不进回放：等级分怎么算与谁有管理权无关，故盖在回放之后即可。
   const patchAccount = (account) => {
@@ -457,7 +457,7 @@ function resetCache() {
   collegeStore.reset();
   // 资料补丁同理：改过的昵称头像也是临时写入
   profileStore.reset();
-  // 角色任免同理：管理员把谁设成了干事也是临时写入
+  // 角色任免同理：管理员把谁设成了学院负责人也是临时写入
   roleStore.reset();
   // 赛季状态同理：分界点必须一起清，否则下一轮生成的积分还是切过的
   seasonStore.reset();
@@ -862,7 +862,7 @@ async function submitMatch(params = {}) {
       return { ok: false, match: null, errors: {}, scoreErrors: [], firstError: '找不到这场比赛' };
     }
     const actorAccount = accountOf(actor);
-    // 抽签比赛的成绩由场上的人补录，管理员代录任意一场，干事只代录本学院
+    // 抽签比赛的成绩由场上的人补录，管理员代录任意一场，学院负责人只代录本学院
     // 有人上场的比赛——判定与云端 submitScheduledMatch、界面上的「录分」
     // 按钮（events-view.buildBracketRows）同源，三处一旦分叉，就会出现
     // 「看得见按钮、点下去却被拒」。
@@ -929,7 +929,7 @@ async function submitMatch(params = {}) {
     };
   }
 
-  // 给了登录者就按同一条规则查权限：只有参赛者、本学院有人上场的干事、
+  // 给了登录者就按同一条规则查权限：只有参赛者、本学院有人上场的负责人、
   // 管理员能录这一场。没给 actor 的调用只会来自测试或脚本——本地模拟数据
   // 不是安全边界，真正的边界在云端的 ctx（那里 actor 永远存在）。
   if (actor) {
@@ -944,7 +944,7 @@ async function submitMatch(params = {}) {
         match: null,
         errors: {},
         scoreErrors: [],
-        firstError: '只有参赛者、本学院干事或管理员可以录入这场比赛的成绩',
+        firstError: '只有参赛者、本学院负责人或管理员可以录入这场比赛的成绩',
       };
     }
   }
@@ -1297,7 +1297,7 @@ async function assignTieReferee(tieId, refereeId, actor) {
 /* ---------- 实时比分 ---------- */
 /* 逐球计分的四个写接口 + 一个读接口，与云端 live-handlers 同一套纯逻辑。
    权限与录分同源（canRecordScore）：能录这一场的人（裁判 / 管理员 /
-   参赛者 / 本学院干事）才能开台、判球、撤销、定稿。每判一球只写实时
+   参赛者 / 本学院负责人）才能开台、判球、撤销、定稿。每判一球只写实时
    台账，不动赛季缓存；只有定稿走 submitMatch 时才 bumpSeason（§八.5）。 */
 
 /**
@@ -1307,7 +1307,7 @@ async function assignTieReferee(tieId, refereeId, actor) {
  *
  * @param {Object} match
  * @param {string} actor
- * @param {Array<Object>} users 用于解析学院（干事代录的边界）
+ * @param {Array<Object>} users 用于解析学院（学院负责人代录的边界）
  * @returns {boolean}
  */
 function liveMayRecord(match, actor, users) {
@@ -1578,7 +1578,7 @@ async function rejectMember(applicationId, actor, reason) {
 }
 
 /**
- * 把某位会员设为 / 撤销为干事（学院负责人）。
+ * 把某位会员设为 / 撤销为学院负责人。
  *
  * 【为什么与审核分开一条通路】
  * 审核动的是「账号状态」（待审核 → 正常 / 已禁用），任免动的是「角色」，
@@ -1586,12 +1586,12 @@ async function rejectMember(applicationId, actor, reason) {
  * 与入会无关的字段；单独一条，改的是什么、谁有资格，都一目了然。
  *
  * 【为什么被任免者要从 load() 里回查】
- * 干事多半是种子里的老会员（如 u02 张宇轩），不在 user-store 那份申请台账
+ * 学院负责人多半是种子里的老会员（如 u02 张宇轩），不在 user-store 那份申请台账
  * 里。accountOf 会先查回放后的会员名单，再退回申请名单，两处都能找。
  *
  * @param {string} targetId 被任免的会员编号
  * @param {string} actor 操作者编号
- * @param {boolean} makeLeader true 设为干事，false 撤销
+ * @param {boolean} makeLeader true 设为学院负责人，false 撤销
  * @returns {Promise<{ok:boolean, account:Object|null, message:string}>}
  */
 async function setCollegeLeader(targetId, actor, makeLeader) {
@@ -1975,11 +1975,11 @@ async function cancelSignupEvent(id, actor) {
 }
 
 /**
- * 代某位会员签到。只有干事以上能签（决策 4：不做自助签到）。
+ * 代某位会员签到。只有学院负责人以上能签（决策 4：不做自助签到）。
  *
  * @param {string} id
  * @param {string} userId 要签到的会员
- * @param {string} actor 代签的干事
+ * @param {string} actor 代签的学院负责人
  * @returns {Promise<{ok:boolean, record:Object|null, message:string}>}
  */
 async function checkInEvent(id, userId, actor) {
@@ -1990,7 +1990,7 @@ async function checkInEvent(id, userId, actor) {
 
   if (!userId) return { ok: false, record: null, message: '请指定要签到的会员' };
 
-  // 干事只能签本学院的人；管理员通行（见 event.canCheckIn）
+  // 学院负责人只能签本学院的人；管理员通行（见 event.canCheckIn）
   const member = users.find((u) => u._id === userId) || null;
   if (!canCheckIn(target, account, { target: member || {} })) {
     return { ok: false, record: null, message: '当前账号不能为会员签到' };
@@ -2096,7 +2096,7 @@ async function publishCollegeEvent(form, actor) {
 }
 
 /**
- * 提交本学院的参赛名单。**干事（本学院）+ 管理员**，且仅在报名中。
+ * 提交本学院的参赛名单。**学院负责人（本学院）+ 管理员**，且仅在报名中。
  *
  * 队员身份一律用台账里的会员回查（不信任调用方给的 college），
  * 与 accountOf 同一思路。同一赛事同一学院只有一份名单，重复提交覆盖旧的。
@@ -2268,7 +2268,7 @@ async function setCollegeEventPinned(eventId, pinned, actor) {
 }
 
 /**
- * 提交本大场的排阵。**干事（本学院）+ 管理员**，且大场尚未开始（D37）。
+ * 提交本大场的排阵。**学院负责人（本学院）+ 管理员**，且大场尚未开始（D37）。
  *
  * @param {Object} payload { tieId, college, entries }
  * @param {string} actor 提交人编号

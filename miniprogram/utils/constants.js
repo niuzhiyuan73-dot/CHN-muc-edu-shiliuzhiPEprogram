@@ -15,13 +15,13 @@
 /** 用户角色 */
 const ROLE = {
   MEMBER: 0, // 普通会员
-  STAFF: 1, // 干事
+  STAFF: 1, // 学院负责人
   ADMIN: 2, // 管理员
 };
 
 const ROLE_LABEL = {
   [ROLE.MEMBER]: '会员',
-  [ROLE.STAFF]: '干事',
+  [ROLE.STAFF]: '学院负责人',
   [ROLE.ADMIN]: '管理员',
 };
 

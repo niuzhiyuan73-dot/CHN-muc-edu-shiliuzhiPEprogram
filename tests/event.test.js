@@ -52,10 +52,10 @@ const member = (id, extra = {}) => ({
   ...extra,
 });
 
-/** 一位干事 */
+/** 一位学院负责人 */
 const staff = (id = 's1', extra = {}) => ({
   _id: id,
-  nickName: `干事${id}`,
+  nickName: `学院负责人${id}`,
   role: ROLE.STAFF,
   status: USER_STATUS.ACTIVE,
   ...extra,
@@ -114,8 +114,8 @@ describe('canManageEvent —— 发布 / 管理权（仅管理员）', () => {
     assert.equal(canManageEvent(admin()), true);
   });
 
-  test('干事与普通会员都没有管理权，本地模拟数据源也不放宽', () => {
-    // 干事比会员多的只是「代签到」与「录入比分」，赛事本身的操盘权收到管理员
+  test('学院负责人与普通会员都没有管理权，本地模拟数据源也不放宽', () => {
+    // 学院负责人比会员多的只是「代签到」与「录入比分」，赛事本身的操盘权收到管理员
     assert.equal(canManageEvent(staff()), false);
     assert.equal(canManageEvent(member('m1')), false);
     // 判定只看角色——否则本地上每位会员都会看到「＋发布」
@@ -140,7 +140,7 @@ describe('赛事状态机 —— 开始 / 签到 / 结束', () => {
 
   test('只有进行中的赛事能签到与结束', () => {
     const ongoing = openEvent({ status: EVENT_STATUS.ONGOING });
-    // 签到放给干事分担；结束赛事仍只有管理员
+    // 签到放给学院负责人分担；结束赛事仍只有管理员
     assert.equal(canCheckIn(ongoing, staff()), true);
     assert.equal(canCheckIn(ongoing, admin()), true);
     assert.equal(canFinishEvent(ongoing, admin()), true);
@@ -158,7 +158,7 @@ describe('赛事状态机 —— 开始 / 签到 / 结束', () => {
   });
 });
 
-describe('canCheckIn —— 干事代签只限本学院', () => {
+describe('canCheckIn —— 学院负责人代签只限本学院', () => {
   const ongoing = () => openEvent({ status: EVENT_STATUS.ONGOING });
 
   test('管理员可以为任何学院的人签到', () => {
@@ -166,14 +166,14 @@ describe('canCheckIn —— 干事代签只限本学院', () => {
     assert.equal(canCheckIn(ongoing(), admin(), { target }), true);
   });
 
-  test('干事只能签本学院的人', () => {
+  test('学院负责人只能签本学院的人', () => {
     const me = staff('s1', { college: '信息工程学院' });
     assert.equal(canCheckIn(ongoing(), me, { target: member('m1', { college: '信息工程学院' }) }), true);
     // 替别的学院签会把本院的账记到别人名下，拦住
     assert.equal(canCheckIn(ongoing(), me, { target: member('m2', { college: '美术学院' }) }), false);
   });
 
-  test('干事没有学院时，代签一律不放行（宁严勿松）', () => {
+  test('学院负责人没有学院时，代签一律不放行（宁严勿松）', () => {
     const noCollege = staff('s1');
     assert.equal(canCheckIn(ongoing(), noCollege, { target: member('m1', { college: '体育学院' }) }), false);
   });
@@ -221,7 +221,7 @@ describe('canDrawEvent —— 抽签资格（仅管理员）', () => {
     assert.equal(canDrawEvent(openEvent(), admin()), true);
   });
 
-  test('干事不再有抽签权', () => {
+  test('学院负责人不再有抽签权', () => {
     assert.equal(canDrawEvent(openEvent(), staff()), false);
   });
 
@@ -627,10 +627,10 @@ describe('buildEventRecord —— 组装赛事记录', () => {
 
   test('记下发布人，昵称缺失时逐层兜底', () => {
     const result = buildEventRecord(validForm(), {
-      actor: { _id: 's9', nickName: '', realName: '张干事' },
+      actor: { _id: 's9', nickName: '', realName: '张学院负责人' },
     });
     assert.equal(result.record.publisherId, 's9');
-    assert.equal(result.record.publisherName, '张干事');
+    assert.equal(result.record.publisherName, '张学院负责人');
   });
 
   test('项目落库：选了写下来，留空存 null（当作不限）', () => {
@@ -853,7 +853,7 @@ describe('buildEventRow —— 把权限算进数据里', () => {
     assert.equal(row.mySignupLabel, '已报名');
   });
 
-  test('干事只看到代签到，结束赛事交给管理员', () => {
+  test('学院负责人只看到代签到，结束赛事交给管理员', () => {
     const row = buildEventRow(openEvent({ status: EVENT_STATUS.ONGOING }), { actor: staff('s1') });
     assert.equal(row.canCheckIn, true);
     assert.equal(row.canFinish, false);

@@ -8,7 +8,7 @@
  *   · 赛事「2026 院际匹克球团体赛」正在进行（16 所学院、团体单败）
  *   · 第一轮 16 进 8 已全部打完
  *   · 第二轮 八进四 已打完三场，只剩法学院那场停在「待排阵」
- *   · 演示账号 u06 赵明宇是法学院干事，本人不参赛
+ *   · 演示账号 u06 赵明宇是法学院负责人，本人不参赛
  *
  * 【为什么不是手写一份静态快照】
  * 场景里的每一场比分、每一次晋级都应由真实的赛制规则推出来，才经得起
@@ -41,7 +41,7 @@ const {
 
 /** 种子里的管理员，全场规则性操作都由他做 */
 const ADMIN_ID = 'u01';
-/** 演示账号：赵明宇，本场被任命为法学院干事 */
+/** 演示账号：赵明宇，本场被任命为法学院负责人 */
 const LEADER_ID = 'u06';
 const LAW_COLLEGE = '法学院';
 
@@ -96,7 +96,7 @@ function installCollegeDemo(deps) {
   /** 当前在册会员（每次回读，因为前面的写入会重建缓存） */
   const members = () => load().members;
 
-  /** 某学院可以上场的会员（在册、且不是干事——干事不参赛） */
+  /** 某学院可以上场的会员（在册、且不是学院负责人——学院负责人不参赛） */
   const rosterMembersOf = (college) =>
     members().filter(
       (member) =>
@@ -108,7 +108,7 @@ function installCollegeDemo(deps) {
   /** 某学院可以上场的会员编号 */
   const rosterIdsOf = (college) => rosterMembersOf(college).map((member) => member._id);
 
-  /** 替某学院排阵的人：法学院的名单交给干事，其余学院由管理员代劳 */
+  /** 替某学院排阵的人：法学院的名单交给学院负责人，其余学院由管理员代劳 */
   const lineupActorOf = (college) => (college === LAW_COLLEGE ? LEADER_ID : ADMIN_ID);
 
   /**
@@ -209,7 +209,7 @@ function installCollegeDemo(deps) {
     actions.approveMember(account._id, ADMIN_ID);
   }
 
-  // 2. 任命赵明宇为法学院干事（本人不参赛，见 rosterIdsOf 的排除）
+  // 2. 任命赵明宇为法学院负责人（本人不参赛，见 rosterIdsOf 的排除）
   actions.setCollegeLeader(LEADER_ID, ADMIN_ID, true);
 
   // 3. 发布学院赛：团体单败，一场大场打男单 + 女单
@@ -234,7 +234,7 @@ function installCollegeDemo(deps) {
   const event = collegeStore.listEvents().slice(-1)[0];
   if (!event) return null;
 
-  // 4. 16 所学院交名单（干事本人不进名单）→ 管理员逐份审核通过
+  // 4. 16 所学院交名单（学院负责人本人不进名单）→ 管理员逐份审核通过
   const colleges = Array.from(new Set(members().map((member) => member.college))).sort();
   for (const college of colleges) {
     const memberIds = rosterIdsOf(college);

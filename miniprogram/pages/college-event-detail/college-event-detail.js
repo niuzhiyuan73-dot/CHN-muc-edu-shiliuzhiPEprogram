@@ -371,7 +371,7 @@ Page({
     });
   },
 
-  /** 去某个小项的录分页（参赛者 / 干事 / 管理员） */
+  /** 去某个小项的录分页（参赛者 / 学院负责人 / 管理员） */
   onOpenMatch(event) {
     const { matchId } = event.currentTarget.dataset;
     if (!matchId) return;
@@ -384,7 +384,7 @@ Page({
     wx.navigateTo({ url: `/pages/college-entry-review/college-entry-review?eventId=${this.eventId}` });
   },
 
-  /** 去本学院名单提交页（干事） */
+  /** 去本学院名单提交页（学院负责人） */
   onOpenEntry() {
     wx.navigateTo({ url: `/pages/college-entry/college-entry?eventId=${this.eventId}` });
   },

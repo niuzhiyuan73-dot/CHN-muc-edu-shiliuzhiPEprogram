@@ -315,7 +315,7 @@
     <template is="memberHero" data="{{user: user}}" />
 
     <!--
-      任免干事。只有管理员看别人的主页时才渲染（leader.visible 由
+      任免学院负责人。只有管理员看别人的主页时才渲染（leader.visible 由
       profile-view 用 validateCollegeLeader 算出来）。放在战绩之前：
       需要处理的事该排在浏览数据前面。
     -->
