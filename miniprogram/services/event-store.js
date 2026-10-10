@@ -23,6 +23,11 @@
  * 测试里要能断言「第一场新发赛事的编号是 le0001」。序号只增不减的话，
  * 这条断言就会随用例执行顺序飘移，变成时而通过的坏测试。
  *
+ * 【为什么按协会分桶】
+ * 与 match-store 同理：每个协会各持一份独立的赛事台账，切换协会即切换
+ * 整份台账。新增编号（le0001……）也随桶清零，于是两个协会各自都能从
+ * le0001 起编——这正是「各协会功能完全一致、数据互不可见」的落地方式。
+ *
  * 【纯内存】
  * 刻意不写 wx storage：这些是演示期的临时写入，重启即失效。上云后
  * 持久化由云函数负责，届时整个模块可以直接删掉。
@@ -30,21 +35,25 @@
  */
 
 const { EVENT_STATUS, SIGNUP_STATUS } = require('../utils/constants.js');
+const { perAssociation } = require('./association-scope.js');
 
 /** 本地新增赛事的编号前缀。种子赛事是 e01…，不会撞号 */
 const LOCAL_ID_PREFIX = 'le';
 
-/** 本次会话中新发的赛事（按发布顺序） */
-let submitted = [];
-
-/** 对已有赛事的改判：_id → { status, results, actor, actedAt, finishedAt } */
-let overrides = new Map();
-
-/** 报名记录：自然键 → 记录。自然键用「赛事|会员」直接拼，天然去重 */
-let signups = new Map();
-
-/** 自增序号，保证同一会话内编号不重复 */
-let sequence = 0;
+/**
+ * 按协会分桶的赛事台账：每个协会各持一份「新发赛事 + 改判 + 报名 + 序号」。
+ * @type {{current: Function, clear: Function}}
+ */
+const state = perAssociation(() => ({
+  /** 本次会话中新发的赛事（按发布顺序） */
+  submitted: [],
+  /** 对已有赛事的改判：_id → { status, results, actor, actedAt, finishedAt } */
+  overrides: new Map(),
+  /** 报名记录：自然键 → 记录。自然键用「赛事|会员」直接拼，天然去重 */
+  signups: new Map(),
+  /** 自增序号，保证同一协会会话内编号不重复 */
+  sequence: 0,
+}));
 
 /** 复制一条赛事，并逐层复制 results——否则外部改自己的数组会渗进台账 */
 function cloneEvent(record) {
@@ -69,8 +78,9 @@ function cloneSignup(record) {
  * @returns {string} le0001、le0002……
  */
 function nextId() {
-  sequence += 1;
-  return `${LOCAL_ID_PREFIX}${String(sequence).padStart(4, '0')}`;
+  const bucket = state.current();
+  bucket.sequence += 1;
+  return `${LOCAL_ID_PREFIX}${String(bucket.sequence).padStart(4, '0')}`;
 }
 
 /**
@@ -81,7 +91,7 @@ function nextId() {
  */
 function addEvent(draft) {
   const record = cloneEvent({ ...draft, _id: nextId(), status: EVENT_STATUS.SIGNUP });
-  submitted.push(record);
+  state.current().submitted.push(record);
   return cloneEvent(record);
 }
 
@@ -91,7 +101,7 @@ function addEvent(draft) {
  * @returns {Object|null}
  */
 function overrideOf(id) {
-  const patch = overrides.get(id);
+  const patch = state.current().overrides.get(id);
   return patch ? { ...patch } : null;
 }
 
@@ -104,8 +114,9 @@ function overrideOf(id) {
  * @returns {Object} 合并后的改判
  */
 function setStatus(id, patch) {
-  const next = { ...(overrides.get(id) || {}), ...patch };
-  overrides.set(id, next);
+  const bucket = state.current();
+  const next = { ...(bucket.overrides.get(id) || {}), ...patch };
+  bucket.overrides.set(id, next);
   return { ...next };
 }
 
@@ -114,7 +125,7 @@ function setStatus(id, patch) {
  * @returns {Array<Object>}
  */
 function listSubmitted() {
-  return submitted.map(cloneEvent);
+  return state.current().submitted.map(cloneEvent);
 }
 
 /* ---------- 报名记录 ---------- */
@@ -131,7 +142,7 @@ function signupKey(eventId, userId) {
  * @returns {Object|null}
  */
 function findSignup(eventId, userId) {
-  const record = signups.get(signupKey(eventId, userId));
+  const record = state.current().signups.get(signupKey(eventId, userId));
   return record ? cloneSignup(record) : null;
 }
 
@@ -141,7 +152,7 @@ function findSignup(eventId, userId) {
  * @returns {Array<Object>}
  */
 function listSignups(eventId) {
-  const all = [...signups.values()].map(cloneSignup);
+  const all = [...state.current().signups.values()].map(cloneSignup);
   return eventId ? all.filter((item) => item.eventId === eventId) : all;
 }
 
@@ -156,16 +167,13 @@ function listSignups(eventId) {
  */
 function saveSignup(record) {
   const stored = cloneSignup({ ...record });
-  signups.set(signupKey(record.eventId, record.userId), stored);
+  state.current().signups.set(signupKey(record.eventId, record.userId), stored);
   return cloneSignup(stored);
 }
 
-/** 清空新增、改判与报名，并复位编号。mock.resetCache() 会调用它。 */
+/** 清空全部协会的新增、改判与报名，并复位编号。mock.resetCache() 会调用它。 */
 function reset() {
-  submitted = [];
-  overrides = new Map();
-  signups = new Map();
-  sequence = 0;
+  state.clear();
 }
 
 module.exports = {

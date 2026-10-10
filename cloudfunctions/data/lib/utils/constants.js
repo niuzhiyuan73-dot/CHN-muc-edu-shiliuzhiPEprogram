@@ -670,6 +670,9 @@ const COLLECTION = {
 const STORAGE_KEY = {
   USER_INFO: 'userInfo', // 登录后的用户信息
   SETTINGS: 'settings', // 本地设置项
+  // 当前协会的 id。多协会版本里「我现在在哪个协会」要跨启动保留：冷启动时
+  // app.js 读它来复位会话作用域，用户不必每开一次小程序就重选一次。
+  ASSOCIATION: 'association',
 };
 
 /**

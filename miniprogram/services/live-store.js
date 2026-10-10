@@ -13,11 +13,20 @@
  * 【为什么存取都复制】
  * 与 match-store 同一纪律：交出去的数组若与台账共用引用，调用方随手
  * push 一球就会悄悄改到台账。rallies 是数组，必须逐层复制。
+ *
+ * 【为什么按协会分桶】
+ * 与其它台账同理：实时比分只在当前协会里可见，切换协会即切换整份台账。
+ * 比赛编号（matchId）本身已按协会隔离，分桶只是把这份隔离贯彻到实时态。
  * ============================================================
  */
 
-/** matchId → 实时态 */
-let states = new Map();
+const { perAssociation } = require('./association-scope.js');
+
+/**
+ * 按协会分桶的实时态台账：每个协会各持一份「matchId → 实时态」。
+ * @type {{current: Function, clear: Function}}
+ */
+const state = perAssociation(() => ({ states: new Map() }));
 
 /**
  * 复制一份实时态。rallies 是唯一的可变子结构，逐层复制。
@@ -39,7 +48,7 @@ function cloneLive(state) {
  * @returns {Object|null}
  */
 function get(matchId) {
-  return cloneLive(states.get(matchId));
+  return cloneLive(state.current().states.get(matchId));
 }
 
 /**
@@ -47,10 +56,10 @@ function get(matchId) {
  * @param {Object} state 必须带 matchId
  * @returns {Object} 落库后的副本
  */
-function set(state) {
-  if (!state || !state.matchId) return null;
-  states.set(state.matchId, cloneLive(state));
-  return cloneLive(state);
+function set(liveState) {
+  if (!liveState || !liveState.matchId) return null;
+  state.current().states.set(liveState.matchId, cloneLive(liveState));
+  return cloneLive(liveState);
 }
 
 /**
@@ -58,7 +67,7 @@ function set(state) {
  * @returns {Array<Object>}
  */
 function list() {
-  return [...states.values()].map(cloneLive);
+  return [...state.current().states.values()].map(cloneLive);
 }
 
 /**
@@ -71,9 +80,9 @@ function byIds(matchIds) {
   return ids.map((id) => get(id)).filter(Boolean);
 }
 
-/** 清空。mock.resetCache() 会调用它。 */
+/** 清空全部协会的实时态。mock.resetCache() 会调用它。 */
 function reset() {
-  states = new Map();
+  state.clear();
 }
 
 module.exports = {

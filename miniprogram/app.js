@@ -10,6 +10,7 @@
 
 const { STORAGE_KEY, DATA_SOURCE } = require('./utils/constants.js');
 const { CLOUD_ENV_ID } = require('./config.js');
+const { isKnownAssociation, defaultAssociationId } = require('./utils/associations.js');
 const facade = require('./services/index.js');
 
 App({
@@ -30,11 +31,16 @@ App({
 
     /** 系统信息（状态栏高度等），在 onLaunch 中采集 */
     systemInfo: null,
+
+    /** 当前协会 id，启动时由 initAssociation 复位。空串表示尚未设定 */
+    association: '',
   },
 
   onLaunch() {
     this.initSystemInfo();
     this.initDataSource();
+    // 协会要在任何数据读取之前定下来：refreshSession 要按它读会员台账
+    this.initAssociation();
     this.restoreUserInfo();
     // 故意不 await：启动流程不该被一次网络往返拖住。校正结果落在
     // globalData 上，下一次页面 onShow 读全局登录态时就会体现出来
@@ -109,6 +115,58 @@ App({
     if (target === DATA_SOURCE.MOCK) {
       console.info('[app] 当前使用本地模拟数据模式，功能可完整预览');
     }
+  },
+
+  /**
+   * 复位「当前协会」。
+   *
+   * 【为什么冷启动要读缓存】多协会版本里「我现在在哪个协会」是该跨启动
+   * 保留的会话状态，否则用户每开一次小程序都得重选一遍。缓存里的 id 若不
+   * 是注册表里的已知协会（旧版本没写过、或协会已下架），就退回默认协会。
+   *
+   * 【为什么必须在 refreshSession 之前】校正登录态要按当前协会去读会员台账；
+   * 协会没定下来，读到的可能是另一份，校正结果就张冠李戴了。
+   *
+   * @returns {string} 设定后的协会 id；一个启用协会都没有时为空串
+   */
+  initAssociation() {
+    let cached = '';
+    try {
+      cached = wx.getStorageSync(STORAGE_KEY.ASSOCIATION);
+    } catch (err) {
+      console.error('[app] 读取本地协会失败', err);
+    }
+
+    const target = isKnownAssociation(cached) ? cached : defaultAssociationId();
+    // 一个启用协会都没有：保持未设定，由调用方据空串跳过业务（见 associations.js）
+    if (!target) return '';
+    return this.setAssociation(target);
+  },
+
+  /**
+   * 切换当前协会。写门面（决定后续读到哪份数据）与本地缓存，并回写 globalData。
+   *
+   * @param {string} id 注册表里的已知协会 id
+   * @returns {string} 设定后的 id
+   * @throws {Error} 未知协会（由 association-scope 抛出）
+   */
+  setAssociation(id) {
+    const next = facade.setAssociation(id);
+    this.globalData.association = next;
+    try {
+      wx.setStorageSync(STORAGE_KEY.ASSOCIATION, next);
+    } catch (err) {
+      console.error('[app] 写入本地协会失败', err);
+    }
+    return next;
+  },
+
+  /**
+   * 当前协会 id。页面一律通过它读取；globalData 尚未填时回落到门面（+默认）。
+   * @returns {string}
+   */
+  getAssociation() {
+    return this.globalData.association || facade.getAssociation();
   },
 
   /**

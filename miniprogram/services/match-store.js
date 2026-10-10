@@ -12,6 +12,11 @@
  * 一旦下沉到这里，最危险的约束就离使用现场太远，后人换个场景复用时
  * 很容易踩雷。
  *
+ * 【为什么要按协会分桶】
+ * 多协会版本里每个协会各持一份独立的台账，切换协会即切换整份台账。
+ * 分桶在 association-scope.perAssociation 里统一实现，于是「一个协会
+ * 录的比赛不会出现在另一个协会」是天然成立的，不必在每个读取点写过滤。
+ *
  * 【为什么 reset 要复位序号】
  * 测试里要能断言「第一场录入的比赛编号是 lm0001」。如果序号只增不减，
  * 这个断言就会随用例执行顺序飘移，变成一条时而通过时而失败的坏测试。
@@ -23,18 +28,23 @@
  */
 
 const { MATCH_STATUS } = require('../utils/constants.js');
+const { perAssociation } = require('./association-scope.js');
 
 /** 本地新增比赛的编号前缀 */
 const LOCAL_ID_PREFIX = 'lm';
 
-/** 本次会话中新增的比赛（按录入顺序） */
-let submitted = [];
-
-/** 对已有比赛的改判：_id → { status, reason, action, actor, actedAt } */
-let overrides = new Map();
-
-/** 自增序号，保证同一会话内编号不重复 */
-let sequence = 0;
+/**
+ * 按协会分桶的台账：每个协会各持一份「新增 + 改判 + 序号」。
+ * @type {{current: Function, clear: Function}}
+ */
+const state = perAssociation(() => ({
+  /** 本次会话中新增的比赛（按录入顺序） */
+  submitted: [],
+  /** 对已有比赛的改判：_id → { status, reason, action, actor, actedAt } */
+  overrides: new Map(),
+  /** 自增序号，保证同一协会同一会话内编号不重复 */
+  sequence: 0,
+}));
 
 /**
  * 需要逐层复制的字段。
@@ -62,8 +72,9 @@ function cloneMatch(record) {
  * @returns {string} lm0001、lm0002……
  */
 function nextId() {
-  sequence += 1;
-  return `${LOCAL_ID_PREFIX}${String(sequence).padStart(4, '0')}`;
+  const bucket = state.current();
+  bucket.sequence += 1;
+  return `${LOCAL_ID_PREFIX}${String(bucket.sequence).padStart(4, '0')}`;
 }
 
 /**
@@ -83,7 +94,7 @@ function addMatch(draft) {
     _id: nextId(),
     status: MATCH_STATUS.PENDING,
   });
-  submitted.push(record);
+  state.current().submitted.push(record);
   return cloneMatch(record);
 }
 
@@ -109,12 +120,13 @@ function addMatch(draft) {
  * @returns {Object} 落库后的副本
  */
 function saveMatch(draft) {
+  const bucket = state.current();
   const record = cloneMatch({ ...draft, status: MATCH_STATUS.PENDING });
-  const index = submitted.findIndex((item) => item._id === record._id);
-  if (index >= 0) submitted[index] = record;
-  else submitted.push(record);
+  const index = bucket.submitted.findIndex((item) => item._id === record._id);
+  if (index >= 0) bucket.submitted[index] = record;
+  else bucket.submitted.push(record);
   // 覆盖即作废旧改判，否则驳回/撤销过的签位重抽后仍是「已撤销」
-  overrides.delete(record._id);
+  bucket.overrides.delete(record._id);
   return cloneMatch(record);
 }
 
@@ -124,7 +136,7 @@ function saveMatch(draft) {
  * @returns {Object|null} 没有改判时返回 null
  */
 function overrideOf(id) {
-  const patch = overrides.get(id);
+  const patch = state.current().overrides.get(id);
   return patch ? { ...patch } : null;
 }
 
@@ -137,8 +149,9 @@ function overrideOf(id) {
  * @returns {Object} 合并后的改判
  */
 function setStatus(id, patch) {
-  const next = { ...(overrides.get(id) || {}), ...patch };
-  overrides.set(id, next);
+  const bucket = state.current();
+  const next = { ...(bucket.overrides.get(id) || {}), ...patch };
+  bucket.overrides.set(id, next);
   return { ...next };
 }
 
@@ -147,14 +160,12 @@ function setStatus(id, patch) {
  * @returns {Array<Object>}
  */
 function listSubmitted() {
-  return submitted.map(cloneMatch);
+  return state.current().submitted.map(cloneMatch);
 }
 
-/** 清空新增与改判，并复位编号。mock.resetCache() 会调用它。 */
+/** 清空全部协会的新增与改判，并复位编号。mock.resetCache() 会调用它。 */
 function reset() {
-  submitted = [];
-  overrides = new Map();
-  sequence = 0;
+  state.clear();
 }
 
 module.exports = {

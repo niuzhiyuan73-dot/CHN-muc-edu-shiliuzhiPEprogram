@@ -28,6 +28,9 @@ const profileStore = require('./profile-store.js');
 const roleStore = require('./role-store.js');
 const seasonStore = require('./season-store.js');
 const liveStore = require('./live-store.js');
+// 当前协会（会话作用域）：缓存按它分份，各台账按它分桶
+const scope = require('./association-scope.js');
+const { allAssociations } = require('../utils/associations.js');
 const { installCollegeDemo } = require('./college-demo.js');
 const { register: registerAccount } = require('./auth.js');
 const { canManage } = require('./permission.js');
@@ -172,7 +175,40 @@ const SEED_OPTIONS = {
   casualPerWeek: 30,
 };
 
-let cache = null;
+/**
+ * 每个协会各持一份缓存：association → buildCache() 的结果。
+ *
+ * 【为什么按协会分份，而不是一份缓存里塞全部协会】
+ * 与各台账按协会分桶同一条纪律：读到的永远只有当前协会那一份，隔离是
+ * 「天然」的，不必在每个读取点再写一遍过滤。切协会时另建一份，切回来
+ * 直接用旧的那份，不必重算那 600 场回放。
+ */
+const caches = new Map();
+
+/**
+ * 让当前协会的缓存失效，下次读取重建。
+ * 所有本地写接口（录分 / 审核 / 发布 / 改判……）都靠它在写入后把缓存
+ * 打回待重建——只删当前协会那一份，别的协会缓存原样留着。
+ */
+function invalidate() {
+  caches.delete(scope.getAssociation());
+}
+
+/**
+ * 某个协会的种子生成参数。
+ *
+ * 默认协会（注册表里第一位）沿用 SEED_OPTIONS，与改造前的行为逐字节一致；
+ * 其余协会按注册表次序把 seed 错开，于是各协会的模拟比赛/赛事数据各不相同
+ * ——这正是「各协会数据互不可见、又各自能演示」的来源。注意会员身份仍是
+ * 共享的那 24 位：账号是全局的（见 associations.js），因协会而异的是内容。
+ *
+ * @param {string} association
+ * @returns {Object} generateSeed 的参数
+ */
+function seedOptionsFor(association) {
+  const index = Math.max(0, allAssociations().findIndex((a) => a.id === association));
+  return { ...SEED_OPTIONS, seed: SEED_OPTIONS.seed + index };
+}
 
 /**
  * 学院赛演示场景是否还允许自动装载。
@@ -183,8 +219,11 @@ let cache = null;
  */
 let collegeDemoEnabled = true;
 
-/** 演示场景只装一次；装上后再读多少遍都不重复，也不重复跑那段回放 */
-let collegeDemoInstalled = false;
+/**
+ * 演示场景在每个协会里各装一次。用一个 Set 记「哪些协会已装过」：
+ * 切到新协会时它的桶是空的，自然要重装一遍；切回来则不必重复跑那段回放。
+ */
+const collegeDemoInstalled = new Set();
 
 /**
  * 第一次读到数据前，把学院赛演示场景装进台账。
@@ -196,11 +235,17 @@ let collegeDemoInstalled = false;
  *
  * 【为什么先置位再装】
  * 装载过程中动作函数会回调 load()，置位后递归调用立即返回，不会死循环。
- * 装完 cache 已被写入失效，调用方的 load() 会再补一次含场景的最终缓存。
+ * 装完当前协会的缓存已被写入失效，调用方的 load() 会再补一次含场景的最终缓存。
+ *
+ * 【为什么从作用域里现取协会，而不是由调用方传入】
+ * 这五处调用（load 与四个 getCollege*）都发生在「当前协会」的上下文里；
+ * 各自去取一次 getAssociation() 只会让签名更长、口径还可能走散。现取
+ * 一次最省心，也保证装的桶与读的桶始终是同一个。
  */
 function ensureCollegeDemo() {
-  if (!collegeDemoEnabled || collegeDemoInstalled) return;
-  collegeDemoInstalled = true;
+  const association = scope.getAssociation();
+  if (!collegeDemoEnabled || collegeDemoInstalled.has(association)) return;
+  collegeDemoInstalled.add(association);
   try {
     installCollegeDemo({
       load,
@@ -284,8 +329,8 @@ function publicMember(user) {
  *
  * @returns {{users:Array, members:Array, applications:Array, matches:Array, events:Array, ledger:Array, meta:Object, nameOf:Function}}
  */
-function buildCache() {
-  const seed = generateSeed(SEED_OPTIONS);
+function buildCache(association) {
+  const seed = generateSeed(seedOptionsFor(association));
 
   // 1. 本地账号：演示申请 + 本次会话注册的，逐条叠加审核改判
   const local = userStore.listAccounts();
@@ -424,17 +469,18 @@ function buildCache() {
 }
 
 /**
- * 加载（并缓存）模拟数据。
+ * 加载（并缓存）当前协会的模拟数据。
  * @returns {{users:Array, matches:Array, events:Array, ledger:Array, meta:Object, nameOf:Function}}
  */
 function load() {
-  if (!cache) {
-    cache = buildCache();
+  const association = scope.getAssociation();
+  if (!caches.has(association)) {
+    caches.set(association, buildCache(association));
     ensureCollegeDemo();
     // 演示场景的写入已让上面那份缓存失效，这里补一次；补完就是含场景的最终缓存
-    if (!cache) cache = buildCache();
+    if (!caches.has(association)) caches.set(association, buildCache(association));
   }
-  return cache;
+  return caches.get(association);
 }
 
 /**
@@ -444,7 +490,7 @@ function load() {
  * 又叠回来，「重置」就成了假的。
  */
 function resetCache() {
-  cache = null;
+  caches.clear();
   matchStore.reset();
   // 本地账号也要清：注册与审核改判同样属于「本次会话的临时写入」
   userStore.reset();
@@ -465,7 +511,9 @@ function resetCache() {
   liveStore.reset();
   // 学院赛演示场景也一并关掉：复位是测试专用动作，之后各用例要的是干净
   // 基线（24 位会员、0 场学院赛），而不是再把演示数据装回来。
+  // 各协会的「已装过」标记也清掉，免得下次开演示时被上一轮的残留挡住。
   collegeDemoEnabled = false;
+  collegeDemoInstalled.clear();
 }
 
 /**
@@ -899,7 +947,7 @@ async function submitMatch(params = {}) {
     }
 
     const match = matchStore.saveMatch({ ...target, ...filled.patch });
-    cache = null;
+    invalidate();
     return { ok: true, match, errors: {}, scoreErrors: [], firstError: '' };
   }
 
@@ -964,7 +1012,7 @@ async function submitMatch(params = {}) {
 
   const match = matchStore.addMatch(result.record);
   // 写操作之后必须让缓存失效，否则分数变化不会兑现
-  cache = null;
+  invalidate();
   return { ok: true, match, errors: {}, scoreErrors: [], firstError: '' };
 }
 
@@ -1018,7 +1066,7 @@ async function confirmMatch(id, actor) {
     actedAt: new Date(),
   };
   matchStore.setStatus(id, patch);
-  cache = null;
+  invalidate();
   if (match.competition === MATCH_COMPETITION.COLLEGE) {
     // 学院赛小场：把结果写回大场，本轮打完则排下一轮
     advanceCollegeAfterLeg({ ...match, ...patch });
@@ -1061,7 +1109,7 @@ function advanceEvent(id) {
     matchStore.saveMatch(draft);
     inserted = true;
   });
-  if (inserted) cache = null;
+  if (inserted) invalidate();
 }
 
 /**
@@ -1094,7 +1142,7 @@ async function rejectMatch(id, actor, reason) {
     actedAt: new Date(),
   };
   matchStore.setStatus(id, patch);
-  cache = null;
+  invalidate();
   return { ok: true, match: { ...match, ...patch }, message: '' };
 }
 
@@ -1150,7 +1198,7 @@ async function revokeMatch(id, actor, reason) {
     actedAt: new Date(),
   };
   matchStore.setStatus(id, patch);
-  cache = null;
+  invalidate();
 
   // 学院赛小场：把这一场的结果从大场里收回来（清胜负、必要时退回进行中）
   const revoked = { ...match, ...patch };
@@ -1185,7 +1233,7 @@ async function forfeitMatch(id, forfeitBy, actor) {
 
   const patch = buildForfeitPatch(match, by, { actorId: actor, now: new Date() });
   matchStore.setStatus(id, patch);
-  cache = null;
+  invalidate();
 
   const patched = { ...match, ...patch };
   advanceEvent(patched.eventId);
@@ -1245,7 +1293,7 @@ async function assignMatchReferee(matchId, refereeId, actor) {
 
   const patch = buildRefereePatch(id, { actorId: actor, now: new Date() });
   matchStore.setStatus(matchId, patch);
-  cache = null;
+  invalidate();
   return { ok: true, match: { ...match, ...patch }, message: '' };
 }
 
@@ -1290,7 +1338,7 @@ async function assignTieReferee(tieId, refereeId, actor) {
   }
 
   const record = collegeStore.updateTie(tieId, patch);
-  cache = null;
+  invalidate();
   return { ok: true, record, matches, message: '' };
 }
 
@@ -1516,7 +1564,7 @@ async function registerMember(profile, options = {}) {
   }
 
   const account = userStore.addAccount(result.account);
-  cache = null;
+  invalidate();
   return { ok: true, account, errors: {}, firstError: '' };
 }
 
@@ -1551,7 +1599,7 @@ async function reviewMember(applicationId, actor, action, reason, initialElo) {
   }
 
   userStore.setStatus(applicationId, patch);
-  cache = null;
+  invalidate();
   return { ok: true, account: userStore.findAccount(applicationId), message: '' };
 }
 
@@ -1600,7 +1648,7 @@ async function setCollegeLeader(targetId, actor, makeLeader) {
   if (!verdict.ok) return { ok: false, account: null, message: verdict.message };
 
   roleStore.setRole(target._id, verdict.role);
-  cache = null;
+  invalidate();
   // 重新查一遍，拿到的就是盖过角色补丁的新身份
   return { ok: true, account: accountOf(target._id), message: '' };
 }
@@ -1635,7 +1683,7 @@ async function setAssociationLeader(targetId, actor, makeLeader) {
   }
 
   roleStore.setRole(target._id, makeLeader ? ROLE.ADMIN : ROLE.MEMBER);
-  cache = null;
+  invalidate();
   return { ok: true, account: accountOf(target._id), message: '' };
 }
 
@@ -1665,7 +1713,7 @@ async function publishAnnouncement(form, actor) {
   }
 
   const record = announcementStore.addAnnouncement(built.record);
-  cache = null;
+  invalidate();
   return { ok: true, record, errors: {}, firstError: '' };
 }
 
@@ -1694,7 +1742,7 @@ async function archiveAnnouncement(id, actor) {
     actor,
     actedAt: new Date(),
   });
-  cache = null;
+  invalidate();
 
   const record = load().announcementLedger.find((item) => item._id === id) || null;
   return { ok: true, record, message: '' };
@@ -1739,7 +1787,7 @@ async function resetSeason(actor) {
   }
 
   seasonStore.setReset({ resetTime: new Date() });
-  cache = null;
+  invalidate();
   return { ok: true, season: await getSeasonState(), message: '' };
 }
 
@@ -1773,7 +1821,7 @@ async function updateProfile(patch, actor) {
   }
 
   profileStore.setProfile(account._id, built.patch);
-  cache = null;
+  invalidate();
   // 重新查一遍，拿到的就是盖过补丁的新昵称/头像
   return { ok: true, account: accountOf(account._id), errors: {}, firstError: '' };
 }
@@ -1825,7 +1873,7 @@ async function publishEvent(form, actor) {
   }
 
   const record = eventStore.addEvent(built.record);
-  cache = null;
+  invalidate();
   return { ok: true, record, errors: {}, firstError: '' };
 }
 
@@ -1855,7 +1903,7 @@ async function startEvent(id, actor) {
   if (blocked) return { ok: false, record: null, message: blocked };
 
   eventStore.setStatus(id, { status: EVENT_STATUS.ONGOING, actor, actedAt: new Date() });
-  cache = null;
+  invalidate();
   return { ok: true, record: findEvent(id), message: '' };
 }
 
@@ -1882,7 +1930,7 @@ async function setEventPinned(id, pinned, actor) {
   }
 
   eventStore.setStatus(id, { pinned: Boolean(pinned), actor, actedAt: new Date() });
-  cache = null;
+  invalidate();
   return { ok: true, record: findEvent(id), message: '' };
 }
 
@@ -1947,7 +1995,7 @@ async function drawEvent(id, actor, options = {}) {
   const matches = buildInitialMatches(target, draw).map((draft) => matchStore.saveMatch(draft));
 
   eventStore.setStatus(id, { draw });
-  cache = null;
+  invalidate();
   return { ok: true, record: findEvent(id), draw, matches, message: '' };
 }
 
@@ -2095,7 +2143,7 @@ async function finishEvent(id, results, actor) {
     finishedAt: new Date(),
   });
   // 名次落定就要重算积分，缓存必须失效
-  cache = null;
+  invalidate();
   return { ok: true, record: findEvent(id), errors: {}, firstError: '' };
 }
 
@@ -2375,7 +2423,7 @@ async function startTie(tieId, actor) {
     startedAt: new Date(),
     legs,
   });
-  cache = null;
+  invalidate();
   return { ok: true, record, message: '' };
 }
 
@@ -2513,7 +2561,7 @@ async function recordForfeit(tieId, legNo, forfeitBy, actor) {
     actedAt: new Date(),
   };
   matchStore.setStatus(leg.matchId, patch);
-  cache = null;
+  invalidate();
 
   const patched = { ...match, ...patch };
   advanceCollegeAfterLeg(patched);

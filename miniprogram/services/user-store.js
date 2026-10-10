@@ -12,6 +12,12 @@
  * 申请要不要剔除」是有讲究的，属于数据层的知识（见 mock.js 的 buildCache）。
  * 一旦下沉到这里，最危险的约束就离使用现场太远。
  *
+ * 【为什么要按协会分桶】
+ * 与 match-store 同理：每个协会各持一份独立的账号台账，切换协会即切换
+ * 整份台账。注意两条演示申请是全局的（账号是全局的，见 associations.js
+ * 的说明），分桶的是「本次会话注册的账号」与「审核改判」——这正是随
+ * 协会而异的部分。
+ *
  * 【为什么预置两条演示申请】
  * 审核页首屏若空空如也，没法演示也没法自测。待审核的申请不计入「会员数」
  * （只有 ACTIVE 才进 getMembers），所以 24 这个数字不会因此变动。
@@ -29,6 +35,7 @@
 
 const { ROLE, USER_STATUS } = require('../utils/constants.js');
 const { createEmptyRatings } = require('../utils/rating.js');
+const { perAssociation } = require('./association-scope.js');
 
 /**
  * 预置的两条入会申请。
@@ -68,11 +75,16 @@ const DEMO_APPLICATIONS = Object.freeze([
   }),
 ]);
 
-/** 本次会话中注册产生的账号（按注册顺序），已定案的也在里面 */
-let submitted = [];
-
-/** 对账号的改判：_id → { status, action, reason, actor, actedAt } */
-let overrides = new Map();
+/**
+ * 按协会分桶的账号台账：每个协会各持一份「本次会话注册 + 改判」。
+ * @type {{current: Function, clear: Function}}
+ */
+const state = perAssociation(() => ({
+  /** 本次会话中注册产生的账号（按注册顺序），已定案的也在里面 */
+  submitted: [],
+  /** 对账号的改判：_id → { status, action, reason, actor, actedAt } */
+  overrides: new Map(),
+}));
 
 /**
  * 需要逐层复制的字段。
@@ -103,9 +115,9 @@ function cloneAccount(account) {
   return copy;
 }
 
-/** 台账里的全部账号（演示 + 注册），未叠加改判 */
+/** 当前协会台账里的全部账号（演示 + 注册），未叠加改判 */
 function listRaw() {
-  return DEMO_APPLICATIONS.concat(submitted);
+  return DEMO_APPLICATIONS.concat(state.current().submitted);
 }
 
 /**
@@ -113,7 +125,7 @@ function listRaw() {
  * 记录里仍写着 PENDING，真正管用的是那条改判。
  */
 function effectiveStatus(account) {
-  const patch = overrides.get(account._id);
+  const patch = state.current().overrides.get(account._id);
   return patch && patch.status !== undefined ? patch.status : account.status;
 }
 
@@ -123,7 +135,7 @@ function effectiveStatus(account) {
  * @returns {Object|null} 没有改判时返回 null
  */
 function overrideOf(id) {
-  const patch = overrides.get(id);
+  const patch = state.current().overrides.get(id);
   return patch ? { ...patch } : null;
 }
 
@@ -135,8 +147,9 @@ function overrideOf(id) {
  * @returns {Object} 合并后的改判
  */
 function setStatus(id, patch) {
-  const next = { ...(overrides.get(id) || {}), ...patch };
-  overrides.set(id, next);
+  const bucket = state.current();
+  const next = { ...(bucket.overrides.get(id) || {}), ...patch };
+  bucket.overrides.set(id, next);
   return { ...next };
 }
 
@@ -154,8 +167,9 @@ function setStatus(id, patch) {
 function addAccount(account) {
   if (!account || !account._id) return null;
 
-  const index = submitted.findIndex((item) => item._id === account._id);
-  if (index >= 0 && effectiveStatus(submitted[index]) !== USER_STATUS.PENDING) {
+  const bucket = state.current();
+  const index = bucket.submitted.findIndex((item) => item._id === account._id);
+  if (index >= 0 && effectiveStatus(bucket.submitted[index]) !== USER_STATUS.PENDING) {
     // 交回去的是「改判生效后」的那一条，否则调用方拿到的还是一个 PENDING，
     // 会以为自己的重试把审批结果顶掉了
     return findAccount(account._id);
@@ -164,8 +178,8 @@ function addAccount(account) {
   // 落库时状态一律收回「待审核」：就算调用方塞进来一个 ACTIVE，
   // 也不能凭这一次写入让自己转正——激活的权力只属于审核接口。
   const record = cloneAccount({ ...account, status: USER_STATUS.PENDING });
-  if (index >= 0) submitted[index] = record;
-  else submitted.push(record);
+  if (index >= 0) bucket.submitted[index] = record;
+  else bucket.submitted.push(record);
 
   return cloneAccount(record);
 }
@@ -175,6 +189,7 @@ function addAccount(account) {
  * @returns {Array<Object>} 待审核、已驳回、已通过都在里面，由调用方分类
  */
 function listAccounts() {
+  const overrides = state.current().overrides;
   return listRaw().map((account) => {
     const patch = overrides.get(account._id);
     return patch ? { ...cloneAccount(account), ...patch } : cloneAccount(account);
@@ -191,14 +206,13 @@ function findAccount(id) {
   const found = listRaw().find((account) => account._id === id);
   if (!found) return null;
 
-  const patch = overrides.get(id);
+  const patch = state.current().overrides.get(id);
   return patch ? { ...cloneAccount(found), ...patch } : cloneAccount(found);
 }
 
-/** 清空注册与改判。mock.resetCache() 会调用它，复位到两条演示申请的基线。 */
+/** 清空全部协会的注册与改判。mock.resetCache() 会调用它。 */
 function reset() {
-  submitted = [];
-  overrides = new Map();
+  state.clear();
 }
 
 module.exports = {

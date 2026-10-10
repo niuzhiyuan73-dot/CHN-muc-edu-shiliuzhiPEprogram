@@ -32,6 +32,7 @@
 
 const { DATA_SOURCE } = require('../utils/constants.js');
 const { guardWrite, isWriteAction } = require('../utils/write.js');
+const scope = require('./association-scope.js');
 const mock = require('./mock.js');
 
 /**
@@ -114,6 +115,10 @@ module.exports = {
   setDataSource,
   getDataSource,
   isMockNow,
+  // 「当前协会」是客户端会话状态，与数据源无关，故不经 ...api 透传（mock 与
+  // cloud 都不该导出它），而是由门面直接暴露——页面要切协会只能走这里。
+  setAssociation: scope.setAssociation,
+  getAssociation: scope.getAssociation,
 };
 
 /**

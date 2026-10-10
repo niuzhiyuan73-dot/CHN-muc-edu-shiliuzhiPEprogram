@@ -13,12 +13,21 @@
  * 「台账与回放结果谁对」的问题。补丁只覆盖昵称与头像两个字段，
  * 其余一律以回放结果为准，天然不会分叉。
  *
+ * 【为什么按协会分桶】
+ * 与其它台账同理：改名、换头像的效果只在当前协会里可见，切换协会即切回
+ * 该协会自己的那份补丁。于是「同一个账号在两个协会里叫什么」互不串味。
+ *
  * 纯内存，不落盘——与其它台账一致，重启小程序即回到种子状态。
  * ============================================================
  */
 
-/** _id → 资料补丁 */
-let overrides = new Map();
+const { perAssociation } = require('./association-scope.js');
+
+/**
+ * 按协会分桶的资料台账：每个协会各持一份「_id → 资料补丁」。
+ * @type {{current: Function, clear: Function}}
+ */
+const state = perAssociation(() => ({ overrides: new Map() }));
 
 /**
  * 取某人的资料补丁。没有改动过时返回 null。
@@ -27,7 +36,7 @@ let overrides = new Map();
  */
 function patchOf(userId) {
   if (!userId) return null;
-  const patch = overrides.get(userId);
+  const patch = state.current().overrides.get(userId);
   return patch ? { ...patch } : null;
 }
 
@@ -40,14 +49,15 @@ function patchOf(userId) {
  */
 function setProfile(userId, patch) {
   if (!userId) return null;
-  const next = { ...(overrides.get(userId) || {}), ...patch };
-  overrides.set(userId, next);
+  const bucket = state.current();
+  const next = { ...(bucket.overrides.get(userId) || {}), ...patch };
+  bucket.overrides.set(userId, next);
   return { ...next };
 }
 
-/** 清空台账。测试与 resetCache 用 */
+/** 清空全部协会的台账。测试与 resetCache 用 */
 function reset() {
-  overrides = new Map();
+  state.clear();
 }
 
 module.exports = { patchOf, setProfile, reset };

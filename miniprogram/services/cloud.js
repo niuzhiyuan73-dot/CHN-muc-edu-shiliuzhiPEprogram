@@ -18,6 +18,8 @@
  * ============================================================
  */
 
+const scope = require('./association-scope.js');
+
 /** 统一的云函数名 */
 const CLOUD_FUNCTION = 'data';
 
@@ -34,9 +36,12 @@ async function request(action, payload = {}) {
     throw new Error('云开发尚未初始化，请先在 app.js 中调用 wx.cloud.init');
   }
 
+  // association 随每次请求带上：服务端据此做读过滤与写盖章（见云函数
+  // resolveContext）。它只是「客户端说自己在哪个协会」，权限与归属仍由
+  // 服务端判定，前端说了不算。
   const { result } = await wx.cloud.callFunction({
     name: CLOUD_FUNCTION,
-    data: { action, payload },
+    data: { action, payload, association: scope.getAssociation() },
   });
 
   if (!result || result.ok !== true) {

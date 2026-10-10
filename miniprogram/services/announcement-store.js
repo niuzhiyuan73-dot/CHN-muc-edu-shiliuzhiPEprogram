@@ -11,6 +11,10 @@
  * 必须留在管理台账里」，那属于数据层的知识（见 mock.js 的 buildCache）。
  * 一旦下沉到这里，最危险的约束就离使用现场太远。
  *
+ * 【为什么要按协会分桶】
+ * 与 match-store 同理：每个协会各持一份独立的公告台账，切换协会即切换
+ * 整份台账，一个协会新发/下架的公告不会波及另一个协会。
+ *
  * 【为什么下架走 overrides 而不是删掉】
  * 公告是发出去给人看过的，直接抹掉会让「上周那条通知哪去了」无从追溯。
  * 下架只把状态改成 archived：公开列表看不见，管理台账里仍留着，必要时
@@ -27,18 +31,23 @@
  */
 
 const { ANNOUNCEMENT_STATUS } = require('../utils/constants.js');
+const { perAssociation } = require('./association-scope.js');
 
 /** 本地新增公告的编号前缀 */
 const LOCAL_ID_PREFIX = 'la';
 
-/** 本次会话中新发的公告（按发布顺序） */
-let submitted = [];
-
-/** 对已有公告的改判：_id → { status, actor, actedAt } */
-let overrides = new Map();
-
-/** 自增序号，保证同一会话内编号不重复 */
-let sequence = 0;
+/**
+ * 按协会分桶的公告台账：每个协会各持一份「新增 + 改判 + 序号」。
+ * @type {{current: Function, clear: Function}}
+ */
+const state = perAssociation(() => ({
+  /** 本次会话中新发的公告（按发布顺序） */
+  submitted: [],
+  /** 对已有公告的改判：_id → { status, actor, actedAt } */
+  overrides: new Map(),
+  /** 自增序号，保证同一协会同一会话内编号不重复 */
+  sequence: 0,
+}));
 
 /**
  * 需要逐层复制的字段。
@@ -66,8 +75,9 @@ function cloneAnnouncement(record) {
  * @returns {string} la0001、la0002……
  */
 function nextId() {
-  sequence += 1;
-  return `${LOCAL_ID_PREFIX}${String(sequence).padStart(4, '0')}`;
+  const bucket = state.current();
+  bucket.sequence += 1;
+  return `${LOCAL_ID_PREFIX}${String(bucket.sequence).padStart(4, '0')}`;
 }
 
 /**
@@ -87,7 +97,7 @@ function addAnnouncement(draft) {
     _id: nextId(),
     status: ANNOUNCEMENT_STATUS.PUBLISHED,
   });
-  submitted.push(record);
+  state.current().submitted.push(record);
   return cloneAnnouncement(record);
 }
 
@@ -97,7 +107,7 @@ function addAnnouncement(draft) {
  * @returns {Object|null} 没有改判时返回 null
  */
 function overrideOf(id) {
-  const patch = overrides.get(id);
+  const patch = state.current().overrides.get(id);
   return patch ? { ...patch } : null;
 }
 
@@ -109,8 +119,9 @@ function overrideOf(id) {
  * @returns {Object} 合并后的改判
  */
 function setStatus(id, patch) {
-  const next = { ...(overrides.get(id) || {}), ...patch };
-  overrides.set(id, next);
+  const bucket = state.current();
+  const next = { ...(bucket.overrides.get(id) || {}), ...patch };
+  bucket.overrides.set(id, next);
   return { ...next };
 }
 
@@ -119,14 +130,12 @@ function setStatus(id, patch) {
  * @returns {Array<Object>}
  */
 function listSubmitted() {
-  return submitted.map(cloneAnnouncement);
+  return state.current().submitted.map(cloneAnnouncement);
 }
 
-/** 清空新增与改判，并复位编号。mock.resetCache() 会调用它。 */
+/** 清空全部协会的新增与改判，并复位编号。mock.resetCache() 会调用它。 */
 function reset() {
-  submitted = [];
-  overrides = new Map();
-  sequence = 0;
+  state.clear();
 }
 
 module.exports = {

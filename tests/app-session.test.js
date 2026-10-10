@@ -18,6 +18,7 @@ const { beforeEach } = require('node:test');
 const facade = require('../miniprogram/services/index.js');
 const { resolveAuthState } = require('../miniprogram/services/auth.js');
 const { DEFAULT_CURRENT_USER_ID } = require('../miniprogram/services/mock.js');
+const { defaultAssociationId } = require('../miniprogram/utils/associations.js');
 const { DATA_SOURCE, STORAGE_KEY, ROLE, USER_STATUS } = require('../miniprogram/utils/constants.js');
 
 /* ============================================================
@@ -252,4 +253,52 @@ test('基础库没有 wx.cloud 时退回 mock，不抛错', async () => {
   } finally {
     global.wx.cloud = originalCloud;
   }
+});
+
+/* ============================================================
+ * 当前协会的复位与切换
+ * ============================================================
+ * 多协会版本里「我在哪个协会」要跨启动保留。冷启动读本地缓存复位会话作用域，
+ * 未知的 id（旧版本没写过、协会已下架）退回默认协会，切换时同时写门面与缓存。
+ */
+
+test('冷启动把协会复位到默认，并落盘', async () => {
+  await launch({ envId: '' });
+
+  assert.strictEqual(facade.getAssociation(), defaultAssociationId());
+  assert.strictEqual(appConfig.globalData.association, defaultAssociationId());
+  // 没设定过就落一次盘，下次冷启动才有东西可读
+  assert.strictEqual(storage[STORAGE_KEY.ASSOCIATION], defaultAssociationId());
+});
+
+test('冷启动读取已保存的协会', async () => {
+  storage[STORAGE_KEY.ASSOCIATION] = 'tt';
+
+  await launch({ envId: '' });
+
+  assert.strictEqual(facade.getAssociation(), 'tt');
+  assert.strictEqual(appConfig.globalData.association, 'tt');
+});
+
+test('缓存里的协会非法时回落到默认，并把默认写回缓存', async () => {
+  storage[STORAGE_KEY.ASSOCIATION] = 'ghost';
+
+  await launch({ envId: '' });
+
+  assert.strictEqual(facade.getAssociation(), defaultAssociationId());
+  assert.strictEqual(storage[STORAGE_KEY.ASSOCIATION], defaultAssociationId());
+});
+
+test('setAssociation 切换会话、写缓存，未知协会抛错', async () => {
+  await launch({ envId: '' });
+
+  const next = appConfig.setAssociation('bd');
+  assert.strictEqual(next, 'bd');
+  assert.strictEqual(facade.getAssociation(), 'bd');
+  assert.strictEqual(appConfig.globalData.association, 'bd');
+  assert.strictEqual(storage[STORAGE_KEY.ASSOCIATION], 'bd');
+
+  assert.throws(() => appConfig.setAssociation('nope'), /未知的协会 id/);
+  // 抛错后仍停在原协会，不落到半个态
+  assert.strictEqual(facade.getAssociation(), 'bd');
 });

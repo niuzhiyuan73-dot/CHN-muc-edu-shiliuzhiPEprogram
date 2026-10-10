@@ -21,6 +21,10 @@
  * 与 event-store 同理：测试里要能断言「第一场新发的学院赛是 lce0001」，
  * 序号只增不减的话，这条断言会随用例执行顺序飘移。
  *
+ * 【为什么按协会分桶】
+ * 与 event-store 同理：每个协会各持一份独立的学院赛台账，切换协会即切换
+ * 整份台账。新增编号（lce0001……）也随桶清零，两个协会各自从 lce0001 起编。
+ *
  * 【纯内存】
  * 刻意不写 wx storage：这些是演示期的临时写入，重启即失效。上云后
  * 持久化由云函数负责，届时整个模块可以直接删掉。
@@ -29,26 +33,29 @@
 
 const { COLLEGE_EVENT_STATUS } = require('../utils/constants.js');
 const { lineupKey } = require('./college-lineup.js');
+const { perAssociation } = require('./association-scope.js');
 
 /** 本地新增学院赛的编号前缀 */
 const LOCAL_EVENT_ID_PREFIX = 'lce';
 /** 名单主键前缀。用「赛事 + 学院」拼成，天然一院一份 */
 const ENTRY_ID_PREFIX = 'cen';
 
-/** 本次会话新发的学院赛（按发布顺序） */
-let events = [];
-
-/** 自增序号，保证同一会话内编号不重复 */
-let sequence = 0;
-
-/** 名单台账：_id → 记录 */
-let entries = new Map();
-
-/** 大场台账：_id → 记录 */
-let ties = new Map();
-
-/** 排阵台账：_id → 记录 */
-let lineups = new Map();
+/**
+ * 按协会分桶的学院赛台账：每个协会各持一份「学院赛 + 名单 + 大场 + 排阵 + 序号」。
+ * @type {{current: Function, clear: Function}}
+ */
+const state = perAssociation(() => ({
+  /** 本次会话新发的学院赛（按发布顺序） */
+  events: [],
+  /** 自增序号，保证同一协会会话内编号不重复 */
+  sequence: 0,
+  /** 名单台账：_id → 记录 */
+  entries: new Map(),
+  /** 大场台账：_id → 记录 */
+  ties: new Map(),
+  /** 排阵台账：_id → 记录 */
+  lineups: new Map(),
+}));
 
 /** 逐层复制日期，外部改自己的对象渗不进台账 */
 function copyDate(value) {
@@ -110,8 +117,9 @@ function cloneLineup(record) {
  * @returns {string} lce0001、lce0002……
  */
 function nextEventId() {
-  sequence += 1;
-  return `${LOCAL_EVENT_ID_PREFIX}${String(sequence).padStart(4, '0')}`;
+  const bucket = state.current();
+  bucket.sequence += 1;
+  return `${LOCAL_EVENT_ID_PREFIX}${String(bucket.sequence).padStart(4, '0')}`;
 }
 
 /**
@@ -122,7 +130,7 @@ function nextEventId() {
  */
 function addEvent(draft) {
   const record = cloneEvent({ ...draft, _id: nextEventId() });
-  events.push(record);
+  state.current().events.push(record);
   return cloneEvent(record);
 }
 
@@ -131,7 +139,7 @@ function addEvent(draft) {
  * @returns {Array<Object>}
  */
 function listEvents() {
-  return events.map(cloneEvent);
+  return state.current().events.map(cloneEvent);
 }
 
 /**
@@ -140,7 +148,7 @@ function listEvents() {
  * @returns {Object|null}
  */
 function findEvent(id) {
-  const hit = events.find((item) => item._id === id);
+  const hit = state.current().events.find((item) => item._id === id);
   return hit ? cloneEvent(hit) : null;
 }
 
@@ -151,10 +159,11 @@ function findEvent(id) {
  * @returns {Object|null}
  */
 function updateEvent(id, patch) {
-  const index = events.findIndex((item) => item._id === id);
+  const bucket = state.current();
+  const index = bucket.events.findIndex((item) => item._id === id);
   if (index < 0) return null;
-  events[index] = { ...events[index], ...patch };
-  return cloneEvent(events[index]);
+  bucket.events[index] = { ...bucket.events[index], ...patch };
+  return cloneEvent(bucket.events[index]);
 }
 
 /* ---------- 名单 ---------- */
@@ -171,7 +180,7 @@ function entryId(eventId, college) {
  * @returns {Object|null}
  */
 function findEntry(eventId, college) {
-  const record = entries.get(entryId(eventId, college));
+  const record = state.current().entries.get(entryId(eventId, college));
   return record ? cloneEntry(record) : null;
 }
 
@@ -181,7 +190,7 @@ function findEntry(eventId, college) {
  * @returns {Object|null}
  */
 function findEntryById(id) {
-  const record = entries.get(id);
+  const record = state.current().entries.get(id);
   return record ? cloneEntry(record) : null;
 }
 
@@ -191,7 +200,7 @@ function findEntryById(id) {
  * @returns {Array<Object>}
  */
 function listEntries(eventId) {
-  const all = [...entries.values()].map(cloneEntry);
+  const all = [...state.current().entries.values()].map(cloneEntry);
   return eventId ? all.filter((item) => item.eventId === eventId) : all;
 }
 
@@ -205,7 +214,7 @@ function listEntries(eventId) {
 function saveEntry(draft) {
   const id = entryId(draft.eventId, draft.college);
   const stored = cloneEntry({ ...draft, _id: id });
-  entries.set(id, stored);
+  state.current().entries.set(id, stored);
   return cloneEntry(stored);
 }
 
@@ -216,10 +225,11 @@ function saveEntry(draft) {
  * @returns {Object|null}
  */
 function updateEntry(id, patch) {
-  const current = entries.get(id);
+  const bucket = state.current();
+  const current = bucket.entries.get(id);
   if (!current) return null;
   const next = { ...current, ...patch };
-  entries.set(id, next);
+  bucket.entries.set(id, next);
   return cloneEntry(next);
 }
 
@@ -233,10 +243,11 @@ function updateEntry(id, patch) {
  * @returns {Array<Object>} 落库后的副本
  */
 function saveTies(draftList) {
+  const bucket = state.current();
   const saved = [];
   for (const draft of Array.isArray(draftList) ? draftList : []) {
     const stored = cloneTie(draft);
-    ties.set(stored._id, stored);
+    bucket.ties.set(stored._id, stored);
     saved.push(cloneTie(stored));
   }
   return saved;
@@ -248,7 +259,7 @@ function saveTies(draftList) {
  * @returns {Array<Object>}
  */
 function listTies(eventId) {
-  const all = [...ties.values()].map(cloneTie);
+  const all = [...state.current().ties.values()].map(cloneTie);
   const filtered = eventId ? all.filter((item) => item.eventId === eventId) : all;
   return filtered.sort((a, b) => (a.round - b.round) || (a.slot - b.slot));
 }
@@ -259,7 +270,7 @@ function listTies(eventId) {
  * @returns {Object|null}
  */
 function findTie(id) {
-  const record = ties.get(id);
+  const record = state.current().ties.get(id);
   return record ? cloneTie(record) : null;
 }
 
@@ -270,10 +281,11 @@ function findTie(id) {
  * @returns {Object|null}
  */
 function updateTie(id, patch) {
-  const current = ties.get(id);
+  const bucket = state.current();
+  const current = bucket.ties.get(id);
   if (!current) return null;
   const next = { ...current, ...patch };
-  ties.set(id, next);
+  bucket.ties.set(id, next);
   return cloneTie(next);
 }
 
@@ -286,7 +298,7 @@ function updateTie(id, patch) {
  * @returns {Object|null}
  */
 function findLineup(tieId, college) {
-  const record = lineups.get(lineupKey(tieId, college));
+  const record = state.current().lineups.get(lineupKey(tieId, college));
   return record ? cloneLineup(record) : null;
 }
 
@@ -296,7 +308,7 @@ function findLineup(tieId, college) {
  * @returns {Array<Object>}
  */
 function listLineups(eventId) {
-  const all = [...lineups.values()].map(cloneLineup);
+  const all = [...state.current().lineups.values()].map(cloneLineup);
   return eventId ? all.filter((item) => item.eventId === eventId) : all;
 }
 
@@ -310,17 +322,13 @@ function listLineups(eventId) {
 function saveLineup(draft) {
   const id = lineupKey(draft.tieId, draft.college);
   const stored = cloneLineup({ ...draft, _id: id });
-  lineups.set(id, stored);
+  state.current().lineups.set(id, stored);
   return cloneLineup(stored);
 }
 
-/** 清空学院赛、名单、大场与排阵，并复位编号。mock.resetCache() 会调用它。 */
+/** 清空全部协会的学院赛、名单、大场与排阵，并复位编号。mock.resetCache() 会调用它。 */
 function reset() {
-  events = [];
-  sequence = 0;
-  entries = new Map();
-  ties = new Map();
-  lineups = new Map();
+  state.clear();
 }
 
 module.exports = {

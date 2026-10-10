@@ -18,12 +18,22 @@
  * 那份台账只管注册申请，装不下种子会员；而本台账只服务「角色」这一件事，
  * 范围收得越窄，越不容易被将来的改动误伤。
  *
+ * 【为什么按协会分桶】
+ * 角色是「某人在某协会里的角色」，天然因协会而异：同一个人可以在匹克球协会
+ * 当干事、在乒乓球协会只是普通会员。分桶让每个协会各持一份任免，切换协会即
+ * 切换整份角色表。注意这与云端 memberships「协会角色」的语义一致。
+ *
  * 纯内存，不落盘——与其它台账一致，重启小程序即回到种子状态。
  * ============================================================
  */
 
-/** _id → 角色补丁 */
-let overrides = new Map();
+const { perAssociation } = require('./association-scope.js');
+
+/**
+ * 按协会分桶的角色台账：每个协会各持一份「_id → 角色补丁」。
+ * @type {{current: Function, clear: Function}}
+ */
+const state = perAssociation(() => ({ overrides: new Map() }));
 
 /**
  * 取某人的角色补丁。没有任免过时返回 null。
@@ -32,7 +42,7 @@ let overrides = new Map();
  */
 function patchOf(userId) {
   if (!userId) return null;
-  const patch = overrides.get(userId);
+  const patch = state.current().overrides.get(userId);
   return patch ? { ...patch } : null;
 }
 
@@ -45,14 +55,15 @@ function patchOf(userId) {
  */
 function setRole(userId, role) {
   if (!userId) return null;
-  const next = { ...(overrides.get(userId) || {}), role };
-  overrides.set(userId, next);
+  const bucket = state.current();
+  const next = { ...(bucket.overrides.get(userId) || {}), role };
+  bucket.overrides.set(userId, next);
   return { ...next };
 }
 
-/** 清空台账。测试与 resetCache 用 */
+/** 清空全部协会的台账。测试与 resetCache 用 */
 function reset() {
-  overrides = new Map();
+  state.clear();
 }
 
 module.exports = { patchOf, setRole, reset };
