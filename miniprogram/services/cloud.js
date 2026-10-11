@@ -114,10 +114,11 @@ const setCollegeLeader = (userId, actor, makeLeader) =>
 // canManage）——协会负责人的有效角色也是管理员，用 canManage 区分不出来。
 const setAssociationLeader = (userId, actor, makeLeader) =>
   request('setAssociationLeader', { userId, actor, makeLeader });
-// 调整某位会员在本协会的初始等级分（管理员或本协会负责人）。value 为空表示
-// 清除。服务端会再校验一遍权限、状态与「是否已打过比赛」，前端说了不算。
-const setMemberInitialElo = (userId, value, actor) =>
-  request('setMemberInitialElo', { userId, value, actor });
+// 手工调整某位会员在本协会某个池的当前等级分（管理员或本协会负责人）。
+// 用于「在外面打完比赛、对手不在本程序里」的同步：服务端把它记成一条
+// 时间线改分，不改写历史流水。服务端会再校验一遍权限与取值。
+const setMemberElo = (userId, pool, value, actor) =>
+  request('setMemberElo', { userId, pool, value, actor });
 
 /*
  * 公告发布与下架。
@@ -262,7 +263,7 @@ module.exports = {
   rejectMember,
   setCollegeLeader,
   setAssociationLeader,
-  setMemberInitialElo,
+  setMemberElo,
   publishAnnouncement,
   archiveAnnouncement,
   updateProfile,

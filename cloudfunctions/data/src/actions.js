@@ -57,7 +57,7 @@ const WRITE_ACTIONS = [
   'rejectMember',
   'setCollegeLeader',
   'setAssociationLeader',
-  'setMemberInitialElo',
+  'setMemberElo',
   'publishAnnouncement',
   'archiveAnnouncement',
   'updateProfile',

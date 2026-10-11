@@ -33,13 +33,9 @@
  * ============================================================
  */
 
-const { ROLE, ASSOC_ROLE, COLLEGES, USER_STATUS, USER_STATUS_LABEL, GENDER_LABEL } = require('../utils/constants.js');
+const { ROLE, ASSOC_ROLE, COLLEGES, USER_STATUS, USER_STATUS_LABEL, GENDER_LABEL, ALL_RATING_POOLS } = require('../utils/constants.js');
 const { formatDateTime } = require('../utils/format.js');
 const { canManage, isActive } = require('./permission.js');
-// 「有没有打过比赛」按生涯总计判断（见 utils/rating.summarizeCareer）。
-// 它只读 user.ratings，而数据集里的会员本就是按协会取的那一份，因此
-// 「在本协会有没有出场」直接由它回答。
-const { summarizeCareer } = require('../utils/rating.js');
 
 /** 审核动作 */
 const REVIEW_ACTION = {
@@ -291,62 +287,75 @@ function buildInitialEloByAssoc(member, association, value) {
 }
 
 /**
- * 能不能调整某位会员的初始等级分（与具体数值无关的前置条件）。
+ * 能不能调整某位会员的**当前**等级分（与具体数值无关的前置条件）。
  *
- * 【三类人可改】管理员（全局通行）与协会负责人（仅本协会）。「仅本协会」
- * 不在这里显式判断：调用方传入的 actor 已经是**本协会的有效角色**（云端
- * 由 buildContext 解出、mock 由角色台账解出），协会负责人出了本协会就是
- * 普通会员，canManage 自然不放行。
- *
- * 【为什么「打过比赛就不能改」】初始分是回放的**起评分**，只在一个人还没
- * 出场时才有意义；一旦打过，分数已经由真实比赛长出来，再改起评分等于篡改
- * 历史。判定用生涯总计 matchCount：娱乐赛（日常约球）也算「打过」，只要
- * 进过回放就锁死。
- *
- * 允许自己改自己（管理员 / 协会负责人调整本人的初始分），也允许协会负责人
- * 调整管理员——不在目标角色上设限。
+ * 不设「打过比赛就不能改」那道闸——这个功能就是给已经出过场的人用的（成员
+ * 出外打完比赛、对手不在系统里，只能外部算好一个分数直接写进来）。边界为
+ * 管理员 / 本协会负责人、目标在册。
  *
  * @param {Object|null} actor 操作者
- * @param {Object|null} target 被调整的会员（须带 ratings）
+ * @param {Object|null} target 被调整的会员
  * @param {Object} [options] 透传给 permission.canManage
  * @returns {{ok:boolean, message:string}}
  */
-function canEditInitialElo(actor, target, options = {}) {
+function canEditCurrentElo(actor, target, options = {}) {
   if (!canManage(actor, { ...options, minRole: ROLE.ADMIN })) {
-    return { ok: false, message: '只有管理员或本协会负责人可以调整初始等级分' };
+    return { ok: false, message: '只有管理员或本协会负责人可以调整等级分' };
   }
   if (!target) {
     return { ok: false, message: '找不到这位会员' };
   }
   if (target.status !== USER_STATUS.ACTIVE) {
-    return { ok: false, message: '只有在册会员才能调整初始等级分' };
-  }
-  if (summarizeCareer(target).totalMatches > 0) {
-    return { ok: false, message: '该会员已经打过比赛，初始等级分不能再改' };
+    return { ok: false, message: '只有在册会员才能调整等级分' };
   }
   return { ok: true, message: '' };
 }
 
 /**
- * 校验并归一化「管理员 / 协会负责人手工调整的初始等级分」。
+ * 校验并归一化「把某会员某项目的当前等级分改成 value」。
  *
- * 先过 canEditInitialElo 的三条前置，再把数值交给 validateInitialElo 归一化。
- * 空值（null / 空串）经 validateInitialElo 归一为 null，表示**清除**。
+ * 先过 canEditCurrentElo 的两条前置，再校验项目名与数值。数值不接受空值
+ * （当前分没有「不指定」）。
  *
  * @param {Object|null} actor
  * @param {Object|null} target
+ * @param {string} pool 等级分池（singles / doubles）
  * @param {*} value 输入框里的原始值
  * @param {Object} [options] 透传给 permission.canManage
  * @returns {{ok:boolean, message:string, value:number|null}}
  */
-function validateInitialEloEdit(actor, target, value, options = {}) {
-  const allowed = canEditInitialElo(actor, target, options);
+function validateCurrentEloEdit(actor, target, pool, value, options = {}) {
+  const allowed = canEditCurrentElo(actor, target, options);
   if (!allowed.ok) return { ok: false, message: allowed.message, value: null };
 
-  const parsed = validateInitialElo(value);
+  if (!ALL_RATING_POOLS.includes(pool)) {
+    return { ok: false, message: '项目不正确', value: null };
+  }
+
+  const parsed = validateEloValue(value);
   if (!parsed.ok) return { ok: false, message: parsed.message, value: null };
 
   return { ok: true, message: '', value: parsed.value };
+}
+
+/**
+ * 生成「把某会员在某协会某项目的当前等级分设为 value」之后的新映射。
+ *
+ * 结构 `currentEloByAssoc = { 协会: { 池: {value, at} } }`：每个（人、协会、池）
+ * 只留最后一次设置（含生效时刻 at，回放据此把它插进时间线）。与 rating.js
+ * 同一纪律——产出新对象，不就地改。
+ *
+ * @param {Object} member 会员记录
+ * @param {string} association 协会 id
+ * @param {string} pool 等级分池
+ * @param {number} value 归一化后的等级分
+ * @param {number} at 生效时刻的时间戳
+ * @returns {Object} 新的 currentEloByAssoc 映射
+ */
+function buildCurrentEloByAssoc(member, association, pool, value, at) {
+  const map = { ...((member && member.currentEloByAssoc) || {}) };
+  map[association] = { ...(map[association] || {}), [pool]: { value, at } };
+  return map;
 }
 
 /**
@@ -364,26 +373,44 @@ function validateInitialEloEdit(actor, target, value, options = {}) {
  * @param {*} value 输入框里的原始值
  * @returns {{ok:boolean, value:number|null, message:string}}
  */
-function validateInitialElo(value) {
+function checkEloNumber(value, label) {
   const isBlank = value === null || value === undefined || String(value).trim() === '';
   if (isBlank) return { ok: true, value: null, message: '' };
 
   // 布尔值能被 Number 转成 0/1，不是想要的行为，显式挡掉
   const num = typeof value === 'boolean' ? NaN : Number(value);
   if (!Number.isFinite(num)) {
-    return { ok: false, value: null, message: '初始等级分必须是数字' };
+    return { ok: false, value: null, message: `${label}必须是数字` };
   }
   if (!Number.isInteger(num)) {
-    return { ok: false, value: null, message: '初始等级分必须是整数' };
+    return { ok: false, value: null, message: `${label}必须是整数` };
   }
   if (num < INITIAL_ELO_MIN || num > INITIAL_ELO_MAX) {
     return {
       ok: false,
       value: null,
-      message: `初始等级分需在 ${INITIAL_ELO_MIN}–${INITIAL_ELO_MAX} 之间`,
+      message: `${label}需在 ${INITIAL_ELO_MIN}–${INITIAL_ELO_MAX} 之间`,
     };
   }
   return { ok: true, value: num, message: '' };
+}
+
+function validateInitialElo(value) {
+  return checkEloNumber(value, '初始等级分');
+}
+
+/**
+ * 校验「当前等级分」的数值。与初始分同范围，但不接受空值——当前分是
+ * 一个确切的值，没有「不指定」这一说（要清除是另一回事，本期不做）。
+ *
+ * @param {*} value 输入框里的原始值
+ * @returns {{ok:boolean, value:number|null, message:string}}
+ */
+function validateEloValue(value) {
+  const parsed = checkEloNumber(value, '等级分');
+  if (!parsed.ok) return parsed;
+  if (parsed.value === null) return { ok: false, value: null, message: '请输入等级分' };
+  return parsed;
 }
 
 /**
@@ -485,8 +512,9 @@ module.exports = {
   isGlobalAdminMember,
   resolvedInitialElo,
   buildInitialEloByAssoc,
-  canEditInitialElo,
-  validateInitialEloEdit,
+  canEditCurrentElo,
+  validateCurrentEloEdit,
+  buildCurrentEloByAssoc,
   validateReview,
   buildApplicationRow,
 };

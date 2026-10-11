@@ -993,3 +993,111 @@ describe('回放排序 —— 必须是全序，等级分不能随扫描顺序�
     assert.equal(getPoolRating(userOf(forward, 'a'), RATING_POOL.SINGLES).elo > MALE_START, true);
   });
 });
+
+describe('replaySeason —— 手工改分时间线（eloOverrides）', () => {
+  /** 取回放后某场比赛的某位参赛者的明细 */
+  const playerOf = (result, matchId, userId) =>
+    result.matches.find((m) => m._id === matchId).players.find((p) => p.userId === userId);
+
+  test('生效时刻晚于所有比赛时，改分直接决定最终分数', () => {
+    const members = [{ _id: 'a', nickName: '甲' }, { _id: 'b', nickName: '乙' }];
+    const result = replaySeason({
+      members,
+      matches: [men('m1', ['a'], ['b'], 'A', 1)],
+      events: [],
+      options: {
+        eloOverrides: [
+          { userId: 'a', pool: RATING_POOL.SINGLES, value: 1800, at: new Date('2026-06-01T00:00:00').getTime() },
+        ],
+      },
+    });
+    assert.equal(getPoolRating(userOf(result, 'a'), RATING_POOL.SINGLES).elo, 1800);
+  });
+
+  test('改分插在时间线中间：之前的比赛照旧，之后的比赛从新值续算', () => {
+    const members = [{ _id: 'a', nickName: '甲' }, { _id: 'b', nickName: '乙' }];
+    const first = men('m1', ['a'], ['b'], 'A', 1);
+    const second = men('m2', ['a'], ['b'], 'A', 3);
+
+    // 基线：不插改分，第二场的赛前分就是第一场的赛后分
+    const baseline = replaySeason({ members, matches: [first, second], events: [] });
+    assert.equal(
+      playerOf(baseline, 'm2', 'a').eloBefore,
+      playerOf(baseline, 'm1', 'a').eloAfter
+    );
+
+    // 在第一天与第三天之间把 a 改成 1800
+    const result = replaySeason({
+      members,
+      matches: [first, second],
+      events: [],
+      options: {
+        eloOverrides: [
+          { userId: 'a', pool: RATING_POOL.SINGLES, value: 1800, at: new Date('2026-05-02T00:00:00').getTime() },
+        ],
+      },
+    });
+
+    // 第一场不受影响：赛前仍是初始分，赛后仍是正常加减
+    assert.equal(playerOf(result, 'm1', 'a').eloBefore, MALE_START);
+    // 第二场从改分后的 1800 起步
+    assert.equal(playerOf(result, 'm2', 'a').eloBefore, 1800);
+    // 对手 b 没被改，其连续性不受影响
+    assert.equal(
+      playerOf(result, 'm2', 'b').eloBefore,
+      playerOf(result, 'm1', 'b').eloAfter
+    );
+  });
+
+  test('对还没出场的人改分，起点分一并改成新值（界面「入池」不再显示性别初值）', () => {
+    const members = [{ _id: 'a', nickName: '甲' }, { _id: 'b', nickName: '乙' }];
+    const result = replaySeason({
+      members,
+      matches: [],
+      events: [],
+      options: {
+        eloOverrides: [{ userId: 'a', pool: RATING_POOL.SINGLES, value: 1700, at: 1 }],
+      },
+    });
+    const rating = getPoolRating(userOf(result, 'a'), RATING_POOL.SINGLES);
+    assert.equal(rating.elo, 1700);
+    assert.equal(rating.startElo, 1700);
+  });
+
+  test('改分只作用于指定池，不串到另一个池', () => {
+    const members = [{ _id: 'a', nickName: '甲' }, { _id: 'b', nickName: '乙' }];
+    const result = replaySeason({
+      members,
+      matches: [men('m1', ['a'], ['b'], 'A', 1)],
+      events: [],
+      options: {
+        // 改的是双打，单打那场不该受影响
+        eloOverrides: [{ userId: 'a', pool: RATING_POOL.DOUBLES, value: 1500, at: 1 }],
+      },
+    });
+    const singles = getPoolRating(userOf(result, 'a'), RATING_POOL.SINGLES);
+    // 单打仍是「初始分 + 一场胜利的加分」
+    assert.ok(singles.elo > MALE_START, '单打分数应仍是赢了一场后的结果');
+    assert.equal(getPoolRating(userOf(result, 'a'), RATING_POOL.DOUBLES).elo, 1500);
+  });
+
+  test('名单外 / 非法项目 / 非法数值的改分被忽略，不影响回放', () => {
+    const members = [{ _id: 'a', nickName: '甲' }, { _id: 'b', nickName: '乙' }];
+    const result = replaySeason({
+      members,
+      matches: [men('m1', ['a'], ['b'], 'A', 1)],
+      events: [],
+      options: {
+        eloOverrides: [
+          { userId: 'ghost', pool: RATING_POOL.SINGLES, value: 1800, at: 1 },
+          { userId: 'a', pool: 'mixed', value: 1800, at: 1 },
+          { userId: 'a', pool: RATING_POOL.SINGLES, value: NaN, at: 1 },
+          null,
+        ],
+      },
+    });
+    // 三条都该被丢弃，a 的分数就是正常打了一场的结果
+    const singles = getPoolRating(userOf(result, 'a'), RATING_POOL.SINGLES);
+    assert.ok(singles.elo > MALE_START && singles.elo < 1800);
+  });
+});

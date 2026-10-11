@@ -36,6 +36,7 @@ const {
   DEFAULT_EVENT_LEVEL,
   RATING_POOL,
   BRACKET_STAGE,
+  ALL_RATING_POOLS,
 } = require('../utils/constants.js');
 const {
   calculateMatchRatings,
@@ -347,6 +348,9 @@ function applyEventPoints({ roster, replayed, events, config, resetMs, resetAppl
  * @param {Map<string, Map<string, number>>} params.presets 预先定好的初始分
  * @param {boolean} params.collectPlacement 是否采集定级观察
  * @param {string|Date|null} [params.resetTime] 赛季分界点，只用来切积分；不传表示从未重置
+ * @param {Array<{userId:string,pool:string,value:number,at:number|string|Date}>} [params.eloOverrides]
+ *        手工改分时间线。每条表示「在 at 时刻把该会员该池的分数置为 value」，
+ *        在回放途中按时间点插入，改分之后的比赛从 value 继续累加。
  * @returns {{users:Array, matches:Array, events:Array, meta:Object, observations:Map}}
  */
 function runReplay({
@@ -358,6 +362,7 @@ function runReplay({
   presets,
   collectPlacement,
   resetTime = null,
+  eloOverrides = [],
 }) {
   // ---------- 1. 准备工作副本 ----------
   // 所有运算都在副本上进行，调用方的数据一个字节都不会被改动。
@@ -454,11 +459,63 @@ function runReplay({
     user.settled[poolName] = true;
   }
 
+  // ---------- 1.5 当前等级分覆盖（管理员 / 协会负责人手工改分）----------
+  // 每条形如 {userId, pool, value, at}：在 at 时刻把该会员该池的分数直接置为 value。
+  // 按 at 升序插入时间线——这样「改分之后的比赛」从 value 继续累加，而「改分
+  // 之前已经打完的比赛」不受影响。若不按时间线（比如一律在最后覆盖），改分
+  // 之后新录的比赛就会被无声地抹掉。
+  const overrides = [...eloOverrides]
+    .filter(
+      (o) =>
+        o &&
+        roster.has(o.userId) &&
+        ALL_RATING_POOLS.includes(o.pool) &&
+        Number.isFinite(o.value)
+    )
+    .sort((a, b) => numOr(a.at, Infinity) - numOr(b.at, Infinity));
+  let nextOverride = 0;
+
+  /** 把一条覆盖落到会员工作副本上 */
+  function applyEloOverride(user, override) {
+    const current = user.ratings[override.pool];
+    // 还没在该池出场过的人，起点分一并改掉——否则界面「入池 X 分」仍显示
+    // 性别初始分，与看到的当前分对不上。
+    const fresh = !user.settled[override.pool];
+    user.ratings = {
+      ...user.ratings,
+      [override.pool]: {
+        ...current,
+        elo: override.value,
+        startElo: fresh ? override.value : current.startElo,
+      },
+    };
+    // 标记为已定级：否则该会员首次登场时 settleInitial 会把分数重置回
+    // 性别初始分，这次改分就被悄悄抹掉了。
+    user.settled[override.pool] = true;
+  }
+
+  /** 应用所有生效时刻 <= time 的覆盖 */
+  function applyOverridesUpTo(time) {
+    while (
+      nextOverride < overrides.length &&
+      numOr(overrides[nextOverride].at, Infinity) <= time
+    ) {
+      applyEloOverride(roster.get(overrides[nextOverride].userId), overrides[nextOverride]);
+      nextOverride += 1;
+    }
+  }
+
   // ---------- 2. 按时间顺序逐场回放 ----------
   const ordered = sortByTime(matches);
   const replayed = [];
 
   for (const match of ordered) {
+    const matchTime = new Date(match.matchTime).getTime();
+    // 先应用「在本场之前生效」的改分，再算这场——顺序反了分数就错。
+    // 时间缺失 / 非法的比赛排在最末（与 compareForReplay 一致），视为
+    // 晚于一切改分。
+    applyOverridesUpTo(Number.isFinite(matchTime) ? matchTime : Infinity);
+
     const poolName = MATCH_TYPE_TO_POOL[match.matchType];
     if (!poolName) {
       throw new Error(`比赛 ${match._id} 的比赛类型 ${match.matchType} 无法映射到等级分池`);
@@ -587,6 +644,11 @@ function runReplay({
     });
   }
 
+  // 收尾：把「生效时刻晚于最后一场」的改分补上。改分往往发生在一场比赛
+  // 之后（比如刚在外部打完比赛回来改分），若只靠循环内的调用，这类改分会
+  // 被遗漏，导致改完分再刷新页面时分数又弹回旧值。
+  applyOverridesUpTo(Infinity);
+
   // ---------- 2.5 结算赛事积分 ----------
   // 积分只能等所有比赛回放完才结：名次是赛事的最终结果，不逐场发（2.5）。
   applyEventPoints({ roster, replayed, events, config: pointConfig, resetMs, resetApplies });
@@ -663,6 +725,7 @@ function replaySeason({ members, matches, events = [], announcements = [], optio
     pointConfig = DEFAULT_POINT_CONFIG,
     seasonStart,
     resetTime = null,
+    eloOverrides = [],
   } = options;
 
   // 先把 ELO 参数合并成一份完整配置再使用。
@@ -670,7 +733,7 @@ function replaySeason({ members, matches, events = [], announcements = [], optio
   // 调用方以为改了初始分，实际上所有人还是从默认值起步。
   const elo = { ...DEFAULT_CONFIG, ...(eloConfig || {}) };
 
-  const base = { members, matches, events, elo, pointConfig, resetTime };
+  const base = { members, matches, events, elo, pointConfig, resetTime, eloOverrides };
 
   // 第一遍：所有人从初始分起步，采集新人的定级依据
   const probe = runReplay({ ...base, presets: new Map(), collectPlacement: true });

@@ -394,15 +394,14 @@
     </view>
 
     <!--
-      调整初始等级分。仅「还没出场、且操作者有权」时出现（initialElo.visible）。
-      点整卡改数值，右侧「清除」按钮回到自动定级（catchtap 免得顺带触发改值）。
+      更改当前等级分。有权限、且当前有可展示的项目时才出现
+      （currentElo.visible）。改的是当前项目对应的池——用于会员在外打完比赛、
+      对手不在本程序里时，直接把分数改成外部算好的值。
     -->
-    <view wx:if="{{initialElo.visible}}" class="card entry-card" bindtap="onEditInitialElo">
+    <view wx:if="{{currentElo.visible}}" class="card entry-card" bindtap="onEditCurrentElo">
       <view class="entry-card-main">
-        <view class="entry-card-title">初始等级分 · {{initialElo.currentText}}</view>
-        <view class="entry-card-hint">{{initialElo.hint}}</view>
+        <view class="entry-card-title">更改等级分</view>
       </view>
-      <view wx:if="{{initialElo.canClear}}" class="entry-card-action" catchtap="onClearInitialElo">清除</view>
       <view class="entry-card-arrow">›</view>
     </view>
 

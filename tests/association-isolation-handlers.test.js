@@ -524,89 +524,17 @@ test('有效角色随成员行变化 —— 任免后名单里的角色跟着变
 });
 
 /* ============================================================
- * 七、按协会分身份：初始等级分与全局管理员标记
+ * 七、按协会分身份：入会审核指定的初始分与全局管理员标记
  * ============================================================
- * 初始等级分是「某人在某协会里的起评分」，不是账号的全局属性：在 A 协会
- * 指定的分不该漂到 B 协会去。云端的存储形态是 users.initialEloByAssoc
- * （按协会一张小表），下发前再由 derive 拍平成本协会那一个（见
- * derive.withScopedInitialElo）。这一节盯三件事：
+ * 入会审核通过时指定的初始分是「某人在某协会里的起评分」，不是账号的全局
+ * 属性：在 A 协会指定的分不该漂到 B 协会去。云端的存储形态是
+ * users.initialEloByAssoc（按协会一张小表），下发前再由 derive 拍平成本
+ * 协会那一个（见 derive.withScopedInitialElo）。
  *
- *   1. 写：初始分落进写操作所在协会那一档，另一协会不受影响。
- *   2. 权：管理员跨协会可改；协会负责人只在本协会可改，出界即普通会员。
- *   3. 锁：已打过比赛（含日常约球）的人不能再改，这是初始分的语义边界。
- *
- * 再加一条：名单与 getCurrentUser 下发的 isGlobalAdmin 要把「全局管理员」
- * 与「有效角色同为 ADMIN 的协会负责人」分开——前端据此决定协会负责人任免
+ * 另外，名单与 getCurrentUser 下发的 isGlobalAdmin 要把「全局管理员」与
+ * 「有效角色同为 ADMIN 的协会负责人」分开——前端据此决定协会负责人任免
  * 入口显不显示，两者混淆会让人层层自封。
  * ============================================================ */
-
-/** 一位没有比赛的在册会员：初始分可改（种子里的 u01–u04 都打过） */
-const FRESH_USER = {
-  ...USERS[1],
-  _id: 'u_fresh',
-  openId: 'openid-fresh',
-  nickName: '新人',
-  role: ROLE.MEMBER,
-};
-
-test('初始等级分 —— 管理员改本协会初值：落 initialEloByAssoc 并拍平进名单', async () => {
-  const repo = createFixtureRepo({ users: [...USERS, FRESH_USER] });
-
-  const res = await on(repo, 'setMemberInitialElo', { userId: 'u_fresh', value: 1600 }, 'openid-admin', 'pkb');
-  assert.equal(res.data.ok, true, res.data.message);
-
-  // 落库在按协会的档里，不留改造前的扁平字段
-  const stored = await repo.users.getById('u_fresh');
-  assert.equal(stored.initialEloByAssoc.pkb, 1600);
-  assert.equal(stored.initialElo, undefined);
-
-  // pkb 名单里拍平成本协会那一个；tt 里没指定，走自动定级
-  const pkb = await on(repo, 'getMembers', {}, 'openid-u01', 'pkb');
-  assert.equal(pkb.data.find((m) => m._id === 'u_fresh').initialElo, 1600);
-
-  const tt = await on(repo, 'getMembers', {}, 'openid-u01', 'tt');
-  assert.equal(tt.data.find((m) => m._id === 'u_fresh').initialElo, undefined);
-});
-
-test('初始等级分 —— 协会负责人只在本协会可改，普通会员无权', async () => {
-  const repo = createFixtureRepo({
-    users: [...USERS, FRESH_USER],
-    memberships: [
-      { _id: membershipKey('u01', 'tt'), userId: 'u01', association: 'tt', role: ASSOC_ROLE.LEADER },
-    ],
-  });
-
-  // tt 里 u01 是协会负责人 → 可改本协会初值
-  const byLeader = await on(repo, 'setMemberInitialElo', { userId: 'u_fresh', value: 1500 }, 'openid-u01', 'tt');
-  assert.equal(byLeader.data.ok, true, byLeader.data.message);
-
-  // 同一个 u01 换到 pkb 只是普通会员 → 无权
-  const asMember = await on(repo, 'setMemberInitialElo', { userId: 'u_fresh', value: 1500 }, 'openid-u01', 'pkb');
-  assert.equal(asMember.data.ok, false);
-  assert.match(asMember.data.message, /只有管理员或本协会负责人/);
-});
-
-test('初始等级分 —— 打过比赛的会员锁死（含日常约球）', async () => {
-  const repo = createFixtureRepo();
-  // u01 在夹具里打过 m1 / m3 / m4
-  const res = await on(repo, 'setMemberInitialElo', { userId: 'u01', value: 1600 }, 'openid-admin', 'pkb');
-  assert.equal(res.data.ok, false);
-  assert.match(res.data.message, /已经打过比赛/);
-});
-
-test('初始等级分 —— 清除本协会那一档，回到自动定级', async () => {
-  const repo = createFixtureRepo({ users: [...USERS, FRESH_USER] });
-  await on(repo, 'setMemberInitialElo', { userId: 'u_fresh', value: 1600 }, 'openid-admin', 'pkb');
-
-  const cleared = await on(repo, 'setMemberInitialElo', { userId: 'u_fresh', value: null }, 'openid-admin', 'pkb');
-  assert.equal(cleared.data.ok, true, cleared.data.message);
-
-  const stored = await repo.users.getById('u_fresh');
-  assert.ok(!stored.initialEloByAssoc || stored.initialEloByAssoc.pkb === undefined, '本协会那一档被删掉');
-
-  const pkb = await on(repo, 'getMembers', {}, 'openid-u01', 'pkb');
-  assert.equal(pkb.data.find((m) => m._id === 'u_fresh').initialElo, undefined);
-});
 
 test('入会审核 —— 指定的初始分写进审核所在协会那一档', async () => {
   const repo = createFixtureRepo();
@@ -622,6 +550,120 @@ test('入会审核 —— 指定的初始分写进审核所在协会那一档', 
   assert.equal(ttVal.initialElo, 1400);
   const pkbVal = (await on(repo, 'getMembers', {}, 'openid-u01', 'pkb')).data.find((m) => m._id === 'u_pending');
   assert.equal(pkbVal.initialElo, undefined, 'pkb 里没指定，不漂过去');
+});
+
+/* ============================================================
+ * 八、按协会分身份：当前等级分（时间线改分）
+ * ============================================================
+ * 与初始分不同，当前分不限「是否出过场」——用来同步「在外面打完比赛、对手
+ * 不在本程序里」的分数。云端把改分存进 users.currentEloByAssoc（按协会、
+ * 按池），下发前由 derive 摊平成一条时间线喂给回放（见
+ * derive.collectCurrentEloOverrides）。这一节盯三件事：
+ *
+ *   1. 写：改分落进写操作所在协会那一档，另一协会不受影响。
+ *   2. 权：管理员 / 本协会负责人可改，普通会员不行。
+ *   3. 用：改分确实作用于回放——出过场的人该池分数被改成指定值。
+ * ============================================================ */
+
+test('当前等级分 —— 管理员改本协会某池：落 currentEloByAssoc 并作用于回放', async () => {
+  const repo = createFixtureRepo();
+
+  const pkbBefore = (await on(repo, 'getMembers', {}, 'openid-u01', 'pkb')).data.find(
+    (m) => m._id === 'u01'
+  );
+  const baseElo = pkbBefore.ratings[RATING_POOL.SINGLES].elo;
+  assert.notEqual(baseElo, 1700, '前提：改的分与原值不同，否则这条测不出东西');
+
+  const res = await on(
+    repo,
+    'setMemberElo',
+    { userId: 'u01', pool: RATING_POOL.SINGLES, value: 1700 },
+    'openid-admin',
+    'pkb'
+  );
+  assert.equal(res.data.ok, true, res.data.message);
+
+  // 落库：按协会、按池存一个 {value, at}
+  const stored = await repo.users.getById('u01');
+  assert.equal(stored.currentEloByAssoc.pkb[RATING_POOL.SINGLES].value, 1700);
+  assert.ok(Number.isFinite(stored.currentEloByAssoc.pkb[RATING_POOL.SINGLES].at));
+
+  // pkb 名单里 u01 的单打分数被改成 1700（改分晚于所有比赛，直接是终值）
+  const pkbAfter = (await on(repo, 'getMembers', {}, 'openid-u01', 'pkb')).data.find(
+    (m) => m._id === 'u01'
+  );
+  assert.equal(pkbAfter.ratings[RATING_POOL.SINGLES].elo, 1700);
+
+  // tt 里没有改分，分数照旧按流水算
+  const ttU01 = (await on(repo, 'getMembers', {}, 'openid-u01', 'tt')).data.find(
+    (m) => m._id === 'u01'
+  );
+  assert.notEqual(ttU01.ratings[RATING_POOL.SINGLES].elo, 1700, 'tt 不该受 pkb 改分影响');
+});
+
+test('当前等级分 —— 协会负责人只在本协会可改，普通会员无权', async () => {
+  const repo = createFixtureRepo({
+    memberships: [
+      { _id: membershipKey('u01', 'tt'), userId: 'u01', association: 'tt', role: ASSOC_ROLE.LEADER },
+    ],
+  });
+
+  const byLeader = await on(
+    repo,
+    'setMemberElo',
+    { userId: 'u03', pool: RATING_POOL.SINGLES, value: 1500 },
+    'openid-u01',
+    'tt'
+  );
+  assert.equal(byLeader.data.ok, true, byLeader.data.message);
+
+  const asMember = await on(
+    repo,
+    'setMemberElo',
+    { userId: 'u03', pool: RATING_POOL.SINGLES, value: 1500 },
+    'openid-u01',
+    'pkb'
+  );
+  assert.equal(asMember.data.ok, false);
+  assert.match(asMember.data.message, /只有管理员或本协会负责人/);
+});
+
+test('当前等级分 —— 查无此人 / 项目非法 / 数值越界都不写入', async () => {
+  const repo = createFixtureRepo();
+
+  const ghost = await on(
+    repo,
+    'setMemberElo',
+    { userId: 'ghost', pool: RATING_POOL.SINGLES, value: 1500 },
+    'openid-admin',
+    'pkb'
+  );
+  assert.equal(ghost.data.ok, false);
+  assert.match(ghost.data.message, /找不到/);
+
+  const badPool = await on(
+    repo,
+    'setMemberElo',
+    { userId: 'u03', pool: 'mixed', value: 1500 },
+    'openid-admin',
+    'pkb'
+  );
+  assert.equal(badPool.data.ok, false);
+  assert.match(badPool.data.message, /项目/);
+
+  const badValue = await on(
+    repo,
+    'setMemberElo',
+    { userId: 'u03', pool: RATING_POOL.SINGLES, value: 99999 },
+    'openid-admin',
+    'pkb'
+  );
+  assert.equal(badValue.data.ok, false);
+  assert.match(badValue.data.message, /之间/);
+
+  // 一次都没写进去
+  const stored = await repo.users.getById('u03');
+  assert.ok(!stored.currentEloByAssoc || !stored.currentEloByAssoc.pkb);
 });
 
 test('getCurrentUser —— 下发 isGlobalAdmin：全局管理员为真，协会负责人为假', async () => {

@@ -37,6 +37,7 @@ const {
   ROLE,
   USER_STATUS,
   ANNOUNCEMENT_STATUS,
+  ALL_RATING_POOLS,
   isMemberStatus,
 } = require('../../lib/utils/constants.js');
 const { loadSeason, ALGO_VERSION } = require('./season.js');
@@ -66,6 +67,42 @@ function withScopedInitialElo(user, association) {
   if (resolved === null) delete next.initialElo;
   else next.initialElo = resolved;
   return next;
+}
+
+/**
+ * 把会员记录里「本协会的手工改分」摊平成回放引擎要的时间线数组。
+ *
+ * 【为什么要摊平】改分按协会、按池分开存在 `currentEloByAssoc`，而回放引擎
+ * 只认一条扁平的 eloOverrides 时间线（见 replay.js 的覆盖逻辑）。协会这件事
+ * 同样止步于本函数，与 withScopedInitialElo 一个路数。
+ *
+ * 【为什么用全量 users 而不是 members】改分可能落在「刚离校但历史流水还在」
+ * 的人身上；回放引擎自己会按名单过滤（roster.has），这里不必重复判断，也
+ * 免得漏掉一条导致分数对不上。
+ *
+ * @param {Array<Object>} users 账号记录（含 currentEloByAssoc）
+ * @param {string} association 协会 id
+ * @returns {Array<{userId:string, pool:string, value:number, at:number}>}
+ */
+function collectCurrentEloOverrides(users, association) {
+  const out = [];
+  for (const user of users) {
+    const byPool = user && user.currentEloByAssoc && user.currentEloByAssoc[association];
+    if (!byPool) continue;
+    for (const pool of ALL_RATING_POOLS) {
+      const entry = byPool[pool];
+      if (!entry || !Number.isFinite(entry.value)) continue;
+      // at 一律归一成数字时间戳：回放的时间线排序只认有限数字（见 replay 的
+      // numOr），Date / ISO 串在旧数据或个人手改的场景里都可能出现。
+      out.push({
+        userId: user._id,
+        pool,
+        value: entry.value,
+        at: new Date(entry.at).getTime(),
+      });
+    }
+  }
+  return out;
 }
 
 /**
@@ -203,6 +240,8 @@ async function buildDataset(repo, season, association) {
     options: {
       seasonStart: season.anchorTime,
       resetTime: season.resetTime || null,
+      // 手工改分（见 member-handlers.setMemberElo）作为时间线插进回放
+      eloOverrides: collectCurrentEloOverrides(allUsers, association),
     },
   });
 

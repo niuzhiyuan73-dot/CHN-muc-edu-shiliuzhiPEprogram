@@ -27,6 +27,7 @@ const collegeStore = require('./college-store.js');
 const profileStore = require('./profile-store.js');
 const roleStore = require('./role-store.js');
 const initialEloStore = require('./initialElo-store.js');
+const eloStore = require('./elo-store.js');
 const seasonStore = require('./season-store.js');
 const liveStore = require('./live-store.js');
 // 当前协会（会话作用域）：缓存按它分份，各台账按它分桶
@@ -45,7 +46,7 @@ const {
   validateReview,
   validateCollegeLeader,
   validateAssociationLeader,
-  validateInitialEloEdit,
+  validateCurrentEloEdit,
 } = require('./member-review.js');
 const {
   canConfirm,
@@ -503,6 +504,8 @@ function buildCache(association) {
     events: eventLedger,
     options: {
       resetTime: reset ? reset.resetTime : null,
+      // 手工改分（见 elo-store）作为时间线插进回放，改分之后的比赛从新值续算
+      eloOverrides: eloStore.list(),
     },
   });
 
@@ -615,6 +618,8 @@ function resetCache() {
   roleStore.reset();
   // 初始分覆盖同理：手工指定的起评分也是临时写入，复位后要回到种子初值
   initialEloStore.reset();
+  // 当前分改分同理：管理员手工改的分也是临时写入，复位后要回到按流水算出的值
+  eloStore.reset();
   // 赛季状态同理：分界点必须一起清，否则下一轮生成的积分还是切过的
   seasonStore.reset();
   // 实时比分同理：逐球流水是临时写入，复位后不该再看到上一轮的比分
@@ -1795,25 +1800,27 @@ async function setAssociationLeader(targetId, actor, makeLeader) {
 }
 
 /**
- * 手工调整 / 清除某位会员在**本协会**的初始等级分。
+ * 手工调整某位会员在**本协会**某个池的**当前**等级分。
  *
- * 与 setMemberInitialElo（云端 member-handlers）同一语义：权限与「打过就不能改」
- * 的前置判定交给 validateInitialEloEdit（纯函数，两处共用），本函数只把归一化
- * 后的值落进按协会分桶的 initialEloStore，再失效缓存让回放重算。
+ * 不限出场与否，用来处理「在外打完比赛、对手不在本程序里」的情况——外部
+ * 算好新分后直接记一条「此刻起 = X」，回放会把它当一次时间线事件，之后的
+ * 比赛从 X 继续累加（见 elo-store 与 replay 的覆盖逻辑）。
  *
- * value 为 null / 空串表示**清除**该协会的初始分（回到自动定级），不是写入 0。
+ * 权限与取值校验交给 validateCurrentEloEdit（纯函数，云函数共用），本函数
+ * 只把归一化后的值落进按协会分桶的 eloStore，再失效缓存让回放重算。
  *
  * @param {string} userId 被调整的会员编号
+ * @param {string} pool 等级分池（singles / doubles）
  * @param {*} value 输入框 / 半屏弹层里的原始值
  * @param {string} actor 操作者编号
  * @returns {Promise<{ok:boolean, account:Object|null, message:string}>}
  */
-async function setMemberInitialElo(userId, value, actor) {
+async function setMemberElo(userId, pool, value, actor) {
   const target = accountOf(userId);
-  const verdict = validateInitialEloEdit(accountOf(actor), target, value);
+  const verdict = validateCurrentEloEdit(accountOf(actor), target, pool, value);
   if (!verdict.ok) return { ok: false, account: null, message: verdict.message };
 
-  initialEloStore.setValue(target._id, verdict.value);
+  eloStore.setValue(target._id, pool, verdict.value, Date.now());
   invalidate();
   return { ok: true, account: accountOf(target._id), message: '' };
 }
@@ -2770,7 +2777,7 @@ module.exports = {
   rejectMember,
   setCollegeLeader,
   setAssociationLeader,
-  setMemberInitialElo,
+  setMemberElo,
   publishAnnouncement,
   archiveAnnouncement,
   updateProfile,

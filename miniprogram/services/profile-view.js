@@ -46,7 +46,7 @@ const { resolveNameDisplay } = require('./profile.js');
 const {
   validateCollegeLeader,
   validateAssociationLeader,
-  canEditInitialElo,
+  canEditCurrentElo,
   isGlobalAdminMember,
 } = require('./member-review.js');
 const scope = require('./association-scope.js');
@@ -260,10 +260,11 @@ async function loadMemberView(userId, options = {}) {
     isGlobalAdmin: Boolean(viewer && viewer.isGlobalAdmin),
   });
 
-  // 初始等级分调整入口。权限与「打过就不能改」交给 canEditInitialElo（与写入端
-  // 一字不差）；当前值取本协会解析后的 initialElo——未指定即「自动定级」。
-  const initialEloCheck = canEditInitialElo(viewer, target);
-  const currentInitialElo = Number.isFinite(target.initialElo) ? target.initialElo : null;
+  // 当前等级分调整入口。不限出场与否——用来处理「在外打完比赛、对手不在本
+  // 程序里」的同步（也是手工改分的唯一入口）。权限交给 canEditCurrentElo
+  // （与写入端一字不差）；改分作用在**当前显示的项目**对应的池上，所以没有
+  // 项目时不出现。
+  const currentEloCheck = canEditCurrentElo(viewer, target);
 
   return {
     found: true,
@@ -363,14 +364,14 @@ async function loadMemberView(userId, options = {}) {
       label: makeAssocLeader ? '设为协会负责人' : '撤销协会负责人',
       hint: makeAssocLeader ? '管理本协会的赛事、会员与公告' : '收回本协会的管理权限',
     },
-    // 初始等级分调整入口：还没出场、且操作者有权时才出现。「当前值」是本协会
-    // 解析后的起评分，未指定时显示「自动定级」并禁用「清除」。
-    initialElo: {
-      visible: initialEloCheck.ok,
-      current: currentInitialElo,
-      currentText: currentInitialElo === null ? '自动定级' : formatElo(currentInitialElo),
-      canClear: currentInitialElo !== null,
-      hint: '这位会员还没打过比赛，可以先给定一个起评分',
+    // 当前等级分调整入口：有权限、且当前有可展示的项目时才出现。改的是当前
+    // 项目对应的池，所以带上 label / pool / project 让页面知道改的是哪一项。
+    currentElo: {
+      visible: currentEloCheck.ok && Boolean(active),
+      project: active ? active.project : '',
+      pool: active ? active.pool : '',
+      label: active ? active.label : '',
+      current: active ? active.elo : null,
     },
   };
 }

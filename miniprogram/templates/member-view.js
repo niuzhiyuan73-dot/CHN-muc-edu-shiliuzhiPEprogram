@@ -19,7 +19,7 @@ const {
   getMember,
   setCollegeLeader,
   setAssociationLeader,
-  setMemberInitialElo,
+  setMemberElo,
 } = require('../services/index.js');
 const { applyBranding, themeClassOf } = require('../services/branding.js');
 const { activeAssociations } = require('../utils/associations.js');
@@ -372,28 +372,29 @@ function createMemberPage(options = {}) {
     },
 
     /**
-     * 调整当前主页会员在本协会的初始等级分。数值从弹层的输入框取；
+     * 调整当前主页会员在**本协会当前项目**的当前等级分。用于「在外打完比赛、
+     * 对手不在本程序里」的同步：直接改成外部算好的分数。数值从弹层输入框取；
      * Node 测试没有 wx.showModal，直接把当前值当作提交值（用例可改调
-     * submitInitialElo 直接驱动）。
+     * submitCurrentElo 直接驱动）。
      *
      * @returns {Promise<void>|undefined}
      */
-    onEditInitialElo() {
-      const entry = this.data.view && this.data.view.initialElo;
+    onEditCurrentElo() {
+      const entry = this.data.view && this.data.view.currentElo;
       if (!entry || !entry.visible) return undefined;
 
       if (typeof wx === 'undefined' || typeof wx.showModal !== 'function') {
-        return this.submitInitialElo(entry.current);
+        return this.submitCurrentElo(entry.current);
       }
       return new Promise((resolve) => {
         wx.showModal({
-          title: '调整初始等级分',
+          title: `调整${entry.label}等级分`,
           editable: true,
-          placeholderText: '留空则自动定级，0–3000 的整数',
+          placeholderText: '0–3000 的整数',
           content: entry.current === null ? '' : String(entry.current),
           success: (res) => {
             if (!res.confirm) return resolve(undefined);
-            resolve(this.submitInitialElo(res.content));
+            resolve(this.submitCurrentElo(res.content));
           },
           fail: () => resolve(undefined),
         });
@@ -401,16 +402,16 @@ function createMemberPage(options = {}) {
     },
 
     /**
-     * 写入初始等级分。value 为 null / 空串即清除（回到自动定级）。
-     * 独立成方法，便于测试绕过 wx 弹层直接驱动。
+     * 写入当前等级分。改的是当前显示项目对应的池（entry.pool），之后的比赛
+     * 会从这个新值继续累加。独立成方法，便于测试绕过 wx 弹层直接驱动。
      *
      * @param {*} value 输入框里的原始值
      * @returns {Promise<void>|undefined}
      */
-    async submitInitialElo(value) {
-      const view = this.data.view;
-      const target = view && view.user;
-      if (!target) return undefined;
+    async submitCurrentElo(value) {
+      const entry = this.data.view && this.data.view.currentElo;
+      const target = this.data.view && this.data.view.user;
+      if (!entry || !entry.visible || !target) return undefined;
 
       const user = this.currentUser();
       if (!user) {
@@ -419,28 +420,14 @@ function createMemberPage(options = {}) {
       }
 
       const result = await this.runInLocalAssociation(() =>
-        setMemberInitialElo(target.userId, value, user._id)
+        setMemberElo(target.userId, entry.pool, value, user._id)
       );
       if (!result.ok) {
         this.showToast(result.message || '操作失败');
         return undefined;
       }
-      const cleared = value === null || String(value).trim() === '';
-      this.showToast(cleared ? '已清除，回到自动定级' : '已更新初始等级分', 'success');
+      this.showToast('已更新等级分', 'success');
       return this.refresh();
-    },
-
-    /** 清除当前主页会员在本协会的初始等级分（回到自动定级） */
-    async onClearInitialElo() {
-      const entry = this.data.view && this.data.view.initialElo;
-      if (!entry || !entry.visible || !entry.canClear) return undefined;
-
-      const confirmed = await this.confirm(
-        '清除这位会员的初始等级分，之后回到「按前五场自动定级」？',
-        '清除初始等级分'
-      );
-      if (!confirmed) return undefined;
-      return this.submitInitialElo(null);
     },
 
     /** 点交锋记录或搭档记录里的人，去看他的主页 */

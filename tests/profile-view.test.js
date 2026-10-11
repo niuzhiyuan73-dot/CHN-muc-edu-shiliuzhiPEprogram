@@ -9,26 +9,15 @@ const {
   loadMemberView,
   DEFAULT_HISTORY_LIMIT,
 } = require('../miniprogram/services/profile-view.js');
-const { PLACEHOLDER, formatElo } = require('../miniprogram/utils/format.js');
+const { PLACEHOLDER } = require('../miniprogram/utils/format.js');
 const { sortProjectsForDisplay } = require('../miniprogram/utils/leaderboard.js');
 const { RANK_PROJECT_CONFIG, ROLE, USER_STATUS } = require('../miniprogram/utils/constants.js');
 const {
   getMatchHistory,
   getMyProjects,
-  registerMember,
-  approveMember,
-  setMemberInitialElo,
+  setMemberElo,
   resetCache,
 } = require('../miniprogram/services/index.js');
-
-/** 一份合法的实名信息（新注册会员没有任何比赛，初始分可改） */
-const REGISTER_DRAFT = {
-  realName: '测试同学',
-  gender: 'M',
-  studentId: '20240099',
-  college: '法学院',
-  phone: '13700001111',
-};
 
 /* 模拟数据源默认会装载学院赛演示场景（见 services/college-demo.js），
  * 其中的演示账号 u06 被任命为法学院负责人。本文件断言的是干净种子
@@ -542,45 +531,39 @@ test('loadMemberView —— 角色徽标随协会变化：u04 在 tt 是协会�
 });
 
 /* ============================================================
- * 初始等级分调整入口
+ * 当前等级分调整入口
  * ============================================================
- * 初始分是回放的起评分，只在会员还没出场时才有意义。种子里 24 位会员
- * 都打过比赛，所以入口只有在「刚通过审核、还没上场」的人身上才出现。
+ * 出过场的人也能改——用来同步「在外面打完比赛」的分数。改的是**当前显示
+ * 项目**对应的池，所以入口只有在该会员有项目时才出现。
  * ============================================================ */
 
-test('loadMemberView —— 打过比赛的会员不出现初始等级分入口', async () => {
+test('loadMemberView —— 有权限时出现当前等级分入口，跟着当前项目走', async () => {
   const view = await loadMemberView('u06', { viewer: GLOBAL_ADMIN_VIEWER });
-  assert.strictEqual(view.initialElo.visible, false);
+  assert.strictEqual(view.currentElo.visible, true);
+  // 入口作用在当前显示的项目上
+  assert.strictEqual(view.currentElo.project, view.activeProject);
+  assert.strictEqual(view.currentElo.label, view.activeProjectLabel);
+  // 当前值就是该项目解析出来的原始分数
+  assert.strictEqual(typeof view.currentElo.current, 'number');
 });
 
-test('loadMemberView —— 未出场的会员出现入口：显示当前值与清除开关', async () => {
-  const reg = await registerMember(REGISTER_DRAFT);
-  assert.strictEqual(reg.ok, true, reg.firstError);
-  const approved = await approveMember(reg.account._id, 'u01');
-  assert.strictEqual(approved.ok, true, approved.message);
-
-  // 没指定过初始分 → 自动定级，清除按钮禁用
-  const fresh = await loadMemberView(reg.account._id, { viewer: GLOBAL_ADMIN_VIEWER });
-  assert.strictEqual(fresh.initialElo.visible, true);
-  assert.strictEqual(fresh.initialElo.current, null);
-  assert.strictEqual(fresh.initialElo.currentText, '自动定级');
-  assert.strictEqual(fresh.initialElo.canClear, false);
-
-  // 指定一个初始分后 → 当前值跟着变，可清除
-  const set = await setMemberInitialElo(reg.account._id, 1650, 'u01');
-  assert.strictEqual(set.ok, true, set.message);
-  const after = await loadMemberView(reg.account._id, { viewer: GLOBAL_ADMIN_VIEWER });
-  assert.strictEqual(after.initialElo.current, 1650);
-  assert.strictEqual(after.initialElo.currentText, formatElo(1650));
-  assert.strictEqual(after.initialElo.canClear, true);
-});
-
-test('loadMemberView —— 普通会员看不到初始等级分入口', async () => {
-  const reg = await registerMember(REGISTER_DRAFT);
-  await approveMember(reg.account._id, 'u01');
-
-  const view = await loadMemberView(reg.account._id, {
+test('loadMemberView —— 普通会员看不到当前等级分入口', async () => {
+  const view = await loadMemberView('u06', {
     viewer: { _id: 'u05', role: ROLE.MEMBER, status: USER_STATUS.ACTIVE },
   });
-  assert.strictEqual(view.initialElo.visible, false);
+  assert.strictEqual(view.currentElo.visible, false);
+});
+
+test('loadMemberView —— 改分后入口显示新值', async () => {
+  const before = await loadMemberView('u06', { viewer: GLOBAL_ADMIN_VIEWER });
+  const pool = before.currentElo.pool;
+
+  const set = await setMemberElo('u06', pool, 1750, 'u01');
+  assert.strictEqual(set.ok, true, set.message);
+
+  const after = await loadMemberView('u06', {
+    viewer: GLOBAL_ADMIN_VIEWER,
+    project: before.activeProject,
+  });
+  assert.strictEqual(after.currentElo.current, 1750);
 });

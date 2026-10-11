@@ -31,7 +31,9 @@ const {
   EVENT_STATUS,
   SEED_MODE,
   ROLE,
+  RATING_POOL,
 } = require('../miniprogram/utils/constants.js');
+const { getPoolRating } = require('../miniprogram/utils/rating.js');
 
 /** 种子里点名的学院负责人：u02 张宇轩 */
 const STAFF_ID = 'u02';
@@ -303,13 +305,13 @@ describe('mock —— 各协会数据互不可见', () => {
 });
 
 /* ============================================================
- * 四、按协会分身份：学院负责人与初始等级分
+ * 四、按协会分身份：学院负责人与当前等级分
  * ============================================================
- * 身份与初始分都不是「账号的属性」，而是「某人在某协会里的属性」。
+ * 身份与改分都不是「账号的属性」，而是「某人在某协会里的属性」。
  * 这里盯住两件事落了地：
  *   1. 种子里的学院负责人只在默认协会成立，换协会即退回普通会员。
- *   2. 手工指定的初始等级分只落当前协会，另一个协会看不到、也不受影响。
- * 一旦漏掉，表现就是「在 A 协会当干事管到了 B 协会的人」「在 A 定的初始分
+ *   2. 手工改的当前等级分只落当前协会，另一个协会看不到、也不受影响。
+ * 一旦漏掉，表现就是「在 A 协会当干事管到了 B 协会的人」「在 A 改的分
  * 跑到 B 去了」——不会报错，只会越权与串味，所以每条都在这里变红。
  * ============================================================ */
 
@@ -345,60 +347,66 @@ describe('mock —— 学院负责人按协会', () => {
   });
 });
 
-describe('mock —— 初始等级分按协会', () => {
-  /** 在指定协会注册并通过一位新会员，返回其编号（新会员无比赛，可改初始分） */
-  async function freshMember(association) {
-    scope.setAssociation(association);
-    const reg = await facade.registerMember(REGISTER_DRAFT);
-    assert.equal(reg.ok, true, reg.firstError);
-    const approved = await facade.approveMember(reg.account._id, ADMIN_ID);
-    assert.equal(approved.ok, true, approved.message);
-    return reg.account._id;
+describe('mock —— 当前等级分按协会', () => {
+  /** 取某人在当前协会某池的当前分 */
+  async function eloOf(id, pool) {
+    return getPoolRating(await facade.getMember(id), pool).elo;
   }
 
-  test('手工指定初始分只落当前协会，另一个协会不受影响', async () => {
-    const id = await freshMember(TT);
-    // 新会员默认没有指定初始分，走自动定级
-    assert.equal((await facade.getMember(id)).initialElo, undefined, '默认自动定级');
-
-    const edited = await facade.setMemberInitialElo(id, 1600, ADMIN_ID);
-    assert.equal(edited.ok, true, edited.message);
-    assert.equal((await facade.getMember(id)).initialElo, 1600, 'tt 里已指定 1600');
-
-    // pkb 里根本没有这位新会员（本地账号按协会分桶）
+  test('管理员可把出过场会员的当前分改成指定值（初始分那套会拦，这里不拦）', async () => {
     scope.setAssociation(PKB);
-    assert.equal(await facade.getMember(id), null);
-
-    // 切回 tt 初值还在
-    scope.setAssociation(TT);
-    assert.equal((await facade.getMember(id)).initialElo, 1600);
-  });
-
-  test('清除初始分把本协会那一档删掉，回到自动定级', async () => {
-    const id = await freshMember(TT);
-    await facade.setMemberInitialElo(id, 1600, ADMIN_ID);
-    assert.equal((await facade.getMember(id)).initialElo, 1600);
-
-    const cleared = await facade.setMemberInitialElo(id, null, ADMIN_ID);
-    assert.equal(cleared.ok, true, cleared.message);
-    assert.equal((await facade.getMember(id)).initialElo, undefined, '清除后回到自动定级');
-  });
-
-  test('打过比赛的会员初始分锁死，改不动', async () => {
-    // u03 是种子老会员，回放后已有场次
-    scope.setAssociation(PKB);
+    // u03 是种子老会员，回放后已有场次——初始分改不动，但当前分可以
     assert.ok((await facade.getMember('u03')).ratings, '前提：种子会员有回放战绩');
-    const denied = await facade.setMemberInitialElo('u03', 1500, ADMIN_ID);
-    assert.equal(denied.ok, false);
-    assert.match(denied.message, /已经打过比赛/);
+
+    const edited = await facade.setMemberElo('u03', RATING_POOL.SINGLES, 1750, ADMIN_ID);
+    assert.equal(edited.ok, true, edited.message);
+    assert.equal(await eloOf('u03', RATING_POOL.SINGLES), 1750);
   });
 
-  test('普通会员无权调整初始分', async () => {
-    const id = await freshMember(TT);
-    // u06 在 tt 是普通会员（未任免）
-    const denied = await facade.setMemberInitialElo(id, 1600, 'u06');
+  test('改分只落当前协会：另一个协会的分数不动', async () => {
+    scope.setAssociation(PKB);
+    const pkbBefore = await eloOf('u03', RATING_POOL.SINGLES);
+
+    scope.setAssociation(TT);
+    const edited = await facade.setMemberElo('u03', RATING_POOL.SINGLES, 1600, ADMIN_ID);
+    assert.equal(edited.ok, true, edited.message);
+    assert.equal(await eloOf('u03', RATING_POOL.SINGLES), 1600);
+
+    // 切回 pkb：仍是原来的值
+    scope.setAssociation(PKB);
+    assert.equal(await eloOf('u03', RATING_POOL.SINGLES), pkbBefore);
+  });
+
+  test('改单打不碰双打（按池隔离）', async () => {
+    scope.setAssociation(PKB);
+    const doublesBefore = await eloOf('u03', RATING_POOL.DOUBLES);
+    await facade.setMemberElo('u03', RATING_POOL.SINGLES, 1750, ADMIN_ID);
+    assert.equal(await eloOf('u03', RATING_POOL.DOUBLES), doublesBefore);
+  });
+
+  test('普通会员无权调整当前分', async () => {
+    scope.setAssociation(TT);
+    const denied = await facade.setMemberElo('u03', RATING_POOL.SINGLES, 1600, 'u06');
     assert.equal(denied.ok, false);
     assert.match(denied.message, /只有管理员或本协会负责人/);
+  });
+
+  test('查无此人时不写入', async () => {
+    scope.setAssociation(PKB);
+    const denied = await facade.setMemberElo('ghost', RATING_POOL.SINGLES, 1600, ADMIN_ID);
+    assert.equal(denied.ok, false);
+    assert.match(denied.message, /找不到/);
+  });
+
+  test('resetCache 清掉改分，回到按流水算出的值', async () => {
+    scope.setAssociation(PKB);
+    const baseline = await eloOf('u03', RATING_POOL.SINGLES);
+    await facade.setMemberElo('u03', RATING_POOL.SINGLES, 1750, ADMIN_ID);
+    assert.equal(await eloOf('u03', RATING_POOL.SINGLES), 1750);
+
+    mock.resetCache();
+    scope.setAssociation(PKB);
+    assert.equal(await eloOf('u03', RATING_POOL.SINGLES), baseline);
   });
 });
 
