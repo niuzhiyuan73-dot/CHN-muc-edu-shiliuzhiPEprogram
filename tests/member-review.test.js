@@ -29,10 +29,16 @@ const {
   canReviewApplication,
   canSetCollegeLeader,
   validateCollegeLeader,
+  validateAssociationLeader,
+  isGlobalAdminMember,
+  resolvedInitialElo,
+  buildInitialEloByAssoc,
+  canEditInitialElo,
+  validateInitialEloEdit,
   validateReview,
   buildApplicationRow,
 } = require('../miniprogram/services/member-review.js');
-const { ROLE, USER_STATUS, COLLEGES } = require('../miniprogram/utils/constants.js');
+const { ROLE, ASSOC_ROLE, USER_STATUS, COLLEGES } = require('../miniprogram/utils/constants.js');
 
 /** 一位刚注册、还没通过的申请人 */
 const APPLICANT = {
@@ -400,4 +406,154 @@ test('validateCollegeLeader —— 设为学院负责人给 STAFF，撤销给 ME
     message: '',
     role: ROLE.MEMBER,
   });
+});
+
+/* ============================================================
+ * 八、全局管理员 vs 协会负责人
+ * ============================================================
+ * 协会负责人的**有效角色**也是 ADMIN（见 context.effectiveRole），单看 role
+ * 分不出他与全局管理员。isGlobalAdmin 是账号的全局属性，任免协会负责人只认它。
+ * ============================================================ */
+
+test('isGlobalAdminMember —— 优先看 isGlobalAdmin，而不是有效角色', () => {
+  // 协会负责人：有效角色是 ADMIN，但 isGlobalAdmin 为假
+  assert.strictEqual(isGlobalAdminMember({ role: ROLE.ADMIN, isGlobalAdmin: false }), false);
+  assert.strictEqual(isGlobalAdminMember({ role: ROLE.ADMIN, isGlobalAdmin: true }), true);
+  // 老记录没有这个字段时退回按角色判定
+  assert.strictEqual(isGlobalAdminMember({ role: ROLE.ADMIN }), true);
+  assert.strictEqual(isGlobalAdminMember({ role: ROLE.MEMBER }), false);
+  assert.strictEqual(isGlobalAdminMember(null), false);
+});
+
+/* ============================================================
+ * 九、任免协会负责人（仅全局管理员）
+ * ============================================================ */
+
+/** 一位全局管理员（账号级） */
+const GLOBAL_ADMIN = { _id: 'u10', role: ROLE.ADMIN, status: USER_STATUS.ACTIVE, isGlobalAdmin: true };
+/** 一位协会负责人：有效角色 ADMIN，但不是全局管理员 */
+const ASSOC_LEADER = { _id: 'u11', role: ROLE.ADMIN, status: USER_STATUS.ACTIVE, isGlobalAdmin: false };
+
+test('validateAssociationLeader —— 只有全局管理员能任免，协会负责人与普通会员都不行', () => {
+  assert.strictEqual(validateAssociationLeader(GLOBAL_ADMIN, CANDIDATE, true).ok, true);
+  // 协会负责人虽有效角色是 ADMIN，但不是全局管理员——不许层层自封
+  assert.strictEqual(validateAssociationLeader(ASSOC_LEADER, CANDIDATE, true).ok, false);
+  assert.strictEqual(validateAssociationLeader(MEMBER, CANDIDATE, true).ok, false);
+  assert.strictEqual(validateAssociationLeader(null, CANDIDATE, true).ok, false);
+});
+
+test('validateAssociationLeader —— 调用方可用 options.isGlobalAdmin 显式声明（云端 ctx 用）', () => {
+  const actor = { _id: 'u12', role: ROLE.ADMIN, status: USER_STATUS.ACTIVE };
+  assert.strictEqual(validateAssociationLeader(actor, CANDIDATE, true, { isGlobalAdmin: true }).ok, true);
+  assert.strictEqual(validateAssociationLeader(actor, CANDIDATE, true, { isGlobalAdmin: false }).ok, false);
+});
+
+test('validateAssociationLeader —— 不能给自己任免，也找不到人时明确失败', () => {
+  assert.match(validateAssociationLeader(GLOBAL_ADMIN, GLOBAL_ADMIN, true).message, /自己/);
+  assert.match(validateAssociationLeader(GLOBAL_ADMIN, null, true).message, /找不到/);
+});
+
+test('validateAssociationLeader —— 目标是全局管理员时不动他，协会负责人可以撤', () => {
+  const other = { ...GLOBAL_ADMIN, _id: 'u99' };
+  assert.match(validateAssociationLeader(GLOBAL_ADMIN, other, false).message, /管理员/);
+  // 协会负责人不是全局管理员，撤销他是允许的
+  assert.strictEqual(validateAssociationLeader(GLOBAL_ADMIN, ASSOC_LEADER, false).ok, true);
+});
+
+test('validateAssociationLeader —— 只有在册会员才能设为协会负责人', () => {
+  const pending = { ...CANDIDATE, status: USER_STATUS.PENDING };
+  assert.match(validateAssociationLeader(GLOBAL_ADMIN, pending, true).message, /在册/);
+});
+
+test('validateAssociationLeader —— 设为协会负责人给 leader，撤销给 null', () => {
+  assert.deepStrictEqual(validateAssociationLeader(GLOBAL_ADMIN, CANDIDATE, true), {
+    ok: true,
+    message: '',
+    role: ASSOC_ROLE.LEADER,
+  });
+  assert.deepStrictEqual(validateAssociationLeader(GLOBAL_ADMIN, ASSOC_LEADER, false), {
+    ok: true,
+    message: '',
+    role: null,
+  });
+});
+
+/* ============================================================
+ * 十、按协会存 / 解析初始等级分
+ * ============================================================ */
+
+test('resolvedInitialElo —— 优先取本协会那一档，缺省退回改造前的扁平字段', () => {
+  assert.strictEqual(resolvedInitialElo({ initialEloByAssoc: { pkb: 1600, tt: 1200 } }, 'pkb'), 1600);
+  assert.strictEqual(resolvedInitialElo({ initialEloByAssoc: { pkb: 1600 } }, 'tt'), null);
+  // 没有本协会档时退回扁平字段（老数据）
+  assert.strictEqual(resolvedInitialElo({ initialEloByAssoc: {}, initialElo: 1500 }, 'pkb'), 1500);
+  assert.strictEqual(resolvedInitialElo({ initialElo: 1500 }, 'pkb'), 1500);
+  assert.strictEqual(resolvedInitialElo({}, 'pkb'), null);
+  assert.strictEqual(resolvedInitialElo(null, 'pkb'), null);
+});
+
+test('buildInitialEloByAssoc —— 写入 / 清除只动本协会那一档，且不改入参', () => {
+  const member = { initialEloByAssoc: { pkb: 1600 } };
+
+  const added = buildInitialEloByAssoc(member, 'tt', 1200);
+  assert.deepStrictEqual(added, { pkb: 1600, tt: 1200 });
+  // 不可变：入参没被改
+  assert.deepStrictEqual(member.initialEloByAssoc, { pkb: 1600 });
+
+  // null 表示清除该协会这一档，不是写入 0
+  const cleared = buildInitialEloByAssoc({ initialEloByAssoc: added }, 'pkb', null);
+  assert.deepStrictEqual(cleared, { tt: 1200 });
+  // 清除后不改变已算出的那份映射（仍是新对象）
+  assert.deepStrictEqual(added, { pkb: 1600, tt: 1200 });
+});
+
+/* ============================================================
+ * 十一、调整初始等级分（管理员 / 本协会协会负责人）
+ * ============================================================ */
+
+/** 一位还没出场的在册会员 */
+const FRESH = { _id: 'u20', role: ROLE.MEMBER, status: USER_STATUS.ACTIVE, ratings: {} };
+/** 一位已经打过比赛的会员（任意一个池有过场次） */
+const PLAYED = {
+  _id: 'u21',
+  role: ROLE.MEMBER,
+  status: USER_STATUS.ACTIVE,
+  ratings: { singles: { matchCount: 3, wins: 2, losses: 1 } },
+};
+
+test('canEditInitialElo —— 管理员与协会负责人（有效角色 ADMIN）都可以，普通会员不行', () => {
+  assert.strictEqual(canEditInitialElo(GLOBAL_ADMIN, FRESH).ok, true);
+  assert.strictEqual(canEditInitialElo(ASSOC_LEADER, FRESH).ok, true);
+  assert.strictEqual(canEditInitialElo(MEMBER, FRESH).ok, false);
+  assert.strictEqual(canEditInitialElo(null, FRESH).ok, false);
+});
+
+test('canEditInitialElo —— 打过比赛就不能改（娱乐赛也算）', () => {
+  const result = canEditInitialElo(GLOBAL_ADMIN, PLAYED);
+  assert.strictEqual(result.ok, false);
+  assert.match(result.message, /打过比赛/);
+});
+
+test('canEditInitialElo —— 只有在册会员才能改', () => {
+  const pending = { ...FRESH, status: USER_STATUS.PENDING };
+  assert.match(canEditInitialElo(GLOBAL_ADMIN, pending).message, /在册/);
+  assert.match(canEditInitialElo(GLOBAL_ADMIN, null).message, /找不到/);
+});
+
+test('canEditInitialElo —— 可以改自己，也可以改管理员', () => {
+  assert.strictEqual(canEditInitialElo(GLOBAL_ADMIN, GLOBAL_ADMIN).ok, true);
+  assert.strictEqual(canEditInitialElo(ASSOC_LEADER, GLOBAL_ADMIN).ok, true);
+});
+
+test('validateInitialEloEdit —— 通过前置后把数值归一化，空值即清除', () => {
+  assert.deepStrictEqual(validateInitialEloEdit(GLOBAL_ADMIN, FRESH, '1600'), {
+    ok: true,
+    message: '',
+    value: 1600,
+  });
+  assert.strictEqual(validateInitialEloEdit(GLOBAL_ADMIN, FRESH, '').value, null);
+  // 越界数值被挡，且不做任何写入
+  assert.match(validateInitialEloEdit(GLOBAL_ADMIN, FRESH, 99999).message, /之间/);
+  // 没权限时先报权限，不落到数值校验
+  assert.match(validateInitialEloEdit(MEMBER, FRESH, 1600).message, /管理员/);
 });

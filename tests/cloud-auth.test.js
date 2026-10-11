@@ -317,8 +317,13 @@ test('入会审核 —— 通过时可顺手指定初始分，越界则整单被
     admin
   );
   assert.equal(approved.data.ok, true, approved.data.message);
-  // 服务端把指定分写进账号，回放据此跳过前五场自动定级
-  assert.equal(approved.data.account.initialElo, 1620);
+  // 初始分按协会分开存：指定分写进 initialEloByAssoc 的本协会档，回放据此
+  // 跳过前五场自动定级；改造前的全局字段 initialElo 不再写入
+  assert.equal(approved.data.account.initialElo, undefined);
+  assert.ok(
+    Object.values(approved.data.account.initialEloByAssoc || {}).includes(1620),
+    '指定分应写进按协会分开的初始分档'
+  );
 });
 
 test('入会审核 —— 找不到的申请有明确文案', async () => {

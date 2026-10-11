@@ -758,8 +758,10 @@ describe('mock 数据源 —— 会员注册与审核', () => {
 
       const approved = await mock.approveMember(account._id, me._id, 1620);
       assert.equal(approved.ok, true, approved.message);
-      // 指定分要落在账号上，回放据此跳过前五场定级
-      assert.equal(approved.account.initialElo, 1620);
+      // 指定分按协会记账，回放前解析到会员的扁平 initialElo 上，回放据此
+      // 跳过前五场定级（账号记录本身不再带全局 initialElo）
+      const member = await mock.getMember(account._id);
+      assert.equal(member.initialElo, 1620);
 
       // 男会员默认初始分是 1450，指定 1620 说明覆盖真的生效了
       const board = await mock.getLeaderboard(RANK_PROJECT.MEN_SINGLES);

@@ -33,9 +33,13 @@
  * ============================================================
  */
 
-const { ROLE, COLLEGES, USER_STATUS, USER_STATUS_LABEL, GENDER_LABEL } = require('../utils/constants.js');
+const { ROLE, ASSOC_ROLE, COLLEGES, USER_STATUS, USER_STATUS_LABEL, GENDER_LABEL } = require('../utils/constants.js');
 const { formatDateTime } = require('../utils/format.js');
-const { canManage } = require('./permission.js');
+const { canManage, isActive } = require('./permission.js');
+// 「有没有打过比赛」按生涯总计判断（见 utils/rating.summarizeCareer）。
+// 它只读 user.ratings，而数据集里的会员本就是按协会取的那一份，因此
+// 「在本协会有没有出场」直接由它回答。
+const { summarizeCareer } = require('../utils/rating.js');
 
 /** 审核动作 */
 const REVIEW_ACTION = {
@@ -185,6 +189,167 @@ function validateCollegeLeader(actor, target, makeLeader, options = {}) {
 }
 
 /**
+ * 校验一次协会负责人的任免：能不能把 target 设为 / 撤销为「本协会」的协会负责人。
+ *
+ * 【为什么只认全局管理员】协会负责人握住的是「本协会全部内容」的管理权，
+ * 与管理员在本协会内同权。若允许协会负责人互相任命，等于把整个协会交出去
+ * 还可以层层转授。所以任免只认**全局管理员**（options.isGlobalAdmin，来自
+ * 云端的 ctx.isGlobalAdmin），协会负责人自身不算——与 role-handlers 的
+ * setAssociationLeader 一字不差。
+ *
+ * 【为什么不在这里校验学院】协会负责人没有 college 边界（协会负责人管全协会），
+ * 与学院负责人以学院为界不同，故不做 college 判定。
+ *
+ * @param {Object|null} actor 操作者
+ * @param {Object|null} target 被任免的会员
+ * @param {boolean} makeLeader true 设为协会负责人，false 撤销
+ * @param {Object} [options]
+ * @param {boolean} [options.isGlobalAdmin] 操作者是不是全局管理员；缺省取 actor.isGlobalAdmin
+ * @returns {{ok:boolean, message:string, role:string|null}} role 为 ASSOC_ROLE.LEADER 或 null（撤销）
+ */
+function validateAssociationLeader(actor, target, makeLeader, options = {}) {
+  const isGlobalAdmin =
+    options.isGlobalAdmin !== undefined
+      ? Boolean(options.isGlobalAdmin)
+      : isGlobalAdminMember(actor);
+
+  if (!isActive(actor) || !isGlobalAdmin) {
+    return { ok: false, message: '只有全局管理员可以任免协会负责人', role: null };
+  }
+  if (!target) {
+    return { ok: false, message: '找不到这位会员', role: null };
+  }
+  if (isSelf(actor, target)) {
+    return { ok: false, message: '不能给自己任免角色', role: null };
+  }
+  // 目标是全局管理员就不动他（撤掉他的协会负责人身份＝给会长降级）。
+  // 协会负责人的有效角色也是 ADMIN，但它不是全局管理员，可以撤——见 isGlobalAdminMember。
+  if (isGlobalAdminMember(target)) {
+    return { ok: false, message: '不能改变管理员的角色', role: null };
+  }
+  if (target.status !== USER_STATUS.ACTIVE) {
+    return { ok: false, message: '只有在册会员才能设为协会负责人', role: null };
+  }
+
+  return { ok: true, message: '', role: makeLeader ? ASSOC_ROLE.LEADER : null };
+}
+
+/**
+ * 某位会员是不是**全局管理员**（账号级身份，不随协会变化）。
+ *
+ * 【为什么要看 isGlobalAdmin 而不是 role】协会负责人的**有效角色**也是
+ * ADMIN（见 context.effectiveRole / mock 的角色补丁），只看 role 会把协会
+ * 负责人误当成全局管理员。mock 与云端都在会员记录上带了 isGlobalAdmin
+ * （见 mock.patchAccount 与 derive.buildDataset）；改造前的旧记录没有这个
+ * 字段，退回按角色判定——那时全局管理员就是 role >= ADMIN。
+ *
+ * @param {Object|null} member
+ * @returns {boolean}
+ */
+function isGlobalAdminMember(member) {
+  if (!member) return false;
+  if (member.isGlobalAdmin !== undefined) return Boolean(member.isGlobalAdmin);
+  return Number(member.role || 0) >= ROLE.ADMIN;
+}
+
+/**
+ * 解析某位会员在**指定协会**的初始等级分。
+ *
+ * 【新结构优先，旧字段兜底】改造后初始分按协会分开存：`initialEloByAssoc`
+ * 是一个「协会 id → 分数」的映射。改造前的老账号只有一个全局的
+ * `initialElo`，读到它时按兜底值使用，避免老数据凭空丢掉起评分。
+ *
+ * @param {Object} member 会员记录
+ * @param {string} association 协会 id
+ * @returns {number|null} 解析出的初始分；未指定时返回 null（由回放走自动定级）
+ */
+function resolvedInitialElo(member, association) {
+  if (!member) return null;
+  const map = member.initialEloByAssoc;
+  if (map && association && Number.isFinite(map[association])) return map[association];
+  if (Number.isFinite(member.initialElo)) return member.initialElo;
+  return null;
+}
+
+/**
+ * 生成「写入某会员在某协会的初始分」之后的新映射。
+ *
+ * 【为什么返回新对象而不是就地改】与 rating.js 同一纪律：云函数里并发写
+ * 同一份数据会互相踩，所有更新一律产出新对象。value 为 null 表示**清除**
+ * 该协会的初始分（回到自动定级），不是写入 0。
+ *
+ * @param {Object} member 会员记录
+ * @param {string} association 协会 id
+ * @param {number|null} value 归一化后的初始分，null 表示清除
+ * @returns {Object} 新的 initialEloByAssoc 映射
+ */
+function buildInitialEloByAssoc(member, association, value) {
+  const map = { ...((member && member.initialEloByAssoc) || {}) };
+  if (value === null || value === undefined) delete map[association];
+  else map[association] = value;
+  return map;
+}
+
+/**
+ * 能不能调整某位会员的初始等级分（与具体数值无关的前置条件）。
+ *
+ * 【三类人可改】管理员（全局通行）与协会负责人（仅本协会）。「仅本协会」
+ * 不在这里显式判断：调用方传入的 actor 已经是**本协会的有效角色**（云端
+ * 由 buildContext 解出、mock 由角色台账解出），协会负责人出了本协会就是
+ * 普通会员，canManage 自然不放行。
+ *
+ * 【为什么「打过比赛就不能改」】初始分是回放的**起评分**，只在一个人还没
+ * 出场时才有意义；一旦打过，分数已经由真实比赛长出来，再改起评分等于篡改
+ * 历史。判定用生涯总计 matchCount：娱乐赛（日常约球）也算「打过」，只要
+ * 进过回放就锁死。
+ *
+ * 允许自己改自己（管理员 / 协会负责人调整本人的初始分），也允许协会负责人
+ * 调整管理员——不在目标角色上设限。
+ *
+ * @param {Object|null} actor 操作者
+ * @param {Object|null} target 被调整的会员（须带 ratings）
+ * @param {Object} [options] 透传给 permission.canManage
+ * @returns {{ok:boolean, message:string}}
+ */
+function canEditInitialElo(actor, target, options = {}) {
+  if (!canManage(actor, { ...options, minRole: ROLE.ADMIN })) {
+    return { ok: false, message: '只有管理员或本协会负责人可以调整初始等级分' };
+  }
+  if (!target) {
+    return { ok: false, message: '找不到这位会员' };
+  }
+  if (target.status !== USER_STATUS.ACTIVE) {
+    return { ok: false, message: '只有在册会员才能调整初始等级分' };
+  }
+  if (summarizeCareer(target).totalMatches > 0) {
+    return { ok: false, message: '该会员已经打过比赛，初始等级分不能再改' };
+  }
+  return { ok: true, message: '' };
+}
+
+/**
+ * 校验并归一化「管理员 / 协会负责人手工调整的初始等级分」。
+ *
+ * 先过 canEditInitialElo 的三条前置，再把数值交给 validateInitialElo 归一化。
+ * 空值（null / 空串）经 validateInitialElo 归一为 null，表示**清除**。
+ *
+ * @param {Object|null} actor
+ * @param {Object|null} target
+ * @param {*} value 输入框里的原始值
+ * @param {Object} [options] 透传给 permission.canManage
+ * @returns {{ok:boolean, message:string, value:number|null}}
+ */
+function validateInitialEloEdit(actor, target, value, options = {}) {
+  const allowed = canEditInitialElo(actor, target, options);
+  if (!allowed.ok) return { ok: false, message: allowed.message, value: null };
+
+  const parsed = validateInitialElo(value);
+  if (!parsed.ok) return { ok: false, message: parsed.message, value: null };
+
+  return { ok: true, message: '', value: parsed.value };
+}
+
+/**
  * 校验并归一化「管理员手工指定的初始等级分」。
  *
  * 【为什么要单独一个函数】
@@ -316,6 +481,12 @@ module.exports = {
   canReviewApplication,
   canSetCollegeLeader,
   validateCollegeLeader,
+  validateAssociationLeader,
+  isGlobalAdminMember,
+  resolvedInitialElo,
+  buildInitialEloByAssoc,
+  canEditInitialElo,
+  validateInitialEloEdit,
   validateReview,
   buildApplicationRow,
 };

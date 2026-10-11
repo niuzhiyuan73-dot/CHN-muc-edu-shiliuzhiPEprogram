@@ -33,6 +33,9 @@ const {
   ROLE,
 } = require('../miniprogram/utils/constants.js');
 
+/** 种子里点名的学院负责人：u02 张宇轩 */
+const STAFF_ID = 'u02';
+
 const ADMIN_ID = 'u01';
 const PKB = 'pkb';
 const TT = 'tt';
@@ -296,5 +299,194 @@ describe('mock —— 各协会数据互不可见', () => {
     assert.ok(!(await facade.getEvents()).some((e) => e._id === 'le0001'));
     scope.setAssociation(PKB);
     assert.ok(!(await facade.getEvents()).some((e) => e._id === 'le0001'));
+  });
+});
+
+/* ============================================================
+ * 四、按协会分身份：学院负责人与初始等级分
+ * ============================================================
+ * 身份与初始分都不是「账号的属性」，而是「某人在某协会里的属性」。
+ * 这里盯住两件事落了地：
+ *   1. 种子里的学院负责人只在默认协会成立，换协会即退回普通会员。
+ *   2. 手工指定的初始等级分只落当前协会，另一个协会看不到、也不受影响。
+ * 一旦漏掉，表现就是「在 A 协会当干事管到了 B 协会的人」「在 A 定的初始分
+ * 跑到 B 去了」——不会报错，只会越权与串味，所以每条都在这里变红。
+ * ============================================================ */
+
+describe('mock —— 学院负责人按协会', () => {
+  test('种子里的学院负责人只在默认协会成立，换协会即退回普通会员', async () => {
+    scope.setAssociation(PKB);
+    assert.equal((await facade.getMember(STAFF_ID)).role, ROLE.STAFF, 'pkb 里他是学院负责人');
+
+    scope.setAssociation(TT);
+    assert.equal((await facade.getMember(STAFF_ID)).role, ROLE.MEMBER, 'tt 里他只是普通会员');
+
+    scope.setAssociation(BD);
+    assert.equal((await facade.getMember(STAFF_ID)).role, ROLE.MEMBER);
+
+    // 切回默认协会身份仍在——各协会各存各的，不是被永久抹掉
+    scope.setAssociation(PKB);
+    assert.equal((await facade.getMember(STAFF_ID)).role, ROLE.STAFF);
+  });
+
+  test('管理员在非默认协会任免学院负责人，只改那个协会', async () => {
+    scope.setAssociation(TT);
+    const set = await facade.setCollegeLeader('u06', ADMIN_ID, true);
+    assert.equal(set.ok, true, set.message);
+    assert.equal((await facade.getMember('u06')).role, ROLE.STAFF, 'tt 里已是学院负责人');
+
+    // pkb 里 u06 仍是普通会员
+    scope.setAssociation(PKB);
+    assert.equal((await facade.getMember('u06')).role, ROLE.MEMBER, 'pkb 不该受影响');
+
+    // 切回 tt 任免仍在
+    scope.setAssociation(TT);
+    assert.equal((await facade.getMember('u06')).role, ROLE.STAFF);
+  });
+});
+
+describe('mock —— 初始等级分按协会', () => {
+  /** 在指定协会注册并通过一位新会员，返回其编号（新会员无比赛，可改初始分） */
+  async function freshMember(association) {
+    scope.setAssociation(association);
+    const reg = await facade.registerMember(REGISTER_DRAFT);
+    assert.equal(reg.ok, true, reg.firstError);
+    const approved = await facade.approveMember(reg.account._id, ADMIN_ID);
+    assert.equal(approved.ok, true, approved.message);
+    return reg.account._id;
+  }
+
+  test('手工指定初始分只落当前协会，另一个协会不受影响', async () => {
+    const id = await freshMember(TT);
+    // 新会员默认没有指定初始分，走自动定级
+    assert.equal((await facade.getMember(id)).initialElo, undefined, '默认自动定级');
+
+    const edited = await facade.setMemberInitialElo(id, 1600, ADMIN_ID);
+    assert.equal(edited.ok, true, edited.message);
+    assert.equal((await facade.getMember(id)).initialElo, 1600, 'tt 里已指定 1600');
+
+    // pkb 里根本没有这位新会员（本地账号按协会分桶）
+    scope.setAssociation(PKB);
+    assert.equal(await facade.getMember(id), null);
+
+    // 切回 tt 初值还在
+    scope.setAssociation(TT);
+    assert.equal((await facade.getMember(id)).initialElo, 1600);
+  });
+
+  test('清除初始分把本协会那一档删掉，回到自动定级', async () => {
+    const id = await freshMember(TT);
+    await facade.setMemberInitialElo(id, 1600, ADMIN_ID);
+    assert.equal((await facade.getMember(id)).initialElo, 1600);
+
+    const cleared = await facade.setMemberInitialElo(id, null, ADMIN_ID);
+    assert.equal(cleared.ok, true, cleared.message);
+    assert.equal((await facade.getMember(id)).initialElo, undefined, '清除后回到自动定级');
+  });
+
+  test('打过比赛的会员初始分锁死，改不动', async () => {
+    // u03 是种子老会员，回放后已有场次
+    scope.setAssociation(PKB);
+    assert.ok((await facade.getMember('u03')).ratings, '前提：种子会员有回放战绩');
+    const denied = await facade.setMemberInitialElo('u03', 1500, ADMIN_ID);
+    assert.equal(denied.ok, false);
+    assert.match(denied.message, /已经打过比赛/);
+  });
+
+  test('普通会员无权调整初始分', async () => {
+    const id = await freshMember(TT);
+    // u06 在 tt 是普通会员（未任免）
+    const denied = await facade.setMemberInitialElo(id, 1600, 'u06');
+    assert.equal(denied.ok, false);
+    assert.match(denied.message, /只有管理员或本协会负责人/);
+  });
+});
+
+/* ============================================================
+ * 五、演示账号在各协会的身份（seed.ASSOC_ROLE_SEED）
+ * ============================================================
+ * 种子登记了几位跨协会的演示账号，用来在模拟器里演「同一个人在不同协会
+ * 身份不同」。这里把每个协会的角色钉死，免得哪天改了登记表却没人发现。
+ * 编号与身份的对照见 docs/mock演示账号.md 与 seed.js 的 ASSOC_ROLE_SEED。
+ */
+
+describe('mock —— 演示账号在各协会的身份', () => {
+  /** 取某人在当前协会的有效角色 */
+  async function roleOf(id) {
+    return (await facade.getMember(id)).role;
+  }
+
+  test('全局管理员 u01：各协会都是管理员，且 isGlobalAdmin 为真', async () => {
+    for (const assoc of [PKB, TT, BD]) {
+      scope.setAssociation(assoc);
+      const m = await facade.getMember(ADMIN_ID);
+      assert.equal(m.role, ROLE.ADMIN, `${assoc} 里应是管理员`);
+      assert.equal(m.isGlobalAdmin, true, `${assoc} 里应是全局管理员`);
+    }
+  });
+
+  test('pkb 负责人 u09：只有 pkb 是管理员，且不是全局管理员', async () => {
+    scope.setAssociation(PKB);
+    const m = await facade.getMember('u09');
+    assert.equal(m.role, ROLE.ADMIN, 'pkb 里 u09 是协会负责人');
+    // 协会负责人的有效角色也是 ADMIN，但不是全局管理员——只有靠 isGlobalAdmin
+    // 这条，前端才分得出「协会负责人」与「全局管理员」（见 profile-view）
+    assert.equal(m.isGlobalAdmin, false, '协会负责人 ≠ 全局管理员');
+
+    scope.setAssociation(TT);
+    assert.equal(await roleOf('u09'), ROLE.MEMBER, 'tt 里只是普通会员');
+    scope.setAssociation(BD);
+    assert.equal(await roleOf('u09'), ROLE.MEMBER, 'bd 里只是普通会员');
+  });
+
+  test('u04：tt 负责人 + bd 学院负责人（跨协会两种身份）', async () => {
+    scope.setAssociation(TT);
+    assert.equal(await roleOf('u04'), ROLE.ADMIN, 'tt 里是协会负责人');
+    scope.setAssociation(BD);
+    assert.equal(await roleOf('u04'), ROLE.STAFF, 'bd 里是学院负责人');
+    scope.setAssociation(PKB);
+    assert.equal(await roleOf('u04'), ROLE.MEMBER, 'pkb 里什么都不是');
+  });
+
+  test('u10：两个协会的学院负责人', async () => {
+    scope.setAssociation(PKB);
+    assert.equal(await roleOf('u10'), ROLE.STAFF);
+    scope.setAssociation(TT);
+    assert.equal(await roleOf('u10'), ROLE.STAFF);
+    scope.setAssociation(BD);
+    assert.equal(await roleOf('u10'), ROLE.MEMBER);
+  });
+
+  test('三个各协会的学院负责人：pkb u05 / tt u08 / bd u11', async () => {
+    scope.setAssociation(PKB);
+    assert.equal(await roleOf('u05'), ROLE.STAFF);
+    scope.setAssociation(TT);
+    assert.equal(await roleOf('u08'), ROLE.STAFF);
+    scope.setAssociation(BD);
+    assert.equal(await roleOf('u11'), ROLE.STAFF);
+  });
+
+  test('u07：bd 负责人，其余协会是普通会员', async () => {
+    scope.setAssociation(BD);
+    assert.equal(await roleOf('u07'), ROLE.ADMIN);
+    scope.setAssociation(PKB);
+    assert.equal(await roleOf('u07'), ROLE.MEMBER);
+    scope.setAssociation(TT);
+    assert.equal(await roleOf('u07'), ROLE.MEMBER);
+  });
+
+  test('默认登录种子 u06 在各协会都是普通会员', async () => {
+    for (const assoc of [PKB, TT, BD]) {
+      scope.setAssociation(assoc);
+      assert.equal(await roleOf('u06'), ROLE.MEMBER);
+    }
+  });
+
+  test('运行时任免盖得住种子登记——撤销种子里的协会负责人', async () => {
+    scope.setAssociation(PKB);
+    assert.equal(await roleOf('u09'), ROLE.ADMIN, '前提：u09 是种子里的 pkb 负责人');
+    const revoked = await facade.setAssociationLeader('u09', ADMIN_ID, false);
+    assert.equal(revoked.ok, true, revoked.message);
+    assert.equal(await roleOf('u09'), ROLE.MEMBER, '撤销后回到普通会员');
   });
 });

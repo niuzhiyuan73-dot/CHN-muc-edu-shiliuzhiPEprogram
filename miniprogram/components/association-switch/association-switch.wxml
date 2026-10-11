@@ -1,6 +1,5 @@
-<!-- 协会切换徽章：图标字 + 简称 + 下拉暗示。整块可点，点了弹协会清单。 -->
+<!-- 协会切换徽章：项目名（三字）+ 下拉暗示。整块可点，点了弹协会清单。 -->
 <view class="assoc-switch" bindtap="onTap" hover-class="assoc-switch--hover">
-  <text class="assoc-switch__glyph">{{glyph}}</text>
-  <text class="assoc-switch__name">{{shortName}}</text>
+  <text class="assoc-switch__name">{{sportName}}</text>
   <text class="assoc-switch__caret">▾</text>
 </view>

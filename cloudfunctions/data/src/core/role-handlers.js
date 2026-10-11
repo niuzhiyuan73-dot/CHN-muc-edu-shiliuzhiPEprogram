@@ -25,8 +25,11 @@ const { ok, fail } = require('../envelope.js');
 const { callerError, effectiveRole } = require('./context.js');
 const { bumpSeason } = require('./season.js');
 const { membershipKey } = require('./idempotency.js');
-const { validateCollegeLeader } = require('../../lib/services/member-review.js');
-const { ROLE, ASSOC_ROLE, USER_STATUS } = require('../../lib/utils/constants.js');
+const {
+  validateCollegeLeader,
+  validateAssociationLeader,
+} = require('../../lib/services/member-review.js');
+const { ASSOC_ROLE } = require('../../lib/utils/constants.js');
 
 /**
  * 任命 / 免除**本协会的学院负责人**（写 `memberships.role='staff'`）。
@@ -92,23 +95,17 @@ async function setAssociationLeader(payload = {}, ctx) {
   const guard = callerError(ctx);
   if (guard) return fail(guard);
 
-  if (!ctx.isGlobalAdmin) {
-    return ok({ ok: false, account: null, message: '只有全局管理员可以任免协会负责人' });
-  }
-
   const target = await ctx.repo.users.getById(payload.userId);
-  if (!target) return ok({ ok: false, account: null, message: '找不到这位会员' });
-  if (target._id === ctx.actorId) {
-    return ok({ ok: false, account: null, message: '不能给自己任免角色' });
-  }
-  if (Number(target.role || 0) >= ROLE.ADMIN) {
-    return ok({ ok: false, account: null, message: '不能改变管理员的角色' });
-  }
-  if (target.status !== USER_STATUS.ACTIVE) {
-    return ok({ ok: false, account: null, message: '只有在册会员才能设为协会负责人' });
-  }
-
   const makeLeader = Boolean(payload.makeLeader);
+
+  // 任免权与四条边界共用 validateAssociationLeader（纯函数，mock 的
+  // setAssociationLeader 与之共用），两处不再各写一套。isGlobalAdmin 由
+  // ctx 显式传入——有效角色是 ADMIN 的协会负责人不算全局管理员。
+  const verdict = validateAssociationLeader(ctx.actor, target, makeLeader, {
+    isGlobalAdmin: ctx.isGlobalAdmin,
+  });
+  if (!verdict.ok) return ok({ ok: false, account: null, message: verdict.message });
+
   const key = membershipKey(target._id, ctx.association);
 
   await ctx.repo.transaction(async (tx) => {

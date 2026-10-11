@@ -37,92 +37,113 @@ beforeEach(() => facade.resetCache());
  * 一、公开列表
  * ============================================================ */
 
-describe('公告公开列表 —— 跨协会、谁都能看', () => {
-  test('跨协会聚合：按协会分栏，各组置顶在最前', async () => {
+describe('公告公开列表 —— 跨协会、顶部协会标签切换', () => {
+  test('协会标签：每个启用协会一个，默认停在全局所在协会', async () => {
     const view = await loadAnnouncementListView();
 
-    // 三个协会的种子公告都在：pkb 6 + tt 4 + bd 4
-    assert.strictEqual(view.total, 14);
     assert.deepStrictEqual(
-      view.groups.map((group) => group.associationId),
+      view.associationTabs.map((tab) => tab.associationId),
       ['pkb', 'tt', 'bd'],
-      '按注册表次序分栏'
+      '按注册表次序一协会一个标签'
     );
-    // 种子里的「开训 / 招新」通知是置顶的，即便不是最新的也要在各组最前
-    assert.strictEqual(view.groups[0].rows[0].pinned, true);
-    for (const group of view.groups) {
-      assert.ok(group.associationName, '分组该带协会简称');
-      assert.ok(group.associationGlyph, '分组该带协会徽标字');
-      assert.ok(group.themeClass.startsWith('assoc-'), '分组该带主题类');
-      assert.strictEqual(group.count, group.rows.length);
-      for (const row of group.rows) {
-        assert.strictEqual(row.association, group.associationId, '每条公告标出归属协会');
-        assert.strictEqual(row.associationName, group.associationName);
-      }
+    assert.deepStrictEqual(
+      view.associationTabs.map((tab) => tab.label),
+      ['匹克球', '乒乓球', '羽毛球'],
+      '标签用三字项目名'
+    );
+    // 没指定协会时跟随全局所在协会（此处为注册表首个启用协会）
+    assert.strictEqual(view.activeAssociation, 'pkb');
+    assert.strictEqual(view.associationTabs.find((t) => t.associationId === 'pkb').active, true);
+    assert.strictEqual(view.associationTabs.find((t) => t.associationId === 'tt').active, false);
+    // 条数按该协会全部公告算：pkb 6 / tt 4 / bd 4
+    assert.strictEqual(view.associationTabs[0].count, 6);
+    assert.strictEqual(view.associationTabs[1].count, 4);
+    assert.strictEqual(view.associationTabs[2].count, 4);
+    assert.ok(view.themeClass.startsWith('assoc-'), '该带当前协会的主题类');
+  });
+
+  test('只展示当前协会的公告，置顶的排最前', async () => {
+    const view = await loadAnnouncementListView({ association: 'pkb' });
+
+    assert.strictEqual(view.activeAssociation, 'pkb');
+    assert.strictEqual(view.total, 6);
+    assert.strictEqual(view.rows.length, 6);
+    // 种子里「开训 / 招新」通知是置顶的，即便不是最新的也要在最前
+    assert.strictEqual(view.rows[0].pinned, true);
+    for (const row of view.rows) {
+      assert.strictEqual(row.association, 'pkb', '只放当前协会的公告');
     }
   });
 
-  test('分类标签带数量，当前页被标成 active', async () => {
-    const view = await loadAnnouncementListView();
+  test('切到别的协会：换成那个协会的公告', async () => {
+    const view = await loadAnnouncementListView({ association: 'tt' });
+
+    assert.strictEqual(view.activeAssociation, 'tt');
+    assert.strictEqual(view.total, 4);
+    assert.strictEqual(view.associationTabs.find((t) => t.associationId === 'tt').active, true);
+    for (const row of view.rows) assert.strictEqual(row.association, 'tt');
+  });
+
+  test('非法协会退回全局所在协会，不至于白屏', async () => {
+    const view = await loadAnnouncementListView({ association: 'nonsense' });
+    assert.strictEqual(view.activeAssociation, 'pkb');
+    assert.strictEqual(view.total, 6);
+  });
+
+  test('分类标签带数量，计数按当前协会算、当前页被标成 active', async () => {
+    const view = await loadAnnouncementListView({ association: 'pkb' });
 
     assert.deepStrictEqual(
       view.tabs.map((tab) => tab.tab),
       [ALL_TAB, ...ANNOUNCEMENT_CATEGORIES]
     );
     assert.strictEqual(view.tabs[0].label, '全部');
-    assert.strictEqual(view.tabs[0].count, 14);
+    assert.strictEqual(view.tabs[0].count, 6);
     assert.strictEqual(view.tabs[0].active, true);
-    // 通知 2+2+2、赛事 2+1+1、战报 2+1+1
-    assert.strictEqual(view.tabs.find((t) => t.tab === '通知').count, 6);
-    assert.strictEqual(view.tabs.find((t) => t.tab === '赛事').count, 4);
-    assert.strictEqual(view.tabs.find((t) => t.tab === '战报').count, 4);
+    // pkb：通知 2、赛事 2、战报 2
+    assert.strictEqual(view.tabs.find((t) => t.tab === '通知').count, 2);
+    assert.strictEqual(view.tabs.find((t) => t.tab === '赛事').count, 2);
+    assert.strictEqual(view.tabs.find((t) => t.tab === '战报').count, 2);
   });
 
-  test('按分类筛选：只在各自栏内留下该分类，计数不归零', async () => {
-    const view = await loadAnnouncementListView({ tab: '赛事' });
+  test('按分类筛选：只留该分类，别的分类计数不归零', async () => {
+    const view = await loadAnnouncementListView({ association: 'pkb', tab: '赛事' });
 
     assert.strictEqual(view.activeTab, '赛事');
-    assert.strictEqual(view.visibleCount, 4);
-    assert.strictEqual(
-      view.visibleCount,
-      view.groups.reduce((total, group) => total + group.rows.length, 0)
-    );
-    for (const group of view.groups) {
-      for (const row of group.rows) assert.strictEqual(row.category, '赛事');
-    }
+    assert.strictEqual(view.visibleCount, 2);
+    assert.strictEqual(view.rows.length, view.visibleCount);
+    for (const row of view.rows) assert.strictEqual(row.category, '赛事');
     // 切到某个分类后，别的分类的计数不该归零
-    assert.strictEqual(view.tabs.find((t) => t.tab === '通知').count, 6);
+    assert.strictEqual(view.tabs.find((t) => t.tab === '通知').count, 2);
   });
 
   test('非法分类退回「全部」，不至于白屏', async () => {
-    const view = await loadAnnouncementListView({ tab: 'nonsense' });
+    const view = await loadAnnouncementListView({ association: 'pkb', tab: 'nonsense' });
     assert.strictEqual(view.activeTab, ALL_TAB);
-    assert.strictEqual(view.total, 14);
+    assert.strictEqual(view.total, 6);
   });
 
   test('公开页绝不出现管理按钮', async () => {
-    const view = await loadAnnouncementListView();
+    const view = await loadAnnouncementListView({ association: 'pkb' });
+    assert.ok(view.rows.length > 0);
     // 行里连 canArchive 都是恒假的——actor 传的是 null
-    for (const group of view.groups) {
-      for (const row of group.rows) assert.strictEqual(row.canArchive, false);
-    }
+    for (const row of view.rows) assert.strictEqual(row.canArchive, false);
   });
 
-  test('某分类被各协会都下架光之后，空态有话说', async () => {
-    // 把每个协会的战报都下架：跨协会口径下，只清一个协会不会让整栏变空
-    const before = await loadAnnouncementListView({ tab: '战报' });
-    for (const group of before.groups) {
-      for (const row of group.rows) {
-        await withAssociation(group.associationId, () =>
-          facade.archiveAnnouncement(row.id, PUBLISHER._id)
-        );
-      }
+  test('某协会某分类被下架光之后，空态有话说，别的协会不受影响', async () => {
+    // 把 pkb 的战报都下架：只清一个协会，别的协会的战报仍在
+    const before = await loadAnnouncementListView({ association: 'pkb', tab: '战报' });
+    for (const row of before.rows) {
+      await withAssociation('pkb', () => facade.archiveAnnouncement(row.id, PUBLISHER._id));
     }
 
-    const view = await loadAnnouncementListView({ tab: '战报' });
+    const view = await loadAnnouncementListView({ association: 'pkb', tab: '战报' });
     assert.strictEqual(view.visibleCount, 0);
-    assert.deepStrictEqual(view.groups, []);
+    assert.deepStrictEqual(view.rows, []);
     assert.match(view.emptyText, /战报/);
+
+    const tt = await loadAnnouncementListView({ association: 'tt', tab: '战报' });
+    assert.strictEqual(tt.visibleCount, 1, '别的协会的战报不该被牵连下架');
   });
 });
 
@@ -220,12 +241,13 @@ describe('公告管理视图 —— 内容', () => {
     assert.strictEqual(last.statusLabel, '已下架');
     assert.strictEqual(last.canArchive, false);
 
-    const publicView = await loadAnnouncementListView();
-    // 跨协会聚合：下架的是 pkb 那条，总数 14 少一条，别的协会不受影响
-    assert.strictEqual(publicView.total, 13);
-    const pkbGroup = publicView.groups.find((group) => group.associationId === 'pkb');
-    assert.strictEqual(pkbGroup.count, 5);
-    assert.ok(!pkbGroup.rows.some((row) => row.id === 'a01'), '下架的那条不该还在公开聚合里');
+    // 下架的是 pkb 那条：pkb 的公开列表少一条，别的协会不受影响
+    const publicView = await loadAnnouncementListView({ association: 'pkb' });
+    assert.strictEqual(publicView.total, 5);
+    assert.ok(!publicView.rows.some((row) => row.id === 'a01'), '下架的那条不该还在公开列表里');
+
+    const ttView = await loadAnnouncementListView({ association: 'tt' });
+    assert.strictEqual(ttView.total, 4);
   });
 
   test('每一行都不含 undefined / null / NaN', async () => {

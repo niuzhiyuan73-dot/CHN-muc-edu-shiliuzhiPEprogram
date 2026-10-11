@@ -1115,6 +1115,25 @@ test('他人主页 —— 普通会员看不到任免入口，也没有可点的
   assert.strictEqual((await facade.getMember('u02')).role, 1, 'u02 种子里就是学院负责人，不该被改动');
 });
 
+test('他人主页 —— 协会负责人在本协会能看到并执行任免入口', async () => {
+  // 登录快照故意写成「普通会员」（role 0），模拟快照按别的协会读下、与本页
+  // 协会对不上的情形。u09 在匹克球协会（pkb）是协会负责人，入口是否出现应当
+  // 以**本页协会**解析出的身份为准，而不是拿快照里的旧 role 一刀切。
+  loginAs({ _id: 'u09', role: 0, status: 1 });
+  const page = instantiate(memberConfig);
+  await page.onLoad({ userId: 'u06' });
+  // 页内切到 pkb（u06 默认协会可能不是这个）：切换后按本协会重新解析身份
+  await page.onAssociationChange({ detail: { id: 'pkb' } });
+
+  assert.strictEqual(page.data.switchValue, 'pkb');
+  assert.strictEqual(page.data.view.leader.visible, true, '本协会负责人应当看到任免入口');
+
+  calls.toasts.length = 0;
+  await page.onSetCollegeLeader();
+  assert.strictEqual((await facade.getMember('u06')).role, 1, '点击后真的写进数据源');
+  assert.ok(calls.toasts.includes('已设为学院负责人'));
+});
+
 /* ============================================================
  * 排行榜
  * ============================================================ */
@@ -3314,29 +3333,46 @@ test('首页 —— 点公告卡片跳到公告列表页', async () => {
   assert.deepStrictEqual(calls.navigations, ['/pages/announcements/announcements']);
 });
 
-test('公告列表页 —— 未登录也能看，跨协会分栏，置顶排最前且绝无管理按钮', async () => {
+test('公告列表页 —— 未登录也能看，顶部协会标签，默认看当前协会且绝无管理按钮', async () => {
   resetSession();
+  facade.setAssociation('pkb');
 
   const page = instantiate(announcementsConfig);
   await page.onLoad();
 
   assert.strictEqual(page.data.loading, false);
   assert.strictEqual(page.data.error, '');
-  // 三个协会的公告都在，且按协会分栏
-  assert.strictEqual(page.data.view.total, 14);
+  // 顶部一栏协会标签：每个启用协会一个，按注册表次序
   assert.deepStrictEqual(
-    page.data.view.groups.map((group) => group.associationId),
+    page.data.view.associationTabs.map((tab) => tab.associationId),
     ['pkb', 'tt', 'bd']
   );
-  assert.strictEqual(page.data.view.groups[0].rows[0].pinned, true);
+  // 没指定时停在全局所在协会，只展示它的公告
+  assert.strictEqual(page.data.view.activeAssociation, 'pkb');
+  assert.strictEqual(page.data.view.total, 6);
+  assert.strictEqual(page.data.view.rows[0].pinned, true);
   // 公开页的每一行都不带管理按钮——视图模型给的是 actor: null
-  for (const group of page.data.view.groups) {
-    for (const row of group.rows) assert.strictEqual(row.canArchive, false);
-  }
+  for (const row of page.data.view.rows) assert.strictEqual(row.canArchive, false);
+});
+
+test('公告列表页 —— 点协会标签只看该协会，分类计数跟着换', async () => {
+  resetSession();
+  facade.setAssociation('pkb');
+
+  const page = instantiate(announcementsConfig);
+  await page.onLoad();
+
+  await page.onSwitchAssociation({ currentTarget: { dataset: { association: 'tt' } } });
+
+  assert.strictEqual(page.data.view.activeAssociation, 'tt');
+  assert.strictEqual(page.data.view.total, 4);
+  for (const row of page.data.view.rows) assert.strictEqual(row.association, 'tt');
+  assert.strictEqual(page.data.view.tabs[0].count, 4);
 });
 
 test('公告列表页 —— 点分类标签整页换成该分类，别的分类计数不归零', async () => {
   resetSession();
+  facade.setAssociation('pkb');
 
   const page = instantiate(announcementsConfig);
   await page.onLoad();
@@ -3344,15 +3380,14 @@ test('公告列表页 —— 点分类标签整页换成该分类，别的分类
   await page.onSwitchTab({ currentTarget: { dataset: { tab: '赛事' } } });
 
   assert.strictEqual(page.data.view.activeTab, '赛事');
-  assert.strictEqual(page.data.view.visibleCount, 4);
-  for (const group of page.data.view.groups) {
-    for (const row of group.rows) assert.strictEqual(row.category, '赛事');
-  }
-  assert.strictEqual(page.data.view.tabs.find((t) => t.tab === '通知').count, 6);
+  assert.strictEqual(page.data.view.visibleCount, 2);
+  for (const row of page.data.view.rows) assert.strictEqual(row.category, '赛事');
+  assert.strictEqual(page.data.view.tabs.find((t) => t.tab === '通知').count, 2);
 });
 
 test('公告列表页 —— 重复点当前标签不做无谓的重新加载', async () => {
   resetSession();
+  facade.setAssociation('pkb');
 
   const page = instantiate(announcementsConfig);
   await page.onLoad();
@@ -4496,6 +4531,73 @@ test('学院赛详情 —— 只有管理员看得到指派裁判入口', async 
   const member = instantiate(collegeEventDetailConfig);
   await member.onLoad({ eventId: event._id });
   assert.strictEqual(member.data.view.ties[0].canAssignReferee, false);
+});
+
+test('学院赛详情 —— 管理员能替两侧排阵，学院负责人只拿到本侧', async () => {
+  const { event, ties } = await startTestCollegeEvent();
+  const tie = ties[0];
+
+  // 管理员：本人学院（体育学院）并不在这两侧，仍应两侧各给一个排阵入口
+  loginAs(ADMIN);
+  const admin = instantiate(collegeEventDetailConfig);
+  await admin.onLoad({ eventId: event._id });
+
+  const adminRow = admin.data.view.ties.find((row) => row.tieId === tie._id);
+  assert.strictEqual(adminRow.canSubmitLineup, true, '管理员该能看到排阵入口');
+  assert.deepStrictEqual(
+    adminRow.lineupActions.map((action) => action.college),
+    [tie.collegeA, tie.collegeB],
+    '两侧各一个入口'
+  );
+  assert.deepStrictEqual(
+    adminRow.lineupActions.map((action) => action.side),
+    ['A', 'B']
+  );
+  assert.match(adminRow.lineupActions[0].label, /提交 A 侧排阵/);
+
+  // 点某一侧的按钮：跳排阵页时把那一侧学院带上
+  calls.navigations.length = 0;
+  admin.onOpenLineup({ currentTarget: { dataset: { tieId: tie._id, college: tie.collegeB } } });
+  assert.deepStrictEqual(calls.navigations, [
+    `/pages/college-lineup/college-lineup?tieId=${tie._id}&eventId=${event._id}&college=${encodeURIComponent(tie.collegeB)}`,
+  ]);
+
+  // 学院负责人：只解得出自己那一侧，入口只有一个
+  loginAs({ role: 1, _id: STAFF_ID, college: STAFF_COLLEGE });
+  const staff = instantiate(collegeEventDetailConfig);
+  await staff.onLoad({ eventId: event._id });
+  const staffRow = staff.data.view.ties.find((row) => row.tieId === tie._id);
+  assert.strictEqual(staffRow.lineupActions.length, 1, '学院负责人只管自己那一侧');
+  assert.strictEqual(staffRow.lineupActions[0].college, STAFF_COLLEGE);
+});
+
+test('排阵页 —— 管理员带 college 参数替任一方排阵', async () => {
+  const { event, ties } = await startTestCollegeEvent();
+  const tie = ties[0];
+  const sideCollege = STAFF_COLLEGE;
+  loginAs(ADMIN);
+
+  // 不带 college：管理员本人学院不在大场内，被挡住（这正是要修的旧行为）
+  const noParam = instantiate(collegeLineupConfig);
+  await noParam.onLoad({ tieId: tie._id, eventId: event._id });
+  assert.match(noParam.data.view.blockReason, /不在本大场的参赛学院内/);
+
+  // 带 college：替该侧排阵，进得去
+  const page = instantiate(collegeLineupConfig);
+  await page.onLoad({ tieId: tie._id, eventId: event._id, college: sideCollege });
+  assert.strictEqual(page.data.view.blockReason, '');
+  assert.strictEqual(page.data.view.college, sideCollege);
+  assert.strictEqual(page.data.view.canSubmit, true);
+
+  // 能真正提交：数据层按编号回查，管理员替任一方兜底是允许的
+  const ids = await memberIdsOf(sideCollege);
+  page.onTogglePlayer({ currentTarget: { dataset: { legNo: 1 } }, detail: { value: [ids[0]] } });
+  page.onTogglePlayer({ currentTarget: { dataset: { legNo: 2 } }, detail: { value: [ids[1]] } });
+  await page.onSubmit();
+
+  const lineups = await facade.getCollegeLineups(event._id);
+  assert.strictEqual(lineups.length, 1);
+  assert.strictEqual(lineups[0].college, sideCollege, '排阵落在指定的那一侧学院名下');
 });
 
 test('学院赛小场录分 —— 大场指派的裁判亮在小场页上，别人的录入随之收口', async () => {

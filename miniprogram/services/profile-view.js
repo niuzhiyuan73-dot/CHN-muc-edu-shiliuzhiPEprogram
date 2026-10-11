@@ -23,7 +23,14 @@
  * ============================================================
  */
 
-const { ROLE, ROLE_LABEL, USER_STATUS_LABEL, RATING_POOL_LABEL } = require('../utils/constants.js');
+const {
+  ROLE,
+  ROLE_LABEL,
+  ASSOC_ROLE,
+  ASSOC_ROLE_LABEL,
+  USER_STATUS_LABEL,
+  RATING_POOL_LABEL,
+} = require('../utils/constants.js');
 const {
   formatDate,
   formatSigned,
@@ -36,7 +43,12 @@ const {
 const { sortProjectsForDisplay } = require('../utils/leaderboard.js');
 const { formatMatchFormat } = require('../utils/match-format.js');
 const { resolveNameDisplay } = require('./profile.js');
-const { validateCollegeLeader } = require('./member-review.js');
+const {
+  validateCollegeLeader,
+  validateAssociationLeader,
+  canEditInitialElo,
+  isGlobalAdminMember,
+} = require('./member-review.js');
 const scope = require('./association-scope.js');
 const {
   getCurrentUser,
@@ -150,6 +162,24 @@ function buildHistoryRow(row) {
 }
 
 /**
+ * 会员头上的角色徽标。
+ *
+ * 【为什么 ADMIN 要再分两种】协会负责人的**有效角色**也是 ADMIN（见
+ * context.effectiveRole），但它其实是「本协会」给的身份，与账号级的全局
+ * 管理员不是一回事。只看 role 会把协会负责人显示成「管理员」，在本协会里
+ * 看着像是跨协会的权限。用 isGlobalAdminMember 区分：全局管理员显「管理员」，
+ * 本协会的 leader 显「协会负责人」。学院负责人（STAFF）沿用角色表的说法。
+ *
+ * @param {Object} user 会员记录（带有效 role 与 isGlobalAdmin）
+ * @returns {string}
+ */
+function roleLabelOf(user) {
+  if (isGlobalAdminMember(user)) return ROLE_LABEL[ROLE.ADMIN];
+  if (Number(user.role || 0) >= ROLE.ADMIN) return ASSOC_ROLE_LABEL[ASSOC_ROLE.LEADER];
+  return ROLE_LABEL[user.role] || '';
+}
+
+/**
  * 装载个人主页的全部数据。
  *
  * @param {string} [userId] 想看谁的页面。不传则看当前登录会员（即「我的」）。
@@ -177,6 +207,12 @@ async function loadMemberView(userId, options = {}) {
   if (!user) {
     return { found: false };
   }
+
+  // 入口判定（学院负责人 / 协会负责人 / 初始等级分）要读「本人是否已出场」，
+  // 这只有派生数据集里的会员才带 ratings（见 rating.summarizeCareer）。云端
+  // getCurrentUser 给的是账号原始文档（含手机号等本人字段）但不含 ratings，
+  // 故本人场景补取一份派生记录专供判定；「看的是谁」仍用 user，展示字段不变。
+  const target = user.ratings ? user : (await getMember(user._id)) || user;
 
   const projects = sortProjectsForDisplay(await getMyProjects(user._id));
   const active = pickProject(projects, project);
@@ -211,8 +247,23 @@ async function loadMemberView(userId, options = {}) {
   // 状态正常且有确定学院、对方不是管理员）全部交给 validateCollegeLeader 判定，
   // 与写入端一字不差；这里只据结果决定按钮显不显示、写什么字，不另写一套规则。
   // 当前不是学院负责人时动作为「设为学院负责人」，已经是学院负责人则是「撤销学院负责人」。
-  const makeLeader = Number(user.role || 0) < ROLE.STAFF;
-  const leaderCheck = validateCollegeLeader(viewer, user, makeLeader);
+  const makeLeader = Number(target.role || 0) < ROLE.STAFF;
+  const leaderCheck = validateCollegeLeader(viewer, target, makeLeader);
+
+  // 协会负责人任免入口：仅**全局管理员**可见并生效（协会负责人的有效角色也是
+  // ADMIN，故用 isGlobalAdmin 区分）。目标是全局管理员或自己时整张卡不出现。
+  // 目标当前已是本协会协会负责人时，按钮转为「撤销」。
+  const targetIsAssocLeader =
+    !isGlobalAdminMember(target) && Number(target.role || 0) >= ROLE.ADMIN;
+  const makeAssocLeader = !targetIsAssocLeader;
+  const assocLeaderCheck = validateAssociationLeader(viewer, target, makeAssocLeader, {
+    isGlobalAdmin: Boolean(viewer && viewer.isGlobalAdmin),
+  });
+
+  // 初始等级分调整入口。权限与「打过就不能改」交给 canEditInitialElo（与写入端
+  // 一字不差）；当前值取本协会解析后的 initialElo——未指定即「自动定级」。
+  const initialEloCheck = canEditInitialElo(viewer, target);
+  const currentInitialElo = Number.isFinite(target.initialElo) ? target.initialElo : null;
 
   return {
     found: true,
@@ -227,7 +278,7 @@ async function loadMemberView(userId, options = {}) {
       college: user.college || '',
       // 实名信息，个人资料页只读展示
       studentId: user.studentId || '',
-      roleLabel: ROLE_LABEL[user.role] || '',
+      roleLabel: roleLabelOf(user),
       statusLabel: USER_STATUS_LABEL[user.status] || '',
       joinDateText: formatDate(user.joinDate),
       points: user.points || 0,
@@ -304,6 +355,22 @@ async function loadMemberView(userId, options = {}) {
       makeLeader,
       label: makeLeader ? '设为学院负责人' : '撤销学院负责人',
       hint: makeLeader ? '代签、代录本学院的比赛' : '收回本学院的管理权限',
+    },
+    // 协会负责人任免入口（仅全局管理员）。与学院负责人同一位置并排出现。
+    associationLeader: {
+      visible: assocLeaderCheck.ok,
+      makeLeader: makeAssocLeader,
+      label: makeAssocLeader ? '设为协会负责人' : '撤销协会负责人',
+      hint: makeAssocLeader ? '管理本协会的赛事、会员与公告' : '收回本协会的管理权限',
+    },
+    // 初始等级分调整入口：还没出场、且操作者有权时才出现。「当前值」是本协会
+    // 解析后的起评分，未指定时显示「自动定级」并禁用「清除」。
+    initialElo: {
+      visible: initialEloCheck.ok,
+      current: currentInitialElo,
+      currentText: currentInitialElo === null ? '自动定级' : formatElo(currentInitialElo),
+      canClear: currentInitialElo !== null,
+      hint: '这位会员还没打过比赛，可以先给定一个起评分',
     },
   };
 }

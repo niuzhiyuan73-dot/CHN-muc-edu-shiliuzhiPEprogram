@@ -1,7 +1,7 @@
 /**
  * 协会切换器（首页与「我的」共用）
  * ============================================================
- * 一个只读的小徽章：图标字 + 协会简称 + 一个下拉的暗示。点它弹
+ * 一个只读的小徽章：项目名（三字）+ 一个下拉的暗示。点它弹
  * wx.showActionSheet，选中另一个协会后**抛出 change 事件**（`{ id }`），
  * 由所在页面决定怎么用。
  *
@@ -32,8 +32,7 @@ Component({
   },
 
   data: {
-    glyph: '',
-    shortName: '',
+    sportName: '',
   },
 
   lifetimes: {
@@ -43,13 +42,12 @@ Component({
   },
 
   methods: {
-    /** 按 id 取协会，刷新徽章上的图标字与简称 */
+    /** 按 id 取协会，刷新徽章上的项目名 */
     refreshLabel(id) {
       const list = activeAssociations();
       const found = list.find((item) => item.id === id) || list[0] || null;
       this.setData({
-        glyph: found ? found.logoGlyph : '',
-        shortName: found ? found.shortName : '',
+        sportName: found ? found.sportName : '',
       });
     },
 

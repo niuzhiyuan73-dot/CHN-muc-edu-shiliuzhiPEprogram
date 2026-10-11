@@ -44,7 +44,8 @@ test('每个协会的字段齐全，且规则默认值合法', () => {
   for (const a of allAssociations()) {
     assert.strictEqual(typeof a.id, 'string');
     assert.ok(a.id.length > 0);
-    assert.ok(a.name && a.shortName && a.logoGlyph, `${a.id} 缺品牌字段`);
+    assert.ok(a.name && a.shortName && a.sportName && a.logoGlyph, `${a.id} 缺品牌字段`);
+    assert.strictEqual(a.sportName.length, 3, `${a.id}.sportName 该是三字项目名`);
 
     // 主题色的四个值都是 #RRGGBB
     for (const key of ['primary', 'primaryDark', 'primaryLight', 'accent']) {

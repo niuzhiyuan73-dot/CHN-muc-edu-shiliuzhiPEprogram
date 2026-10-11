@@ -63,11 +63,23 @@
   min-width: 0;
 }
 
+/* 昵称整串显示，宁可让后面的真名/徽标换行，也不要被挤成一个字一行。
+   flex-wrap 让真名、徽标在放不下时整块换行；nick 自身不缩、不内换行，
+   实在过长时截断（不设 nowrap 的话中文最小内容宽度只有一个字，会竖排）。 */
 .member-name {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   font-size: var(--font-xl);
   font-weight: 600;
+}
+
+.member-nick {
+  flex-shrink: 0;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 /* 真名缀在昵称旁边：字号压小、字重回常规、颜色压淡，

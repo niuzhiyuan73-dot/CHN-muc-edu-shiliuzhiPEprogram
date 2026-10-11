@@ -1,7 +1,7 @@
 {
   "name": "data",
   "version": "1.0.0",
-  "description": "匹克球俱乐部小程序统一数据云函数（按 action 分发）",
+  "description": "体育管理小程序统一数据云函数（按 action 分发）",
   "main": "index.js",
   "dependencies": {
     "wx-server-sdk": "~2.6.3"

@@ -315,17 +315,31 @@ async function loadCollegeEventDetailView(eventId, options = {}) {
   const baseTieRows = ties.map((tie) => {
     const refereeName = tie.referee ? nameOf(memberById.get(tie.referee)) || tie.referee : '';
     const row = buildTieRow(tie, { actor, refereeName });
-    const myLineup = actor
-      ? lineups.find((item) => item.tieId === tie._id && item.college === actor.college)
-      : null;
-    const canLineup = canSubmitLineup(tie, actor, { college: actor && actor.college, event });
+    // 排阵入口按「两侧各解一次」来算：学院负责人只解得出自己那一侧；管理员与
+    // 协会负责人（有效角色同为管理员）两侧都解得出。若只盯 actor.college，
+    // 本学院没进这场大场的管理者就会一个入口都没有——正是要修的 bug。
+    const lineupActions = [
+      { side: 'A', college: tie.collegeA },
+      { side: 'B', college: tie.collegeB },
+    ]
+      .filter((item) => item.college && canSubmitLineup(tie, actor, { college: item.college, event }))
+      .map((item) => {
+        const submitted = lineups.some(
+          (entry) => entry.tieId === tie._id && entry.college === item.college
+        );
+        return {
+          side: item.side,
+          college: item.college,
+          submitted,
+          label: `${submitted ? '修改' : '提交'} ${item.side} 侧排阵`,
+        };
+      });
     return {
       ...row,
       // buildTieRow 只判「这一场还能不能改派」，管理员与否在这里合上
       canAssignReferee: Boolean(row.canAssignReferee && mayAssignReferee),
-      canSubmitLineup: canLineup,
-      lineupActionText: canLineup ? (myLineup ? '修改排阵' : '提交排阵') : '',
-      myLineupSubmitted: Boolean(myLineup),
+      canSubmitLineup: lineupActions.length > 0,
+      lineupActions,
     };
   });
 
@@ -536,7 +550,7 @@ async function loadCollegeLineupView(tieId, options = {}) {
   } else if (event && event.status !== COLLEGE_EVENT_STATUS.ONGOING) {
     blockReason = '赛事还没开始，不能排阵';
   } else if (!canSubmitLineup(tie, actor, { college, event })) {
-    blockReason = '只有本学院负责人或管理员可以排阵';
+    blockReason = '只有本学院负责人、协会负责人或管理员可以排阵';
   } else if (!entry || entry.status !== COLLEGE_ENTRY_STATUS.APPROVED) {
     blockReason = '本学院的名单尚未通过审核，不能排阵';
   }

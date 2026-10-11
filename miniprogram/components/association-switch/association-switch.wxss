@@ -16,13 +16,9 @@
   opacity: 0.7;
 }
 
-.assoc-switch__glyph {
-  font-size: 26rpx;
-  font-weight: 600;
-}
-
 .assoc-switch__name {
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .assoc-switch__caret {

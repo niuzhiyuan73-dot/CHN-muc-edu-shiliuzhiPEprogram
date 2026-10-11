@@ -21,12 +21,13 @@
  * 公告本就是公开内容，访客也能看。这里给每一行传 actor: null，
  * 于是 canArchive 恒为假，页面上不会冒出管理按钮。
  *
- * 【公开列表为什么跨协会、按协会分栏】
+ * 【公开列表为什么跨协会、按协会标签切换】
  * 公告页回答的是「最近各协会都发了什么」，与首页公告栏同一口径——把全部
- * 启用协会的公告都摆出来，按协会分栏，每条标注归属。要只看某个协会，
- * 切到该协会即可（§11.3）。首页与列表页共用 collectAnnouncements 的同一
- * 套聚合思路：串行逐协会取数（见 association-scope.mapActiveAssociations），
- * 每个协会各成一组。
+ * 启用协会的公告都取出来。之前是竖着一栏栏叠下来，协会一多，下面的就被
+ * 压在很下面、要一直滑才看得到；现在顶部横着一栏协会标签，选哪个协会就
+ * 只看哪个协会，谁的公告都不会被藏住（§11.3）。取数沿用与首页
+ * collectAnnouncements 同一套聚合思路：串行逐协会取（见
+ * association-scope.mapActiveAssociations）。
  * ============================================================
  */
 
@@ -61,26 +62,31 @@ function categoryTabs(rows, activeTab) {
 }
 
 /**
- * 装载公开公告列表——跨全部启用协会聚合，按协会分栏。
+ * 装载公开公告列表——跨全部启用协会聚合，顶部一栏协会标签切换。
  *
  * 【返回值形状】
- *   groups  可见的协会分组（当前分类下一条都没有的协会整组略去），
- *           每组带 associationId / associationName / associationGlyph /
- *           themeClass / count / rows
- *   tabs    分类标签（计数按全部协会的并集算）
- *   total   全部协会的公告总数（不随当前分类变化）
- *   visibleCount 当前分类下实际展示的条数
+ *   activeAssociation 当前选中的协会 id
+ *   themeClass        当前协会的主题类（挂到根容器，标签与内容随协会上色）
+ *   associationTabs   协会标签（每个启用协会一个），
+ *                     带 associationId / label / glyph / count / active
+ *   tabs              分类标签（计数按当前协会算，不随当前分类变化）
+ *   rows              当前协会、当前分类下的公告
+ *   total             当前协会的公告总数（不随当前分类变化）
+ *   visibleCount      当前分类下实际展示的条数
  *
  * @param {Object} [options]
  * @param {string} [options.tab] 当前分类，非法值退回「全部」
+ * @param {string} [options.association] 当前协会，非法值退回全局所在协会
  * @returns {Promise<Object>}
  */
 async function loadAnnouncementListView(options = {}) {
-  const { tab = ALL_TAB } = options;
+  const { tab = ALL_TAB, association } = options;
   const activeTab = VALID_TABS.includes(tab) ? tab : ALL_TAB;
 
   // 串行逐协会取：当前协会是模块级单例，只能一个协会一个协会地切过去取。
-  // 每组自带协会信息与主题类，模板据此分栏、按协会上色。
+  // 取完 mapActiveAssociations 会把全局协会还原，故先记下它，供「没指定协会时」兜底。
+  const fallback = scope.getAssociation();
+
   const groups = await scope.mapActiveAssociations(async (assoc) => {
     const items = await getAnnouncements();
     // actor 传 null：公开页不给任何管理按钮
@@ -92,36 +98,49 @@ async function loadAnnouncementListView(options = {}) {
     }));
     return {
       associationId: assoc.id,
-      associationName: assoc.shortName,
-      associationGlyph: assoc.logoGlyph,
+      label: assoc.sportName,
+      glyph: assoc.logoGlyph,
       themeClass: brandOf(assoc.id).rootClass,
       rows,
     };
   });
 
-  const allRows = groups.flatMap((group) => group.rows);
+  // 选中的协会：入参合法就用它；否则跟随全局所在协会；再不行退回第一个。
+  const has = (id) => groups.some((group) => group.associationId === id);
+  const activeAssociation = has(association)
+    ? association
+    : has(fallback)
+      ? fallback
+      : groups[0]
+        ? groups[0].associationId
+        : '';
 
-  const visibleGroups = groups
-    .map((group) => ({
-      ...group,
-      rows:
-        activeTab === ALL_TAB
-          ? group.rows
-          : group.rows.filter((row) => row.category === activeTab),
-    }))
-    .map((group) => ({ ...group, count: group.rows.length }))
-    .filter((group) => group.rows.length > 0);
+  const current = groups.find((group) => group.associationId === activeAssociation) || null;
+  const scopedRows = current ? current.rows : [];
+  const rows =
+    activeTab === ALL_TAB
+      ? scopedRows
+      : scopedRows.filter((row) => row.category === activeTab);
 
-  const visibleCount = visibleGroups.reduce((total, group) => total + group.rows.length, 0);
+  const associationTabs = groups.map((group) => ({
+    associationId: group.associationId,
+    label: group.label,
+    glyph: group.glyph,
+    count: group.rows.length,
+    active: group.associationId === activeAssociation,
+  }));
 
   return {
+    activeAssociation,
+    themeClass: current ? current.themeClass : '',
+    associationTabs,
     activeTab,
-    tabs: categoryTabs(allRows, activeTab),
-    groups: visibleGroups,
-    total: allRows.length,
-    visibleCount,
+    tabs: categoryTabs(scopedRows, activeTab),
+    rows,
+    total: scopedRows.length,
+    visibleCount: rows.length,
     emptyText:
-      activeTab === ALL_TAB ? '暂时还没有公告' : `「${activeTab}」分类下暂时没有公告`,
+      activeTab === ALL_TAB ? '这个协会暂时还没有公告' : `「${activeTab}」分类下暂时没有公告`,
   };
 }
 

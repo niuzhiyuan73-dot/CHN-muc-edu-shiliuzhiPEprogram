@@ -17,7 +17,7 @@
  * ============================================================
  */
 
-const { generateSeed } = require('./seed.js');
+const { generateSeed, ASSOC_ROLE_SEED } = require('./seed.js');
 const { replaySeason } = require('./replay.js');
 const matchStore = require('./match-store.js');
 const userStore = require('./user-store.js');
@@ -26,11 +26,12 @@ const eventStore = require('./event-store.js');
 const collegeStore = require('./college-store.js');
 const profileStore = require('./profile-store.js');
 const roleStore = require('./role-store.js');
+const initialEloStore = require('./initialElo-store.js');
 const seasonStore = require('./season-store.js');
 const liveStore = require('./live-store.js');
 // 当前协会（会话作用域）：缓存按它分份，各台账按它分桶
 const scope = require('./association-scope.js');
-const { allAssociations } = require('../utils/associations.js');
+const { allAssociations, defaultAssociationId } = require('../utils/associations.js');
 // 各协会的模拟数据口味（起始日期 / 赛事标题前缀 / 公告种子 / 学院赛命名）。
 // 纯 mock 概念，云端没有对应物，故与种子生成参数一起只走这一条路。
 const { flavorOf } = require('./association-flavor.js');
@@ -39,7 +40,13 @@ const { register: registerAccount } = require('./auth.js');
 const { canManage } = require('./permission.js');
 const { canResetSeason } = require('./season.js');
 const { findCappedMatchIds, checkSubmitAllowed, seasonPairCounts } = require('./rating-cap.js');
-const { REVIEW_ACTION, validateReview, validateCollegeLeader } = require('./member-review.js');
+const {
+  REVIEW_ACTION,
+  validateReview,
+  validateCollegeLeader,
+  validateAssociationLeader,
+  validateInitialEloEdit,
+} = require('./member-review.js');
 const {
   canConfirm,
   canRevoke,
@@ -347,8 +354,75 @@ function publicMember(user) {
  *
  * @returns {{users:Array, members:Array, applications:Array, matches:Array, events:Array, ledger:Array, meta:Object, nameOf:Function}}
  */
+/**
+ * 种子里点名的学院负责人只在**默认协会**生效。
+ *
+ * 【为什么】学院负责人是「某人在某协会里的身份」（见 constants.ASSOC_ROLE），
+ * 一人可以在 A 协会当学院负责人、在 B 协会只是普通会员。而 MEMBER_SEED 是
+ * 一份全局名单，u02 张宇轩的 STAFF 会被 generateSeed 原样复制进每个协会。
+ * 这里把非默认协会里的 STAFF 退回普通会员，于是「切到别的协会他就不是学院
+ * 负责人了」这条规则在本地也立得住——与云端 memberships「按协会存角色」一致。
+ *
+ * 【为什么不改 generateSeed】它还被 seed.test.js 直接调用，只认一份全局名单；
+ * 把协会概念塞进去会让那份纯生成器多背一个与它无关的参数。
+ *
+ * @param {Array<Object>} members generateSeed 产出的会员
+ * @param {string} association 当前协会
+ * @returns {Array<Object>} 角色已按协会归一后的会员（默认协会原样返回）
+ */
+function scopeSeedRoles(members, association) {
+  if (association === defaultAssociationId()) return members;
+  return members.map((member) =>
+    Number(member.role || 0) === ROLE.STAFF ? { ...member, role: ROLE.MEMBER } : member
+  );
+}
+
+/**
+ * 演示账号在本协会的角色补丁（见 seed.js 的 ASSOC_ROLE_SEED）。
+ *
+ * 【为什么在回放之后盖、而不写进会员记录】
+ * 协会负责人（ADMIN）若直接写进会员记录，patchAccount 里那句
+ * 「isGlobalAdmin = 账号 role ≥ ADMIN」会把它误判成**全局管理员**，于是
+ * 只该给全局管理员看的「协会负责人任免入口」会对普通负责人亮出来。
+ * 把协会角色做成一层补丁（与运行时任免 roleStore 同位置、同优先级，都盖在
+ * 回放结果之上），isGlobalAdmin 仍只认账号的全局角色，各协会的身份就不会串味。
+ *
+ * 【与运行时任免的先后】种子登记是底，运行时任免盖在其上：管理员在界面上
+ * 的任免（含「撤销」——撤销写的是 MEMBER）优先于种子登记。
+ *
+ * @param {string} userId 会员编号
+ * @param {string} association 当前协会
+ * @returns {Object|null} { role }，或 null（该协会未给此人登记角色）
+ */
+function assocRoleSeedPatch(userId, association) {
+  const table = ASSOC_ROLE_SEED[association];
+  if (!table || !Object.prototype.hasOwnProperty.call(table, userId)) return null;
+  return { role: table[userId] };
+}
+
+/**
+ * 把本协会手工指定的初始分盖到会员记录上（必须在回放之前）。
+ *
+ * 台账里「有覆盖」才动：数字即指定值，null 即清除（删掉扁平字段，回放走
+ * 自动定级）。回放引擎只认会员记录上的 initialElo，所以这一步要在
+ * replaySeason 之前完成（见 initialElo-store 的说明）。
+ *
+ * @param {Object} member
+ * @returns {Object} 已盖过本协会初始分的记录（不修改入参）
+ */
+function applyInitialEloOverride(member) {
+  const override = initialEloStore.valueOf(member._id);
+  if (!override.set) return member;
+  const next = { ...member };
+  if (override.value === null) delete next.initialElo;
+  else next.initialElo = override.value;
+  return next;
+}
+
 function buildCache(association) {
   const seed = generateSeed(seedOptionsFor(association));
+  // 学院负责人按协会区分：种子里的 STAFF 只在默认协会保留（见 scopeSeedRoles）
+  const seedMembers = scopeSeedRoles(seed.members, association);
 
   // 1. 本地账号：演示申请 + 本次会话注册的，逐条叠加审核改判
   const local = userStore.listAccounts();
@@ -418,9 +492,12 @@ function buildCache(association) {
   //    replayed.users 才是「回放后的会员」。
   // 开始过新赛季时把分界点交给回放：分界之前的赛事积分不计入本赛季
   // （见 replay.js 的 applyEventPoints）。等级分不受影响。
+  // 回放前把本协会手工指定的初始分盖到会员上（见 applyInitialEloOverride）。
+  // 必须在这里、而不是回放之后：初始分是回放的起评分，晚一步分数就算错了。
+  const replayMembers = seedMembers.concat(approved).map(applyInitialEloOverride);
   const replayed = replaySeason({
     ...seed,
-    members: seed.members.concat(approved),
+    members: replayMembers,
     matches: activeOnly,
     // 赛事进回放：等级表决定赛事比赛用哪个 K，积分只发给已结束的那些
     events: eventLedger,
@@ -459,9 +536,22 @@ function buildCache(association) {
   //    角色不进回放：等级分怎么算与谁有管理权无关，故盖在回放之后即可。
   const patchAccount = (account) => {
     const profile = profileStore.patchOf(account._id);
+    // 演示账号的协会角色（种子登记，见 seed.js 的 ASSOC_ROLE_SEED）作为底，
+    // 运行时任免（roleStore）盖在其上——界面上的任免优先于种子登记。
+    const seedRole = assocRoleSeedPatch(account._id, association);
     const role = roleStore.patchOf(account._id);
-    if (!profile && !role) return account;
-    return { ...account, ...(profile || {}), ...(role || {}) };
+    // isGlobalAdmin 只看账号的**全局角色**（未经本协会任免覆盖、也不看协会角色
+    // 登记）：被任命为协会负责人的人，有效角色虽然是 ADMIN，但不是全局管理员。
+    // 前端据此区分「协会负责人任免入口」显不显示（见 profile-view）。
+    // 与云端 ctx.isGlobalAdmin 同义。
+    const isGlobalAdmin = Number(account.role || 0) >= ROLE.ADMIN;
+    return {
+      ...account,
+      ...(profile || {}),
+      ...(seedRole || {}),
+      ...(role || {}),
+      isGlobalAdmin,
+    };
   };
   const members = replayed.users.map(patchAccount);
 
@@ -523,6 +613,8 @@ function resetCache() {
   profileStore.reset();
   // 角色任免同理：管理员把谁设成了学院负责人也是临时写入
   roleStore.reset();
+  // 初始分覆盖同理：手工指定的起评分也是临时写入，复位后要回到种子初值
+  initialEloStore.reset();
   // 赛季状态同理：分界点必须一起清，否则下一轮生成的积分还是切过的
   seasonStore.reset();
   // 实时比分同理：逐球流水是临时写入，复位后不该再看到上一轮的比分
@@ -1610,10 +1702,11 @@ async function reviewMember(applicationId, actor, action, reason, initialElo) {
     actor,
     actedAt: new Date(),
   };
-  // 只有「通过」且真的填了分数才落这个字段。留空时字段根本不出现，
-  // 回放引擎据此判断该走自动定级（见 replay.js）
+  // 通过时若填了初始分，按**协会**记账（与云端 initialEloByAssoc 同义）：
+  // initialEloStore 按协会分桶，这个起评分只在当前协会生效，切到别的协会
+  // 该会员仍走自动定级。留空则不记，回放走自动定级（见 replay.js）。
   if (action === REVIEW_ACTION.APPROVE && verdict.initialElo !== null) {
-    patch.initialElo = verdict.initialElo;
+    initialEloStore.setValue(applicationId, verdict.initialElo);
   }
 
   userStore.setStatus(applicationId, patch);
@@ -1672,35 +1765,55 @@ async function setCollegeLeader(targetId, actor, makeLeader) {
 }
 
 /**
- * 把某位会员设为 / 撤销为**协会负责人**。
+ * 把某位会员设为 / 撤销为**本协会**的协会负责人。
  *
- * 本地模拟只有单一「协会」语境，因此协会负责人直接落成管理员角色；
+ * 任免权与四条边界全部交给 validateAssociationLeader（纯函数，云端角色处理器
+ * 与之共用），本函数只负责落库与失效缓存。角色补丁落进 roleStore——它按协会
+ * 分桶，于是在 A 协会被任命的人，切到 B 协会仍是原来的角色。
+ *
+ * 本地模拟把协会负责人落成管理员角色（roleStore 存的补丁是扁平 ROLE）；
  * 云端则由全局管理员写 `memberships.role='leader'`（见 role-handlers.js）。
  * 两处只求「谁有资格、结果如何」一致，存储形态留给各自的数据源。
  *
- * @param {string} targetId
- * @param {string} actor
- * @param {boolean} makeLeader
+ * @param {string} targetId 被任免的会员编号
+ * @param {string} actor 操作者编号
+ * @param {boolean} makeLeader true 设为协会负责人，false 撤销
  * @returns {Promise<{ok:boolean, account:Object|null, message:string}>}
  */
 async function setAssociationLeader(targetId, actor, makeLeader) {
   const me = accountOf(actor);
-  if (!canManage(me, { minRole: ROLE.ADMIN })) {
-    return { ok: false, account: null, message: '只有管理员可以任免协会负责人' };
-  }
   const target = accountOf(targetId);
-  if (!target) return { ok: false, account: null, message: '找不到这位会员' };
-  if (me && target._id === me._id) {
-    return { ok: false, account: null, message: '不能给自己任免角色' };
-  }
-  if (Number(target.role || 0) >= ROLE.ADMIN) {
-    return { ok: false, account: null, message: '不能改变管理员的角色' };
-  }
-  if (target.status !== USER_STATUS.ACTIVE) {
-    return { ok: false, account: null, message: '只有在册会员才能设为协会负责人' };
-  }
+  const verdict = validateAssociationLeader(me, target, makeLeader, {
+    // 全局管理员只看账号的全局角色（未经本协会任免覆盖），见 patchAccount
+    isGlobalAdmin: Boolean(me && me.isGlobalAdmin),
+  });
+  if (!verdict.ok) return { ok: false, account: null, message: verdict.message };
 
   roleStore.setRole(target._id, makeLeader ? ROLE.ADMIN : ROLE.MEMBER);
+  invalidate();
+  return { ok: true, account: accountOf(target._id), message: '' };
+}
+
+/**
+ * 手工调整 / 清除某位会员在**本协会**的初始等级分。
+ *
+ * 与 setMemberInitialElo（云端 member-handlers）同一语义：权限与「打过就不能改」
+ * 的前置判定交给 validateInitialEloEdit（纯函数，两处共用），本函数只把归一化
+ * 后的值落进按协会分桶的 initialEloStore，再失效缓存让回放重算。
+ *
+ * value 为 null / 空串表示**清除**该协会的初始分（回到自动定级），不是写入 0。
+ *
+ * @param {string} userId 被调整的会员编号
+ * @param {*} value 输入框 / 半屏弹层里的原始值
+ * @param {string} actor 操作者编号
+ * @returns {Promise<{ok:boolean, account:Object|null, message:string}>}
+ */
+async function setMemberInitialElo(userId, value, actor) {
+  const target = accountOf(userId);
+  const verdict = validateInitialEloEdit(accountOf(actor), target, value);
+  if (!verdict.ok) return { ok: false, account: null, message: verdict.message };
+
+  initialEloStore.setValue(target._id, verdict.value);
   invalidate();
   return { ok: true, account: accountOf(target._id), message: '' };
 }
@@ -2657,6 +2770,7 @@ module.exports = {
   rejectMember,
   setCollegeLeader,
   setAssociationLeader,
+  setMemberInitialElo,
   publishAnnouncement,
   archiveAnnouncement,
   updateProfile,

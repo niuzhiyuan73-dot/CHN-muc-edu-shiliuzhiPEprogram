@@ -365,13 +365,14 @@ Page({
 
   /* ---------- 跳转 ---------- */
 
-  /** 去本大场的排阵页 */
+  /** 去本大场的排阵页。college 指明替哪一侧排（管理员/协会负责人两侧都能进） */
   onOpenLineup(event) {
-    const { tieId } = event.currentTarget.dataset;
+    const { tieId, college } = event.currentTarget.dataset;
     if (!tieId) return;
 
+    const collegeParam = college ? `&college=${encodeURIComponent(college)}` : '';
     wx.navigateTo({
-      url: `/pages/college-lineup/college-lineup?tieId=${tieId}&eventId=${this.eventId}`,
+      url: `/pages/college-lineup/college-lineup?tieId=${tieId}&eventId=${this.eventId}${collegeParam}`,
     });
   },
 

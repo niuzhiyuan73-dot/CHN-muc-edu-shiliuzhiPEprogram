@@ -163,7 +163,7 @@ def build():
     title = doc.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     title.paragraph_format.space_after = Pt(2)
-    run = title.add_run("中央民族大学匹克球俱乐部小程序")
+    run = title.add_run("中央民族大学石榴籽体育管理小程序")
     set_font(run, size=13, bold=True, color=MUTED, ea=HEAD_EA)
 
     subtitle = doc.add_paragraph()
@@ -187,7 +187,7 @@ def build():
             ["云函数", "data（本环境唯一云函数，承载全部读写接口）"],
             ["最容易忘", "改完代码务必重新「上传并部署」cloudfunctions/data；忘了就会报「未知的操作：xxx」（详见第九节）"],
             ["核心原则", "小程序端不直接读写数据库；一切写操作都经云函数 data 完成，控制台只用于初始化、审核、提权、赛季更新与救急"],
-            ["集合规模", "个人赛 7 个 + 学院赛 4 个（college_events / college_entries / ties / lineups）；学院赛与个人赛互不共用集合"],
+            ["集合规模", "个人赛与公共 10 个 + 学院赛 4 个（college_events / college_entries / ties / lineups），共 14 个；学院赛与个人赛互不共用集合"],
         ],
         widths=[3.0, 13.2],
     )
@@ -226,20 +226,22 @@ def build():
 
     # ---------------- 二、集合总览 ----------------
     heading(doc, "二、数据库集合总览", 1)
-    para(doc, "环境里一共有 12 个业务集合：个人赛 8 个、学院赛 4 个。名称必须与下表完全一致（区分大小写与下划线）。")
-    para(doc, "个人赛集合：", bold=True)
+    para(doc, "环境里一共有 14 个业务集合：个人赛与公共集合 10 个、学院赛 4 个。名称必须与下表完全一致（区分大小写与下划线）。")
+    para(doc, "个人赛与公共集合：", bold=True)
     table(
         doc,
         ["集合名", "存什么", "必建", "关键字段"],
         [
-            ["users", "会员档案与入会申请（同一集合，用 status 区分）", "是", "openId、nickName、realName、gender('M'/'F')、role(0/1/2)、status(0/1/2/3)、initialElo、joinDate、college"],
-            ["matches", "比赛流水，等级分的唯一来源（含学院赛小场）", "是", "_id、matchType、pool、teamA、teamB、scoreA、scoreB、winner、status(0/1/2)、matchTime、eventId、competition、collegeEventId、tieId、outcome、forfeitBy"],
-            ["events", "个人赛事", "是", "_id、title、matchType、format、level、groupCount、advancePerGroup、status(0/1/2)、results、draw"],
-            ["event_signups", "赛事报名与签到", "是", "_id、eventId、userId、status(0已取消/1已报名/2已签到)、signTime、checkInTime"],
-            ["announcements", "公告", "是", "_id、title、content、category、pinned、status('published'/'archived')、publishTime"],
-            ["seasons", "赛季锚点，只需要一条 _id='current' 的记录", "是", "_id、anchorTime、resetTime、seasonNumber、version、algoVersion"],
-            ["rankings", "排行榜快照，一条 _id='current' 的记录（纯缓存，删了会自动重算）", "是", "_id、key、algoVersion、savedAt、data（整份数据集）"],
-            ["audit_logs", "写操作留痕（预留，当前不写入）", "可选", "—"],
+            ["users", "会员档案与入会申请（同一集合，用 status 区分）。账号全局一份，不按协会拆分", "是", "openId、nickName、realName、gender('M'/'F')、role(0/2)、status(0/1/2/3)、initialEloByAssoc（按协会的初始分小表，如 {pkb:1500}）、joinDate、college"],
+            ["memberships", "协会角色表：某人于某协会的学院负责人 / 协会负责人。无行 = 普通会员（多协会改造新增）", "是", "_id('mb_'+md5(userId|协会))、userId、association、role('staff'学院负责人/'leader'协会负责人)、updatedAt"],
+            ["matches", "比赛流水，等级分的唯一来源（含学院赛小场）", "是", "_id、association、matchType、pool、teamA、teamB、scoreA、scoreB、winner、status(0/1/2)、matchTime、eventId、competition、collegeEventId、tieId、outcome、forfeitBy"],
+            ["events", "个人赛事", "是", "_id、association、title、matchType、format、level、groupCount、advancePerGroup、status(0/1/2)、results、draw"],
+            ["event_signups", "赛事报名与签到", "是", "_id、association、eventId、userId、status(0已取消/1已报名/2已签到)、signTime、checkInTime"],
+            ["announcements", "公告", "是", "_id、association、title、content、category、pinned、status('published'/'archived')、publishTime"],
+            ["live_scores", "实时比分的过程态，一场一条（_id='ls_'+比赛id）；定稿后转写进 matches（实时比分功能新增）", "是", "_id、association、matchId、…（只存逐球计分的中间态，定稿后落正规比分）"],
+            ["seasons", "赛季锚点，按协会各一条 _id='current_<协会>' 的记录（如 current_pkb）", "是", "_id、association、anchorTime、resetTime、seasonNumber、version、algoVersion"],
+            ["rankings", "排行榜快照，按协会各一条 _id='current_<协会>' 的记录（纯缓存，删了会自动重算）", "是", "_id、association、key、algoVersion、savedAt、data（整份数据集）"],
+            ["audit_logs", "写操作留痕（预留，当前不写入）", "可选", "association 等"],
         ],
         widths=[2.6, 5.0, 1.6, 7.0],
     )
@@ -255,6 +257,30 @@ def build():
         ],
         widths=[2.6, 5.0, 1.6, 7.0],
     )
+    heading(doc, "2.1 多协会：内容按协会分区（本次改造新增）", 2)
+    para(doc, "小程序已从「一个匹克球俱乐部」扩成「多个体育协会」共用同一环境（首批：pkb 匹克球、tt 乒乓、bd 羽球）。协会清单写在代码注册表 miniprogram/utils/associations.js 里，环境里没有也不需要有 associations 集合。改造后按协会分区的做法如下：")
+    table(
+        doc,
+        ["方面", "改造前", "改造后"],
+        [
+            ["账号", "每个账号属于一个俱乐部", "账号全局一份（users 不按协会拆），一人可同时属于多个协会"],
+            ["内容归属", "文档不带协会字段", "所有内容文档带 association 字段（pkb/tt/bd），读时按它过滤、写时由云函数盖章"],
+            ["角色", "角色全在 users.role（0/1/2）", "两级：全局角色在 users.role（0/2）；协会角色在 memberships（staff/leader），按协会各记一行"],
+            ["赛季 / 榜单单例", "seasons、rankings 各一条 _id='current'", "按协会各一条 _id='current_<协会>'（current_pkb / current_tt / current_bd）"],
+            ["自然键", "_id 不含协会", "生成 _id 时并入 association；旧文档 _id 不变"],
+        ],
+        widths=[2.6, 5.6, 8.0],
+    )
+    para(doc, "带 association 字段的集合：matches、events、event_signups、announcements、college_events、college_entries、ties、lineups、live_scores、audit_logs。users 是全局账号，不带 association。", muted=True)
+    callout(
+        doc,
+        "接入既有线上数据时，按「加字段、不重排主键」三步迁移：①新建 memberships 集合；②把 matches / events / event_signups / "
+        "announcements / college_events / college_entries / ties / lineups / live_scores / audit_logs 里缺 association 的文档批量补成 'pkb'；"
+        "③把 seasons、rankings 各那条 _id='current' 重命名为 'current_pkb'。旧文档在补字段之前会被当成 pkb 读出（代码对「缺字段」按 pkb 处理），"
+        "所以务必补全，否则新协会的数据会与旧数据混在一起。",
+        "迁移要点",
+    )
+
     callout(doc, "event_signups 必须建。cloudfunctions/README.md 里曾写「报名集合不必建」，那是旧版本的说法；现在的报名与签到都会写这个集合，缺了它报名会直接报错。", "关键")
     callout(doc, "学院赛的 4 个集合同样必须建。college_events 与 college_entries 缺一不可，ties 与 lineups 在「开始赛事」后就会写入；少建任何一个，学院赛都会在对应步骤直接报错。", "关键")
     para(doc, "rankings 也必须建。它存的是「重放结果的落库缓存」——云函数冷启动时先读它，省掉全表读与两遍重放。它是纯缓存：键由赛季版本号 + 算法版本 + 锚点拼成，任何写操作让版本号 +1，旧快照即作废；读不到或读坏了都会退回现场重算，所以删掉它只会让下一次读变慢，不会算错分数。")
@@ -265,10 +291,10 @@ def build():
 
     heading(doc, "3.1 新建集合", 2)
     numbered(doc, "数据库 → 集合管理 → 「＋ 新建集合」。")
-    numbered(doc, "按第 2 节的表格逐个建个人赛集合：users、matches、events、event_signups、announcements、seasons、rankings。可选建 audit_logs。")
+    numbered(doc, "按第 2 节的表格逐个建个人赛与公共集合：users、memberships、matches、events、event_signups、announcements、live_scores、seasons、rankings。可选建 audit_logs。")
     numbered(doc, "再逐个建学院赛集合：college_events、college_entries、ties、lineups。")
-    numbered(doc, "集合名一个字都不能差，建错名字等于没建。")
-    numbered(doc, "seasons 建好后，手工新增一条 _id 为 current 的文档（字段见第 6 节）；不建也能跑，系统会按默认第一赛季处理。")
+    numbered(doc, "集合名一个字都不能差，建错名字等于没建。memberships 是多协会改造新增的协会角色表，缺了它学院负责人 / 协会负责人的任免会报错。")
+    numbered(doc, "seasons 建好后，可按协会手工各新增一条 _id 形如 current_pkb / current_tt / current_bd 的文档（字段见第 6 节）；不建也能跑，系统会按默认第一赛季处理。")
 
     heading(doc, "3.2 建索引", 2)
     para(doc, "索引不是必须，但数据一多，没有索引的查询会明显变慢。在集合的「索引管理」里添加：")
@@ -317,7 +343,7 @@ def build():
             ["realName", "真实姓名", "展示用"],
             ["gender", "'M' 或 'F'", "缺失会让该会员从单打榜单中消失"],
             ["studentId / college / phone", "学号 / 学院 / 手机", "身份信息"],
-            ["role", "2", "2=管理员，1=干事，0=会员"],
+            ["role", "2", "2=管理员，0=会员（1 已废弃；学院负责人改记 memberships）"],
             ["status", "1", "1=在册；0=待审核，2=禁用，3=离校"],
             ["joinDate", "加入日期", "展示用"],
         ],
@@ -333,7 +359,7 @@ def build():
         ["要做的事", "集合", "怎么改"],
         [
             ["通过一条申请", "users", "找到 status=0 的文档，把 status 改成 1，保存"],
-            ["指定初始等级分", "users", "通过时同时加 initialElo 字段，取 0–3000 的整数（不加则按前五场自动定级）"],
+            ["指定初始等级分", "users", "加 / 改 initialEloByAssoc 里对应协会的那一项，取 0–3000 的整数，如 { pkb: 1500 }（该协会不填则按前五场自动定级）。初始分**按协会分开存**：一个人可以在匹克球协会有指定分、在乒乓协会走自动定级。该会员在某个协会一旦打过比赛（含日常约球），那个协会的初始分即锁死，改不生效——它是回放的起评分，只在还没出场时才有意义"],
             ["驳回一条申请", "users", "把 status 改成 2（禁用），并加 reason 字段写清理由"],
         ],
         widths=[3.4, 2.4, 10.4],
@@ -342,26 +368,38 @@ def build():
     bullet(doc, "控制台手工通过不会写 action 字段，但状态与数据一致，不影响分数重放。")
     bullet(doc, "改完让当事人重开小程序，登录态会重新拉取。")
     callout(doc, "不要为了「通过」而删除再新建文档。删除会换掉 _id，该会员此前的比赛记录会对不上人。", "注意")
+    callout(doc, "初始等级分也能在小程序里改：打开该会员的个人主页，**还没出场**的会员会出现「调整初始等级分」入口"
+                 "（对应云函数 setMemberInitialElo，带「清除」按钮可回到自动定级）。管理员跨协会都能改，协会负责人只在本协会可改；"
+                 "一旦该会员在本协会打过比赛（含日常约球），入口即消失。这条与上面控制台手工改 initialEloByAssoc 等效。", "提示")
 
     # ---------------- 五、角色调整 ----------------
-    heading(doc, "五、日常操作二：调整角色（提权 / 降权）", 1)
-    para(doc, "角色只由 users 集合的 role 字段决定，权限判定同时要求账号是在册状态。干事在学院赛里是「学院负责人」，权限以 college 字段为界——只能管自己那一所学院的名单与排阵。")
+    heading(doc, "五、日常操作二：调整角色（全局管理员 / 协会负责人 / 学院负责人）", 1)
+    para(doc, "多协会改造后，角色分两层，控制台里要改的地方不同：")
+    bullet(doc, "全局角色：写在 users.role，只有两档——0=会员、2=管理员（全局管理员，可管所有协会）。旧版「干事」用的 1 已废弃。")
+    bullet(doc, "协会角色：写在 memberships 集合，一人可因协会而异——staff=学院负责人、leader=协会负责人（在本协会内等同管理员）。无行即普通会员。")
+    para(doc, "「有效角色」由两者合成：users.role=2 即为管理员；否则看本协会的 memberships 行——leader → 管理员、staff → 学院负责人、无行 → 会员。权限判定同时要求账号是在册状态（status=1）。")
     table(
         doc,
-        ["目标", "role 值", "另外必须满足"],
+        ["想给的权限", "改哪里", "改成什么"],
         [
-            ["管理员（发布、抽签、开赛、结束赛事；可替任何学院兜底）", "2", "status = 1"],
-            ["干事（额外：代签到、录分任意场次；本学院的名单与排阵）", "1", "status = 1，且 college 为本学院"],
-            ["普通会员", "0", "status = 1"],
+            ["全局管理员（管理所有协会）", "users", "role=2（并确保 status=1）"],
+            ["协会负责人（只管本协会，权限同管理员）", "memberships", "新增一行：userId + association + role='leader'"],
+            ["学院负责人（只管本协会、本院名单与排阵）", "memberships", "新增一行：userId + association + role='staff'"],
+            ["退回普通会员", "memberships / users", "删掉该协会的 memberships 行；全局角色改回 users.role=0"],
         ],
-        widths=[7.4, 2.4, 6.4],
+        widths=[5.4, 3.2, 7.6],
     )
-    numbered(doc, "数据库 → users，按昵称或 realName 搜索到目标会员。")
-    numbered(doc, "把 role 改成 1 或 2（降权改回 0），确认 status 是 1，保存。")
-    numbered(doc, "要当学院负责人（干事）的，务必把 college 填成 26 所学院之一的全名，否则他在学院赛里提交不了任何名单或排阵。")
+    para(doc, "memberships 一行的写法（_id 必须等于 mb_ + md5(userId|协会Id)，算错就读不到）：", bold=True)
+    code(doc, "{ _id: 'mb_<md5(userId|协会Id)>', userId: 'u_xxx', association: 'pkb', role: 'staff', updatedAt: <时间> }")
+    numbered(doc, "全局管理员：数据库 → users，按昵称或 realName 搜到目标会员，把 role 改成 2，确认 status=1，保存；降权改回 0。")
+    numbered(doc, "协会角色（学院负责人 / 协会负责人）：数据库 → memberships，按上表新建或删除该行记录；association 写协会 id（pkb / tt / bd）。")
+    numbered(doc, "要当学院负责人的，另需把该会员 users.college 填成 26 所学院之一的全名，否则他在学院赛里提交不了任何名单或排阵。")
     numbered(doc, "让对方重开小程序，权限立即生效，无需重新登录或换绑。")
     callout(doc, "role 改高了但 status 不是 1（比如还是待审核），权限照样不通过——这是最常见的「我明明设成管理员了怎么还不能发布」的原因。", "注意")
-    callout(doc, "学院负责人也可以在小程序里「会员审核」页由管理员任免（对应云函数 setCollegeLeader），控制台改 role + college 是等效的兜底手段。", "提示")
+    callout(doc, "两种情况都能在小程序里做，他人主页上并排有两个入口，由页面的协会切换决定操作哪个协会："
+                 "①「任免学院负责人」（对应 setCollegeLeader）——本协会的协会负责人或全局管理员都能做；"
+                 "②「任免协会负责人」（对应 setAssociationLeader）——**仅全局管理员**可见（协会负责人的有效角色也是管理员，"
+                 "故用账号的全局身份区分），避免协会负责人反手把自己人提成协会负责人。两个入口在控制台手工加 / 删 memberships 行的效果一致。", "提示")
 
     # ---------------- 六、赛季更新 ----------------
     heading(doc, "六、日常操作三：赛季更新（只能在控制台做）", 1)
@@ -406,7 +444,7 @@ def build():
         ],
         widths=[3.4, 5.6, 7.2],
     )
-    para(doc, "对应的就是 seasons 集合里 _id='current' 那一条文档。想核对结果，直接看它即可。")
+    para(doc, "对应的就是 seasons 集合里本协会那一条 _id='current_<协会>' 的文档（如 current_pkb）。想核对结果，直接看它即可。多协会下每个协会各有一条，赛季互相独立。")
 
     heading(doc, "6.5 验证", 2)
     bullet(doc, "小程序赛事页或排行榜会显示新的「第 N 赛季」。")
@@ -415,7 +453,7 @@ def build():
     bullet(doc, "若页面仍是旧赛季，退出重进一次小程序；仍不对则检查 users 里该账号 status 是否为 1。")
 
     heading(doc, "6.6 高级：手工调整赛季参数", 2)
-    para(doc, "只有在确实需要时才做。直接编辑 seasons/current 的 anchorTime，或手工把 resetTime / seasonNumber 改成别的值。")
+    para(doc, "只有在确实需要时才做。直接编辑 seasons 里本协会那条（_id='current_<协会>'，如 current_pkb）的 anchorTime，或手工把 resetTime / seasonNumber 改成别的值。")
     callout(doc, "手工改完必须把 version 加 1，否则云函数还会用缓存里的旧结果，改了等于没改。", "注意")
 
     # ---------------- 七、数据救急 ----------------
@@ -423,22 +461,22 @@ def build():
     para(doc, "这一节是「小程序里改不动、又必须马上修」时的兜底手段。直接改库没有业务校验，改前请先导出备份。")
 
     heading(doc, "7.1 先记住缓存这件事", 2)
-    para(doc, "等级分、积分、排行榜都是由云函数从原始数据现场算出来的，结果会按 seasons.version 缓存两处：云函数容器内存里一份，rankings/current 里一份。也就是说：你改完 matches / users / events，小程序可能还是旧数字。")
-    numbered(doc, "改完数据后，到 seasons/current 把 version 加 1 并保存。")
-    numbered(doc, "下一次读取就会重算，并把新的快照写回 rankings/current，小程序刷新即可看到新结果。")
-    para(doc, "如果不放心，也可以顺手把 rankings/current 整条删掉强制重算——它是纯缓存，删了不影响任何数据。", muted=True)
+    para(doc, "等级分、积分、排行榜都是由云函数从原始数据现场算出来的，结果会按本赛季版本的 version 缓存两处：云函数容器内存里一份，rankings 里本协会那条（_id='current_<协会>'）一份。也就是说：你改完 matches / users / events，小程序可能还是旧数字。")
+    numbered(doc, "改完数据后，到 seasons 里本协会那条（_id='current_<协会>'，如 current_pkb）把 version 加 1 并保存。")
+    numbered(doc, "下一次读取就会重算，并把新的快照写回 rankings 里本协会那条（_id='current_<协会>'），小程序刷新即可看到新结果。")
+    para(doc, "如果不放心，也可以顺手把 rankings 里该协会那条整条删掉强制重算——它是纯缓存，删了不影响任何数据。", muted=True)
 
     heading(doc, "7.2 改一个比分", 2)
     numbered(doc, "优先方案：在小程序「比赛」页把该场撤销（要填理由），再重新录分、确认。这样分数会正确回滚与叠加。")
     numbered(doc, "确需在控制台改：数据库 → matches，找到该场文档。")
     numbered(doc, "改 scoreA / scoreB 与 winner（'A' 或 'B'）；要作废则把 status 改成 2（已撤销），要恢复成生效则改回 1。")
-    numbered(doc, "把 seasons/current.version 加 1。")
+    numbered(doc, "把 seasons 里本协会那条（_id='current_<协会>'）的 version 加 1。")
     callout(doc, "matches._id 是自然键（由比赛内容算出）。同样的比赛重复导入会覆盖同一条，不会产生两条。", "提示")
 
     heading(doc, "7.3 改赛事名次", 2)
     numbered(doc, "数据库 → events，找到该赛事文档。")
     numbered(doc, "编辑 results 数组（每项形如 {userId, placement}），placement 是不小于 1 的整数。")
-    numbered(doc, "把 seasons/current.version 加 1，分数与积分会按新名次重算。")
+    numbered(doc, "把 seasons 里本协会那条（_id='current_<协会>'）的 version 加 1，分数与积分会按新名次重算。")
 
     heading(doc, "7.4 清理测试数据", 2)
     bullet(doc, "删除赛事时，记得一并清理 event_signups 里该 eventId 的报名记录，以及 matches 里该 eventId 的比赛；只删赛事会留下孤儿数据。")
@@ -471,7 +509,7 @@ def build():
     bullet(doc, "录分时就被拦下，不是事后静默不计分：打满之后两人再录，小程序会直接报「本赛季 X 与 Y 已经打了 15 场，达到上限」。录分页选对手的名单里，每个人后面也标着本赛季已经和他打了多少场，打满的标红。")
     bullet(doc, "只有日常约球受这条限制：带 eventId（赛事）或 collegeEventId + tieId（学院赛小场）的比赛一律不受限、也不占日常名额。")
     bullet(doc, "双打按跨队无序对算：一队两人对对手两人算四组对，任一组满额整场就录不进去。同队的搭档之间不算一对。")
-    bullet(doc, "待确认的场次也占名额，被驳回或撤销（REVOKED）之后名额才还回来。赛季分界点（seasons/current.resetTime）之前的场次属于上一个赛季，不占本赛季名额。")
+    bullet(doc, "待确认的场次也占名额，被驳回或撤销（REVOKED）之后名额才还回来。赛季分界点（seasons 里本协会那条的 resetTime）之前的场次属于上一个赛季，不占本赛季名额。")
     bullet(doc, "上限写在代码里（miniprogram/utils/constants.js 的 RATED_PAIR_LIMIT），库里没有「已超限」这种标记可供直接改。要临时放开某两人，只能改常量并重新上传云函数。")
     heading(doc, "7.7 有比赛在 matches 里查得到，却不进成绩公示", 2)
     para(doc, "导入历史成绩、在控制台直接改库、或者这条规则上线之前录下的场次，都绕过了提交时的闸门。它们会被算出来「超限」：比赛留在 matches 集合里，但不进成绩公示、也查不到分数变化。")
@@ -484,7 +522,7 @@ def build():
     numbered(doc, "用仓库里的 tools/import-matches.py 把历史 Excel 转成 matches 集合需要的 JSON。")
     numbered(doc, "控制台 → 数据库 → matches → 「导入」。")
     numbered(doc, "选择生成的 JSON 文件，冲突处理选「覆盖」，执行导入。")
-    numbered(doc, "导入完成后把 seasons/current.version 加 1，让分数重算。")
+    numbered(doc, "导入完成后把 seasons 里对应协会那条（_id='current_<协会>'）的 version 加 1，让分数重算。")
     bullet(doc, "导入的记录 status 应为 1（已生效），否则不计分。")
     bullet(doc, "务必先建好 users，并保证每条比赛里的 userId 都能对上人。")
     callout(doc, "导入前先导出 matches 现有数据备份。导错格式再覆盖回去，比重新录几个月的成绩便宜得多。", "注意")
@@ -508,14 +546,17 @@ def build():
             ["调用云函数报「未知的操作：xxx」", "云函数没部署，或部署的是旧版本（例：前端已在调 getCollegeEvents，云端还没有这个 action）", "重新「上传并部署：云端安装依赖」，并确认传到 " + ENV_ID + "（见第九节）"],
             ["提示「当前账号没有…权限」", "role 不够，或 status 不是 1", "控制台改 users 的 role / status，让对方重开小程序"],
             ["排行榜少了某个人", "users 缺 gender 字段", "补上 'M' 或 'F'（或 '男'/'女'）"],
-            ["改了数据库但分数没变", "云函数结果被缓存", "seasons/current.version 加 1，或等容器回收"],
+            ["改了数据库但分数没变", "云函数结果被缓存", "seasons 里本协会那条的 version 加 1，或等容器回收"],
             ["报名 / 签到直接报错", "event_signups 集合没建", "按第 3.1 节新建该集合"],
             ["学院赛某一步直接报错", "college_events / college_entries / ties / lineups 有集合没建", "按第 3.1 节补齐 4 个学院赛集合"],
-            ["干事交不了本院名单 / 排阵", "该账号的 college 为空或不是学院全名", "在 users 里把 college 改成 26 所学院之一的全名"],
+            ["学院负责人交不了本院名单 / 排阵", "该账号的 college 为空或不是学院全名", "在 users 里把 college 改成 26 所学院之一的全名"],
             ["学院赛找不到某个学院", "该学院名单不是「已通过」状态", "在 college_entries 里把 status 改成 1（已通过），或让管理员在小程序里通过"],
             ["大场点「开始」不生效", "双方排阵未齐", "确认 ties 里 lineupA/lineupB 都为 true；缺的一方补交排阵"],
             ["开始新赛季被拒绝", "调试身份的 OpenID 不是管理员", "改用 role=2 且 status=1 的账号登录开发者工具再调用"],
-            ["赛季显示不对", "seasons/current 的 seasonNumber 或 version 异常", "直接编辑该文档，并把 version 加 1"],
+            ["赛季显示不对", "seasons 里本协会那条的 seasonNumber 或 version 异常", "直接编辑该文档（_id='current_<协会>'），并把 version 加 1"],
+            ["任免学院负责人 / 协会负责人报错", "memberships 集合没建，或该行 _id 算错", "按第 3.1、第 5 节新建 memberships 并核对 _id"],
+            ["设了初始分但分数没变", "该会员在本协会已打过比赛（初始分锁死），或该项写错了协会", "确认 initialEloByAssoc 里写了正确的协会键；已出场的会员初始分改不动，属正常，回放会忽略它"],
+            ["某协会看不到任何数据", "内容文档缺 association 字段，被当成 pkb", "给该协会的文档补上正确的 association 字段"],
         ],
         widths=[4.4, 4.8, 7.0],
     )
@@ -526,7 +567,9 @@ def build():
         doc,
         ["对象", "字段", "取值"],
         [
-            ["账号角色", "users.role", "0=会员，1=干事，2=管理员"],
+            ["账号角色", "users.role", "0=会员，2=管理员（全局）；1 已废弃，学院负责人改记 memberships"],
+            ["协会角色", "memberships.role", "staff=学院负责人，leader=协会负责人；无行=普通会员（按协会各异）"],
+            ["内容归属协会", "内容文档.association", "pkb=匹克球，tt=乒乓，bd=羽球；写时由云函数盖章，缺字段按 pkb 读"],
             ["账号状态", "users.status", "0=待审核，1=在册，2=禁用，3=离校"],
             ["个人赛事", "events.status", "0=报名中，1=进行中，2=已结束"],
             ["比赛", "matches.status", "0=待确认，1=已生效，2=已撤销"],
@@ -549,13 +592,16 @@ def build():
         ["action", "作用", "谁可以用"],
         [
             ["registerMember", "提交入会申请", "无需账号"],
-            ["approveMember / rejectMember", "审核会员（可通过时可指定初始分）", "仅管理员"],
+            ["approveMember / rejectMember", "审核会员（可通过时按协会指定初始分，写进 initialEloByAssoc）", "仅管理员"],
+            ["setCollegeLeader", "任免本协会的学院负责人（写 memberships 一行）", "本协会的协会负责人或全局管理员"],
+            ["setAssociationLeader", "任免本协会的协会负责人（写 memberships 一行）", "仅全局管理员"],
+            ["setMemberInitialElo", "调整 / 清除某会员在本协会的初始等级分（写 initialEloByAssoc；已出场则拒绝）", "管理员；协会负责人限本协会"],
             ["publishEvent", "发布赛事", "管理员"],
             ["drawEvent", "抽签 / 重新抽签", "管理员"],
             ["startEvent", "开始赛事（单打、双打都需先抽签）", "管理员"],
             ["signUpEvent / cancelSignupEvent", "报名 / 取消报名", "本人"],
-            ["checkInEvent", "代会员签到", "干事及以上"],
-            ["submitMatch", "录入比赛成绩（个人赛与学院赛小场共用）", "登录；给抽签场次补分需参赛者或干事及以上"],
+            ["checkInEvent", "代会员签到", "学院负责人及以上"],
+            ["submitMatch", "录入比赛成绩（个人赛与学院赛小场共用）", "登录；给抽签场次补分需参赛者或学院负责人及以上"],
             ["confirmMatch / rejectMatch", "确认 / 驳回比分", "对手方或管理员"],
             ["revokeMatch", "撤销已生效比赛", "仅管理员（撤销改写已生效的账本，录入者本人也不行）"],
             ["forfeitMatch", "个人赛本人弃权（对手晋级，不计 ELO）", "本场参赛者本人；管理员可替任意一方"],
@@ -565,11 +611,11 @@ def build():
             ["getCollegeEvents / getCollegeEvent", "读取学院赛列表 / 详情", "登录"],
             ["getCollegeEntries / getCollegeTies / getCollegeLineups", "读取学院名单 / 大场 / 排阵", "登录"],
             ["publishCollegeEvent", "发布学院赛", "管理员"],
-            ["submitCollegeEntry", "提交本学院名单", "干事（限本学院）或管理员"],
+            ["submitCollegeEntry", "提交本学院名单", "学院负责人（限本学院）或管理员"],
             ["reviewCollegeEntry", "审核学院名单（通过 / 退回）", "管理员"],
             ["drawCollegeEvent", "学院赛抽签 / 重抽", "管理员"],
             ["startCollegeEvent", "开始学院赛，生成首轮大场", "管理员"],
-            ["submitLineup", "提交大场排阵", "干事（限本学院）或管理员"],
+            ["submitLineup", "提交大场排阵", "学院负责人（限本学院）或管理员"],
             ["startTie", "开始大场，生成小场（双方排阵须齐）", "管理员"],
             ["recordForfeit", "记录学院赛小场弃权", "管理员"],
             ["finishCollegeEvent", "录入学院名次并结束学院赛", "管理员"],
@@ -584,9 +630,13 @@ def build():
         [
             ["通过入会申请", "users", "status：0 → 1"],
             ["驳回入会申请", "users", "status：0 → 2，加 reason"],
-            ["设为管理员", "users", "role → 2（并确保 status=1）"],
-            ["设为干事", "users", "role → 1（并确保 status=1）"],
+            ["设为全局管理员", "users", "role → 2（并确保 status=1）"],
             ["降回会员", "users", "role → 0"],
+            ["设为学院负责人", "memberships", "新增一行：userId + association + role='staff'"],
+            ["设为协会负责人", "memberships", "新增一行：userId + association + role='leader'（仅全局管理员有权任命）"],
+            ["撤销协会角色", "memberships", "删除该 userId + association 的行"],
+            ["调整 / 清除初始等级分", "users", "改 initialEloByAssoc 里对应协会那一项（0–3000）；清掉该项即回到自动定级。该协会已打过比赛的会员不可改"],
+            ["旧版干事迁到协会角色", "memberships + users", "users.role=1 的人：memberships 加一行 staff；users.role 改 0"],
             ["开启新赛季", "（云函数 data）", "调用 resetSeason"],
             ["手工调赛季号", "seasons", "seasonNumber、version +1"],
             ["让分数立即重算", "seasons", "version +1"],

@@ -3,8 +3,8 @@
 
   <!-- 顶部品牌区 -->
   <view class="login-hero">
-    <view class="login-logo">匹</view>
-    <view class="login-title">中央民族大学匹克球俱乐部</view>
+    <view class="login-logo">籽</view>
+    <view class="login-title">中央民族大学石榴籽体育管理</view>
     <view class="login-subtitle">会员注册 · 成绩记录 · 等级分排名</view>
   </view>
 

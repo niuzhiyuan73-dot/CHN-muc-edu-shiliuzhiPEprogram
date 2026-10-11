@@ -88,9 +88,18 @@ function publicMember(user) {
   return copy;
 }
 
-/** 当前登录会员。云端就是 OpenID 对应的那一位。 */
+/**
+ * 当前登录会员。云端就是 OpenID 对应的那一位。
+ *
+ * 【为什么额外下发 isGlobalAdmin】ctx.actor.role 已被换成**本协会的有效
+ * 角色**（协会负责人在本协会内也算 ADMIN），前端据此分不清「全局管理员」
+ * 与「协会负责人」。而任免协会负责人只认全局管理员（见 role-handlers），
+ * 前端要决定那个入口显不显示，就必须知道这个身份。故把 ctx.isGlobalAdmin
+ * 一并下发；它是账号的全局属性，不随协会变化。
+ */
 async function getCurrentUser(payload, ctx) {
-  return ok(ctx.actor || null);
+  if (!ctx.actor) return ok(null);
+  return ok({ ...ctx.actor, isGlobalAdmin: Boolean(ctx.isGlobalAdmin) });
 }
 
 async function getMembers(payload, ctx) {

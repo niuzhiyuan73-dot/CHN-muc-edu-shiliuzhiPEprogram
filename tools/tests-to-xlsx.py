@@ -99,7 +99,7 @@ def sheet_overview(wb, cases, info, xml_path, generated_at):
     ws.column_dimensions["A"].width = 118
 
     lines = [
-        ("中央民族大学匹克球俱乐部 · 单元测试记录", TITLE_FONT),
+        ("中央民族大学石榴籽体育管理 · 单元测试记录", TITLE_FONT),
         ("", None),
         ("一、这份表是什么", SECTION_FONT),
         (

@@ -163,24 +163,49 @@ App({
       return this.globalData.association;
     }
 
-    if (!target || target === this.globalData.association) return this.globalData.association;
-    try {
-      return this.setAssociation(target);
-    } catch (err) {
-      console.error('[app] 切换默认协会失败', err);
-      return this.globalData.association;
+    if (target && target !== this.globalData.association) {
+      try {
+        // 用 applyAssociation 而非 setAssociation：这里要自己等角色重解落定（见下），
+        // 不让 setAssociation 再甩一个不等的重解出去
+        this.applyAssociation(target);
+      } catch (err) {
+        console.error('[app] 切换默认协会失败', err);
+        return this.globalData.association;
+      }
     }
+
+    // 协会定了之后按**新协会**重解本人角色，并显式等它落定——否则首屏读到的
+    // 还是 refreshSession 在切换前那个协会里解出的角色（见 refreshViewerRole）
+    await this.refreshViewerRole();
+    return this.globalData.association;
   },
 
   /**
    * 切换当前协会。写门面（决定后续读到哪份数据）并回写 globalData。
    * 不做持久化——协会每次启动重算，见 syncAssociationForUser。
    *
+   * 切完异步重解本人角色（见 refreshViewerRole）：不阻塞切换本身，切换要立刻
+   * 可见；角色校正随后到位，下次设页面读到的权限便是新协会的。
+   *
    * @param {string} id 注册表里的已知协会 id
    * @returns {string} 设定后的 id
    * @throws {Error} 未知协会（由 association-scope 抛出）
    */
   setAssociation(id) {
+    const next = this.applyAssociation(id);
+    if (this.globalData.userInfo) this.refreshViewerRole();
+    return next;
+  },
+
+  /**
+   * 只写门面与 globalData，不动登录态。供 setAssociation（要重解角色）与
+   * syncAssociationForUser（自己掌控重解时机）复用，免得同一句写两遍。
+   *
+   * @param {string} id
+   * @returns {string} 设定后的 id
+   * @throws {Error} 未知协会（由 association-scope 抛出）
+   */
+  applyAssociation(id) {
     const next = facade.setAssociation(id);
     this.globalData.association = next;
     return next;
@@ -221,8 +246,13 @@ App({
    *
    * 【两条来源，各按各的规矩】云端按微信身份重新取一次账号（login）。
    * mock 没有服务端，但数据源里的人是可以就地读的——按缓存里的 _id 回查
-   * 本人。刻意不在 mock 下调 login()：那等于「以演示会员身份登录」，会把
-   * 刚注册的账号顶掉；按 _id 回查只校正同一个人，改不到别人头上。
+   * 本人，取他当前的样子（含角色变化，如 college-demo 把人提为学院负责人）。
+   *
+   * 【演示身份为什么以「当前演示账号」为准】mock 的登录人由编译期常量
+   * mock.js 的 DEFAULT_CURRENT_USER_ID 决定。缓存里若是**另一个种子会员**
+   * （把常量改成别人再编译的情形），说明演示身份已经换人，这里整体切成新
+   * 那位——于是「改常量 + 重新编译」就能切换演示账号，不必手动退出登录。
+   * 缓存里的人若已查不到（如本地注册、重启后内存清空的账号），原样保留。
    *
    * 【mock 为什么也要校正】演示场景会把当前用户提为某学院负责人
    * （见 college-demo.js），而登录快照是更早写下的「普通会员」。不回查的话，
@@ -233,6 +263,9 @@ App({
    * 哪种，把人踢回未登录都比让他多看一会儿旧状态糟糕得多。只有云端明确
    * 回答「没有这个账号」（例如账号文档被删）才清本地——那种情况下留着
    * 一份账号，会让每次写操作都报「请先登录」，反而更难排查。
+   *
+   * 【未登录为什么不自动登录】mock 下没有缓存则保持访客态，不自动以演示
+   * 账号登录——登录与否是登录页的决定，这里只负责校正已有会话。
    *
    * @returns {Promise<void>}
    */
@@ -256,10 +289,45 @@ App({
     }
 
     try {
+      // 按缓存里的 _id 回查本人：种子会员都在，本地注册的账号重启后不在。
+      const fresh = await facade.getMember(cached._id);
+      if (!fresh) return; // 查不到：原样保留快照（见上「失败/none 为什么保留缓存」）
+
+      // 演示身份以「当前演示账号」（mock.js 的 DEFAULT_CURRENT_USER_ID）为准：
+      // 常量已改指向别人（缓存里是另一个种子会员）时整体切换，改常量再编译
+      // 即可换人；是同一个人则用回查到的当前样子刷新角色。
+      const current = await facade.getCurrentUser();
+      this.setUserInfo(current && current._id !== cached._id ? current : fresh);
+    } catch (err) {
+      console.error('[app] 校正本地登录态失败，继续沿用缓存', err);
+    }
+  },
+
+  /**
+   * 按**当前协会**重解登录者的有效角色，并回写登录态。
+   *
+   * 【为什么切协会后必须重解】协会角色是「协会内」的：同一个人在 A 协会可能
+   * 只是普通会员、在 B 协会却是负责人（见 seed.js 的 ASSOC_ROLE_SEED）。登录
+   * 快照是切协会之前写下的，不重解就会拿旧协会的角色判权限——例如某协会的
+   * 负责人被默认落到别的协会时被当成会员，连本协会比赛的裁判都指派不了。
+   *
+   * 【为什么与 refreshSession 分开】refreshSession 在 mock 下带着「当前演示
+   * 账号」的换人逻辑（改常量即换演示身份，见上），切协会时不能顺手换人；
+   * 这里只按 _id 回查**同一个人**在当前协会里的样子。
+   *
+   * 【查不到为什么保留旧快照】本地注册、重启后内存清空的账号回查为空，此时
+   * 保留原快照比清成访客稳妥。
+   *
+   * @returns {Promise<void>}
+   */
+  async refreshViewerRole() {
+    const cached = this.getUserInfo();
+    if (!cached || !cached._id) return;
+    try {
       const fresh = await facade.getMember(cached._id);
       if (fresh) this.setUserInfo(fresh);
     } catch (err) {
-      console.error('[app] 校正本地登录态失败，继续沿用缓存', err);
+      console.error('[app] 切协会后刷新本人角色失败，沿用旧快照', err);
     }
   },
 

@@ -59,6 +59,7 @@ function baseRules() {
  *                 一旦上线不可改（改了等于把历史数据指向别的协会）。
  *   name          全称，用于选择页与页内大标题。
  *   shortName     简称，用于导航栏标题等窄处。
+ *   sportName     项目名（三字），用于协会切换徽章、公告页协会标签等极窄处。
  *   logoGlyph     文字徽标（一个汉字），当前首页只用文字徽标、不用图片资源。
  *   theme         主题色，配合 app.wxss 的 .assoc-<id> 覆盖 CSS 变量。
  *   format/elo/…  规则默认值，见 baseRules()。
@@ -71,6 +72,7 @@ const ASSOCIATIONS = [
     id: 'pkb',
     name: '中央民族大学匹克球俱乐部',
     shortName: '民大匹克球',
+    sportName: '匹克球',
     logoGlyph: '匹',
     theme: {
       // 匹克球 → 蓝
@@ -86,6 +88,7 @@ const ASSOCIATIONS = [
     id: 'tt',
     name: '中央民族大学乒乓球协会',
     shortName: '民大乒乓',
+    sportName: '乒乓球',
     logoGlyph: '乒',
     theme: {
       // 乒乓球 → 深绿（RGB 0,77,64）
@@ -101,6 +104,7 @@ const ASSOCIATIONS = [
     id: 'bd',
     name: '中央民族大学羽毛球协会',
     shortName: '民大羽球',
+    sportName: '羽毛球',
     logoGlyph: '羽',
     theme: {
       // 羽毛球 → 紫

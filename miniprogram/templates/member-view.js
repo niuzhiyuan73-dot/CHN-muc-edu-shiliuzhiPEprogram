@@ -15,7 +15,12 @@
  */
 
 const { loadMemberView, DEFAULT_HISTORY_LIMIT } = require('../services/profile-view.js');
-const { setCollegeLeader } = require('../services/index.js');
+const {
+  getMember,
+  setCollegeLeader,
+  setAssociationLeader,
+  setMemberInitialElo,
+} = require('../services/index.js');
 const { applyBranding, themeClassOf } = require('../services/branding.js');
 const { activeAssociations } = require('../utils/associations.js');
 const scope = require('../services/association-scope.js');
@@ -89,8 +94,9 @@ function createMemberPage(options = {}) {
           historyLimit: this.data.historyLimit,
           // 登录态由页面明确传入：他人主页要靠「我是谁」才能判断能不能任免
           // 学院负责人。与 loadMatchView 同一约定——问数据源「当前用户是谁」在
-          // mock 下永远答 u06，会让未登录的访客也拿到任免入口。
-          viewer: this.currentUser(),
+          // mock 下永远答 u06，会让未登录的访客也拿到任免入口。身份按本页协会
+          // 解析（见 viewerFor），使协会负责人随页内协会变化。
+          viewer: await this.viewerFor(association),
           // 页面局部的作用域：只在本次取数期间切过去，取完由 withAssociation 还原
           association,
         });
@@ -213,6 +219,31 @@ function createMemberPage(options = {}) {
       return app.globalData ? app.globalData.userInfo : null;
     },
 
+    /**
+     * 取「看本页的人」身份，并把角色解析到**本页协会**之下。
+     *
+     * 【为什么不能直接用登录快照】登录快照（app.getUserInfo）只带一个 role，
+     * 是按某一个协会读下来的。而协会角色随协会各异：同一个人在本协会是协会
+     * 负责人（有效角色＝管理员），切到别的协会可能只是普通会员。本页允许页内
+     * 切换协会（§11.6），若还拿快照里的旧 role 判权限，协会负责人打开本协会
+     * 会员的主页时，按角色显示的「任免学院负责人」入口会整张不出现——写入端
+     * 本就有这个权限，界面却点不到。
+     *
+     * 【为什么按编号回查而不是问「当前用户是谁」】回查用的是已知编号（快照里
+     * 的 _id），既拿得到本协会下的有效角色，又不会在未登录时凭 mock 的默认
+     * 演示账号答出一个假身份——访客（无 _id）一律返回原值，不给任何入口。
+     * 查不到（本地注册、重启后不在名单）就沿用快照，行为与写入端一致。
+     *
+     * @param {string} [association] 本页协会；传了就在该协会作用域里回查
+     * @returns {Promise<Object|null>} 供 loadMemberView 判权限的 viewer
+     */
+    async viewerFor(association) {
+      const user = this.currentUser();
+      if (!user || !user._id) return user || null;
+      const reload = async () => (await getMember(user._id)) || user;
+      return association ? scope.withAssociation(association, reload) : reload();
+    },
+
     /** 一句轻提示。Node 测试里没有 wx，静默跳过 */
     showToast(title, icon = 'none') {
       if (typeof wx === 'undefined' || typeof wx.showToast !== 'function') return;
@@ -223,20 +254,38 @@ function createMemberPage(options = {}) {
      * 弹一句确认。与公告管理页同一套：Node 测试没有 wx.showModal，
      * 直接放行，免得用例卡在一个永远等不到的回调上。
      * @param {string} content
+     * @param {string} [title='任免学院负责人']
      * @returns {Promise<boolean>}
      */
-    confirm(content) {
+    confirm(content, title = '任免学院负责人') {
       if (typeof wx === 'undefined' || typeof wx.showModal !== 'function') {
         return Promise.resolve(true);
       }
       return new Promise((resolve) => {
         wx.showModal({
-          title: '任免学院负责人',
+          title,
           content,
           success: (res) => resolve(Boolean(res.confirm)),
           fail: () => resolve(false),
         });
       });
+    },
+
+    /**
+     * 在「本页所属协会」作用域里跑一次写操作（可异步）。
+     *
+     * 【为什么写也要按页内协会】个人详情页 / 他人主页允许页内切换协会查看。
+     * 页内协会若不带给写接口，服务端就会按**全局**当前协会判权限与盖章，
+     * 于是「在 B 协会的页面上」做的一次调整会被算到 A 协会头上。这里临时切到
+     * 页内协会再发起写，与取数走同一条作用域（见 profile-view 的 withAssociation）。
+     * 非局部分页（如「我的」）没有页内协会，直接跑，作用域即全局。
+     *
+     * @param {Function} fn 无参函数，返回 Promise
+     * @returns {Promise<*>}
+     */
+    runInLocalAssociation(fn) {
+      if (!localAssociation || !this.localAssociation) return fn();
+      return scope.withAssociation(this.localAssociation, fn);
     },
 
     /**
@@ -265,17 +314,133 @@ function createMemberPage(options = {}) {
       const confirmed = await this.confirm(
         leader.makeLeader
           ? `将 ${target.nickName} 设为学院负责人，他可代签、代录本学院的比赛`
-          : `撤销 ${target.nickName} 的学院负责人身份，他将失去本学院的管理权限`
+          : `撤销 ${target.nickName} 的学院负责人身份，他将失去本学院的管理权限`,
+        '任免学院负责人'
       );
       if (!confirmed) return undefined;
 
-      const result = await setCollegeLeader(target.userId, user._id, leader.makeLeader);
+      // 写也走本页协会作用域：否则服务端按全局协会判权，页内切到别的协会时
+      // 会改错协会（见 runInLocalAssociation）
+      const result = await this.runInLocalAssociation(() =>
+        setCollegeLeader(target.userId, user._id, leader.makeLeader)
+      );
       if (!result.ok) {
         this.showToast(result.message || '操作失败');
         return undefined;
       }
       this.showToast(leader.makeLeader ? '已设为学院负责人' : '已撤销学院负责人', 'success');
       return this.refresh();
+    },
+
+    /**
+     * 把当前主页的会员设为 / 撤销为**本页所属协会**的协会负责人。
+     *
+     * 入口仅对全局管理员显示（profile-view 用 validateAssociationLeader 算出），
+     * 写入端仍会再判一次——有效角色是 ADMIN 的协会负责人不会被放行。
+     *
+     * @returns {Promise<void>|undefined}
+     */
+    async onSetAssociationLeader() {
+      const view = this.data.view;
+      const target = view && view.user;
+      const leader = view && view.associationLeader;
+      if (!target || !leader || !leader.visible) return undefined;
+
+      const user = this.currentUser();
+      if (!user) {
+        this.showToast('请先登录后再操作');
+        return undefined;
+      }
+
+      const confirmed = await this.confirm(
+        leader.makeLeader
+          ? `将 ${target.nickName} 设为本协会的协会负责人，他可管理本协会的赛事、会员与公告`
+          : `撤销 ${target.nickName} 的协会负责人身份，他将失去本协会的管理权限`,
+        '任免协会负责人'
+      );
+      if (!confirmed) return undefined;
+
+      const result = await this.runInLocalAssociation(() =>
+        setAssociationLeader(target.userId, user._id, leader.makeLeader)
+      );
+      if (!result.ok) {
+        this.showToast(result.message || '操作失败');
+        return undefined;
+      }
+      this.showToast(leader.makeLeader ? '已设为协会负责人' : '已撤销协会负责人', 'success');
+      return this.refresh();
+    },
+
+    /**
+     * 调整当前主页会员在本协会的初始等级分。数值从弹层的输入框取；
+     * Node 测试没有 wx.showModal，直接把当前值当作提交值（用例可改调
+     * submitInitialElo 直接驱动）。
+     *
+     * @returns {Promise<void>|undefined}
+     */
+    onEditInitialElo() {
+      const entry = this.data.view && this.data.view.initialElo;
+      if (!entry || !entry.visible) return undefined;
+
+      if (typeof wx === 'undefined' || typeof wx.showModal !== 'function') {
+        return this.submitInitialElo(entry.current);
+      }
+      return new Promise((resolve) => {
+        wx.showModal({
+          title: '调整初始等级分',
+          editable: true,
+          placeholderText: '留空则自动定级，0–3000 的整数',
+          content: entry.current === null ? '' : String(entry.current),
+          success: (res) => {
+            if (!res.confirm) return resolve(undefined);
+            resolve(this.submitInitialElo(res.content));
+          },
+          fail: () => resolve(undefined),
+        });
+      });
+    },
+
+    /**
+     * 写入初始等级分。value 为 null / 空串即清除（回到自动定级）。
+     * 独立成方法，便于测试绕过 wx 弹层直接驱动。
+     *
+     * @param {*} value 输入框里的原始值
+     * @returns {Promise<void>|undefined}
+     */
+    async submitInitialElo(value) {
+      const view = this.data.view;
+      const target = view && view.user;
+      if (!target) return undefined;
+
+      const user = this.currentUser();
+      if (!user) {
+        this.showToast('请先登录后再操作');
+        return undefined;
+      }
+
+      const result = await this.runInLocalAssociation(() =>
+        setMemberInitialElo(target.userId, value, user._id)
+      );
+      if (!result.ok) {
+        this.showToast(result.message || '操作失败');
+        return undefined;
+      }
+      const cleared = value === null || String(value).trim() === '';
+      this.showToast(cleared ? '已清除，回到自动定级' : '已更新初始等级分', 'success');
+      return this.refresh();
+    },
+
+    /** 清除当前主页会员在本协会的初始等级分（回到自动定级） */
+    async onClearInitialElo() {
+      const entry = this.data.view && this.data.view.initialElo;
+      if (!entry || !entry.visible || !entry.canClear) return undefined;
+
+      const confirmed = await this.confirm(
+        '清除这位会员的初始等级分，之后回到「按前五场自动定级」？',
+        '清除初始等级分'
+      );
+      if (!confirmed) return undefined;
+      return this.submitInitialElo(null);
     },
 
     /** 点交锋记录或搭档记录里的人，去看他的主页 */

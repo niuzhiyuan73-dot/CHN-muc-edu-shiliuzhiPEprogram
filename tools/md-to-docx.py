@@ -281,7 +281,7 @@ def setup(doc, title, subtitle):
     head = doc.add_paragraph()
     head.alignment = WD_ALIGN_PARAGRAPH.CENTER
     head.paragraph_format.space_after = Pt(2)
-    run = head.add_run("中央民族大学匹克球俱乐部小程序")
+    run = head.add_run("中央民族大学石榴籽体育管理小程序")
     set_font(run, size=13, bold=True, color=MUTED, ea=HEAD_EA)
 
     banner = doc.add_paragraph()

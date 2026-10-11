@@ -22,7 +22,12 @@ const { getDataset } = require('./derive.js');
 const { bumpSeason } = require('./season.js');
 const { memberKey } = require('./idempotency.js');
 const { register: registerAccount } = require('../../lib/services/auth.js');
-const { REVIEW_ACTION, validateReview } = require('../../lib/services/member-review.js');
+const {
+  REVIEW_ACTION,
+  validateReview,
+  validateInitialEloEdit,
+  buildInitialEloByAssoc,
+} = require('../../lib/services/member-review.js');
 const { buildProfilePatch } = require('../../lib/services/profile.js');
 const { ROLE, USER_STATUS } = require('../../lib/utils/constants.js');
 
@@ -114,15 +119,18 @@ async function reviewMember(applicationId, action, reason, ctx, initialElo) {
       actor: ctx.actorId,
       actedAt: ctx.now,
     };
-    // 只有「通过」且真填了分数才落这个字段；留空时字段不出现，
-    // 回放引擎据此判断该走自动定级（见 lib/services/replay.js）
+    const next = { ...current, ...patch };
+    // 只有「通过」且真填了分数才落初始分。初始分按协会分开存：在哪个协会
+    // 审核通过、填了分，就写进那个协会。留空时不写这一档，回放引擎据此走
+    // 自动定级（见 lib/services/replay.js）；同时清掉改造前的全局遗留字段。
     if (action === REVIEW_ACTION.APPROVE && verdict.initialElo !== null) {
-      patch.initialElo = verdict.initialElo;
+      next.initialEloByAssoc = buildInitialEloByAssoc(current, ctx.association, verdict.initialElo);
+      delete next.initialElo;
     }
 
-    await tx.users.set(applicationId, { ...current, ...patch });
+    await tx.users.set(applicationId, next);
     await bumpSeason(tx, { association: ctx.association, anchorTime: null, now: ctx.now });
-    return { ...current, ...patch };
+    return next;
   });
 
   if (!patched) return ok({ ok: false, account: null, message: '这条申请已经处理过了' });
@@ -188,6 +196,52 @@ async function updateProfile(payload = {}, ctx) {
   return ok({ ok: true, account: patched, errors: {}, firstError: '' });
 }
 
+/**
+ * 调整某位会员在**本协会**的初始等级分。
+ *
+ * 【谁能改】管理员（全局通行）或协会负责人（仅本协会）。「仅本协会」不必
+ * 显式判断：ctx.actor 的 role 已是本协会的有效角色，协会负责人出了本协会
+ * 就是普通会员，canManage 自然不放行（见 member-review.canEditInitialElo）。
+ * 允许改自己，也允许协会负责人改管理员——不在目标角色上设限。
+ *
+ * 【什么时候不能改】该会员在本协会已经打过比赛（生涯总计 > 0）。初始分是
+ * 回放的起评分，只在没出场时才有意义；娱乐赛（日常约球）同样计入，只要进过
+ * 回放就锁死。判定数据取自本协会作用域的数据集。
+ *
+ * 【清除】value 为空（null / 空串）表示清除本协会的初始分，回到自动定级。
+ *
+ * @param {Object} payload { userId, value }
+ * @param {Object} ctx
+ * @returns {Promise<Object>} {ok, account, message}
+ */
+async function setMemberInitialElo(payload = {}, ctx) {
+  const guard = callerError(ctx);
+  if (guard) return fail(guard);
+
+  const { members } = await getDataset(ctx);
+  const target = members.find((item) => item._id === payload.userId) || null;
+
+  const verdict = validateInitialEloEdit(ctx.actor, target, payload.value, { isMock: false });
+  if (!verdict.ok) return ok({ ok: false, account: null, message: verdict.message });
+
+  const patched = await ctx.repo.transaction(async (tx) => {
+    const current = await tx.users.getById(payload.userId);
+    if (!current) return null;
+    const next = {
+      ...current,
+      initialEloByAssoc: buildInitialEloByAssoc(current, ctx.association, verdict.value),
+    };
+    // 初始分现在完全按协会存，清掉改造前的全局遗留字段
+    delete next.initialElo;
+    await tx.users.set(payload.userId, next);
+    await bumpSeason(tx, { association: ctx.association, anchorTime: null, now: ctx.now });
+    return next;
+  });
+
+  if (!patched) return ok({ ok: false, account: null, message: '找不到这位会员' });
+  return ok({ ok: true, account: patched, message: '' });
+}
+
 // reviewMember 是 approve / reject 共用的内部实现，不导出——dispatch 会把
 // 模块的所有导出都当成可调用的 action，导出它就等于多开一个没有参数约定
 // 的路由。
@@ -195,5 +249,6 @@ module.exports = {
   registerMember,
   approveMember,
   rejectMember,
+  setMemberInitialElo,
   updateProfile,
 };

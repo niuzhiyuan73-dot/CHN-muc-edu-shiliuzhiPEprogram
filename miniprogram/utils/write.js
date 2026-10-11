@@ -38,12 +38,13 @@ const WRITE_ACTIONS = [
   // 裁判指派（仅管理员）
   'assignMatchReferee',
   'assignTieReferee',
-  // 会员注册与审核、学院负责人 / 协会负责人任免
+  // 会员注册与审核、学院负责人 / 协会负责人任免、初始等级分调整
   'registerMember',
   'approveMember',
   'rejectMember',
   'setCollegeLeader',
   'setAssociationLeader',
+  'setMemberInitialElo',
   // 公告发布与下架
   'publishAnnouncement',
   'archiveAnnouncement',

@@ -24,7 +24,7 @@
     </view>
     <view class="member-info">
       <view class="member-name">
-        <text>{{user.nickName}}</text>
+        <text class="member-nick">{{user.nickName}}</text>
         <!-- 真名比昵称小一号缀在旁边；与昵称相同时不显示（见 profile.js） -->
         <text wx:if="{{user.showRealName}}" class="member-real-name">（{{user.realName}}）</text>
         <text wx:if="{{user.roleLabel && user.roleLabel !== '会员'}}" class="member-badge">{{user.roleLabel}}</text>
@@ -377,6 +377,32 @@
         <view class="entry-card-title">{{leader.label}}</view>
         <view class="entry-card-hint">{{leader.hint}}</view>
       </view>
+      <view class="entry-card-arrow">›</view>
+    </view>
+
+    <!--
+      任免协会负责人。仅全局管理员可见（associationLeader.visible 由
+      profile-view 用 validateAssociationLeader 算出来）。任命落到哪个协会由
+      页内协会决定——先在本页切到目标协会，再点这张卡即对那个协会生效。
+    -->
+    <view wx:if="{{associationLeader.visible}}" class="card entry-card" bindtap="onSetAssociationLeader">
+      <view class="entry-card-main">
+        <view class="entry-card-title">{{associationLeader.label}}</view>
+        <view class="entry-card-hint">{{associationLeader.hint}}</view>
+      </view>
+      <view class="entry-card-arrow">›</view>
+    </view>
+
+    <!--
+      调整初始等级分。仅「还没出场、且操作者有权」时出现（initialElo.visible）。
+      点整卡改数值，右侧「清除」按钮回到自动定级（catchtap 免得顺带触发改值）。
+    -->
+    <view wx:if="{{initialElo.visible}}" class="card entry-card" bindtap="onEditInitialElo">
+      <view class="entry-card-main">
+        <view class="entry-card-title">初始等级分 · {{initialElo.currentText}}</view>
+        <view class="entry-card-hint">{{initialElo.hint}}</view>
+      </view>
+      <view wx:if="{{initialElo.canClear}}" class="entry-card-action" catchtap="onClearInitialElo">清除</view>
       <view class="entry-card-arrow">›</view>
     </view>
 

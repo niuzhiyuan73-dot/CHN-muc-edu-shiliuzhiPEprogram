@@ -34,6 +34,7 @@ const { isEloEligibleMatch } = require('../../lib/services/college-tie.js');
 const { findCappedMatchIds } = require('../../lib/services/rating-cap.js');
 const { createNameResolver } = require('../../lib/utils/stats.js');
 const {
+  ROLE,
   USER_STATUS,
   ANNOUNCEMENT_STATUS,
   isMemberStatus,
@@ -41,6 +42,31 @@ const {
 const { loadSeason, ALGO_VERSION } = require('./season.js');
 const { effectiveRole } = require('./context.js');
 const { belongsToAssociation } = require('../../lib/utils/associations.js');
+const { resolvedInitialElo } = require('../../lib/services/member-review.js');
+
+/**
+ * 把会员的初始等级分"拍平"成**本协会**的那一个。
+ *
+ * 【为什么在回放之前做】回放引擎读的是会员记录上的扁平字段 `initialElo`
+ * （见 replay.js 的 overriddenInitialElo），它不认识协会。而初始分现在按
+ * 协会分开存（initialEloByAssoc）。与其把协会一路穿进回放引擎、连带改动
+ * 那份要逐字节镜像的纯模块，不如在这里先把本协会的初始分解析到扁平字段上：
+ * 回放照旧只认扁平字段，协会这件事止步于本函数。
+ *
+ * 【为什么清掉再写】解析结果为 null 时要把旧字段删掉，否则一份改造前的
+ * 遗留 `initialElo` 会继续生效，把「本协会未指定初始分」错当成"已指定"。
+ *
+ * @param {Object} user 账号记录
+ * @param {string} association 协会 id
+ * @returns {Object} 扁平 initialElo 已归一的新记录（不修改入参）
+ */
+function withScopedInitialElo(user, association) {
+  const resolved = resolvedInitialElo(user, association);
+  const next = { ...user };
+  if (resolved === null) delete next.initialElo;
+  else next.initialElo = resolved;
+  return next;
+}
 
 /**
  * 仓储 → (协会 → { key, dataset })。
@@ -148,7 +174,10 @@ async function buildDataset(repo, season, association) {
   // 「在册」= 正常 + 已离校。离校的人不能再上榜、不能报名，但历史比赛
   // 还在流水里，回放名单少了他会直接抛错——所以名单按 isMemberStatus 取，
   // 上榜与报名另有闸门（见 leaderboard.isRankable 与 event.canSignUp）。
-  const members = allUsers.filter((user) => isMemberStatus(user.status));
+  // 进回放前先把初始分解析成本协会那一个（见 withScopedInitialElo）。
+  const members = allUsers
+    .filter((user) => isMemberStatus(user.status))
+    .map((user) => withScopedInitialElo(user, association));
   const applications = allUsers.filter((user) => !isMemberStatus(user.status));
 
   // 复制一份再动：就地改数据库读回来的对象，会让调用方看到意外变化
@@ -196,9 +225,14 @@ async function buildDataset(repo, season, association) {
       membershipByUser.set(row.userId, row);
     }
   }
+  // isGlobalAdmin 取账号的**全局角色**（`user.role` 进有效角色替换之前的值）：
+  // 协会负责人的有效角色也是 ADMIN，前端据此分不清两者；这个字段是账号的
+  // 全局属性，不随协会变化，前端用它决定「协会负责人任免入口」显不显示
+  // （见 member-review.isGlobalAdminMember 与 profile-view）。
   const membersWithRole = replayed.users.map((user) => {
     const row = membershipByUser.get(user._id);
-    return row ? { ...user, role: effectiveRole(user.role, row) } : user;
+    const effective = row ? { ...user, role: effectiveRole(user.role, row) } : user;
+    return { ...effective, isGlobalAdmin: Number(user.role || 0) >= ROLE.ADMIN };
   });
 
   return {

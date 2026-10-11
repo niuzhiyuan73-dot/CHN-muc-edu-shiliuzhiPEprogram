@@ -151,7 +151,7 @@ def build():
     title = doc.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     title.paragraph_format.space_after = Pt(2)
-    run = title.add_run("中央民族大学匹克球俱乐部小程序")
+    run = title.add_run("中央民族大学石榴籽体育管理小程序")
     set_font(run, size=13, bold=True, color=MUTED, ea=HEAD_EA)
 
     subtitle = doc.add_paragraph()

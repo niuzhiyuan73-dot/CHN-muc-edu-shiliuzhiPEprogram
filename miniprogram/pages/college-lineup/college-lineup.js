@@ -40,11 +40,13 @@ Page({
 
   /**
    * 返回 Promise 是有意为之：测试需要一个句柄来等首屏加载完。
-   * @param {Object} [query] 路由参数，带 tieId / eventId
+   * @param {Object} [query] 路由参数，带 tieId / eventId / college
    */
   onLoad(query = {}) {
     this.tieId = query.tieId || '';
     this.eventId = query.eventId || '';
+    // 替哪一侧排阵：管理员与协会负责人两侧都进得来，由详情页指明；缺省取本人学院
+    this.college = query.college ? decodeURIComponent(query.college) : '';
     return this.refresh();
   },
 
@@ -72,6 +74,7 @@ Page({
       const view = await loadCollegeLineupView(this.tieId, {
         user: this.currentUser(),
         eventId: this.eventId,
+        college: this.college,
       });
       this.loaded = true;
       this.setData({ loading: false, error: '', view, themeClass: currentThemeClass() });

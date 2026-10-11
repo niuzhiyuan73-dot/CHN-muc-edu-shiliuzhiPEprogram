@@ -219,6 +219,31 @@ test('mock 模式按 _id 校正角色 —— 数据源把人提为学院负责�
   assert.strictEqual(storage[STORAGE_KEY.USER_INFO].role, ROLE.STAFF, '缓存同步更新');
 });
 
+test('mock 模式改了「当前演示账号」，启动会把旧演示账号换成新那位', async () => {
+  // 缓存里是上一次演示用的**另一个种子会员**（u03）；当前常量指向 u06。
+  // 这正是「把 DEFAULT_CURRENT_USER_ID 改成别人再编译」要能切换演示身份的场合。
+  const otherDemo = {
+    _id: 'u03',
+    nickName: '李思远',
+    realName: '李思远',
+    role: ROLE.MEMBER,
+    status: USER_STATUS.ACTIVE,
+  };
+  assert.notStrictEqual(otherDemo._id, DEFAULT_CURRENT_USER_ID, '前提：缓存里不是当前演示账号');
+  storage[STORAGE_KEY.USER_INFO] = otherDemo;
+
+  await launch({ envId: '' });
+
+  const user = appConfig.globalData.userInfo;
+  assert.strictEqual(cloudCalls, 0, 'mock 模式不该请求云端');
+  assert.strictEqual(user._id, DEFAULT_CURRENT_USER_ID, '应整体切到当前演示账号');
+  assert.strictEqual(
+    storage[STORAGE_KEY.USER_INFO]._id,
+    DEFAULT_CURRENT_USER_ID,
+    '缓存同步成新那位，下次冷启动才不会再退回旧的'
+  );
+});
+
 test('本地没有登录态时不发起校正请求', async () => {
   await launch({ envId: 'test-env' });
 
@@ -315,4 +340,45 @@ test('setAssociation 切换会话、不写缓存，未知协会抛错', async ()
   assert.throws(() => appConfig.setAssociation('nope'), /未知的协会 id/);
   // 抛错后仍停在原协会，不落到半个态
   assert.strictEqual(facade.getAssociation(), 'bd');
+});
+
+test('setAssociation 切协会后按新协会重解本人角色 —— 协会负责人不该被当成会员', async () => {
+  // u04 王浩然：pkb 普通会员、tt 协会负责人、bd 学院负责人（见 docs/mock演示账号.md）。
+  // 登录快照里的角色是切协会之前写下的；切换后必须按新协会重解，否则他在 tt 会
+  // 被当成会员，连本协会比赛的裁判都指派不了。
+  appConfig.globalData = {
+    dataSource: DATA_SOURCE.MOCK,
+    cloudEnvId: '',
+    userInfo: {
+      _id: 'u04',
+      nickName: '王浩然',
+      role: ROLE.MEMBER,
+      status: USER_STATUS.ACTIVE,
+    },
+    systemInfo: null,
+  };
+
+  appConfig.setAssociation('pkb');
+  await flush();
+  assert.strictEqual(appConfig.globalData.userInfo.role, ROLE.MEMBER, 'pkb 里是普通会员');
+
+  appConfig.setAssociation('tt');
+  await flush();
+  assert.strictEqual(
+    appConfig.globalData.userInfo.role,
+    ROLE.ADMIN,
+    'tt 里是协会负责人（有效角色即管理员）'
+  );
+  assert.strictEqual(
+    appConfig.globalData.userInfo.isGlobalAdmin,
+    false,
+    '协会负责人不是全局管理员'
+  );
+
+  appConfig.setAssociation('bd');
+  await flush();
+  assert.strictEqual(appConfig.globalData.userInfo.role, ROLE.STAFF, 'bd 里是学院负责人');
+
+  // 复位，别把协会状态漏给后续用例
+  appConfig.setAssociation(defaultAssociationId());
 });

@@ -109,7 +109,7 @@ def sheet_overview(wb, data):
     pct = lambda row: f"{row['convergenceMean'] * 100:.0f}%"
 
     lines = [
-        ("中央民族大学匹克球俱乐部 · 单打评分实验记录", TITLE_FONT),
+        ("中央民族大学石榴籽体育管理 · 单打评分实验记录", TITLE_FONT),
         ("", None),
         ("一、这次实验在问什么", SECTION_FONT),
         (

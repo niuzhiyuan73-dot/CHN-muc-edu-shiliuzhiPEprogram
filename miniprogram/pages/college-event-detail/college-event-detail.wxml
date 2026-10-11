@@ -170,12 +170,17 @@
         </view>
 
         <view class="entry-actions">
+          <!-- 排阵入口按侧给：学院负责人只解出自己那一侧；管理员与协会负责人两侧都
+               解得出，故可能同时出现「提交 A 侧排阵 / 提交 B 侧排阵」两个按钮 -->
           <view
-            wx:if="{{item.canSubmitLineup}}"
+            wx:for="{{item.lineupActions}}"
+            wx:for-item="action"
+            wx:key="side"
             class="btn btn-outline entry-btn"
             data-tie-id="{{item.tieId}}"
+            data-college="{{action.college}}"
             bindtap="onOpenLineup"
-          >{{item.lineupActionText}}</view>
+          >{{action.label}}</view>
           <view
             wx:if="{{item.canStart}}"
             class="btn btn-primary entry-btn {{acting === item.tieId ? 'btn-disabled' : ''}}"
