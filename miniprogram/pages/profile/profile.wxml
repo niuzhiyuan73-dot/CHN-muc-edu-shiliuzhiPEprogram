@@ -8,6 +8,13 @@
 <import src="../../templates/member-view.wxml" />
 
 <view class="page-container">
+  <view class="card entry-card" bindtap="onGoSchoolIdentity">
+    <view class="entry-card-main">
+      <view class="entry-card-title">学校身份</view>
+      <view class="entry-card-hint">选择学校、申请身份与查看审核结果</view>
+    </view>
+    <view class="entry-card-arrow">›</view>
+  </view>
   <!--
     管理入口。放在战绩之前：需要处理的事该排在浏览数据前面。
     没有权限时整张卡不渲染（visible），不是灰掉——灰按钮

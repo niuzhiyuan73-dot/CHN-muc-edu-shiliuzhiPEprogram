@@ -56,6 +56,9 @@ const MANIFEST = [
   'services/replay.js',
   'services/school-permission.js',
   'services/school-member.js',
+  // 身份业务编排依赖注入仓储，不直接引用 wx、Node 或云 SDK。
+  'services/school-context.js',
+  'services/school-membership-service.js',
   'services/court.js',
   'services/match-record.js',
   'services/live-score.js',

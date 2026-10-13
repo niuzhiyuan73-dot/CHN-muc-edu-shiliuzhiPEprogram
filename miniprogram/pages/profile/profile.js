@@ -197,6 +197,10 @@ Page({
   },
 
   /** 未登录时的引导按钮 */
+  onGoSchoolIdentity() {
+    wx.navigateTo({ url: '/pages/school-identity/school-identity' });
+  },
+
   onGoLogin() {
     wx.navigateTo({ url: '/pages/login/login' });
   },

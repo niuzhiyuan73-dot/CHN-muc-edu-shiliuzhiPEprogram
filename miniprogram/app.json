@@ -25,7 +25,8 @@
     "pages/college-lineup/college-lineup",
     "pages/college-match/college-match",
     "pages/college-placement/college-placement",
-    "pages/live-score/live-score"
+    "pages/live-score/live-score",
+    "pages/school-identity/school-identity"
   ],
   "window": {
     "backgroundTextStyle": "dark",

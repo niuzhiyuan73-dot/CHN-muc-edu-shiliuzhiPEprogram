@@ -150,3 +150,26 @@ test('identity client binds school and protocol across interleaved requests', as
     assert.ok(calls.every(c => c.protocolVersion === 2));
   } finally { delete global.wx; }
 });
+
+test('school directory is public but exposes only names and IDs of the selected colleges', async () => {
+  const repo = fixture();
+  const result = (await request(repo, 'getSchoolDirectory', {}, '', 'buaa')).data;
+  assert.equal(result.ok, true);
+  assert.equal(result.schools.length, 2);
+  assert.equal(result.colleges[0].name, '航空学院（模拟）');
+  assert.deepEqual(Object.keys(result.schools[0]).sort(), ['name', 'schoolId', 'shortName']);
+  assert.deepEqual(Object.keys(result.colleges[0]).sort(), ['collegeId', 'name']);
+});
+
+test('identity session exposes local review capability without disclosing global account fields', async () => {
+  const repo = fixture();
+  const local = (await request(repo, 'getSchoolIdentitySession', {}, 'mock_openid_muc_admin')).data;
+  assert.equal(local.canReview, true);
+  assert.deepEqual(Object.keys(local.user).sort(), ['nickName', 'primarySchoolId', 'userId']);
+  const remote = (await request(repo, 'getSchoolIdentitySession', {}, 'mock_openid_muc_admin', 'buaa')).data;
+  assert.equal(remote.canReview, false);
+  assert.equal(remote.account, null);
+  const guest = (await request(repo, 'getSchoolIdentitySession', {}, '')).data;
+  assert.equal(guest.user, null);
+  assert.equal(guest.canReview, false);
+});

@@ -1,0 +1,48 @@
+<view class="page-container school-page">
+  <view class="card">
+    <view class="card-title">学校身份</view>
+    <view class="hint">选择学校，查看或申请该校身份</view>
+    <picker range="{{schools}}" range-key="name" value="{{schoolIndex}}" disabled="{{submitting}}" bindchange="onSchoolChange">
+      <view class="selection">{{schoolName}} <text>切换 ›</text></view>
+    </picker>
+  </view>
+  <view wx:if="{{isMock}}" class="card demo-card">
+    <view class="hint">模拟数据 · 北航学院为测试样本，申请记录仅在本次运行中保留。</view>
+    <picker range="{{demoActors}}" range-key="label" value="{{demoActorIndex}}" disabled="{{submitting}}" bindchange="onDemoActorChange">
+      <view class="selection">体验身份：{{demoActorName}} <text>切换 ›</text></view>
+    </picker>
+  </view>
+  <view wx:if="{{error}}" class="card error-box">
+    <view>{{error}}</view>
+    <button size="mini" bindtap="onRetry" disabled="{{submitting}}">刷新</button>
+  </view>
+  <view wx:if="{{notice}}" class="card hint">{{notice}}</view>
+  <view wx:if="{{loading}}" class="card hint">正在读取学校信息…</view>
+  <block wx:else>
+    <view wx:if="{{user}}" class="card">
+      <view class="card-title">{{user.nickName || '当前账号'}} · {{statusText}}</view>
+      <view wx:if="{{account.reviewReason}}" class="hint">审核说明：{{account.reviewReason}}</view>
+      <block wx:if="{{canApply}}">
+        <picker range="{{colleges}}" range-key="name" value="{{collegeIndex}}" disabled="{{submitting}}" bindchange="onCollegeChange">
+          <view class="selection">{{collegeName || '请选择学院'}} <text>›</text></view>
+        </picker>
+        <input class="identity-input" placeholder="请输入学号" value="{{studentId}}" maxlength="64" disabled="{{submitting}}" bindinput="onStudentIdInput" />
+        <button class="btn btn-primary" loading="{{submitting}}" disabled="{{submitting}}" bindtap="onApply">{{account.status === 'pending' ? '更新申请' : '提交申请'}}</button>
+      </block>
+      <view wx:elif="{{account}}" class="hint">{{collegeName}} · 学号 {{studentId}}</view>
+    </view>
+    <view wx:if="{{canReview}}" class="card">
+      <view class="card-title">{{schoolName}} · 待审核 {{applications.length}} 人</view>
+      <view wx:if="{{!applications.length}}" class="hint">当前没有待审核申请</view>
+      <view wx:for="{{applications}}" wx:key="userId" class="application">
+        <view class="applicant-name">{{item.nickName}}</view>
+        <view class="hint">{{item.collegeName}} · 学号 {{item.studentId}}</view>
+        <input class="identity-input" placeholder="驳回时请填写理由" maxlength="500" value="{{item.reason}}" data-user-id="{{item.userId}}" disabled="{{submitting}}" bindinput="onReasonInput" />
+        <view class="actions">
+          <button size="mini" class="btn btn-primary" data-user-id="{{item.userId}}" data-decision="approve" disabled="{{submitting}}" bindtap="onReview">通过</button>
+          <button size="mini" data-user-id="{{item.userId}}" data-decision="reject" disabled="{{submitting}}" bindtap="onReview">驳回</button>
+        </view>
+      </view>
+    </view>
+  </block>
+</view>
