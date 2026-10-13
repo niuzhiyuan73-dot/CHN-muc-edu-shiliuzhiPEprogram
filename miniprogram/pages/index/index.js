@@ -264,11 +264,14 @@ Page({
     wx.navigateTo({ url: '/pages/login/login' });
   },
 
-  /** 去赛事 tab 看全部赛事。赛事页按当前全局协会展示，故直接切 tab 即可 */
+  /**
+   * 去「赛事」看全部赛事。赛事板块现在收在「协会工作台」里，直接跳到工作台的
+   * 赛事页签；工作台按当前全局协会取数，所以不必再传协会。
+   */
   onGoEvents() {
     // 演示内容没有对应的列表页（那是外校的），别把用户引到本校赛事去
     if (this.data.schoolContent) return undefined;
-    return wx.switchTab({ url: '/pages/events/events' });
+    return wx.navigateTo({ url: '/pages/association-home/association-home?tab=events' });
   },
 
   /** 看全部公告 */

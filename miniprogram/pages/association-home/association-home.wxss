@@ -1,0 +1,49 @@
+/*
+ * 协会工作台样式
+ * 页签（.pool-tabs）的样式在 app.wxss 里，与「我的」页共用。
+ * 三个面板各自的样式随组件走（components/*-panel/*.wxss）。
+ */
+
+/* ==================== 协会名头 ==================== */
+
+.ws-head {
+  display: flex;
+  align-items: center;
+  padding: var(--space-md) var(--space-sm);
+}
+
+.ws-head-glyph {
+  flex: none;
+  width: 72rpx;
+  height: 72rpx;
+  line-height: 72rpx;
+  text-align: center;
+  border-radius: var(--radius-md);
+  background: var(--color-primary);
+  color: #fff;
+  font-size: var(--font-md);
+  font-weight: 600;
+}
+
+.ws-head-main {
+  flex: 1;
+  min-width: 0;
+  margin-left: var(--space-md);
+}
+
+.ws-head-name {
+  font-size: var(--font-lg);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.ws-head-note {
+  margin-top: 2rpx;
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+
+/* 页签紧贴名头，别再叠一层外边距 */
+.ws-tabs {
+  margin-bottom: var(--space-md);
+}

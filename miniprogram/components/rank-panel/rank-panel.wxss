@@ -1,12 +1,13 @@
 /*
- * 排行榜样式
- * 分池切换（.pool-tabs）的样式在 app.wxss 里，与「我的」页共用。
+ * 排行榜面板样式
+ * 分池切换（.pool-tabs）的样式在 app.wxss 里，与「我的」页共用（靠组件的
+ * styleIsolation: apply-shared 渗入）。
  * 「我的排名」卡、搜索框与榜单行的样式都在 templates/rank-board.wxss 里，
- * 与「赛事」页共用。
+ * 与「赛事」面板共用。
  */
 @import "../../templates/rank-board.wxss";
 
-/* 只读浏览提示条：切到外校时出现在页面顶部，与首页同款 */
+/* 只读浏览提示条：切到外校时出现在面板顶部，与首页同款 */
 .readonly-banner {
   margin-bottom: var(--space-md);
   padding: var(--space-sm) var(--space-md);

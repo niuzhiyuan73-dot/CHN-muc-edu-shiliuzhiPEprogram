@@ -1,9 +1,8 @@
 {
   "pages": [
     "pages/index/index",
-    "pages/rank/rank",
-    "pages/match/match",
-    "pages/events/events",
+    "pages/association/association",
+    "pages/association-home/association-home",
     "pages/event-list/event-list",
     "pages/profile/profile",
     "pages/member/member",
@@ -47,16 +46,8 @@
         "text": "首页"
       },
       {
-        "pagePath": "pages/rank/rank",
-        "text": "排行榜"
-      },
-      {
-        "pagePath": "pages/match/match",
-        "text": "比赛"
-      },
-      {
-        "pagePath": "pages/events/events",
-        "text": "赛事"
+        "pagePath": "pages/association/association",
+        "text": "协会"
       },
       {
         "pagePath": "pages/profile/profile",

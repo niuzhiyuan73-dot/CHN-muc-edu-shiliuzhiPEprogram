@@ -1,10 +1,11 @@
 <!--
-  排行榜
+  排行榜面板（协会工作台内嵌）
   数据形状见 services/rank-view.js 的 loadRankView。
   只剩「等级分榜」，不再有榜单类型切换；项目仍可切换。
   列表只列前 10 名，「我的排名」卡不受截断影响；搜索框覆盖全量会员。
+  根节点不带 page-container：外层工作台已经提供了页面内边距。
 -->
-<view class="page-container {{themeClass}}">
+<view class="{{themeClass}}">
 
   <!-- 加载中。必须排在出错之前，否则首屏会一闪而过地报错 -->
   <view wx:if="{{loading}}" class="loading">正在加载…</view>

@@ -1,0 +1,105 @@
+/*
+ * 协会页样式
+ * 页面骨架（.page-container / .empty-note / .loading）在 app.wxss 里。
+ */
+
+/* 只读浏览提示条：切到外校时出现在页面顶部，与首页同款 */
+.readonly-banner {
+  margin-bottom: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  background: #fff4e5;
+  color: #9a5b00;
+  font-size: var(--font-sm);
+  line-height: 1.6;
+}
+
+/* ==================== 引导语 ==================== */
+
+.assoc-intro {
+  margin: var(--space-sm) var(--space-xs) var(--space-md);
+}
+
+.assoc-intro-title {
+  font-size: var(--font-lg);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.assoc-intro-note {
+  margin-top: 4rpx;
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+
+/* ==================== 协会按钮 ==================== */
+
+.assoc-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.assoc-btn {
+  display: flex;
+  align-items: center;
+  padding: var(--space-lg);
+  background: var(--color-card);
+  border-radius: var(--radius-md);
+  border: 2rpx solid transparent;
+  box-shadow: 0 2rpx 12rpx rgba(0, 0, 0, 0.04);
+}
+
+/* 当前全局协会：左边一条主色描边，扫一眼就知道「我现在在哪个协会」 */
+.assoc-btn.is-active {
+  border-color: var(--color-primary);
+  background: var(--color-primary-light);
+}
+
+.assoc-btn-glyph {
+  flex: none;
+  width: 88rpx;
+  height: 88rpx;
+  line-height: 88rpx;
+  text-align: center;
+  border-radius: var(--radius-md);
+  background: var(--color-primary);
+  color: #fff;
+  font-size: var(--font-lg);
+  font-weight: 600;
+}
+
+.assoc-btn-main {
+  flex: 1;
+  min-width: 0;
+  margin-left: var(--space-md);
+}
+
+.assoc-btn-name {
+  font-size: var(--font-md);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.assoc-btn-sport {
+  margin-top: 4rpx;
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+
+.assoc-btn-current {
+  flex: none;
+  margin-right: var(--space-sm);
+  padding: 2rpx 12rpx;
+  border-radius: 999rpx;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: var(--font-xs);
+}
+
+.assoc-btn-arrow {
+  flex: none;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-xl);
+  line-height: 1;
+}

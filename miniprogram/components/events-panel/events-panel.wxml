@@ -1,10 +1,11 @@
 <!--
-  赛事
+  赛事面板（协会工作台内嵌）
   数据形状见 services/events-view.js 的 loadEventsView。
-  榜单行与搜索框的样式来自 templates/rank-board.wxss，与「排行榜」页共用。
+  榜单行与搜索框的样式来自 templates/rank-board.wxss，与「排行榜」面板共用。
   积分榜只列前 10 名，「我的排名」卡不受截断影响，其余名次靠搜索框定位。
+  根节点不带 page-container：外层工作台已经提供了页面内边距。
 -->
-<view class="page-container {{themeClass}}">
+<view class="{{themeClass}}">
 
   <!-- 加载中。必须排在出错之前，否则首屏会一闪而过地报错 -->
   <view wx:if="{{loading}}" class="loading">正在加载…</view>

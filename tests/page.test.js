@@ -148,17 +148,24 @@ const app = {
 
 global.getApp = () => app;
 
-/** 收集所有 Page() 注册的配置 */
+/**
+ * 收集所有 Page() 与 Component() 注册的配置。
+ * 排行榜 / 比赛 / 赛事已从独立页面改成协会工作台里的面板组件，但它们的
+ * 测试仍按老下标取用（rankConfig / matchConfig / eventsConfig）。这里让
+ * Component() 也往同一个数组里 push，并且在下头保持着原来的 require 顺序，
+ * 下标便原样不变——已有的 70 多处引用一行都不用改。
+ */
 const registered = [];
 global.Page = (config) => registered.push(config);
+global.Component = (config) => registered.push(config);
 
-// 注册动作发生在 require 的那一刻，所以必须先装好 Page 再引入页面
+// 注册动作发生在 require 的那一刻，所以必须先装好 Page / Component 再引入
 require('../miniprogram/pages/index/index.js');
 require('../miniprogram/pages/profile/profile.js');
 require('../miniprogram/pages/member/member.js');
-require('../miniprogram/pages/rank/rank.js');
+require('../miniprogram/components/rank-panel/rank-panel.js');
 require('../miniprogram/pages/login/login.js');
-require('../miniprogram/pages/match/match.js');
+require('../miniprogram/components/match-panel/match-panel.js');
 require('../miniprogram/pages/match-entry/match-entry.js');
 // 新页面一律追加在末尾：registered[] 是按 require 顺序取下标的，
 // 插在中间会让 0–6 全部错位，已有用例会成片地「装成别的页面」失败
@@ -168,7 +175,7 @@ require('../miniprogram/pages/announcement-manage/announcement-manage.js');
 require('../miniprogram/pages/announcement-edit/announcement-edit.js');
 require('../miniprogram/pages/profile-edit/profile-edit.js');
 require('../miniprogram/pages/profile-detail/profile-detail.js');
-require('../miniprogram/pages/events/events.js');
+require('../miniprogram/components/events-panel/events-panel.js');
 require('../miniprogram/pages/event-detail/event-detail.js');
 require('../miniprogram/pages/event-edit/event-edit.js');
 require('../miniprogram/pages/event-placement/event-placement.js');
@@ -181,6 +188,9 @@ require('../miniprogram/pages/college-match/college-match.js');
 require('../miniprogram/pages/college-placement/college-placement.js');
 require('../miniprogram/pages/event-list/event-list.js');
 require('../miniprogram/pages/live-score/live-score.js');
+// 「协会」页签与它的工作台（排行榜 / 比赛 / 赛事 收进了工作台），追加在末尾
+require('../miniprogram/pages/association/association.js');
+require('../miniprogram/pages/association-home/association-home.js');
 
 /**
  * 深拷贝页面初值。
@@ -199,9 +209,13 @@ function cloneData(value) {
 }
 
 /**
- * 把页面配置实例化成一个可用的对象。
+ * 把页面 / 组件配置实例化成一个可用的对象。
  * 小程序的 Page 实例会把配置里的方法挂到 this 上，setData 则负责
  * 合并数据并触发重渲染——这里照着做一份最小实现。
+ *
+ * 组件配置（排行榜 / 比赛 / 赛事面板）把方法收在 methods 里，生命周期
+ * （attached / show）只是转调同名的 onLoad / onShow 方法，所以这里把
+ * methods 平铺到实例上即可，用例照旧调 page.onLoad() / page.onShow()。
  *
  * @param {Object} config
  * @returns {Object}
@@ -231,9 +245,11 @@ function instantiate(config) {
     },
   };
 
-  for (const key of Object.keys(config)) {
-    if (typeof config[key] === 'function') {
-      page[key] = config[key].bind(page);
+  // 页面：方法直接挂在配置顶层；组件：方法收在 methods 里，平铺出来
+  const source = config.methods ? config.methods : config;
+  for (const key of Object.keys(source)) {
+    if (typeof source[key] === 'function') {
+      page[key] = source[key].bind(page);
     }
   }
 
@@ -268,6 +284,9 @@ const collegePlacementConfig = registered[23];
 const eventListConfig = registered[24];
 // 实时计分台（唯一的横屏页），注册顺序在最后
 const liveScoreConfig = registered[25];
+// 协会 tab 与它的工作台（排行榜 / 比赛 / 赛事 都收进了工作台）
+const associationConfig = registered[26];
+const associationHomeConfig = registered[27];
 
 // 写接口（确认 / 撤销 / 录入）只改内存，跑完一条用例就得把内存退回种子状态，
 // 否则上一条确认过的比赛会让下一条拿到的榜单与台账都不一样
@@ -5283,3 +5302,176 @@ test('实时计分台 —— 打满两局可定稿，定稿后退回上一页', 
  * 页面已从「我的」移除，赛季更新改为在云控制台手动操作；
  * 云端 resetSeason 能力与 mock 数据源的行为仍由 season-reset.test.js 覆盖。
  * ============================================================ */
+
+/* ============================================================
+ * 协会页 与 协会工作台
+ * ============================================================
+ * 中间三个页签（排行榜 / 比赛 / 赛事）收进了「协会工作台」：协会页列出协会，
+ * 点一个进工作台，在工作台里按页签切换。排行榜 / 比赛 / 赛事本身的行为仍由
+ * 上面那些用例覆盖（它们现在装在组件里，测试按老下标取用）。
+ * ============================================================ */
+
+test('协会页 —— 列出本校的协会，当前全局协会标为「当前」', async () => {
+  const schoolSession = require('../miniprogram/services/school-session');
+  const scope = require('../miniprogram/services/association-scope.js');
+  schoolSession.reset();
+  const before = scope.getAssociation();
+  scope.setAssociation('pkb');
+  try {
+    const page = instantiate(associationConfig);
+    await page.onLoad();
+
+    assert.strictEqual(page.data.loading, false);
+    assert.strictEqual(page.data.error, '');
+    assert.strictEqual(page.data.readOnlySchool, false);
+    assert.deepStrictEqual(
+      page.data.associations.map((item) => item.name),
+      ['民大匹克球', '民大乒乓', '民大羽球']
+    );
+    assert.deepStrictEqual(
+      page.data.associations.filter((item) => item.active).map((item) => item.id),
+      ['pkb'],
+      '当前全局协会那一个才标「当前」'
+    );
+  } finally {
+    scope.setAssociation(before);
+    schoolSession.reset();
+  }
+});
+
+test('协会页 —— 点某个协会：写全局协会并进它的工作台', async () => {
+  const schoolSession = require('../miniprogram/services/school-session');
+  const scope = require('../miniprogram/services/association-scope.js');
+  schoolSession.reset();
+  const before = scope.getAssociation();
+  try {
+    const page = instantiate(associationConfig);
+    await page.onLoad();
+
+    calls.navigations.length = 0;
+    page.onChooseAssociation({ currentTarget: { dataset: { association: 'tt' } } });
+
+    assert.strictEqual(scope.getAssociation(), 'tt', '全局当前协会改成了点中的那个');
+    assert.deepStrictEqual(
+      calls.navigations,
+      ['/pages/association-home/association-home?association=tt&tab=rank'],
+      '进工作台，默认落在排行榜'
+    );
+  } finally {
+    scope.setAssociation(before);
+    schoolSession.reset();
+  }
+});
+
+test('协会页 —— 切到北航列出它的演示协会，并标只读', async () => {
+  const schoolSession = require('../miniprogram/services/school-session');
+  const schoolMock = require('../miniprogram/services/school-mock');
+  schoolSession.reset();
+  schoolMock.setDemoActor('demo_muc_member');
+  try {
+    // 只读 = 浏览的学校 ≠ 我的学校，故两处都要摆好
+    schoolSession.setHomeSchoolId('muc');
+    schoolSession.setSchoolId('buaa');
+    const page = instantiate(associationConfig);
+    await page.onLoad();
+
+    assert.strictEqual(page.data.readOnlySchool, true);
+    assert.strictEqual(page.data.schoolName, '北航');
+    assert.deepStrictEqual(
+      page.data.associations.map((item) => item.name),
+      ['北航匹克球', '北航乒乓球', '北航羽毛球']
+    );
+    assert.ok(page.data.associations.every((item) => Boolean(item.glyph)), '每个协会都带文字徽标');
+  } finally {
+    schoolMock.setDemoActor('demo_applicant');
+    schoolSession.reset();
+  }
+});
+
+test('工作台 —— 带协会与页签进来：定协会、定页签、只挂当前面板', async () => {
+  const schoolSession = require('../miniprogram/services/school-session');
+  const scope = require('../miniprogram/services/association-scope.js');
+  schoolSession.reset();
+  const before = scope.getAssociation();
+  try {
+    const page = instantiate(associationHomeConfig);
+    page.onLoad({ association: 'tt', tab: 'events' });
+
+    assert.strictEqual(scope.getAssociation(), 'tt', '把查询参数里的协会写回全局');
+    assert.strictEqual(page.data.associationId, 'tt');
+    assert.strictEqual(page.data.associationName, '民大乒乓');
+    assert.strictEqual(page.data.activeTab, 'events');
+    assert.deepStrictEqual(page.data.mounted, { rank: false, match: false, events: true });
+    assert.deepStrictEqual(
+      page.data.tabs.filter((item) => item.active).map((item) => item.tab),
+      ['events']
+    );
+  } finally {
+    scope.setAssociation(before);
+    schoolSession.reset();
+  }
+});
+
+test('工作台 —— 不带参数时用全局协会，默认落在排行榜', async () => {
+  const schoolSession = require('../miniprogram/services/school-session');
+  const scope = require('../miniprogram/services/association-scope.js');
+  schoolSession.reset();
+  const before = scope.getAssociation();
+  scope.setAssociation('bd');
+  try {
+    const page = instantiate(associationHomeConfig);
+    page.onLoad();
+
+    assert.strictEqual(page.data.associationId, 'bd');
+    assert.strictEqual(page.data.activeTab, 'rank');
+    assert.deepStrictEqual(page.data.mounted, { rank: true, match: false, events: false });
+  } finally {
+    scope.setAssociation(before);
+    schoolSession.reset();
+  }
+});
+
+test('工作台 —— 切页签懒挂载，挂过的切回来仍保持挂载', async () => {
+  const page = instantiate(associationHomeConfig);
+  page.onLoad({ tab: 'rank' });
+
+  page.onSwitchTab({ currentTarget: { dataset: { tab: 'match' } } });
+  assert.strictEqual(page.data.activeTab, 'match');
+  assert.strictEqual(page.data.mounted.match, true, '首次切到比赛才把它挂上');
+
+  page.onSwitchTab({ currentTarget: { dataset: { tab: 'rank' } } });
+  assert.strictEqual(page.data.activeTab, 'rank');
+  assert.strictEqual(page.data.mounted.match, true, '挂过的面板保持挂载，来回切不丢状态');
+});
+
+test('工作台 —— 非法协会 / 非法页签参数回落到默认值', async () => {
+  const schoolSession = require('../miniprogram/services/school-session');
+  const scope = require('../miniprogram/services/association-scope.js');
+  schoolSession.reset();
+  const before = scope.getAssociation();
+  scope.setAssociation('pkb');
+  try {
+    const page = instantiate(associationHomeConfig);
+    page.onLoad({ association: '不存在', tab: '不存在' });
+
+    assert.strictEqual(page.data.associationId, 'pkb', '非法协会回落到全局协会');
+    assert.strictEqual(page.data.activeTab, 'rank', '非法页签回落到排行榜');
+  } finally {
+    scope.setAssociation(before);
+    schoolSession.reset();
+  }
+});
+
+test('首页 —— 「看全部赛事」跳进工作台的赛事页签', async () => {
+  resetSession();
+  loginAs();
+  const page = instantiate(indexConfig);
+  await page.onLoad();
+
+  calls.navigations.length = 0;
+  page.onGoEvents();
+  assert.deepStrictEqual(
+    calls.navigations,
+    ['/pages/association-home/association-home?tab=events']
+  );
+});

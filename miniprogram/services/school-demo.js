@@ -320,6 +320,40 @@ function associationMetaOf(school, associationId) {
 }
 
 /**
+ * 演示学校的简称（如「北航」），供只读提示条文案使用。
+ * 没有演示内容的学校返回空串。
+ *
+ * @param {string} schoolId
+ * @returns {string}
+ */
+function schoolShortName(schoolId) {
+  const school = DEMO_SCHOOLS[schoolId];
+  return school ? school.shortName : '';
+}
+
+/**
+ * 演示学校有哪些协会，供「协会」页列出该校可逛的协会。
+ * 名称取「学校简称 + 项目名」（如「北航匹克球」），与首页角标同一体例；
+ * 没有演示内容的学校返回 null，调用方回落到协会注册表。
+ *
+ * @param {string} schoolId
+ * @returns {Array<{id: string, name: string, glyph: string, sportName: string}>|null}
+ */
+function schoolAssociations(schoolId) {
+  const school = DEMO_SCHOOLS[schoolId];
+  if (!school || !school.associations) return null;
+  return Object.keys(school.associations).map((id) => {
+    const assoc = getAssociation(id);
+    return {
+      id,
+      name: `${school.shortName}${assoc.sportName}`,
+      glyph: assoc.logoGlyph,
+      sportName: assoc.sportName,
+    };
+  });
+}
+
+/**
  * 取某校某协会的演示内容。
  * 没有演示内容的学校返回 null（调用方回落到真实视图）；协会未登记时退回第一个，
  * 免得新加协会却还没造演示时直接空白。
@@ -607,4 +641,12 @@ function schoolEvents(schoolId, options = {}) {
   };
 }
 
-module.exports = { hasSchoolDemo, schoolHome, schoolRank, schoolMatches, schoolEvents };
+module.exports = {
+  hasSchoolDemo,
+  schoolShortName,
+  schoolAssociations,
+  schoolHome,
+  schoolRank,
+  schoolMatches,
+  schoolEvents,
+};

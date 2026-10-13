@@ -1,9 +1,10 @@
 <!--
-  比赛页
+  比赛面板（协会工作台内嵌）
   数据形状见 services/match-view.js 的 loadMatchView。
   canConfirm / canRevoke 是视图模型算好的，这里不做任何权限推导。
+  根节点不带 page-container：外层工作台已经提供了页面内边距。
 -->
-<view class="page-container {{themeClass}}">
+<view class="{{themeClass}}">
 
   <!-- 加载中。必须排在出错之前，否则首屏会一闪而过地报错 -->
   <view wx:if="{{loading}}" class="loading">正在加载…</view>
