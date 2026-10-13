@@ -16,6 +16,11 @@
 
   <block wx:else>
 
+    <!-- 切到外校为只读浏览：赛事与积分榜是对方学校的演示内容，不能操作也进不了详情 -->
+    <view wx:if="{{demoSchool}}" class="readonly-banner">
+      正在浏览 {{demoSchoolName}}（只读）· 赛事与积分榜为演示内容
+    </view>
+
     <!-- ========== 赛季说明 ========== -->
     <!-- 积分只来自赛事，且每赛季清零。先把口径写在这里，免得有人拿积分当实力比 -->
     <view class="season-bar">

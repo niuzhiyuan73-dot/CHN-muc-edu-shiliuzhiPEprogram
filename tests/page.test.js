@@ -629,6 +629,46 @@ test('比赛页 —— 切到北航显示北航的演示比赛，且没有任何
   }
 });
 
+test('赛事页 —— 切到北航显示北航的演示赛事与积分榜，且只读', async () => {
+  const schoolSession = require('../miniprogram/services/school-session');
+  const schoolMock = require('../miniprogram/services/school-mock');
+  schoolSession.reset();
+  schoolMock.setDemoActor('demo_muc_member');
+  try {
+    resetSession();
+    loginAs();
+    const page = instantiate(eventsConfig);
+    await page.onLoad();
+
+    assert.strictEqual(page.data.demoSchool, false);
+
+    schoolSession.setSchoolId('buaa');
+    await page.refresh();
+
+    assert.strictEqual(page.data.demoSchool, true);
+    assert.strictEqual(page.data.demoSchoolName, '北航');
+    // 赛事列表换成北航的，且没有发布 / 置顶这类写入口
+    assert.ok(page.data.view.events.length > 0, '北航有演示赛事');
+    assert.strictEqual(page.data.view.canPublish, false);
+    assert.ok(page.data.view.events.every((row) => row.canPin === false));
+    // 积分榜也是北航的演示榜，没有学院赛
+    assert.ok(page.data.view.rows.length > 0);
+    assert.strictEqual(page.data.view.me, null);
+    assert.strictEqual(page.data.view.canManageCollege, false);
+    assert.strictEqual(page.data.view.collegeEvents.length, 0);
+
+    // 点赛事行、点榜单行、「查看全部」都不跳转
+    calls.navigations.length = 0;
+    page.onOpenEvent({ currentTarget: { dataset: { eventId: page.data.view.events[0].id } } });
+    page.onOpenMember({ currentTarget: { dataset: { userId: page.data.view.rows[0].userId } } });
+    page.onMoreEvents();
+    assert.deepStrictEqual(calls.navigations, []);
+  } finally {
+    schoolMock.setDemoActor('demo_applicant');
+    schoolSession.reset();
+  }
+});
+
 /* ============================================================
  * 我的页
  * ============================================================ */

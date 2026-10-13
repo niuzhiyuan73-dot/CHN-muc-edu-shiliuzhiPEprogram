@@ -78,6 +78,29 @@ const DEMO_SCHOOLS = {
       ],
     },
 
+    events: {
+      seasonText: '2026 秋季赛季 · 北航',
+      list: [
+        { id: 'buaa_e3', title: '北航校队选拔赛', pinned: true, statusLabel: '报名中', isSignup: true, isOngoing: false,
+          timeText: '2026-11-18 13:30', location: '学院路校区体育馆', levelLabel: '校级', matchTypeLabel: '单打', disciplineLabel: '', quotaText: '7/24 人' },
+        { id: 'buaa_e1', title: '北航新生杯匹克球赛', pinned: false, statusLabel: '报名中', isSignup: true, isOngoing: false,
+          timeText: '2026-11-05 09:00', location: '学院路校区体育馆', levelLabel: '校级', matchTypeLabel: '单打', disciplineLabel: '男单', quotaText: '18/32 人' },
+        { id: 'buaa_e2', title: '北航院系友谊联赛', pinned: false, statusLabel: '进行中', isSignup: false, isOngoing: true,
+          timeText: '2026-10-28 14:00', location: '沙河校区球场', levelLabel: '院系', matchTypeLabel: '双打', disciplineLabel: '混双', quotaText: '16/16 人' },
+        { id: 'buaa_e4', title: '北航春季积分赛', pinned: false, statusLabel: '已结束', isSignup: false, isOngoing: false,
+          timeText: '2026-05-20 09:00', location: '沙河校区球场', levelLabel: '校级', matchTypeLabel: '单打', disciplineLabel: '女单', quotaText: '24/24 人' },
+      ],
+      points: [
+        { nickName: '李昊', realName: '李昊然', count: 6, points: 60 },
+        { nickName: '陈子恒', realName: '陈子恒', count: 5, points: 52 },
+        { nickName: '林晓', realName: '林晓', count: 5, points: 50 },
+        { nickName: '王岩', realName: '王岩', count: 4, points: 38 },
+        { nickName: '周雨桐', realName: '周雨桐', count: 3, points: 30 },
+        { nickName: '孙睿', realName: '孙睿', count: 3, points: 26 },
+        { nickName: '吴桐', realName: '吴桐', count: 2, points: 18 },
+      ],
+    },
+
     matches: [
       { matchId: 'buaa_m1', typeLabel: '男单', formatText: '11 分制 · 三局两胜', dateText: '2026-10-12 19:30',
         locationText: '学院路体育馆 3 号场', teamAText: '李昊', teamBText: '王岩', winnerSide: 'A',
@@ -277,4 +300,73 @@ function schoolMatches(schoolId, options = {}) {
   };
 }
 
-module.exports = { hasSchoolDemo, schoolHome, schoolRank, schoolMatches };
+/** 演示积分榜的一行榜面数据 → 页面渲染行 */
+function pointRowOf(schoolId, entry, index) {
+  const rank = index + 1;
+  return {
+    userId: `demo_${schoolId}_points_${rank}`,
+    rank,
+    medal: MEDALS[rank - 1] || '',
+    isMe: false,
+    nickName: entry.nickName,
+    realName: entry.realName || '',
+    avatarText: avatarOf(entry.nickName),
+    avatarUrl: '',
+    detailText: `${entry.count} 场赛事`,
+    valueText: String(entry.points),
+    noteText: '赛季积分',
+  };
+}
+
+/**
+ * 取某校的赛事页演示视图。形状与 events-view.loadEventsView 一致，只读了
+ * 写入口：没有发布权、没有学院赛，赛事列表与积分榜都不覆盖「我」。
+ *
+ * @param {string} schoolId
+ * @returns {Object|null}
+ */
+function schoolEvents(schoolId) {
+  const school = DEMO_SCHOOLS[schoolId];
+  if (!school || !school.events) return null;
+
+  const data = school.events;
+  const fullBoard = data.points.map((entry, index) => pointRowOf(schoolId, entry, index));
+  const rows = fullBoard.slice(0, TOP_LIMIT);
+  const total = fullBoard.length;
+
+  const events = data.list.map((entry) => ({
+    ...entry,
+    signedUp: false,
+    mySignupLabel: '',
+    // 置顶是写操作，演示里一律不给
+    canPin: false,
+  }));
+
+  return {
+    schoolName: school.shortName,
+    seasonText: data.seasonText,
+    rows,
+    allRows: fullBoard,
+    total,
+    hasMore: total > rows.length,
+    playerCountText: total > TOP_LIMIT ? `前 ${TOP_LIMIT} 名 · 共 ${total} 人` : `${total} 人上榜`,
+    empty: rows.length === 0,
+    emptyNote: '',
+    me: null,
+    meHint: `${school.shortName}的积分榜仅作演示浏览`,
+    events,
+    hasEvents: events.length > 0,
+    eventsEmptyNote: '还没有赛事',
+    eventTotal: events.length,
+    hasMoreEvents: false,
+    canPublish: false,
+    collegeEvents: [],
+    hasCollegeEvents: false,
+    collegeEventsEmptyNote: '还没有学院赛',
+    collegeEventTotal: 0,
+    hasMoreCollegeEvents: false,
+    canManageCollege: false,
+  };
+}
+
+module.exports = { hasSchoolDemo, schoolHome, schoolRank, schoolMatches, schoolEvents };

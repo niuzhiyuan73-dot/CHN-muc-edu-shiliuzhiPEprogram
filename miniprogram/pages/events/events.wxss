@@ -7,6 +7,17 @@
 @import "../../templates/rank-board.wxss";
 @import "../../templates/event-list.wxss";
 
+/* 只读浏览提示条：切到外校时出现在页面顶部，与首页同款 */
+.readonly-banner {
+  margin-bottom: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  background: #fff4e5;
+  color: #9a5b00;
+  font-size: var(--font-sm);
+  line-height: 1.6;
+}
+
 /* ==================== 赛季说明 ==================== */
 
 .season-bar {

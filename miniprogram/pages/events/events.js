@@ -29,6 +29,7 @@ const {
   setEventPinned,
   setCollegeEventPinned,
   isMock,
+  isMockNow,
 } = require('../../services/index.js');
 const { currentThemeClass } = require('../../services/branding.js');
 
@@ -45,6 +46,10 @@ Page({
     view: {},
     /** 开发期在页脚标注数据来源 */
     isMock,
+    /** 当前是否在浏览外校（演示）赛事：为真时整页只读，隐藏发布 / 置顶入口 */
+    demoSchool: false,
+    /** 演示学校简称，供只读提示条显示 */
+    demoSchoolName: '',
 
     // ---------- 积分榜按名字筛选 ----------
     // 完整榜留在 this.view 里，页面上只渲染筛选后的结果。与排行榜页同一套：
@@ -98,18 +103,52 @@ Page({
    */
   async refresh() {
     try {
+      // 切到模拟学校（北航）时展示该校的演示赛事与积分榜：整页只读，发布 /
+      // 置顶等入口一概不给。未开放学校维度的情况（云端数据源）回落到真实视图。
+      const session = require('../../services/school-session.js');
+      const demo = isMockNow()
+        ? require('../../services/school-demo.js').schoolEvents(session.getSchoolId())
+        : null;
+      if (demo) {
+        this.loaded = true;
+        this.view = demo;
+        this.setData({
+          loading: false,
+          error: '',
+          view: demo,
+          demoSchool: true,
+          demoSchoolName: demo.schoolName,
+          themeClass: currentThemeClass(),
+        });
+        this.applyKeyword(this.data.keyword);
+        return;
+      }
+
       const view = await loadEventsView({ user: this.currentUser(), isMock });
       this.loaded = true;
       // 整个视图模型另存一份。里面的完整榜 allRows 不参与渲染，
       // 只当筛选的数据源，所以不用塞进 data——省一次 setData 的开销。
       this.view = view;
-      this.setData({ loading: false, error: '', view, themeClass: currentThemeClass() });
+      this.setData({
+        loading: false,
+        error: '',
+        view,
+        demoSchool: false,
+        demoSchoolName: '',
+        themeClass: currentThemeClass(),
+      });
       // 重新装载后保留搜索词，重新算一遍要显示的行
       this.applyKeyword(this.data.keyword);
     } catch (err) {
       console.error('[events] 加载失败', err);
       this.loaded = true;
-      this.setData({ loading: false, error: '赛事页加载失败，请下拉重试', themeClass: currentThemeClass() });
+      this.setData({
+        loading: false,
+        demoSchool: false,
+        demoSchoolName: '',
+        error: '赛事页加载失败，请下拉重试',
+        themeClass: currentThemeClass(),
+      });
     }
   },
 
@@ -209,6 +248,8 @@ Page({
 
   /** 进「全部赛事」，看没被截断的完整列表 */
   onMoreEvents() {
+    // 外校演示赛事没有对应的列表页（那是本校的），别把人引到本校去
+    if (this.data.demoSchool) return undefined;
     wx.navigateTo({ url: '/pages/event-list/event-list?type=event' });
   },
 
@@ -219,6 +260,8 @@ Page({
 
   /** 点榜上的任何一行，去看这个人的完整战绩 */
   onOpenMember(event) {
+    // 外校演示榜单里的人没有本校账号，点进去只会是「查无此人」
+    if (this.data.demoSchool) return undefined;
     const userId = event.currentTarget.dataset.userId;
     if (!userId) return;
 
@@ -227,6 +270,8 @@ Page({
 
   /** 点一场赛事，进详情看报名名单或录入名次 */
   onOpenEvent(event) {
+    // 外校演示赛事只读，没有可进的详情页
+    if (this.data.demoSchool) return undefined;
     const eventId = event.currentTarget.dataset.eventId;
     if (!eventId) return;
 
