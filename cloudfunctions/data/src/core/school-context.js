@@ -3,12 +3,13 @@ const {
   schoolScope, schoolAssociationKey, schoolMemberKey, schoolRoleKey, schoolMembershipKey,
 } = require('../../lib/utils/school.js');
 
-async function buildSchoolContext({ repo, openId = '', scope, now = new Date() }) {
+// actorId 仅供已认证的内部事务重读使用，网络入口只能传微信 OPENID。
+async function buildSchoolContext({ repo, openId = '', actorId = '', scope, now = new Date() }) {
   const target = schoolScope(scope);
   const [school, schoolAssociation, actor] = await Promise.all([
     repo.schools.getById(target.schoolId),
     repo.schoolAssociations.getById(schoolAssociationKey(target)),
-    openId ? repo.users.getByOpenId(openId) : null,
+    actorId ? repo.users.getById(actorId) : openId ? repo.users.getByOpenId(openId) : null,
   ]);
   if (!school || school.schoolId !== target.schoolId || school.status !== 'active') throw new Error('学校不存在或已停用');
   if (!schoolAssociation || schoolAssociation.schoolId !== target.schoolId ||

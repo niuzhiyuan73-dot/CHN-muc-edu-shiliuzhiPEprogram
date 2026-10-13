@@ -259,7 +259,9 @@ function buildCollections(scope, inTx) {
     },
 
     audit: {
-      append: (entry) => col('auditLogs').add({ data: withoutId(entry) }),
+      append: (entry) => entry._id
+        ? col('auditLogs').doc(entry._id).set({ data: withoutId(entry) })
+        : col('auditLogs').add({ data: withoutId(entry) }),
     },
   };
   return attachSchoolRepository(repo, {

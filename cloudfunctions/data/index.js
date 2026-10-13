@@ -29,6 +29,7 @@ const { buildContext } = require('./src/core/context.js');
 const { createRepo } = require('./src/adapters/cloud-repo.js');
 const { isKnownAssociation, getAssociation } = require('./lib/utils/associations.js');
 const { ASSOCIATION_STATUS } = require('./lib/utils/constants.js');
+const { handleSchoolRequest } = require('./src/core/school-request.js');
 
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 
@@ -72,6 +73,10 @@ function resolveAssociation(association) {
 exports.main = async (event = {}) => {
   try {
     const { action, payload } = event;
+    if (event.protocolVersion !== undefined || event.schoolId !== undefined) {
+      const { OPENID } = cloud.getWXContext();
+      return await handleSchoolRequest(event, { repo: getRepo(), openId: OPENID });
+    }
 
     const assoc = resolveAssociation(event.association);
     if (assoc.error) return fail(assoc.error);

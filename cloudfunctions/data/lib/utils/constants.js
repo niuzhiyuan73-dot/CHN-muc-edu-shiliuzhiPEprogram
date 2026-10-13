@@ -651,6 +651,7 @@ const COLLECTION = {
   SCHOOL_MEMBERS: 'school_members',
   SCHOOL_ROLES: 'school_roles',
   MEMBER_RATINGS: 'member_ratings',
+  STUDENT_ID_CLAIMS: 'student_id_claims',
   USERS: 'users',
   MATCHES: 'matches',
   RANKINGS: 'rankings',

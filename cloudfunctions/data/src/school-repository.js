@@ -1,7 +1,7 @@
 /** 两个适配器共享的学校仓储扩展。原单校接口保留，S2 逐一接入新接口。 */
 const { schoolScope } = require('../lib/utils/school.js');
 
-const SCHOOL_COLLECTIONS = ['schools', 'schoolAssociations', 'colleges', 'schoolMembers', 'schoolRoles', 'memberRatings'];
+const SCHOOL_COLLECTIONS = ['schools', 'schoolAssociations', 'colleges', 'schoolMembers', 'schoolRoles', 'memberRatings', 'studentIdClaims'];
 const SCHOOL_ONLY = ['colleges', 'schoolMembers', 'schoolRoles'];
 const SCOPED_COLLECTIONS = [
   ...SCHOOL_ONLY, 'schoolAssociations', 'memberRatings', 'memberships',
