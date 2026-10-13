@@ -134,7 +134,7 @@ describe('公告公开列表 —— 跨协会、顶部协会标签切换', () =>
     // 把 pkb 的战报都下架：只清一个协会，别的协会的战报仍在
     const before = await loadAnnouncementListView({ association: 'pkb', tab: '战报' });
     for (const row of before.rows) {
-      await withAssociation('pkb', () => facade.archiveAnnouncement(row.id, PUBLISHER._id));
+      await withAssociation('pkb', (api) => api.archiveAnnouncement(row.id, PUBLISHER._id));
     }
 
     const view = await loadAnnouncementListView({ association: 'pkb', tab: '战报' });

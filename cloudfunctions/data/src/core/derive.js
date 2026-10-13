@@ -90,16 +90,19 @@ function collectCurrentEloOverrides(users, association) {
     const byPool = user && user.currentEloByAssoc && user.currentEloByAssoc[association];
     if (!byPool) continue;
     for (const pool of ALL_RATING_POOLS) {
-      const entry = byPool[pool];
-      if (!entry || !Number.isFinite(entry.value)) continue;
-      // at 一律归一成数字时间戳：回放的时间线排序只认有限数字（见 replay 的
-      // numOr），Date / ISO 串在旧数据或个人手改的场景里都可能出现。
-      out.push({
-        userId: user._id,
-        pool,
-        value: entry.value,
-        at: new Date(entry.at).getTime(),
+      const stored = byPool[pool];
+      const history = Array.isArray(stored) ? stored : stored ? [stored] : [];
+      for (const entry of history) {
+        if (!entry || !Number.isFinite(entry.value)) continue;
+        // at 一律归一成数字时间戳：回放的时间线排序只认有限数字（见 replay 的
+        // numOr），Date / ISO 串在旧数据或个人手改的场景里都可能出现。
+        out.push({
+          userId: user._id,
+          pool,
+          value: entry.value,
+          at: new Date(entry.at).getTime(),
       });
+      }
     }
   }
   return out;
@@ -168,7 +171,8 @@ function toSnapshot(dataset) {
  * @returns {Object}
  */
 function fromSnapshot(payload) {
-  return { ...payload, nameOf: createNameResolver(payload.users || []) };
+  const historical = (payload.applications || []).filter((user) => user.status === USER_STATUS.DISABLED);
+  return { ...payload, nameOf: createNameResolver([...(payload.users || []), ...historical]) };
 }
 
 /**
@@ -208,12 +212,10 @@ async function buildDataset(repo, season, association) {
   );
   const scopedMatches = allMatches.filter((match) => belongsToAssociation(match, association));
 
-  // 「在册」= 正常 + 已离校。离校的人不能再上榜、不能报名，但历史比赛
-  // 还在流水里，回放名单少了他会直接抛错——所以名单按 isMemberStatus 取，
-  // 上榜与报名另有闸门（见 leaderboard.isRankable 与 event.canSignUp）。
+  // 停用不能抹掉历史参赛身份。回放保留停用账号，公开会员名单另行过滤。
   // 进回放前先把初始分解析成本协会那一个（见 withScopedInitialElo）。
   const members = allUsers
-    .filter((user) => isMemberStatus(user.status))
+    .filter((user) => isMemberStatus(user.status) || user.status === USER_STATUS.DISABLED)
     .map((user) => withScopedInitialElo(user, association));
   const applications = allUsers.filter((user) => !isMemberStatus(user.status));
 
@@ -276,9 +278,9 @@ async function buildDataset(repo, season, association) {
 
   return {
     ...replayed,
-    users: membersWithRole,
+    users: membersWithRole.filter((user) => isMemberStatus(user.status)),
     // replayed.users 已带上分数与场次，给它一个与 mock 一致的名字
-    members: membersWithRole,
+    members: membersWithRole.filter((user) => isMemberStatus(user.status)),
     applications,
     ledger,
     announcements,

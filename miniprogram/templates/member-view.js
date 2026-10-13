@@ -15,12 +15,6 @@
  */
 
 const { loadMemberView, DEFAULT_HISTORY_LIMIT } = require('../services/profile-view.js');
-const {
-  getMember,
-  setCollegeLeader,
-  setAssociationLeader,
-  setMemberElo,
-} = require('../services/index.js');
 const { applyBranding, themeClassOf } = require('../services/branding.js');
 const { activeAssociations } = require('../utils/associations.js');
 const scope = require('../services/association-scope.js');
@@ -97,7 +91,7 @@ function createMemberPage(options = {}) {
           // mock 下永远答 u06，会让未登录的访客也拿到任免入口。身份按本页协会
           // 解析（见 viewerFor），使协会负责人随页内协会变化。
           viewer: await this.viewerFor(association),
-          // 页面局部的作用域：只在本次取数期间切过去，取完由 withAssociation 还原
+          // 页面局部的作用域：取数客户端固定绑定本页协会
           association,
         });
 
@@ -240,8 +234,8 @@ function createMemberPage(options = {}) {
     async viewerFor(association) {
       const user = this.currentUser();
       if (!user || !user._id) return user || null;
-      const reload = async () => (await getMember(user._id)) || user;
-      return association ? scope.withAssociation(association, reload) : reload();
+      const api = require('../services/index.js').forAssociation(association || scope.getAssociation());
+      return (await api.getMember(user._id)) || user;
     },
 
     /** 一句轻提示。Node 测试里没有 wx，静默跳过 */
@@ -276,16 +270,15 @@ function createMemberPage(options = {}) {
      *
      * 【为什么写也要按页内协会】个人详情页 / 他人主页允许页内切换协会查看。
      * 页内协会若不带给写接口，服务端就会按**全局**当前协会判权限与盖章，
-     * 于是「在 B 协会的页面上」做的一次调整会被算到 A 协会头上。这里临时切到
-     * 页内协会再发起写，与取数走同一条作用域（见 profile-view 的 withAssociation）。
-     * 非局部分页（如「我的」）没有页内协会，直接跑，作用域即全局。
+     * 于是「在 B 协会的页面上」做的一次调整会被算到 A 协会头上。这里把绑定
+     * 页内协会的客户端交给回调，非局部分页则绑定调用时的全局协会。
      *
-     * @param {Function} fn 无参函数，返回 Promise
+     * @param {Function} fn 接收绑定协会的 api，返回 Promise
      * @returns {Promise<*>}
      */
     runInLocalAssociation(fn) {
-      if (!localAssociation || !this.localAssociation) return fn();
-      return scope.withAssociation(this.localAssociation, fn);
+      const association = localAssociation && this.localAssociation || scope.getAssociation();
+      return scope.withAssociation(association, fn);
     },
 
     /**
@@ -321,8 +314,8 @@ function createMemberPage(options = {}) {
 
       // 写也走本页协会作用域：否则服务端按全局协会判权，页内切到别的协会时
       // 会改错协会（见 runInLocalAssociation）
-      const result = await this.runInLocalAssociation(() =>
-        setCollegeLeader(target.userId, user._id, leader.makeLeader)
+      const result = await this.runInLocalAssociation((api) =>
+        api.setCollegeLeader(target.userId, user._id, leader.makeLeader)
       );
       if (!result.ok) {
         this.showToast(result.message || '操作失败');
@@ -360,8 +353,8 @@ function createMemberPage(options = {}) {
       );
       if (!confirmed) return undefined;
 
-      const result = await this.runInLocalAssociation(() =>
-        setAssociationLeader(target.userId, user._id, leader.makeLeader)
+      const result = await this.runInLocalAssociation((api) =>
+        api.setAssociationLeader(target.userId, user._id, leader.makeLeader)
       );
       if (!result.ok) {
         this.showToast(result.message || '操作失败');
@@ -419,8 +412,8 @@ function createMemberPage(options = {}) {
         return undefined;
       }
 
-      const result = await this.runInLocalAssociation(() =>
-        setMemberElo(target.userId, entry.pool, value, user._id)
+      const result = await this.runInLocalAssociation((api) =>
+        api.setMemberElo(target.userId, entry.pool, value, user._id)
       );
       if (!result.ok) {
         this.showToast(result.message || '操作失败');

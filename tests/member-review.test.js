@@ -567,21 +567,21 @@ test('validateCurrentEloEdit —— 校验项目与数值，空值也当错误�
   );
 });
 
-test('buildCurrentEloByAssoc —— 只覆盖本协会本池那一档，含生效时刻，且不改入参', () => {
+test('buildCurrentEloByAssoc —— 追加改分历史，兼容旧记录，不改其他池或入参', () => {
   const member = {
     currentEloByAssoc: { pkb: { singles: { value: 1500, at: 100 } } },
   };
 
   const next = buildCurrentEloByAssoc(member, 'pkb', RATING_POOL.DOUBLES, 1620, 200);
   assert.deepStrictEqual(next, {
-    pkb: { singles: { value: 1500, at: 100 }, doubles: { value: 1620, at: 200 } },
+    pkb: { singles: { value: 1500, at: 100 }, doubles: [{ value: 1620, at: 200 }] },
   });
   // 不可变：入参没被改
   assert.deepStrictEqual(member.currentEloByAssoc, {
     pkb: { singles: { value: 1500, at: 100 } },
   });
 
-  // 同一（人、协会、池）重复设置只留最后一次
+  // 同一（人、协会、池）重复设置不能删除历史改分
   const again = buildCurrentEloByAssoc(
     { currentEloByAssoc: next },
     'pkb',
@@ -589,7 +589,7 @@ test('buildCurrentEloByAssoc —— 只覆盖本协会本池那一档，含生�
     1700,
     300
   );
-  assert.deepStrictEqual(again.pkb.doubles, { value: 1700, at: 300 });
+  assert.deepStrictEqual(again.pkb.doubles, [{ value: 1620, at: 200 }, { value: 1700, at: 300 }]);
 
   // 另一个协会各存一份，互不影响
   const other = buildCurrentEloByAssoc(
@@ -600,5 +600,5 @@ test('buildCurrentEloByAssoc —— 只覆盖本协会本池那一档，含生�
     400
   );
   assert.deepStrictEqual(other.pkb, next.pkb);
-  assert.deepStrictEqual(other.tt.singles, { value: 1400, at: 400 });
+  assert.deepStrictEqual(other.tt.singles, [{ value: 1400, at: 400 }]);
 });

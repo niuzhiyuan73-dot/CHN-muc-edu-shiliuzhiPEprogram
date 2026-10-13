@@ -55,7 +55,8 @@ function seasonId(association) {
  *    进回放的流水少了一批，等级分随之改变，旧缓存同样必须失效；
  *    日后调整 RATED_PAIR_LIMIT 也要在这里 +1。
  */
-const ALGO_VERSION = 7;
+// 8：保留停用参赛者回放、保留改分事件历史，作废旧派生快照。
+const ALGO_VERSION = 8;
 
 /**
  * 赛季文档的缺省形状。数据库里还没有 seasons 文档时用它顶上，
@@ -117,6 +118,13 @@ async function bumpSeason(tx, { association = '', anchorTime = null, now = new D
   return next;
 }
 
+/** 全局账号变更：每个协会的会员数据都需要重建；包含已停用的协会。 */
+async function bumpMemberSeasons(tx, { association = '', now = new Date() } = {}) {
+  const { allAssociations } = require('../../lib/utils/associations.js');
+  const ids = new Set([association, ...allAssociations().map((item) => item.id)]);
+  for (const id of ids) await bumpSeason(tx, { association: id, now });
+}
+
 /**
  * 开始新赛季：写入分界点，并把版本号加一。
  *
@@ -160,5 +168,6 @@ module.exports = {
   defaultSeason,
   loadSeason,
   bumpSeason,
+  bumpMemberSeasons,
   writeSeasonReset,
 };

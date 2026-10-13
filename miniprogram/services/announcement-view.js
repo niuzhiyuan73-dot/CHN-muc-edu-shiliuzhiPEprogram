@@ -33,7 +33,7 @@
 
 const { ANNOUNCEMENT_CATEGORIES } = require('../utils/constants.js');
 const { sortAnnouncements, buildAnnouncementRow, canPublish } = require('./announcement.js');
-const { getAnnouncements, getAnnouncementRecords } = require('./index.js');
+const { getAnnouncementRecords } = require('./index.js');
 const { brandOf } = require('./branding.js');
 const scope = require('./association-scope.js');
 
@@ -83,12 +83,11 @@ async function loadAnnouncementListView(options = {}) {
   const { tab = ALL_TAB, association } = options;
   const activeTab = VALID_TABS.includes(tab) ? tab : ALL_TAB;
 
-  // 串行逐协会取：当前协会是模块级单例，只能一个协会一个协会地切过去取。
-  // 取完 mapActiveAssociations 会把全局协会还原，故先记下它，供「没指定协会时」兜底。
+  // 记录本次加载的默认标签；聚合请求不修改全局选择。
   const fallback = scope.getAssociation();
 
-  const groups = await scope.mapActiveAssociations(async (assoc) => {
-    const items = await getAnnouncements();
+  const groups = await scope.mapActiveAssociations(async (assoc, api) => {
+    const items = await api.getAnnouncements();
     // actor 传 null：公开页不给任何管理按钮
     const rows = sortAnnouncements(items).map((item) => ({
       ...buildAnnouncementRow(item, { actor: null }),

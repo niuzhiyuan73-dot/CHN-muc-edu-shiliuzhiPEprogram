@@ -16,7 +16,6 @@
 
 const { defaultAssociationId } = require('../utils/associations.js');
 const scope = require('./association-scope.js');
-const { getMyProjects } = require('./index.js');
 
 /**
  * 各启用协会里，这个人的比赛场次（单打 + 双打）。
@@ -25,8 +24,8 @@ const { getMyProjects } = require('./index.js');
  * @returns {Promise<Array<{id: string, matchCount: number}>>} 与启用协会同序
  */
 async function matchCountsByAssociation(userId) {
-  return scope.mapActiveAssociations(async (assoc) => {
-    const projects = await getMyProjects(userId);
+  return scope.mapActiveAssociations(async (assoc, api) => {
+    const projects = await api.getMyProjects(userId);
     const matchCount = (Array.isArray(projects) ? projects : []).reduce(
       (sum, item) => sum + (Number(item.matchCount) || 0),
       0

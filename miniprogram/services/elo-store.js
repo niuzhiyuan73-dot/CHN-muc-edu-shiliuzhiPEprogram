@@ -27,7 +27,7 @@ const { perAssociation } = require('./association-scope.js');
 
 /**
  * 按协会分桶的改分台账：每个协会各持一份。
- * 键为 `${userId}|${pool}`，值为 `{ userId, pool, value, at }`。
+ * 键为 `${userId}|${pool}`，值为全部改分事件的数组。
  * @type {{current: Function, clear: Function}}
  */
 const state = perAssociation(() => ({ overrides: new Map() }));
@@ -45,7 +45,8 @@ function keyOf(userId, pool) {
  */
 function valueOf(userId, pool) {
   if (!userId || !pool) return { set: false, value: null, at: null };
-  const entry = state.current().overrides.get(keyOf(userId, pool));
+  const history = state.current().overrides.get(keyOf(userId, pool));
+  const entry = history && history[history.length - 1];
   if (!entry) return { set: false, value: null, at: null };
   return { set: true, value: entry.value, at: entry.at };
 }
@@ -67,7 +68,9 @@ function setValue(userId, pool, value, at) {
     value,
     at: Number.isFinite(atMs) ? atMs : Date.now(),
   };
-  state.current().overrides.set(keyOf(userId, pool), entry);
+  const bucket = state.current().overrides;
+  const key = keyOf(userId, pool);
+  bucket.set(key, [...(bucket.get(key) || []), entry]);
   return entry;
 }
 
@@ -76,7 +79,7 @@ function setValue(userId, pool, value, at) {
  * @returns {Array<{userId:string, pool:string, value:number, at:number}>}
  */
 function list() {
-  return [...state.current().overrides.values()].map((entry) => ({ ...entry }));
+  return [...state.current().overrides.values()].flat().map((entry) => ({ ...entry }));
 }
 
 /** 清空全部协会的台账。mock.resetCache() 会调用它。 */

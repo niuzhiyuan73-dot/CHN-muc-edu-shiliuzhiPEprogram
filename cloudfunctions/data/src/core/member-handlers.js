@@ -19,7 +19,7 @@
 const { ok, fail } = require('../envelope.js');
 const { callerError } = require('./context.js');
 const { getDataset } = require('./derive.js');
-const { bumpSeason } = require('./season.js');
+const { bumpSeason, bumpMemberSeasons } = require('./season.js');
 const { memberKey } = require('./idempotency.js');
 const { register: registerAccount } = require('../../lib/services/auth.js');
 const {
@@ -70,7 +70,7 @@ async function registerMember(payload = {}, ctx) {
       joinDate: ctx.now,
     };
     await tx.users.set(_id, record);
-    await bumpSeason(tx, { association: ctx.association, anchorTime: null, now: ctx.now });
+    await bumpMemberSeasons(tx, { association: ctx.association, now: ctx.now });
     return record;
   });
 
@@ -130,7 +130,7 @@ async function reviewMember(applicationId, action, reason, ctx, initialElo) {
     }
 
     await tx.users.set(applicationId, next);
-    await bumpSeason(tx, { association: ctx.association, anchorTime: null, now: ctx.now });
+    await bumpMemberSeasons(tx, { association: ctx.association, now: ctx.now });
     return next;
   });
 
@@ -187,7 +187,7 @@ async function updateProfile(payload = {}, ctx) {
     if (!current) return null;
     const next = { ...current, ...built.patch };
     await tx.users.set(ctx.actorId, next);
-    await bumpSeason(tx, { association: ctx.association, anchorTime: null, now: ctx.now });
+    await bumpMemberSeasons(tx, { association: ctx.association, now: ctx.now });
     return next;
   });
 

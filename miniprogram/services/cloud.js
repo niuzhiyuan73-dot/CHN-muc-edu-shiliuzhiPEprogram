@@ -31,6 +31,7 @@ const CLOUD_FUNCTION = 'data';
  * @returns {Promise<*>}
  * @throws {Error} 未开通云开发或云函数尚未部署时抛出
  */
+function createClient(association) {
 async function request(action, payload = {}) {
   if (typeof wx === 'undefined' || !wx.cloud) {
     throw new Error('云开发尚未初始化，请先在 app.js 中调用 wx.cloud.init');
@@ -41,7 +42,7 @@ async function request(action, payload = {}) {
   // 服务端判定，前端说了不算。
   const { result } = await wx.cloud.callFunction({
     name: CLOUD_FUNCTION,
-    data: { action, payload, association: scope.getAssociation() },
+    data: { action, payload, association: association === undefined ? scope.getAssociation() : association },
   });
 
   if (!result || result.ok !== true) {
@@ -229,7 +230,7 @@ const undoRally = (matchId, actor) => request('undoRally', { matchId, actor });
 const finishLiveScore = (matchId, actor) => request('finishLiveScore', { matchId, actor });
 const getLiveScores = (matchIds) => request('getLiveScores', { matchIds });
 
-module.exports = {
+return {
   CLOUD_FUNCTION,
   request,
   getCurrentUser,
@@ -301,3 +302,7 @@ module.exports = {
   recordForfeit,
   finishCollegeEvent,
 };
+}
+
+module.exports = createClient();
+Object.defineProperty(module.exports, 'forAssociation', { value: createClient });

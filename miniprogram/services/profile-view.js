@@ -50,17 +50,7 @@ const {
   isGlobalAdminMember,
 } = require('./member-review.js');
 const scope = require('./association-scope.js');
-const {
-  getCurrentUser,
-  getMember,
-  getMyProjects,
-  getRatingHistory,
-  getHeadToHead,
-  getPartnerRecord,
-  getEventRecord,
-  getMatchHistory,
-  getForm,
-} = require('./index.js');
+const { getCurrentUser } = require('./index.js');
 
 /** 默认取多少场逐场战绩。太多会拖慢首屏，剩下的靠「加载更多」。 */
 const DEFAULT_HISTORY_LIMIT = 20;
@@ -197,13 +187,9 @@ async function loadMemberView(userId, options = {}) {
   // 页面局部的协会切换（个人详情页 / 他人主页）：只想让这一页按另一个协会取数，
   // 不改变全局的当前协会。递归一次即可——第二次不再带 association，取完由
   // withAssociation 还原全局作用域。
-  if (association && association !== scope.getAssociation()) {
-    return scope.withAssociation(association, () =>
-      loadMemberView(userId, { ...options, association: undefined })
-    );
-  }
+  const api = require('./index.js').forAssociation(association || scope.getAssociation());
 
-  const user = userId ? await getMember(userId) : await getCurrentUser();
+  const user = userId ? await api.getMember(userId) : await api.getCurrentUser();
   if (!user) {
     return { found: false };
   }
@@ -212,20 +198,20 @@ async function loadMemberView(userId, options = {}) {
   // 这只有派生数据集里的会员才带 ratings（见 rating.summarizeCareer）。云端
   // getCurrentUser 给的是账号原始文档（含手机号等本人字段）但不含 ratings，
   // 故本人场景补取一份派生记录专供判定；「看的是谁」仍用 user，展示字段不变。
-  const target = user.ratings ? user : (await getMember(user._id)) || user;
+  const target = user.ratings ? user : (await api.getMember(user._id)) || user;
 
-  const projects = sortProjectsForDisplay(await getMyProjects(user._id));
+  const projects = sortProjectsForDisplay(await api.getMyProjects(user._id));
   const active = pickProject(projects, project);
   // 没打过任何比赛的人没有项目，此时不能拿 null 去查池相关的接口
   const poolFilter = active ? { pool: active.pool } : {};
 
   const [ratingHistory, headToHead, partners, eventRecord, history, form] = await Promise.all([
-    active ? getRatingHistory(user._id, active.pool) : Promise.resolve([]),
-    getHeadToHead(user._id, poolFilter),
-    getPartnerRecord(user._id, poolFilter),
-    getEventRecord(user._id, poolFilter),
-    getMatchHistory(user._id, { ...poolFilter, limit: historyLimit }),
-    getForm(user._id, { limit: FORM_LIMIT }),
+    active ? api.getRatingHistory(user._id, active.pool) : Promise.resolve([]),
+    api.getHeadToHead(user._id, poolFilter),
+    api.getPartnerRecord(user._id, poolFilter),
+    api.getEventRecord(user._id, poolFilter),
+    api.getMatchHistory(user._id, { ...poolFilter, limit: historyLimit }),
+    api.getForm(user._id, { limit: FORM_LIMIT }),
   ]);
 
   const eventRecords = eventRecord.records.map((row) => ({
@@ -394,9 +380,9 @@ async function loadProfileSummary() {
 
   const nameDisplay = resolveNameDisplay(user);
 
-  const loaded = await scope.mapActiveAssociations(async (assoc) => ({
+  const loaded = await scope.mapActiveAssociations(async (assoc, api) => ({
     assoc,
-    record: await getEventRecord(user._id, {}),
+    record: await api.getEventRecord(user._id, {}),
   }));
 
   let eventCount = 0;

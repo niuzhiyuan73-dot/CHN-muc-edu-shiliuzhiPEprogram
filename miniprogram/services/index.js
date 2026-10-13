@@ -88,30 +88,37 @@ function isMockNow() {
  * 名单以 mock 为准：它是客户端接口的超集（多出 mock 特有的 load / resetCache），
  * 与 cloud 的一致性由 tests/datasource.test.js 守着。
  */
-const api = {};
-for (const name of Object.keys(mock)) {
-  if (typeof mock[name] !== 'function') continue;
-  api[name] = (...args) => {
-    // 解析数据源与「本实现不支持该接口」这两步也放进 run 里：
-    // 它们同样会抛（数据源标识非法、mock 特有的 load/resetCache 在云端没有），
-    // 若留在守卫外面，写操作的异常照样会冒到页面上把按钮卡死。
-    const run = () => {
-      const source = resolveSource();
-      if (typeof source[name] !== 'function') {
-        // 只可能发生在 mock 特有而 cloud 没有的名字上（load / resetCache）
-        throw new Error(`当前数据源（${current}）不支持 ${name}`);
-      }
-      return source[name](...args);
+function createApi(association) {
+  const api = {};
+  for (const name of Object.keys(mock)) {
+    if (typeof mock[name] !== 'function') continue;
+    api[name] = (...args) => {
+      const run = () => {
+        const source = resolveSource();
+        if (typeof source[name] !== 'function') {
+          throw new Error(`当前数据源（${current}）不支持 ${name}`);
+        }
+        if (association === undefined) return source[name](...args);
+        if (current === DATA_SOURCE.CLOUD) {
+          return source.forAssociation(association)[name](...args);
+        }
+        return scope.runSynchronous(association, () => source[name](...args));
+      };
+      return isWriteAction(name) ? guardWrite(run) : run();
     };
-    // 写接口在此收口：任何异常都收敛成 {ok:false,...}，免得页面因未处理的
-    // 异常卡在 submitting 上（见 utils/write.js）。读接口不套——读失败该由
-    // 页面自己 catch，不能伪装成空数据。
-    return isWriteAction(name) ? guardWrite(run) : run();
-  };
+  }
+  return api;
 }
+
+function forAssociation(id) {
+  scope.validateAssociation(id);
+  return createApi(id);
+}
+const api = createApi();
 
 module.exports = {
   ...api,
+  forAssociation,
   setDataSource,
   getDataSource,
   isMockNow,

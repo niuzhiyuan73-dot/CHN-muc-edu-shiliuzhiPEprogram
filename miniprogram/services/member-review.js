@@ -341,8 +341,8 @@ function validateCurrentEloEdit(actor, target, pool, value, options = {}) {
 /**
  * 生成「把某会员在某协会某项目的当前等级分设为 value」之后的新映射。
  *
- * 结构 `currentEloByAssoc = { 协会: { 池: {value, at} } }`：每个（人、协会、池）
- * 只留最后一次设置（含生效时刻 at，回放据此把它插进时间线）。与 rating.js
+ * 结构 `currentEloByAssoc = { 协会: { 池: [{value, at}] } }`：保留全部改分事件。
+ * 兼容旧版单条记录，首次追加时转为数组。与 rating.js
  * 同一纪律——产出新对象，不就地改。
  *
  * @param {Object} member 会员记录
@@ -354,7 +354,9 @@ function validateCurrentEloEdit(actor, target, pool, value, options = {}) {
  */
 function buildCurrentEloByAssoc(member, association, pool, value, at) {
   const map = { ...((member && member.currentEloByAssoc) || {}) };
-  map[association] = { ...(map[association] || {}), [pool]: { value, at } };
+  const previous = map[association] && map[association][pool];
+  const history = Array.isArray(previous) ? previous : previous ? [previous] : [];
+  map[association] = { ...(map[association] || {}), [pool]: [...history, { value, at }] };
   return map;
 }
 

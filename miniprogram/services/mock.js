@@ -431,7 +431,7 @@ function buildCache(association) {
   // 还在流水里，回放名单里少了他会直接抛错，所以仍要进回放；不上榜由
   // leaderboard.isRankable 把关，不在这里分家。
   const applications = local.filter((account) => !isMemberStatus(account.status));
-  const approved = local.filter((account) => isMemberStatus(account.status));
+  const approved = local.filter((account) => isMemberStatus(account.status) || account.status === USER_STATUS.DISABLED);
 
   // 2. 比赛：种子流水接上本次会话新录的，再盖上改判（确认 / 驳回 / 撤销）。
   //    同一编号只留一条：抽签排好却还没打的比赛（如演示赛事的半决赛）本就
@@ -556,7 +556,8 @@ function buildCache(association) {
       isGlobalAdmin,
     };
   };
-  const members = replayed.users.map(patchAccount);
+  const replayAccounts = replayed.users.map(patchAccount);
+  const members = replayAccounts.filter((account) => isMemberStatus(account.status));
 
   return {
     ...replayed,
@@ -575,7 +576,7 @@ function buildCache(association) {
     // 放在 ...replayed 之后，盖掉种子原封不动带来的那份 announcements
     announcements,
     announcementLedger,
-    nameOf: createNameResolver(members),
+    nameOf: createNameResolver(replayAccounts),
   };
 }
 
@@ -1015,6 +1016,10 @@ async function getMatchRecords(options = {}) {
  * @returns {Promise<{ok:boolean, match:Object|null, errors:Object, scoreErrors:string[], firstError:string}>}
  */
 async function submitMatch(params = {}) {
+  return submitMatchNow(params);
+}
+
+function submitMatchNow(params = {}) {
   const { users, meta, ledger } = load();
   const { now, id, actor, ...fields } = params;
 
@@ -1064,6 +1069,10 @@ async function submitMatch(params = {}) {
     const match = matchStore.saveMatch({ ...target, ...filled.patch });
     invalidate();
     return { ok: true, match, errors: {}, scoreErrors: [], firstError: '' };
+  }
+
+  if (fields.eventId) {
+    return { ok: false, match: null, errors: {}, scoreErrors: [], firstError: '赛事成绩请从赛程中选择比赛录入' };
   }
 
   const result = buildMatchRecord(
@@ -1613,7 +1622,7 @@ async function finishLiveScore(matchId, actor) {
     return { ok: false, live: state, match: null, message: '还没有可提交的比分' };
   }
 
-  const submitted = await submitMatch({ id: matchId, scoreA, scoreB, actor });
+  const submitted = submitMatchNow({ id: matchId, scoreA, scoreB, actor });
   if (!submitted.ok) {
     return { ok: false, live: state, match: null, message: submitted.firstError || '提交失败' };
   }
@@ -1679,7 +1688,7 @@ async function registerMember(profile, options = {}) {
   }
 
   const account = userStore.addAccount(result.account);
-  invalidate();
+  caches.clear();
   return { ok: true, account, errors: {}, firstError: '' };
 }
 
@@ -1715,7 +1724,7 @@ async function reviewMember(applicationId, actor, action, reason, initialElo) {
   }
 
   userStore.setStatus(applicationId, patch);
-  invalidate();
+  caches.clear();
   return { ok: true, account: userStore.findAccount(applicationId), message: '' };
 }
 
@@ -1959,7 +1968,7 @@ async function updateProfile(patch, actor) {
   }
 
   profileStore.setProfile(account._id, built.patch);
-  invalidate();
+  caches.clear();
   // 重新查一遍，拿到的就是盖过补丁的新昵称/头像
   return { ok: true, account: accountOf(account._id), errors: {}, firstError: '' };
 }

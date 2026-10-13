@@ -585,8 +585,8 @@ test('当前等级分 —— 管理员改本协会某池：落 currentEloByAssoc
 
   // 落库：按协会、按池存一个 {value, at}
   const stored = await repo.users.getById('u01');
-  assert.equal(stored.currentEloByAssoc.pkb[RATING_POOL.SINGLES].value, 1700);
-  assert.ok(Number.isFinite(stored.currentEloByAssoc.pkb[RATING_POOL.SINGLES].at));
+  assert.equal(stored.currentEloByAssoc.pkb[RATING_POOL.SINGLES][0].value, 1700);
+  assert.ok(Number.isFinite(stored.currentEloByAssoc.pkb[RATING_POOL.SINGLES][0].at));
 
   // pkb 名单里 u01 的单打分数被改成 1700（改分晚于所有比赛，直接是终值）
   const pkbAfter = (await on(repo, 'getMembers', {}, 'openid-u01', 'pkb')).data.find(

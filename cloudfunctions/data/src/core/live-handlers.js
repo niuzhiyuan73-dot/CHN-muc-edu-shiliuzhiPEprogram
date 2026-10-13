@@ -23,7 +23,7 @@ const { ok, fail } = require('../envelope.js');
 const { callerError } = require('./context.js');
 const { getDataset } = require('./derive.js');
 // 定稿把逐球流水转成正式比分后，交给现有的录分链路（单向依赖，无环）
-const { submitMatch } = require('./match-handlers.js');
+const { writeScheduledScore } = require('./score-write.js');
 const { canRecordScore } = require('../../lib/services/match-record.js');
 const { belongsToAssociation } = require('../../lib/utils/associations.js');
 const {
@@ -230,50 +230,26 @@ async function finishLiveScore(payload = {}, ctx) {
 
   const id = liveKey(matchId);
 
-  // 先在事务内复查并盖 finalizedAt 章：两个并发的定稿只可能有一个通过，
-  // 另一个看到章已在直接退出，避免重复走 submitMatch（白 bump 一次赛季）。
-  // 旧写法在事务外读、又在事务外写，两次并发会双双通过守卫、各交一次。
-  const claim = await ctx.repo.transaction(async (tx) => {
+  // 正式比分与定稿章必须一起提交；任何数据库异常都会回滚整个事务。
+  const result = await ctx.repo.transaction(async (tx) => {
     const current = await tx.liveScores.getById(id);
-    if (!current) return { error: '这场比赛还没开实时计分台', live: null };
-    // 已经定稿过就别再交一次：正式比分早已写进比赛记录，重交只会白 bump 一次赛季
-    if (isFinalized(current)) return { error: '比赛已经定稿了', live: current };
-    // 只有分出胜负才能定稿：半局比分（比如 5:2）不是一场合法比赛
-    if (current.status !== LIVE_STATUS.FINISHED) {
-      return { error: '比赛还没打完，不能定稿', live: current };
+    const failed = (message) => ({ ok: false, live: current, match: null, message });
+    if (!current || !belongsToAssociation(current, ctx.association)) {
+      return failed('这场比赛还没开实时计分台');
     }
-
-    const { scoreA, scoreB } = toOfficialScores(current);
-    if (scoreA.length === 0) return { error: '还没有可提交的比分', live: current };
-
-    // 实时态留在台账里（status=finished），查看端据此显示终局；盖 finalizedAt
-    // 章：此后 undoRally 一律拒绝，实时态转只读。
-    const claimed = { ...current, finalizedAt: ctx.now, updatedBy: ctx.actorId, updatedAt: ctx.now };
-    await tx.liveScores.update(id, claimed);
-    return { live: claimed, scoreA, scoreB };
+    if (isFinalized(current)) return failed('比赛已经定稿了');
+    if (current.status !== LIVE_STATUS.FINISHED) {
+      return failed('比赛还没打完，不能定稿');
+    }
+    const scores = toOfficialScores(current);
+    if (scores.scoreA.length === 0) return failed('还没有可提交的比分');
+    const submitted = await writeScheduledScore(tx, matchId, scores, { dataset, ctx });
+    if (!submitted.ok) return failed(submitted.firstError || '提交失败');
+    const live = { ...current, finalizedAt: ctx.now, updatedBy: ctx.actorId, updatedAt: ctx.now };
+    await tx.liveScores.update(id, live);
+    return { ok: true, live, match: submitted.match, message: '' };
   });
-
-  if (claim.error) return ok({ ok: false, live: claim.live, match: null, message: claim.error });
-
-  // 复用现有链路：它负责校验、写回比分、把状态留在待确认并 bumpSeason
-  const submitted = await submitMatch({ id: matchId, scoreA: claim.scoreA, scoreB: claim.scoreB }, ctx);
-  const body = submitted && submitted.data;
-  if (!body || !body.ok) {
-    // 定稿没成功：撤掉刚才盖的章，让实时态回到可写、可重试的状态
-    await ctx.repo.liveScores.update(id, {
-      finalizedAt: null,
-      updatedBy: ctx.actorId,
-      updatedAt: ctx.now,
-    });
-    return ok({
-      ok: false,
-      live: claim.live,
-      match: null,
-      message: (body && body.firstError) || '提交失败',
-    });
-  }
-
-  return ok({ ok: true, live: claim.live, match: body.match, message: '' });
+  return ok(result);
 }
 
 /**

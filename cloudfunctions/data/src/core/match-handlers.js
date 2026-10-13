@@ -21,6 +21,7 @@
 const { ok, fail } = require('../envelope.js');
 const { callerError } = require('./context.js');
 const { getDataset } = require('./derive.js');
+const { writeScheduledScore } = require('./score-write.js');
 const { bumpSeason } = require('./season.js');
 const { matchNaturalKey } = require('./idempotency.js');
 const { checkSubmitAllowed } = require('../../lib/services/rating-cap.js');
@@ -38,7 +39,6 @@ const {
   buildMatchRecord,
   buildForfeitPatch,
   buildRefereePatch,
-  fillScheduledMatch,
   canRecordScore,
 } = require('../../lib/services/match-record.js');
 const { canManage } = require('../../lib/services/permission.js');
@@ -90,70 +90,11 @@ function anchorCandidate(dataset, fallback) {
  * @param {Object} params { dataset, ctx, now }
  * @returns {Promise<Object>}
  */
-async function submitScheduledMatch(id, scores, { dataset, ctx, now }) {
-  const target = findRecord(dataset, id);
-  if (!target) {
-    return ok({ ok: false, match: null, errors: {}, scoreErrors: [], firstError: '找不到这场比赛' });
-  }
-  // 参赛者本人、管理员，或学院负责人代录本学院有人上场的比赛（见 canRecordScore）。
-  // 学院负责人的权限以学院为界，不能替别的学院录分。
-  const mayRecord = canRecordScore(target, ctx.actorId, {
-    role: Number(ctx.role),
-    college: (ctx.actor && ctx.actor.college) || '',
-    collegeOf: (id) => (dataset.users.find((u) => u._id === id) || {}).college || '',
-  });
-  if (!mayRecord) {
-    return ok({
-      ok: false,
-      match: null,
-      errors: {},
-      scoreErrors: [],
-      firstError: '只有参赛者、本学院负责人或管理员可以录入这场比赛的成绩',
-    });
-  }
-
-  const filled = fillScheduledMatch(target, scores, {
-    members: dataset.users,
-    now: now || ctx.now,
-    minMatchTime: dataset.meta.seasonStart || dataset.meta.firstMatchTime,
-    // 录入人按登录者记，而不是沿用记录上的空值：确认权要靠它区分「自己」与「对手」
-    recorder: ctx.actorId,
-  });
-  if (!filled.ok) {
-    return ok({
-      ok: false,
-      match: null,
-      errors: filled.errors,
-      scoreErrors: filled.scoreErrors,
-      firstError: filled.firstError,
-    });
-  }
-
-  const match = await ctx.repo.transaction(async (tx) => {
-    const current = await tx.matches.getById(id);
-    // 事务内再核一次：并发的补录与撤销，只有一侧能落地
-    if (!current || current.status !== MATCH_STATUS.PENDING) return null;
-
-    const patch = {
-      ...filled.patch,
-      status: MATCH_STATUS.PENDING,
-      action: 'score',
-      actor: ctx.actorId,
-      actedAt: ctx.now,
-    };
-    await tx.matches.update(id, patch);
-    await bumpSeason(tx, {
-      association: ctx.association,
-      anchorTime: anchorCandidate(dataset, current.matchTime),
-      now: ctx.now,
-    });
-    return { ...current, ...patch };
-  });
-
-  if (!match) {
-    return ok({ ok: false, match: null, errors: {}, scoreErrors: [], firstError: '只有待确认的比赛可以录分' });
-  }
-  return ok({ ok: true, match, errors: {}, scoreErrors: [], firstError: '' });
+async function submitScheduledMatch(id, scores, context) {
+  const result = await context.ctx.repo.transaction((tx) =>
+    writeScheduledScore(tx, id, scores, context)
+  );
+  return ok(result);
 }
 
 /**
@@ -236,6 +177,10 @@ async function submitMatch(payload = {}, ctx) {
   // 若在这里另立一条新记录，签表里那场会永远空着，比分又挂到了另一条上。
   if (id) {
     return submitScheduledMatch(id, fields, { dataset, ctx });
+  }
+
+  if (fields.eventId) {
+    return ok({ ok: false, match: null, errors: {}, scoreErrors: [], firstError: '赛事成绩请从赛程中选择比赛录入' });
   }
 
   const result = buildMatchRecord(

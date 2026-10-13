@@ -10,8 +10,7 @@
  * 近期赛事把全部协会的都摆出来，每条标注它属于哪个协会；想看某个协会的
  * 全部，再切过去（见需求整理 §11.3）。
  *
- * 【为什么聚合要串行取】当前协会是模块级单例状态（见 association-scope），
- * 跨协会读只能一个协会一个协会地切过去、取完还原，不能并发。
+ * 聚合使用绑定协会的 API，不借用全局选择；赛事与概况可以安全并发。
  *
  * 【为什么近期赛事要另取报名记录】
  * 卡片上要显示「已报几人」「我报没报」。报名记录不在赛事记录里，
@@ -30,7 +29,6 @@ const scope = require('./association-scope.js');
 const { sortAnnouncements } = require('./announcement.js');
 // 赛事行与赛事页共用一份整形，配额、报名状态两处的口径保持一致
 const { buildEventRow } = require('./event.js');
-const { getAnnouncements, getEvents, getEventSignups, getHomeSummary } = require('./index.js');
 
 /** 首页默认展示的公告与赛事条数。太多会把首屏撑得很长。 */
 const DEFAULT_ANNOUNCEMENT_LIMIT = 3;
@@ -90,9 +88,9 @@ function sortUpcomingEvents(events) {
  * @param {Array<Object>} events
  * @returns {Promise<Map<string, Array<Object>>>}
  */
-async function loadSignupMap(events) {
+async function loadSignupMap(events, api = require('./index.js')) {
   const pairs = await Promise.all(
-    events.map(async (event) => [event._id, await getEventSignups(event._id)])
+    events.map(async (event) => [event._id, await api.getEventSignups(event._id)])
   );
   return new Map(pairs);
 }
@@ -104,8 +102,8 @@ async function loadSignupMap(events) {
  * @returns {Promise<Array<Object>>} 排序后的原始公告（带 __assoc 标记）
  */
 async function collectAnnouncements() {
-  const grouped = await scope.mapActiveAssociations(async (assoc) => {
-    const items = await getAnnouncements();
+  const grouped = await scope.mapActiveAssociations(async (assoc, api) => {
+    const items = await api.getAnnouncements();
     return (Array.isArray(items) ? items : []).map((item) => ({ ...item, __assoc: assoc }));
   });
   return sortAnnouncements(grouped.flat());
@@ -119,9 +117,9 @@ async function collectAnnouncements() {
  * @returns {Promise<Array<Object>>}
  */
 async function collectUpcomingEvents(actor, limit) {
-  const grouped = await scope.mapActiveAssociations(async (assoc) => {
-    const events = sortUpcomingEvents(await getEvents());
-    const signupMap = await loadSignupMap(events);
+  const grouped = await scope.mapActiveAssociations(async (assoc, api) => {
+    const events = sortUpcomingEvents(await api.getEvents());
+    const signupMap = await loadSignupMap(events, api);
     return events.map((event) => ({
       event,
       assoc,
@@ -149,7 +147,7 @@ async function collectUpcomingEvents(actor, limit) {
  * @returns {Promise<Object>}
  */
 async function collectSummary() {
-  const list = await scope.mapActiveAssociations(async () => getHomeSummary());
+  const list = await scope.mapActiveAssociations(async (assoc, api) => api.getHomeSummary());
   let memberCount = 0;
   let matchCount = 0;
   let eventCount = 0;

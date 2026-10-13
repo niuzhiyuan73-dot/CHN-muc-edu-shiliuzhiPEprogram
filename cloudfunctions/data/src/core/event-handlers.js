@@ -243,8 +243,26 @@ async function signUpEvent(payload = {}, ctx) {
   if (!built.ok) return ok({ ok: false, record: null, message: built.message });
 
   const _id = signupNaturalKey(payload.id, ctx.actorId);
-  const record = await ctx.repo.transaction(async (tx) => {
+  const result = await ctx.repo.transaction(async (tx) => {
+    const fresh = await tx.events.getById(payload.id);
     const existing = await tx.eventSignups.getById(_id);
+    if (!belongsToAssociation(fresh, ctx.association)) return { message: '找不到这场赛事' };
+    // 旧赛事首次写入时从报名表初始化；后续以事务内赛事计数为准。
+    const count = Number.isInteger(fresh.signupCount)
+      ? fresh.signupCount
+      : signups.filter((item) => item.status !== SIGNUP_STATUS.CANCELED).length;
+    if (!canSignUp({ ...fresh, quota: 0 }, ctx.actor, { signup: existing })) {
+      return { message: signUpRefusal(fresh, existing) };
+    }
+    if (Number(fresh.quota) > 0 && count >= Number(fresh.quota)) {
+      return { message: '报名名额已满' };
+    }
+    const builtFresh = buildSignupRecord(fresh, ctx.actor, { now: ctx.now });
+    if (!builtFresh.ok) return { message: builtFresh.message };
+    await tx.events.update(payload.id, {
+      signupCount: count + 1,
+      signupRevision: Number(fresh.signupRevision || 0) + 1,
+    });
     if (existing) {
       // 取消过的人重新报名：翻回同一条记录，报名时间刷新为这一次
       await tx.eventSignups.update(_id, {
@@ -253,15 +271,15 @@ async function signUpEvent(payload = {}, ctx) {
         checkInTime: null,
         actorId: ctx.actorId,
       });
-      return { ...existing, status: SIGNUP_STATUS.SIGNED, signTime: ctx.now, checkInTime: null };
+      return { record: { ...existing, status: SIGNUP_STATUS.SIGNED, signTime: ctx.now, checkInTime: null } };
     }
-    const doc = { ...built.record, _id, association: ctx.association };
+    const doc = { ...builtFresh.record, _id, association: ctx.association };
     await tx.eventSignups.insert(doc);
-    return doc;
+    return { record: doc };
   });
 
   // 报名不影响等级分，无需让回放缓存失效（见文件头说明）
-  return ok({ ok: true, record, message: '' });
+  return ok({ ok: Boolean(result.record), record: result.record || null, message: result.message || '' });
 }
 
 /**
@@ -304,11 +322,23 @@ async function cancelSignupEvent(payload = {}, ctx) {
   }
 
   const patch = { status: SIGNUP_STATUS.CANCELED, actorId: ctx.actorId, actedAt: ctx.now };
+  const signups = await ctx.repo.eventSignups.listByEvent(payload.id);
   const record = await ctx.repo.transaction(async (tx) => {
+    const fresh = await tx.events.getById(payload.id);
+    const current = await tx.eventSignups.getById(_id);
+    if (!belongsToAssociation(fresh, ctx.association) || !canCancelSignup(fresh, ctx.actor, { signup: current })) return null;
+    const count = Number.isInteger(fresh.signupCount)
+      ? fresh.signupCount
+      : signups.filter((item) => item.status !== SIGNUP_STATUS.CANCELED).length;
     await tx.eventSignups.update(_id, patch);
-    return { ...signup, ...patch };
+    await tx.events.update(payload.id, {
+      signupCount: Math.max(0, count - 1),
+      signupRevision: Number(fresh.signupRevision || 0) + 1,
+    });
+    return { ...current, ...patch };
   });
 
+  if (!record) return ok({ ok: false, record: null, message: '现在不能取消报名' });
   return ok({ ok: true, record, message: '' });
 }
 
@@ -342,10 +372,16 @@ async function checkInEvent(payload = {}, ctx) {
   if (!built.ok) return ok({ ok: false, record: null, message: built.message });
 
   const record = await ctx.repo.transaction(async (tx) => {
-    await tx.eventSignups.update(_id, built.patch);
-    return { ...signup, ...built.patch };
+    const fresh = await tx.events.getById(payload.id);
+    const current = await tx.eventSignups.getById(_id);
+    if (!fresh || !canCheckIn(fresh, ctx.actor, { isMock: false, target: target || {} })) return null;
+    const checked = buildCheckInPatch(current, ctx.actor, { now: ctx.now });
+    if (!checked.ok) return null;
+    await tx.eventSignups.update(_id, checked.patch);
+    return { ...current, ...checked.patch };
   });
 
+  if (!record) return ok({ ok: false, record: null, message: '报名状态已变化，请刷新后重试' });
   return ok({ ok: true, record, message: '' });
 }
 
@@ -502,6 +538,9 @@ async function drawEvent(payload = {}, ctx) {
   const drafts = buildInitialMatches(event, draw);
 
   const written = await ctx.repo.transaction(async (tx) => {
+    const fresh = await tx.events.getById(payload.id);
+    if (!fresh || !canDrawEvent(fresh, ctx.actor, { isMock: false }) ||
+        Number(fresh.signupRevision || 0) !== Number(event.signupRevision || 0)) return null;
     await tx.events.update(payload.id, { draw });
 
     const docs = [];
@@ -524,6 +563,7 @@ async function drawEvent(payload = {}, ctx) {
     return { record: { ...event, draw }, docs };
   });
 
+  if (!written) return ok({ ok: false, record: null, draw: null, matches: [], message: '赛事或报名名单已变化，请刷新后重新抽签' });
   return ok({ ok: true, record: written.record, draw, matches: written.docs, message: '' });
 }
 
