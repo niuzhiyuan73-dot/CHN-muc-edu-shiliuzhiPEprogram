@@ -28,9 +28,29 @@
   margin-bottom: var(--space-xs);
 }
 
+/* 右上角两个徽章（协会 / 学校）竖排，标题长时也不挤 */
+.hero-badges {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8rpx;
+  flex-shrink: 0;
+}
+
 .hero-subtitle {
   font-size: var(--font-sm);
   opacity: 0.85;
+}
+
+/* 只读浏览提示条：切到外校时出现在品牌区下方 */
+.readonly-banner {
+  margin-bottom: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  background: #fff4e5;
+  color: #9a5b00;
+  font-size: var(--font-sm);
+  line-height: 1.6;
 }
 
 .hero-badge {

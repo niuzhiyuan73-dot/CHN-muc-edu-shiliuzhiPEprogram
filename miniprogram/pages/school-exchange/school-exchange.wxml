@@ -1,0 +1,66 @@
+<view class="page-container exchange-page">
+  <view class="card">
+    <view class="card-title">跨校单打邀请赛</view>
+    <view class="hint">本地模拟体验 · 交流赛不计入校内等级分和积分</view>
+    <picker range="{{schools}}" range-key="name" value="{{schoolIndex}}" disabled="{{busy}}" bindchange="onSchoolChange"><view class="selection">{{schoolName}} · 切换学校 ›</view></picker>
+    <picker range="{{actors}}" range-key="label" value="{{actorIndex}}" disabled="{{busy}}" bindchange="onActorChange"><view class="selection">{{actorName}} · 切换体验身份 ›</view></picker>
+  </view>
+  <view wx:if="{{error}}" class="card error">{{error}}<button size="mini" bindtap="onRefresh" disabled="{{busy}}">刷新</button></view>
+  <view wx:if="{{notice}}" class="card hint">{{notice}}</view>
+  <view wx:if="{{loading}}" class="card hint">正在读取…</view>
+  <block wx:else>
+    <view wx:if="{{canCreate}}" class="card">
+      <view class="card-title">发起两校交流赛</view>
+      <view class="hint">主办方：{{schoolName}}；另一所试点学校将收到邀请</view>
+      <input class="field" placeholder="赛事名称" value="{{title}}" data-field="title" bindinput="onField" maxlength="80" disabled="{{busy}}" />
+      <input class="field" placeholder="比赛地点" value="{{location}}" data-field="location" bindinput="onField" maxlength="120" disabled="{{busy}}" />
+      <picker mode="date" value="{{date}}" data-field="date" bindchange="onField" disabled="{{busy}}"><view class="selection">比赛日期：{{date}}</view></picker>
+      <picker mode="time" value="{{time}}" data-field="time" bindchange="onField" disabled="{{busy}}"><view class="selection">开赛时间：{{time}}</view></picker>
+      <view class="hint">总名额</view><input class="field" type="number" value="{{quota}}" data-field="quota" bindinput="onField" disabled="{{busy}}" />
+      <view class="hint">每校名额</view><input class="field" type="number" value="{{schoolQuota}}" data-field="schoolQuota" bindinput="onField" disabled="{{busy}}" />
+      <button class="btn btn-primary" disabled="{{busy}}" loading="{{busy}}" bindtap="onCreate">创建并发出邀请</button>
+    </view>
+    <view class="card">
+      <view class="card-title">本校相关邀请赛</view>
+      <view wx:if="{{!events.length}}" class="hint">暂无可查看的邀请赛</view>
+      <view wx:for="{{events}}" wx:key="_id" class="event-row" data-id="{{item._id}}" bindtap="onOpen">
+        <view>{{item.title}} ›</view><view class="hint">{{item.statusText}} · 本校{{item.invitationText}} · {{item.signupCount}}/{{item.quota}} 人</view>
+      </view>
+    </view>
+    <view wx:if="{{detail}}" class="card">
+      <view class="card-title">{{detail.event.title}}</view>
+      <view class="hint">{{detail.event.location}} · {{detail.statusText}}</view>
+      <view wx:for="{{detail.schools}}" wx:key="id" class="hint">{{item.name}}：{{item.status}}，报名 {{item.count}}/{{item.quota}}</view>
+      <view wx:if="{{detail.canRespond}}" class="actions">
+        <button size="mini" data-decision="accepted" disabled="{{busy}}" bindtap="onRespond">接受邀请</button>
+        <button size="mini" data-decision="declined" disabled="{{busy}}" bindtap="onRespond">婉拒邀请</button>
+      </view>
+      <button wx:if="{{detail.canSignup}}" class="btn btn-primary" disabled="{{busy}}" bindtap="onSignup">{{detail.signed ? '取消我的报名' : '代表本校报名'}}</button>
+      <view class="section-title">参赛名单</view>
+      <view wx:if="{{!detail.participants.length}}" class="hint">暂无报名</view>
+      <view wx:for="{{detail.participants}}" wx:key="userId" class="hint">{{item.nickName}} · {{item.schoolName}}</view>
+      <button wx:if="{{detail.canLock}}" disabled="{{busy}}" bindtap="onLock">锁定报名名单</button>
+      <button wx:if="{{detail.canDraw}}" disabled="{{busy}}" bindtap="onDraw">{{detail.event.draw ? '重新抽签' : '抽签生成对阵'}}</button>
+      <block wx:if="{{detail.matches.length}}">
+        <view class="section-title">赛程与比分</view>
+        <view wx:for="{{detail.matches}}" wx:key="_id" class="event-row">
+          <view>第{{item.round}}轮：{{item.nameA}}（{{item.schoolNameA}}） vs {{item.nameB}}（{{item.schoolNameB}}）</view>
+          <view class="hint">{{item.statusText}} · {{item.scoreText}} · 裁判：{{item.refereeName || '未指定'}}</view>
+          <picker wx:if="{{item.canAssignReferee}}" range="{{detail.referees}}" range-key="nickName" data-matchid="{{item._id}}" bindchange="onRefereeChange">
+            <view class="selection">指定/更换裁判 ›</view>
+          </picker>
+          <view wx:if="{{item.canScore}}" class="actions">
+            <input class="field score-input" type="number" placeholder="{{item.nameA}}" value="{{scoreDraft[item._id].a}}" data-matchid="{{item._id}}" data-side="a" bindinput="onScoreInput" />
+            <input class="field score-input" type="number" placeholder="{{item.nameB}}" value="{{scoreDraft[item._id].b}}" data-matchid="{{item._id}}" data-side="b" bindinput="onScoreInput" />
+            <button size="mini" disabled="{{busy}}" data-matchid="{{item._id}}" bindtap="onSubmitScore">确认比分</button>
+          </view>
+        </view>
+      </block>
+      <button wx:if="{{detail.canConfirmRanking}}" disabled="{{busy}}" bindtap="onConfirmRanking">确认最终名次</button>
+      <block wx:if="{{detail.results.length}}">
+        <view class="section-title">最终名次</view>
+        <view wx:for="{{detail.results}}" wx:key="userId" class="hint">第{{item.placement}}名 · {{item.nickName}}（{{item.schoolName}}）</view>
+      </block>
+    </view>
+  </block>
+</view>

@@ -476,6 +476,31 @@ test('首页 —— 下拉刷新会收起刷新动画', async () => {
   assert.strictEqual(calls.pullDownStopped, 1);
 });
 
+test('首页 —— 可切换浏览的学校，切到外校进入只读', async () => {
+  const schoolSession = require('../miniprogram/services/school-session');
+  const schoolMock = require('../miniprogram/services/school-mock');
+  schoolSession.reset();
+  // 让模拟身份带本校学籍（民大），切走后才判得出「正在浏览外校」
+  schoolMock.setDemoActor('demo_muc_member');
+  try {
+    resetSession();
+    const page = instantiate(indexConfig);
+    await page.onLoad();
+
+    assert.ok(page.data.schoolList.length >= 2, '双校目录里至少两所学校');
+    assert.strictEqual(page.data.schoolId, 'muc');
+    assert.strictEqual(page.data.readOnlySchool, false);
+
+    page.onSchoolChange({ detail: { schoolId: 'buaa' } });
+    assert.strictEqual(page.data.schoolId, 'buaa');
+    assert.strictEqual(page.data.schoolName, '北京航空航天大学');
+    assert.strictEqual(page.data.readOnlySchool, true, '切到外校后进入只读');
+  } finally {
+    schoolMock.setDemoActor('demo_applicant');
+    schoolSession.reset();
+  }
+});
+
 /* ============================================================
  * 我的页
  * ============================================================ */
@@ -1132,6 +1157,33 @@ test('他人主页 —— 协会负责人在本协会能看到并执行任免入
   await page.onSetCollegeLeader();
   assert.strictEqual((await facade.getMember('u06')).role, 1, '点击后真的写进数据源');
   assert.ok(calls.toasts.includes('已设为学院负责人'));
+});
+
+test('他人主页 —— 统一的指定权限入口按可授予档位分发', async () => {
+  // 全局管理员看别人主页时协会负责人与学院负责人两档都开；统一入口点开
+  // 取首项（协会负责人）执行，证明它复用了既有的任免处理。
+  loginAs({ _id: 'u01', role: 2, college: '体育学院', status: 1 });
+  const page = instantiate(memberConfig);
+  await page.onLoad({ userId: 'u06' });
+
+  assert.strictEqual(page.data.view.associationLeader.visible, true);
+  assert.strictEqual(page.data.view.leader.visible, true);
+
+  calls.toasts.length = 0;
+  await page.onGrantPermission();
+  assert.strictEqual((await facade.getMember('u06')).role, 2, '统一入口应当真的写入数据源');
+  assert.ok(calls.toasts.includes('已设为协会负责人'));
+});
+
+test('他人主页 —— 无任免资格时不出现指定权限入口', async () => {
+  loginAs({ _id: 'u06', role: 0 });
+  const page = instantiate(memberConfig);
+  await page.onLoad({ userId: 'u02' });
+
+  assert.strictEqual(page.data.view.leader.visible, false);
+  assert.strictEqual(page.data.view.associationLeader.visible, false);
+  // 误触发也没有任何副作用
+  assert.strictEqual(page.onGrantPermission(), undefined);
 });
 
 /* ============================================================

@@ -150,3 +150,28 @@ test('cloud mode hides demo controls and prevents demo actor selection', async (
   assert.throws(() => service.setDemoActor('demo_muc_admin'));
   facade.setDataSource('mock');
 });
+
+test('unified grant entry lets a school admin assign an association role', async () => {
+  const p = page();
+  await p.onLoad();
+  await p.onDemoActorChange(select(1)); // 民大校管理员
+  assert.deepEqual(p.data.grants.map(g => g.permission), ['associationLeader', 'collegeLeader']);
+  assert.ok(p.data.members.some(m => m.userId === 'demo_muc_member'));
+  await p.onGrant({ currentTarget: { dataset: { userId: 'demo_muc_member' } } });
+  const member = p.data.members.find(m => m.userId === 'demo_muc_member');
+  assert.equal(member.permission, 'associationLeader');
+  assert.equal(member.permissionLabel, '协会负责人');
+});
+
+test('platform admin sees all three grants and cross-school browsing stays read-only', async () => {
+  const p = page();
+  await p.onLoad();
+  await p.onDemoActorChange(select(5)); // 平台管理员
+  assert.deepEqual(p.data.grants.map(g => g.permission), ['schoolAdmin', 'associationLeader', 'collegeLeader']);
+  assert.equal(p.data.readOnly, false);
+  await p.onDemoActorChange(select(1)); // 民大校管理员
+  await p.onSchoolChange(select(1)); // 切到北航
+  assert.equal(p.data.readOnly, true);
+  assert.deepEqual(p.data.grants, []);
+  assert.ok(p.data.members.some(m => m.userId === 'demo_buaa_member'));
+});

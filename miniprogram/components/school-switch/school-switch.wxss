@@ -1,0 +1,26 @@
+/* 学校切换徽章。跟随所在页面的主题色（--color-primary），与协会切换器同一视觉语言。 */
+.school-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6rpx;
+  padding: 6rpx 18rpx;
+  border-radius: 999rpx;
+  background: var(--color-primary-light, #f7e9e7);
+  color: var(--color-primary, #b23a2e);
+  font-size: 26rpx;
+  line-height: 1.4;
+}
+
+.school-switch--hover {
+  opacity: 0.7;
+}
+
+.school-switch__name {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.school-switch__caret {
+  font-size: 22rpx;
+  opacity: 0.75;
+}

@@ -200,6 +200,9 @@ Page({
   onGoSchoolIdentity() {
     wx.navigateTo({ url: '/pages/school-identity/school-identity' });
   },
+  onGoSchoolExchange() {
+    if (facade.isMockNow()) wx.navigateTo({ url: '/pages/school-exchange/school-exchange' });
+  },
 
   onGoLogin() {
     wx.navigateTo({ url: '/pages/login/login' });

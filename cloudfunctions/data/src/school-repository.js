@@ -1,9 +1,11 @@
 /** 两个适配器共享的学校仓储扩展。原单校接口保留，S2 逐一接入新接口。 */
 const { schoolScope } = require('../lib/utils/school.js');
 
-const SCHOOL_COLLECTIONS = ['schools', 'schoolAssociations', 'colleges', 'schoolMembers', 'schoolRoles', 'memberRatings', 'studentIdClaims'];
+const SCHOOL_COLLECTIONS = ['schools', 'schoolAssociations', 'colleges', 'schoolMembers', 'schoolRoles', 'memberRatings', 'studentIdClaims',
+  'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches'];
 const SCHOOL_ONLY = ['colleges', 'schoolMembers', 'schoolRoles'];
 const SCOPED_COLLECTIONS = [
+  'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
   ...SCHOOL_ONLY, 'schoolAssociations', 'memberRatings', 'memberships',
   'matches', 'events', 'eventSignups', 'announcements', 'collegeEvents', 'collegeEntries',
   'ties', 'lineups', 'liveScores', 'seasons', 'rankings',
@@ -23,6 +25,8 @@ function attachSchoolRepository(repo, io, inTx) {
       return io.query(key, SCHOOL_ONLY.includes(key) ? { schoolId: scope.schoolId } : scope);
     };
   }
+  repo.exchangeSignups.listByEvent = eventId => io.query('exchangeSignups', { eventId });
+  repo.exchangeMatches.listByEvent = eventId => io.query('exchangeMatches', { eventId });
   repo.forScope = (input) => {
     const scope = schoolScope(input);
     const result = { scope };

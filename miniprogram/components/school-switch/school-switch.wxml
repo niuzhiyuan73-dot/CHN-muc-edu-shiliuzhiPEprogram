@@ -1,0 +1,5 @@
+<!-- 学校切换徽章：校名 + 下拉暗示。整块可点，点了弹学校清单。 -->
+<view class="school-switch" bindtap="onTap" hover-class="school-switch--hover">
+  <text class="school-switch__name">{{schoolName}}</text>
+  <text class="school-switch__caret">▾</text>
+</view>

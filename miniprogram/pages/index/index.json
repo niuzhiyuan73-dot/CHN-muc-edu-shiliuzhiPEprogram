@@ -1,6 +1,7 @@
 {
   "usingComponents": {
-    "association-switch": "/components/association-switch/association-switch"
+    "association-switch": "/components/association-switch/association-switch",
+    "school-switch": "/components/school-switch/school-switch"
   },
   "navigationBarTitleText": "石榴籽体育管理",
   "enablePullDownRefresh": true,

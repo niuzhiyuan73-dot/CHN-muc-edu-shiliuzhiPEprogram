@@ -8,6 +8,13 @@
 <import src="../../templates/member-view.wxml" />
 
 <view class="page-container">
+  <view wx:if="{{isMock}}" class="card entry-card" bindtap="onGoSchoolExchange">
+    <view class="entry-card-main">
+      <view class="entry-card-title">跨校邀请赛</view>
+      <view class="entry-card-hint">民大与北航 · 模拟邀请与报名</view>
+    </view>
+    <view class="entry-card-arrow">›</view>
+  </view>
   <view class="card entry-card" bindtap="onGoSchoolIdentity">
     <view class="entry-card-main">
       <view class="entry-card-title">学校身份</view>

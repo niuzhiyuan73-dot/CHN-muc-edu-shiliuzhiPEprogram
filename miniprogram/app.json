@@ -26,7 +26,8 @@
     "pages/college-match/college-match",
     "pages/college-placement/college-placement",
     "pages/live-score/live-score",
-    "pages/school-identity/school-identity"
+    "pages/school-identity/school-identity",
+    "pages/school-exchange/school-exchange"
   ],
   "window": {
     "backgroundTextStyle": "dark",

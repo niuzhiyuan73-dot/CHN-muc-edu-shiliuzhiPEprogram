@@ -1,8 +1,20 @@
 const ok = data => ({ ok: true, data });
 const { buildSchoolContext } = require('./school-context.js');
-const { canSchoolAction } = require('./school-permission.js');
+const {
+  canSchoolAction, canReadSchool, canGrantPermission, grantablePermissions,
+  isPlatformAdminCtx, permissionOf, permissionLabelOf, PERMISSION, PERMISSION_LABEL,
+} = require('./school-permission.js');
 const { buildSchoolApplication } = require('./school-member.js');
-const { schoolMemberKey, collegeKey } = require('../utils/school.js');
+const {
+  schoolMemberKey, schoolRoleKey, schoolMembershipKey, collegeKey,
+  PLATFORM_ROLE, PLATFORM_STATUS, SCHOOL_MEMBER_STATUS, SCHOOL_ROLE,
+} = require('../utils/school.js');
+
+/** 可授予的三档权限，顺序从高到低；界面选项与校验共用这一份。 */
+const GRANT_PERMISSIONS = Object.freeze([PERMISSION.SCHOOL_ADMIN, PERMISSION.ASSOCIATION_LEADER, PERMISSION.COLLEGE_LEADER]);
+const grantOptions = ctx => grantablePermissions(ctx).map(permission => ({
+  permission, label: PERMISSION_LABEL[permission],
+}));
 
 function createSchoolHandlers({ claimKey }) {
   const refused = (message) => ({ ok: false, account: null, message });
@@ -114,15 +126,126 @@ function createSchoolHandlers({ claimKey }) {
 
   async function getSchoolIdentitySession(_payload, ctx) {
     const active = ctx.actor && ctx.actor.platformStatus === 'active';
+    // 浏览的是不是外校：本校身份只在 primarySchoolId 上，当前范围与它不一致即只读。
+    const readOnly = Boolean(active && ctx.actor.primarySchoolId && ctx.actor.primarySchoolId !== ctx.schoolId);
     return ok({ ok: true, user: active ? { userId: ctx.actorId, nickName: ctx.actor.nickName || '',
       primarySchoolId: ctx.actor.primarySchoolId || '' } : null,
       account: active ? ctx.schoolMember : null,
+      isPlatformAdmin: isPlatformAdminCtx(ctx),
       canReview: canSchoolAction(ctx, 'reviewMembers', ctx),
+      canManageAssociation: canSchoolAction(ctx, 'manageAssociation', ctx),
+      readOnly,
+      grants: active && !readOnly ? grantOptions(ctx) : [],
       message: active ? '' : '当前账号尚未开通学校身份，请联系管理员' });
   }
 
+  /**
+   * 本校成员与权限。**任何有效平台账号都能读任意启用学校**（跨校只读），
+   * 因此这里不放管理角色门槛，只要求学校与协会可用；返回里不带学号、手机号，
+   * 与跨校参赛名单同一隐私口径。
+   *
+   * @param {Object} _payload
+   * @param {Object} ctx
+   */
+  async function getSchoolMembers(_payload, ctx) {
+    if (!canReadSchool(ctx)) return ok({ ok: false, members: [], grants: [], readOnly: false, message: '没有读取该校成员的权限' });
+    const readOnly = Boolean(ctx.actor.primarySchoolId && ctx.actor.primarySchoolId !== ctx.schoolId);
+    const colleges = await ctx.repo.forScope(ctx).colleges.list();
+    const collegeName = id => (colleges.find(row => row.collegeId === id) || {}).name || '';
+    const rows = (await ctx.repo.forScope(ctx).schoolMembers.list()).filter(row => row.status === SCHOOL_MEMBER_STATUS.ACTIVE);
+    const members = await Promise.all(rows.map(async row => {
+      const [user, role, membership] = await Promise.all([
+        ctx.repo.users.getById(row.userId),
+        ctx.repo.schoolRoles.getById(schoolRoleKey(row.userId, ctx.schoolId)),
+        ctx.repo.memberships.get(schoolMembershipKey(row.userId, ctx)),
+      ]);
+      return {
+        userId: row.userId,
+        nickName: (user && user.nickName) || '会员',
+        collegeId: row.collegeId || '',
+        collegeName: collegeName(row.collegeId),
+        permission: permissionOf(role, membership),
+        permissionLabel: permissionLabelOf(role, membership),
+      };
+    }));
+    members.sort((a, b) => (a.userId < b.userId ? -1 : 1));
+    return ok({ ok: true, members, grants: readOnly ? [] : grantOptions(ctx), readOnly, message: '' });
+  }
+
+  /**
+   * 统一「指定权限」入口：一次只改一档，写什么由 permission 决定。
+   *   schoolAdmin       → school_roles（校级管理员）
+   *   associationLeader → memberships.role='leader'
+   *   collegeLeader     → memberships.role='staff' + collegeId
+   *
+   * 谁能授哪一档由 grantablePermissions 一处决定（平台管理员 / 校级管理员 / 协会
+   * 负责人三档，逐级收窄）；跨校浏览一律拒绝——只读不给授权入口。
+   *
+   * @param {Object} payload { userId, permission, make, collegeId }
+   * @param {Object} ctx
+   */
+  async function grantSchoolPermission(payload = {}, ctx) {
+    if (!ctx.actorId) return ok(refused('请先登录'));
+    if (!GRANT_PERMISSIONS.includes(payload.permission)) return ok(refused('未知的权限类型'));
+    if (typeof payload.userId !== 'string' || !payload.userId) return ok(refused('缺少目标会员'));
+    if (payload.userId === ctx.actorId) return ok(refused('不能给自己指定权限'));
+    if (!canGrantPermission(ctx, payload.permission)) return ok(refused('没有指定该权限的资格'));
+    const make = Boolean(payload.make);
+    const result = await ctx.repo.transaction(async tx => {
+      const fresh = await freshContext(tx, ctx);
+      if (!canGrantPermission(fresh, payload.permission)) return refused('没有指定该权限的资格');
+      const user = await tx.users.getById(payload.userId);
+      if (!user || user.platformStatus !== PLATFORM_STATUS.ACTIVE) return refused('目标账号不可用');
+      if (user.platformRole === PLATFORM_ROLE.ADMIN) return refused('不能改变平台管理员的权限');
+      const member = await tx.schoolMembers.getById(schoolMemberKey(user._id, fresh.schoolId));
+      if (!member || member.status !== SCHOOL_MEMBER_STATUS.ACTIVE) return refused('对方没有本校有效身份');
+
+      if (payload.permission === PERMISSION.SCHOOL_ADMIN) {
+        const key = schoolRoleKey(user._id, fresh.schoolId);
+        await tx.schoolRoles.set(key, {
+          _id: key, userId: user._id, schoolId: fresh.schoolId,
+          role: SCHOOL_ROLE.ADMIN, status: make ? 'active' : 'disabled',
+          updatedBy: fresh.actorId, updatedAt: fresh.now,
+        });
+      } else if (payload.permission === PERMISSION.ASSOCIATION_LEADER) {
+        const key = schoolMembershipKey(user._id, fresh);
+        const existing = await tx.memberships.get(key);
+        const base = existing && existing.role === 'leader' ? existing : {};
+        await tx.memberships.set(key, {
+          ...base, _id: key, userId: user._id, schoolId: fresh.schoolId, association: fresh.association,
+          role: make ? 'leader' : 'member', collegeId: '', status: make ? 'active' : 'revoked',
+          updatedBy: fresh.actorId, updatedAt: fresh.now,
+        });
+      } else {
+        // 学院负责人：必须落到本校一个有效学院，且协会负责人无需再指定学院
+        const current = await tx.memberships.get(schoolMembershipKey(user._id, fresh));
+        if (current && current.status === 'active' && current.role === 'leader') return refused('对方已是协会负责人，无需再指定学院');
+        const collegeId = make ? String(payload.collegeId || '') : '';
+        if (make) {
+          if (!collegeId) return refused('请选择本校有效学院');
+          const college = await tx.colleges.getById(collegeKey(fresh.schoolId, collegeId));
+          if (!college || college.status !== 'active' || college.schoolId !== fresh.schoolId) return refused('请选择本校有效学院');
+        }
+        const key = schoolMembershipKey(user._id, fresh);
+        await tx.memberships.set(key, {
+          _id: key, userId: user._id, schoolId: fresh.schoolId, association: fresh.association,
+          role: make ? 'staff' : 'member', collegeId, status: make ? 'active' : 'revoked',
+          updatedBy: fresh.actorId, updatedAt: fresh.now,
+        });
+      }
+
+      await tx.audit.append({
+        _id: `grant_${payload.permission}_${user._id}_${make ? 'grant' : 'revoke'}`,
+        action: 'grantSchoolPermission', schoolId: fresh.schoolId, association: fresh.association,
+        actorId: fresh.actorId, userId: user._id, permission: payload.permission, make, at: fresh.now,
+      });
+      return { ok: true, account: { userId: user._id, nickName: user.nickName || '' }, message: '' };
+    });
+    return ok(result);
+  }
+
   return { applySchoolMembership, reviewSchoolMembership, getMySchoolMembership, getSchoolApplications,
-    getSchoolDirectory, getSchoolIdentitySession };
+    getSchoolDirectory, getSchoolIdentitySession, getSchoolMembers, grantSchoolPermission };
 }
 
 module.exports = { createSchoolHandlers };

@@ -48,6 +48,13 @@ Page({
     dataSourceLabel: '',
     /** 开发期标注模拟数据（onLoad 时按门面实际状态刷新） */
     isMock: false,
+    /** 当前浏览的学校 id 与校名（只影响学校维度页面，不改首页聚合内容） */
+    schoolId: '',
+    schoolName: '',
+    /** 可选学校清单：[{ schoolId, name }]。学校维度未开放时为空数组，控件自动隐藏 */
+    schoolList: [],
+    /** 是否在浏览外校（只读）。true 时页头出只读提示 */
+    readOnlySchool: false,
   },
 
   /**
@@ -116,6 +123,8 @@ Page({
         auth: resolveAuthState(user),
         associationId: this.currentAssociation(),
       });
+      // 学校切换器单独加载：它只影响学校维度页面，失败不该拖垮首页内容
+      await this.loadSchoolScope();
     } catch (err) {
       console.error('[index] 首页加载失败', err);
       this.loaded = true;
@@ -160,6 +169,62 @@ Page({
   onAssociationChange(event) {
     const id = event && event.detail ? event.detail.id : '';
     this.switchTo(id);
+  },
+
+  /**
+   * 装载学校切换器：学校清单来自学校目录，当前浏览的学校来自会话作用域。
+   * 只读与否由「当前浏览的学校 ≠ 我的学校」决定。整体包在 try/catch 里，
+   * 云端尚未开放学校维度或接口报错时，只是收起控件，不影响首页其余内容。
+   *
+   * @returns {Promise<void>}
+   */
+  async loadSchoolScope() {
+    try {
+      const service = require('../../services/school-identity.js');
+      if (typeof service.isMockNow === 'function' && !service.isMockNow()) {
+        this.setData({ schoolList: [], readOnlySchool: false });
+        return;
+      }
+      const schoolSession = require('../../services/school-session.js');
+      const start = schoolSession.getSchoolId() || 'muc';
+      const api = service.forSchoolIdentity({ schoolId: start, association: 'pkb' });
+      const [directory, session] = await Promise.all([
+        api.getSchoolDirectory(),
+        api.getSchoolIdentitySession(),
+      ]);
+      if (!directory || !directory.ok) {
+        this.setData({ schoolList: [], readOnlySchool: false });
+        return;
+      }
+      const schools = (directory.schools || []).map((row) => ({ schoolId: row.schoolId, name: row.name }));
+      // 「我的学校」以会话返回的 primarySchoolId 为准（演示身份切换后随之变化）
+      schoolSession.setHomeSchoolId(session && session.user ? session.user.primarySchoolId || '' : '');
+      const selected = schoolSession.getSchoolId() || (schools[0] && schools[0].schoolId) || '';
+      schoolSession.setSchoolId(selected);
+      this.setData({
+        schoolList: schools,
+        schoolId: selected,
+        schoolName: (schools.find((row) => row.schoolId === selected) || {}).name || '',
+        readOnlySchool: schoolSession.isReadOnly(),
+      });
+    } catch (err) {
+      console.error('[index] 学校切换器加载失败', err);
+      this.setData({ schoolList: [], readOnlySchool: false });
+    }
+  },
+
+  /** 切学校徽章的 change 事件：写会话作用域，并据结果刷新只读提示 */
+  onSchoolChange(event) {
+    const id = event && event.detail ? event.detail.schoolId : '';
+    if (!id) return;
+    const schoolSession = require('../../services/school-session.js');
+    schoolSession.setSchoolId(id);
+    const found = (this.data.schoolList || []).find((row) => row.schoolId === id);
+    this.setData({
+      schoolId: id,
+      schoolName: found ? found.name : id,
+      readOnlySchool: schoolSession.isReadOnly(),
+    });
   },
 
   /** 去登录/注册 */

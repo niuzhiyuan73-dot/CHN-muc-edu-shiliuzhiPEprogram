@@ -17,6 +17,8 @@ function forSchoolIdentity(input) {
     getSchoolApplications: () => request('getSchoolApplications'),
     getSchoolDirectory: () => request('getSchoolDirectory'),
     getSchoolIdentitySession: () => request('getSchoolIdentitySession'),
+    getSchoolMembers: () => request('getSchoolMembers'),
+    grantSchoolPermission: payload => request('grantSchoolPermission', payload),
   });
 }
 module.exports = { forSchoolIdentity };

@@ -1,18 +1,31 @@
 <!-- 首页：跨协会聚合的公告 + 近期赛事。顶部套中性品牌 -->
 <view class="page-container">
 
-  <!-- 顶部品牌区（中性名）。登录用户右上角带切协会徽章 -->
+  <!-- 顶部品牌区（中性名）。登录用户右上角带切协会 / 切学校徽章 -->
   <view class="hero">
     <view class="hero-head">
       <view class="hero-title">中央民族大学石榴籽体育管理小程序</view>
-      <association-switch
-        wx:if="{{auth.loggedIn}}"
-        value="{{associationId}}"
-        bind:change="onAssociationChange"
-      />
+      <view class="hero-badges">
+        <association-switch
+          wx:if="{{auth.loggedIn}}"
+          value="{{associationId}}"
+          bind:change="onAssociationChange"
+        />
+        <school-switch
+          wx:if="{{schoolList.length > 1}}"
+          value="{{schoolId}}"
+          list="{{schoolList}}"
+          bind:change="onSchoolChange"
+        />
+      </view>
     </view>
     <view class="hero-subtitle">会员管理 · 赛事记录 · 积分排名</view>
     <view class="hero-badge">{{dataSourceLabel}}</view>
+  </view>
+
+  <!-- 切到外校后为只读浏览：能看，不能改。一行提示，避免误以为被卡住 -->
+  <view wx:if="{{readOnlySchool}}" class="readonly-banner">
+    正在浏览 {{schoolName}}（只读）· 可在上方切回本校后操作
   </view>
 
   <view wx:if="{{loading}}" class="loading">正在加载…</view>

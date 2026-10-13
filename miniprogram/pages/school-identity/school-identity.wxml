@@ -44,5 +44,16 @@
         </view>
       </view>
     </view>
+    <view wx:if="{{members.length}}" class="card">
+      <view class="card-title">{{schoolName}} · 成员 {{members.length}} 人</view>
+      <view wx:if="{{readOnly}}" class="hint">正在浏览外校，成员信息只读，不能指定权限。</view>
+      <view wx:for="{{members}}" wx:key="userId" class="member-row">
+        <view class="member-main">
+          <view class="applicant-name">{{item.nickName}}</view>
+          <view class="hint member-meta">{{item.collegeName || '学院待补充'}} · {{item.permissionLabel}}</view>
+        </view>
+        <button wx:if="{{grants.length && item.userId !== user.userId}}" size="mini" data-user-id="{{item.userId}}" disabled="{{submitting}}" bindtap="onGrant">指定权限</button>
+      </view>
+    </view>
   </block>
 </view>

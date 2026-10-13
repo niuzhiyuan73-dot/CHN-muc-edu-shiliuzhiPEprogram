@@ -161,6 +161,46 @@ test('school directory is public but exposes only names and IDs of the selected 
   assert.deepEqual(Object.keys(result.colleges[0]).sort(), ['collegeId', 'name']);
 });
 
+test('unified grant is tiered by identity and cross-school browsing is read-only', async () => {
+  const repo = fixture();
+  await repo.users.set('platformAdmin', { _id: 'platformAdmin', openId: 'openid_platform_admin',
+    nickName: '平台管理员', platformStatus: 'active', platformRole: 'admin' });
+  await apply(repo);
+  await review(repo);
+  const grant = (payload, openId = 'openid_platform_admin', schoolId = 'muc') =>
+    request(repo, 'grantSchoolPermission', payload, openId, schoolId);
+  const roster = (openId = 'mock_openid_muc_admin', schoolId = 'muc') =>
+    request(repo, 'getSchoolMembers', {}, openId, schoolId);
+
+  // 平台管理员三档全开；校管理员收窄到协会 / 学院两档
+  assert.deepEqual((await request(repo, 'getSchoolIdentitySession', {}, 'openid_platform_admin')).data
+    .grants.map(g => g.permission), ['schoolAdmin', 'associationLeader', 'collegeLeader']);
+  assert.deepEqual((await request(repo, 'getSchoolIdentitySession', {}, 'mock_openid_muc_admin')).data
+    .grants.map(g => g.permission), ['associationLeader', 'collegeLeader']);
+
+  assert.equal((await grant({ userId: 'new1', permission: 'associationLeader', make: true })).data.ok, true);
+  let rows = (await roster()).data;
+  assert.equal(rows.readOnly, false);
+  assert.equal(rows.members.find(m => m.userId === 'new1').permissionLabel, '协会负责人');
+  // 升任协会负责人后只剩学院一档可授
+  assert.deepEqual((await request(repo, 'getSchoolIdentitySession', {}, 'new1')).data
+    .grants.map(g => g.permission), ['collegeLeader']);
+  // 学院负责人须落到本校有效学院
+  assert.equal((await grant({ userId: 'demo_muc_member', permission: 'collegeLeader', make: true }, 'mock_openid_muc_admin')).data.ok, false);
+  assert.equal((await grant({ userId: 'demo_muc_member', permission: 'collegeLeader', make: true, collegeId: 'c01' }, 'mock_openid_muc_admin')).data.ok, true);
+  rows = (await roster()).data;
+  assert.equal(rows.members.find(m => m.userId === 'demo_muc_member').permission, 'collegeLeader');
+
+  // 跨校只读：可读外校名单，但没有授权入口，也无法越权写入
+  const remote = (await roster('mock_openid_muc_admin', 'buaa')).data;
+  assert.equal(remote.readOnly, true);
+  assert.deepEqual(remote.grants, []);
+  assert.ok(remote.members.some(m => m.userId === 'demo_buaa_member'));
+  assert.equal((await grant({ userId: 'demo_buaa_member', permission: 'collegeLeader', make: true, collegeId: 'c01' }, 'mock_openid_muc_admin', 'buaa')).data.ok, false);
+  // 不能给自己指定权限
+  assert.equal((await grant({ userId: 'platformAdmin', permission: 'schoolAdmin', make: true })).data.ok, false);
+});
+
 test('identity session exposes local review capability without disclosing global account fields', async () => {
   const repo = fixture();
   const local = (await request(repo, 'getSchoolIdentitySession', {}, 'mock_openid_muc_admin')).data;

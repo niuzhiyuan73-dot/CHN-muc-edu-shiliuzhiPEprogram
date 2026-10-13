@@ -59,6 +59,8 @@ const MANIFEST = [
   // 身份业务编排依赖注入仓储，不直接引用 wx、Node 或云 SDK。
   'services/school-context.js',
   'services/school-membership-service.js',
+  'services/exchange-service.js',
+  'services/exchange-plan.js',
   'services/court.js',
   'services/match-record.js',
   'services/live-score.js',

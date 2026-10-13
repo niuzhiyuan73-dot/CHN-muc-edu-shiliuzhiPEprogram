@@ -365,6 +365,42 @@ function createMemberPage(options = {}) {
     },
 
     /**
+     * 统一的「指定权限」入口：点开后按当前身份**可授予**的档位给出选项，
+     * 再复用各自的处理完成写入。能选哪几档由 profile-view 的可见性决定——
+     * 全局管理员可任免协会负责人，有学院管理权者可任免学院负责人，
+     * 权限不同、入口同一个（§11）。
+     *
+     * @returns {Promise<void>|undefined}
+     */
+    onGrantPermission() {
+      const view = this.data.view || {};
+      const options = [];
+      if (view.associationLeader && view.associationLeader.visible) {
+        options.push({ key: 'associationLeader', label: view.associationLeader.label });
+      }
+      if (view.leader && view.leader.visible) {
+        options.push({ key: 'leader', label: view.leader.label });
+      }
+      if (!options.length) return undefined;
+      const run = (key) => key === 'associationLeader'
+        ? this.onSetAssociationLeader() : this.onSetCollegeLeader();
+      // 真机弹选择框；Node 测试没有 wx.showActionSheet，直接采用首项。
+      if (typeof wx === 'undefined' || typeof wx.showActionSheet !== 'function') {
+        return run(options[0].key);
+      }
+      return new Promise((resolve) => {
+        wx.showActionSheet({
+          itemList: options.map((option) => option.label),
+          success: (res) => {
+            const picked = options[res.tapIndex];
+            return picked ? resolve(run(picked.key)) : resolve(undefined);
+          },
+          fail: () => resolve(undefined),
+        });
+      });
+    },
+
+    /**
      * 调整当前主页会员在**本协会当前项目**的当前等级分。用于「在外打完比赛、
      * 对手不在本程序里」的同步：直接改成外部算好的分数。数值从弹层输入框取；
      * Node 测试没有 wx.showModal，直接把当前值当作提交值（用例可改调
