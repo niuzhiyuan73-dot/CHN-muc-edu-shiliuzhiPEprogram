@@ -645,6 +645,12 @@ const RANK_SORT_BY = {
 
 /** 数据库集合名。集中定义便于后续改名或迁移。 */
 const COLLECTION = {
+  SCHOOLS: 'schools',
+  SCHOOL_ASSOCIATIONS: 'school_associations',
+  COLLEGES: 'colleges',
+  SCHOOL_MEMBERS: 'school_members',
+  SCHOOL_ROLES: 'school_roles',
+  MEMBER_RATINGS: 'member_ratings',
   USERS: 'users',
   MATCHES: 'matches',
   RANKINGS: 'rankings',

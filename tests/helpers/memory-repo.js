@@ -20,6 +20,8 @@
  */
 
 /** 浅拷贝一条文档。null / 原始值原样返回。 */
+const { SCHOOL_COLLECTIONS, attachSchoolRepository } = require('../../cloudfunctions/data/src/school-repository.js');
+
 function clone(doc) {
   return doc === null || typeof doc !== 'object' ? doc : { ...doc };
 }
@@ -30,6 +32,7 @@ function clone(doc) {
  */
 function emptyStore() {
   return {
+    ...Object.fromEntries(SCHOOL_COLLECTIONS.map((key) => [key, new Map()])),
     users: new Map(),
     matches: new Map(),
     events: new Map(),
@@ -82,7 +85,7 @@ function createMemoryRepo(seed = {}) {
       return Promise.resolve(doc ? clone(doc) : null);
     };
 
-    return {
+    const repo = {
       users: {
         list: () => list('users'),
         getById: (id) => read('users', id),
@@ -281,6 +284,13 @@ function createMemoryRepo(seed = {}) {
         },
       },
     };
+    return attachSchoolRepository(repo, {
+      read,
+      set: async (key, id, doc) => { target[key].set(id, { ...doc, _id: id }); },
+      query: (key, where) => list(key).filter((doc) =>
+        Object.keys(where).every((field) => doc[field] === where[field])
+      ),
+    }, inTx);
   }
 
   const repo = collections(store, false);

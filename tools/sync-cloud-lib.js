@@ -41,6 +41,7 @@ const MANIFEST = [
   // 纯计算与常量
   'utils/constants.js',
   'utils/associations.js',
+  'utils/school.js',
   'utils/random.js',
   'utils/bracket.js',
   'utils/elo.js',
@@ -53,6 +54,8 @@ const MANIFEST = [
   'utils/standings.js',
   // 纯逻辑服务
   'services/replay.js',
+  'services/school-permission.js',
+  'services/school-member.js',
   'services/court.js',
   'services/match-record.js',
   'services/live-score.js',

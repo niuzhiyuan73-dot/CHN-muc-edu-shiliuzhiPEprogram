@@ -21,6 +21,7 @@
  */
 
 const { COLLECTIONS } = require('../repository.js');
+const { attachSchoolRepository } = require('../school-repository.js');
 
 /** 单页条数，取云开发云函数端的查询上限 */
 const PAGE_SIZE = 100;
@@ -132,7 +133,7 @@ function buildCollections(scope, inTx) {
     return readAll(scope, COLLECTIONS[key]);
   };
 
-  return {
+  const repo = {
     users: {
       list: () => list('users'),
       getById: (id) => readDoc(scope, COLLECTIONS.users, id),
@@ -261,6 +262,14 @@ function buildCollections(scope, inTx) {
       append: (entry) => col('auditLogs').add({ data: withoutId(entry) }),
     },
   };
+  return attachSchoolRepository(repo, {
+    read: (key, id) => readDoc(scope, COLLECTIONS[key], id),
+    set: (key, id, doc) => col(key).doc(id).set({ data: withoutId(doc) }),
+    query: (key, where) => {
+      if (inTx) throw new Error(`事务内不允许条件读取（${key}），请改用 getById`);
+      return readWhere(scope, COLLECTIONS[key], where);
+    },
+  }, inTx);
 }
 
 /**

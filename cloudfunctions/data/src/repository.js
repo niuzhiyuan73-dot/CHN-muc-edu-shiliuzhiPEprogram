@@ -62,6 +62,15 @@
  *   repo.transaction(fn)                → Promise<*>       fn(txRepo)，抛错则整体回滚
  *   repo.audit.append(entry)            → Promise<void>
  *
+ * 【S1 学校基础，S2 再逐处理器接入】
+ *   repo.forScope({ schoolId, association }) → 固定范围仓储
+ *     .matches / events / schoolMembers / ... → list / getById / insert / set / update
+ *     .transaction(fn)                  → 回调仍为同范围仓储
+ *   repo.<collection>.listByScope(scope) → 数据库条件查询，自动分页
+ *   schools / schoolAssociations / colleges / schoolMembers / schoolRoles /
+ *   memberRatings 新集合提供 getById / set / list。
+ *   范围仓储保护数据归属，不替代身份权限与父资源业务校验。
+ *
  * 【为什么写操作只给 set / update 两种形态】
  * 微信云开发的事务里，集合查询受限而 doc(id) 的读写稳定可靠。把写操作
  * 收敛成「按主键整体写」和「按主键改字段」，事务里就不必做集合查询，
@@ -73,6 +82,12 @@ const { COLLECTION } = require('../lib/utils/constants.js');
 
 /** 逻辑名 → 集合名。集合名集中在 utils/constants.js 定义，便于迁移。 */
 const COLLECTIONS = {
+  schools: COLLECTION.SCHOOLS,
+  schoolAssociations: COLLECTION.SCHOOL_ASSOCIATIONS,
+  colleges: COLLECTION.COLLEGES,
+  schoolMembers: COLLECTION.SCHOOL_MEMBERS,
+  schoolRoles: COLLECTION.SCHOOL_ROLES,
+  memberRatings: COLLECTION.MEMBER_RATINGS,
   users: COLLECTION.USERS,
   matches: COLLECTION.MATCHES,
   events: COLLECTION.EVENTS,
