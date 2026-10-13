@@ -33,11 +33,11 @@
 
   <block wx:else>
 
-    <!-- ==================== 公告（跨协会聚合） ==================== -->
+    <!-- ==================== 公告（本校为跨协会聚合，外校为演示只读） ==================== -->
     <view class="card">
       <view class="card-head">
         <view class="card-title">公告</view>
-        <view class="card-more" bindtap="onGoAnnouncements">看全部公告 ›</view>
+        <view wx:if="{{!schoolContent}}" class="card-more" bindtap="onGoAnnouncements">看全部公告 ›</view>
       </view>
 
       <!-- 每条标注所属协会；点某条若属于别的协会，会先整体切过去 -->
@@ -67,12 +67,12 @@
       </view>
     </view>
 
-    <!-- ==================== 近期赛事（跨协会聚合，仅登录可见） ==================== -->
+    <!-- ==================== 近期赛事（本校聚合 / 外校演示，仅登录可见） ==================== -->
     <!-- 报名中 / 进行中的赛事，最近要打的在前。没有也照常出卡，只换空态文案 -->
     <view class="card" wx:if="{{view.loggedIn}}">
       <view class="card-head">
         <view class="card-title">近期赛事</view>
-        <view class="card-more" bindtap="onGoEvents">看全部赛事 ›</view>
+        <view wx:if="{{!schoolContent}}" class="card-more" bindtap="onGoEvents">看全部赛事 ›</view>
       </view>
 
       <view

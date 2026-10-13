@@ -501,6 +501,49 @@ test('首页 —— 可切换浏览的学校，切到外校进入只读', async 
   }
 });
 
+test('首页 —— 切到北航显示北航自己的演示内容', async () => {
+  const schoolSession = require('../miniprogram/services/school-session');
+  const schoolMock = require('../miniprogram/services/school-mock');
+  schoolSession.reset();
+  schoolMock.setDemoActor('demo_muc_member');
+  try {
+    resetSession();
+    loginAs();
+    const page = instantiate(indexConfig);
+    await page.onLoad();
+
+    // 本校（民大）展示应用本身的跨协会聚合内容，不是北航演示
+    assert.strictEqual(page.data.schoolContent, false);
+    assert.ok(!page.data.view.announcements.rows.every((row) => row.associationName === '北航'));
+
+    page.onSchoolChange({ detail: { schoolId: 'buaa' } });
+
+    assert.strictEqual(page.data.schoolContent, true);
+    const rows = page.data.view.announcements.rows;
+    assert.ok(rows.length > 0, '北航有演示公告');
+    assert.ok(rows.every((row) => row.associationName === '北航'), '每条都标成北航');
+    assert.ok(page.data.view.upcomingEvents.length > 0, '北航有演示赛事');
+    assert.ok(page.data.view.summary.memberCount > 0);
+    assert.strictEqual(page.data.view.loggedIn, true);
+
+    // 演示内容没有对应的列表页，点「看全部」不应跳走（入口本身也已隐藏）
+    calls.navigations.length = 0;
+    calls.tabSwitches.length = 0;
+    page.onGoAnnouncements();
+    page.onGoEvents();
+    assert.deepStrictEqual(calls.navigations, []);
+    assert.deepStrictEqual(calls.tabSwitches, []);
+
+    // 切回本校即还原聚合内容
+    page.onSchoolChange({ detail: { schoolId: 'muc' } });
+    assert.strictEqual(page.data.schoolContent, false);
+    assert.strictEqual(page.data.view.summary.memberCount, 24);
+  } finally {
+    schoolMock.setDemoActor('demo_applicant');
+    schoolSession.reset();
+  }
+});
+
 /* ============================================================
  * 我的页
  * ============================================================ */
