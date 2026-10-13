@@ -35,6 +35,7 @@ const {
   assignMatchReferee,
   getMembers,
   isMock,
+  isMockNow,
 } = require('../../services/index.js');
 const { currentThemeClass } = require('../../services/branding.js');
 
@@ -70,6 +71,10 @@ Page({
     entryHint: '',
     /** 开发期标注模拟数据 */
     isMock,
+    /** 当前是否在浏览外校（演示）比赛：为真时整页只读，隐藏录入口 */
+    demoSchool: false,
+    /** 演示学校简称，供只读提示条显示 */
+    demoSchoolName: '',
     /** 撤销 / 驳回面板 */
     action: { open: false, matchId: '', kind: 'revoke', title: '', hint: '', placeholder: '' },
     /** 面板里填的理由 */
@@ -157,6 +162,33 @@ Page({
     const auth = resolveAuthState(user);
 
     try {
+      // 切到模拟学校（北航）时展示该校的演示比赛：整页只读，没有任何写入口。
+      // 未开放学校维度的情况（云端数据源）回落到真实台账。
+      const session = require('../../services/school-session.js');
+      const demo = isMockNow()
+        ? require('../../services/school-demo.js').schoolMatches(session.getSchoolId(), { loggedIn: Boolean(user) })
+        : null;
+      if (demo) {
+        this.loaded = true;
+        // 演示比赛是静态的，不轮询实时比分；顺手把上一页留下的订阅停掉
+        if (this.liveHandle) {
+          this.liveHandle();
+          this.liveHandle = null;
+        }
+        this.setData({
+          loading: false,
+          error: '',
+          switching: false,
+          view: demo,
+          auth: { loggedIn: Boolean(user), canRecord: false, notice: '' },
+          entryHint: '',
+          demoSchool: true,
+          demoSchoolName: demo.schoolName,
+          themeClass: currentThemeClass(),
+        });
+        return;
+      }
+
       const view = await loadMatchView({ user, tab: this.currentTab });
 
       this.loaded = true;
@@ -167,6 +199,8 @@ Page({
         view,
         auth,
         entryHint: this.describeEntry(auth),
+        demoSchool: false,
+        demoSchoolName: '',
         themeClass: currentThemeClass(),
       });
       // 首屏若已有正在计分的场次（读接口已带上 live），才挂轮询取增量
@@ -177,6 +211,8 @@ Page({
       this.setData({
         loading: false,
         switching: false,
+        demoSchool: false,
+        demoSchoolName: '',
         error: '比赛数据加载失败，请下拉重试',
         themeClass: currentThemeClass(),
       });
@@ -236,6 +272,7 @@ Page({
    * 没有身份就没法录。宁可在这里拦住并说清楚原因，也不要进去之后报错。
    */
   onGoEntry() {
+    if (this.data.demoSchool) return undefined;
     const auth = this.data.auth;
     if (!auth.loggedIn) {
       this.showToast('请先登录后再录入成绩');
@@ -256,6 +293,8 @@ Page({
 
   /** 点队名去看这位会员的主页 */
   onOpenMember(event) {
+    // 外校演示比赛里的选手没有本校账号，点进去只会是「查无此人」
+    if (this.data.demoSchool) return undefined;
     const userId = event.currentTarget.dataset.userId;
     if (!userId) return;
     wx.navigateTo({ url: `/pages/member/member?userId=${userId}` });

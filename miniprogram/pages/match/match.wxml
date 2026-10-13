@@ -15,9 +15,14 @@
 
   <block wx:else>
 
+    <!-- 切到外校为只读浏览：比赛是对方学校的演示内容，入口与操作一概不给 -->
+    <view wx:if="{{demoSchool}}" class="readonly-banner">
+      正在浏览 {{demoSchoolName}}（只读）· 比赛记录为演示内容
+    </view>
+
     <!-- ========== 录入入口 ========== -->
     <!-- 不能录入时把原因写在按钮上方，免得用户点了没反应还不知道为什么 -->
-    <view class="card entry-bar">
+    <view wx:if="{{!demoSchool}}" class="card entry-bar">
       <view class="entry-hint">{{entryHint}}</view>
       <view
         class="btn btn-block {{auth.canRecord ? 'btn-accent' : 'btn-disabled'}}"

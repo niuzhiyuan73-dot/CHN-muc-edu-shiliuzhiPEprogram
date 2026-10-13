@@ -544,6 +544,91 @@ test('首页 —— 切到北航显示北航自己的演示内容', async () => 
   }
 });
 
+test('排行榜 —— 切到北航显示北航的演示榜单且整页只读', async () => {
+  const schoolSession = require('../miniprogram/services/school-session');
+  const schoolMock = require('../miniprogram/services/school-mock');
+  schoolSession.reset();
+  schoolMock.setDemoActor('demo_muc_member');
+  try {
+    resetSession();
+    loginAs();
+    const page = instantiate(rankConfig);
+    await page.onLoad();
+
+    // 本校（民大）走真实榜单，不是演示
+    assert.strictEqual(page.data.demoSchool, false);
+    assert.ok(page.data.view.rows.length > 0);
+
+    // 切到北航：换成演示榜单，且没有「我」这一行
+    schoolSession.setSchoolId('buaa');
+    await page.refresh();
+
+    assert.strictEqual(page.data.demoSchool, true);
+    assert.strictEqual(page.data.demoSchoolName, '北航');
+    assert.ok(page.data.view.rows.length > 0, '北航有演示榜单');
+    assert.strictEqual(page.data.view.me, null);
+    assert.ok(page.data.view.rows.every((row) => row.isMe === false));
+
+    // 演示榜单里的人没有本校账号，点行不跳转
+    calls.navigations.length = 0;
+    page.onOpenMember({ currentTarget: { dataset: { userId: page.data.view.rows[0].userId } } });
+    assert.deepStrictEqual(calls.navigations, []);
+
+    // 切项目仍停在北航演示榜
+    await page.onSwitchProject({ currentTarget: { dataset: { project: 'doubles' } } });
+    assert.strictEqual(page.data.view.activeProject, 'doubles');
+    assert.strictEqual(page.data.demoSchool, true);
+  } finally {
+    schoolMock.setDemoActor('demo_applicant');
+    schoolSession.reset();
+  }
+});
+
+test('比赛页 —— 切到北航显示北航的演示比赛，且没有任何操作入口', async () => {
+  const schoolSession = require('../miniprogram/services/school-session');
+  const schoolMock = require('../miniprogram/services/school-mock');
+  schoolSession.reset();
+  schoolMock.setDemoActor('demo_muc_member');
+  try {
+    resetSession();
+    app.globalData.userInfo = activeMember();
+    const page = instantiate(matchConfig);
+    await page.onLoad();
+
+    assert.strictEqual(page.data.demoSchool, false);
+
+    schoolSession.setSchoolId('buaa');
+    await page.refresh();
+
+    assert.strictEqual(page.data.demoSchool, true);
+    assert.strictEqual(page.data.demoSchoolName, '北航');
+    assert.strictEqual(page.data.auth.canRecord, false);
+
+    const rows = page.data.view.records;
+    assert.ok(rows.length > 0, '北航有演示比赛');
+    // 只剩一排「全部比赛」——浏览者不是该校会员，没有「我的比赛 / 待确认」
+    assert.deepStrictEqual(page.data.view.tabs.map((item) => item.label), ['全部比赛']);
+    // 任何写入口都被关掉
+    assert.ok(
+      rows.every(
+        (row) =>
+          !row.canRecord && !row.canConfirm && !row.canRevoke && !row.canForfeit && !row.canAssignReferee
+      )
+    );
+
+    // 点队名不跳转、点录入不进录入页
+    calls.navigations.length = 0;
+    calls.toasts.length = 0;
+    page.onOpenMember({ currentTarget: { dataset: { userId: rows[0].teamAList[0].userId } } });
+    page.onGoEntry();
+    assert.deepStrictEqual(calls.navigations, []);
+    assert.deepStrictEqual(calls.toasts, []);
+  } finally {
+    schoolMock.setDemoActor('demo_applicant');
+    schoolSession.reset();
+  }
+});
+
 /* ============================================================
  * 我的页
  * ============================================================ */

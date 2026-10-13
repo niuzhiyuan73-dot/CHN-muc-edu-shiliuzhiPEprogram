@@ -230,7 +230,7 @@ Page({
   applySchoolHome() {
     const legacy = this.legacyView;
     if (!legacy) return;
-    const { schoolHome } = require('../../services/school-home.js');
+    const { schoolHome } = require('../../services/school-demo.js');
     const feed = this.data.schoolList.length > 1 ? schoolHome(this.data.schoolId) : null;
     if (!feed) {
       this.setData({ view: legacy, schoolContent: false });

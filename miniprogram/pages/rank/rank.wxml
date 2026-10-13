@@ -16,6 +16,11 @@
 
   <block wx:else>
 
+    <!-- 切到外校为只读浏览：榜单是对方学校的演示内容，不能操作也点不进个人主页 -->
+    <view wx:if="{{demoSchool}}" class="readonly-banner">
+      正在浏览 {{demoSchoolName}}（只读）· 榜单为演示内容
+    </view>
+
     <!-- ========== 项目切换 ========== -->
     <view class="pool-tabs {{switching ? 'is-switching' : ''}}">
       <view

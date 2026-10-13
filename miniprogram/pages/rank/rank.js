@@ -12,7 +12,7 @@
  */
 
 const { loadRankView, describeSearch } = require('../../services/rank-view.js');
-const { isMock } = require('../../services/index.js');
+const { isMock, isMockNow } = require('../../services/index.js');
 const { currentThemeClass } = require('../../services/branding.js');
 
 Page({
@@ -30,6 +30,10 @@ Page({
     view: {},
     /** 开发期在页脚标注数据来源 */
     isMock,
+    /** 当前是否在浏览外校（演示）榜单：为真时整体只读，榜单行不可点 */
+    demoSchool: false,
+    /** 演示学校简称，供只读提示条显示 */
+    demoSchoolName: '',
 
     // ---------- 按名字筛选 ----------
     // 完整榜单留在 this.view 里，页面上只渲染筛选后的结果。这样每敲一个字
@@ -78,11 +82,40 @@ Page({
    */
   async refresh() {
     try {
+      // 切到模拟学校（北航）时展示该校的演示榜单：整页只读，也没有「我」。
+      // 未开放学校维度的房间（云端数据源）回落到真实榜单。
+      const session = require('../../services/school-session.js');
+      const demo = isMockNow()
+        ? require('../../services/school-demo.js').schoolRank(session.getSchoolId(), { project: this.currentProject })
+        : null;
+      if (demo) {
+        this.view = demo;
+        this.setData({
+          loading: false,
+          error: '',
+          switching: false,
+          view: demo,
+          demoSchool: true,
+          demoSchoolName: demo.schoolName,
+          themeClass: currentThemeClass(),
+        });
+        this.applyKeyword(this.data.keyword);
+        return;
+      }
+
       const view = await loadRankView({ project: this.currentProject });
       // 完整榜单另存一份。它不参与渲染，只当筛选的数据源，
       // 所以不用塞进 data——省一次 setData 的开销。
       this.view = view;
-      this.setData({ loading: false, error: '', switching: false, view, themeClass: currentThemeClass() });
+      this.setData({
+        loading: false,
+        error: '',
+        switching: false,
+        view,
+        demoSchool: false,
+        demoSchoolName: '',
+        themeClass: currentThemeClass(),
+      });
       // 切项目/榜单时保留搜索词：搜姓「张」的人，切到女单榜也该还是「张」
       this.applyKeyword(this.data.keyword);
     } catch (err) {
@@ -90,6 +123,8 @@ Page({
       this.setData({
         loading: false,
         switching: false,
+        demoSchool: false,
+        demoSchoolName: '',
         error: '排行榜加载失败，请下拉重试',
         themeClass: currentThemeClass(),
       });
@@ -154,6 +189,8 @@ Page({
    * 这里不排除「我自己」——从榜单进自己主页看曲线，是很自然的动作。
    */
   onOpenMember(event) {
+    // 外校演示榜单里的人没有本校账号，点进去只会是「查无此人」
+    if (this.data.demoSchool) return undefined;
     const userId = event.currentTarget.dataset.userId;
     if (!userId) return;
 
