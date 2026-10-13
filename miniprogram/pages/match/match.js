@@ -162,11 +162,15 @@ Page({
     const auth = resolveAuthState(user);
 
     try {
-      // 切到模拟学校（北航）时展示该校的演示比赛：整页只读，没有任何写入口。
+      // 切到模拟学校（北航）时展示该校当前协会的演示比赛：整页只读，没有任何写入口。
       // 未开放学校维度的情况（云端数据源）回落到真实台账。
       const session = require('../../services/school-session.js');
+      const association = require('../../services/association-scope.js').getAssociation();
       const demo = isMockNow()
-        ? require('../../services/school-demo.js').schoolMatches(session.getSchoolId(), { loggedIn: Boolean(user) })
+        ? require('../../services/school-demo.js').schoolMatches(session.getSchoolId(), {
+            association,
+            loggedIn: Boolean(user),
+          })
         : null;
       if (demo) {
         this.loaded = true;

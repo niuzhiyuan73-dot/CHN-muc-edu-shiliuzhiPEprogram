@@ -521,7 +521,12 @@ test('首页 —— 切到北航显示北航自己的演示内容', async () => 
     assert.strictEqual(page.data.schoolContent, true);
     const rows = page.data.view.announcements.rows;
     assert.ok(rows.length > 0, '北航有演示公告');
-    assert.ok(rows.every((row) => row.associationName === '北航'), '每条都标成北航');
+    assert.ok(rows.every((row) => row.associationName.startsWith('北航')), '每条都标成北航的某个协会');
+    // 首页是跨协会聚合：三个协会各摆一条，切到北航就看得出它有哪些协会
+    assert.deepStrictEqual(
+      rows.map((row) => row.associationName),
+      ['北航匹克球', '北航乒乓球', '北航羽毛球']
+    );
     assert.ok(page.data.view.upcomingEvents.length > 0, '北航有演示赛事');
     assert.ok(page.data.view.summary.memberCount > 0);
     assert.strictEqual(page.data.view.loggedIn, true);
@@ -664,6 +669,59 @@ test('赛事页 —— 切到北航显示北航的演示赛事与积分榜，且
     page.onMoreEvents();
     assert.deepStrictEqual(calls.navigations, []);
   } finally {
+    schoolMock.setDemoActor('demo_applicant');
+    schoolSession.reset();
+  }
+});
+
+test('外校演示 —— 按协会分开：切协会后榜单 / 比赛 / 赛事都换成该协会的内容', async () => {
+  const schoolSession = require('../miniprogram/services/school-session');
+  const schoolMock = require('../miniprogram/services/school-mock');
+  const scope = require('../miniprogram/services/association-scope.js');
+  schoolSession.reset();
+  scope.resetAssociation();
+  schoolMock.setDemoActor('demo_muc_member');
+  try {
+    resetSession();
+    loginAs();
+    schoolSession.setSchoolId('buaa');
+
+    // 排行榜：匹克球与乒乓是两套不同的名单
+    scope.setAssociation('pkb');
+    const rankPage = instantiate(rankConfig);
+    await rankPage.onLoad();
+    const pkbRankFirst = rankPage.data.view.rows[0].nickName;
+    assert.ok(rankPage.data.view.meHint.includes('匹克球'), '提示条点明是哪个协会');
+
+    scope.setAssociation('tt');
+    await rankPage.refresh();
+    assert.strictEqual(rankPage.data.demoSchool, true);
+    assert.notStrictEqual(rankPage.data.view.rows[0].nickName, pkbRankFirst, '切协会换了一套榜单');
+
+    // 比赛页：同样按协会换内容
+    scope.setAssociation('pkb');
+    const matchPage = instantiate(matchConfig);
+    await matchPage.onLoad();
+    const pkbMatchId = matchPage.data.view.records[0].matchId;
+
+    scope.setAssociation('bd');
+    await matchPage.refresh();
+    assert.strictEqual(matchPage.data.demoSchool, true);
+    assert.notStrictEqual(matchPage.data.view.records[0].matchId, pkbMatchId, '切协会换了一套比赛');
+
+    // 赛事页：赛事列表与积分榜都换
+    scope.setAssociation('pkb');
+    const eventsPage = instantiate(eventsConfig);
+    await eventsPage.onLoad();
+    const pkbEventId = eventsPage.data.view.events[0].id;
+
+    scope.setAssociation('bd');
+    await eventsPage.refresh();
+    assert.strictEqual(eventsPage.data.demoSchool, true);
+    assert.notStrictEqual(eventsPage.data.view.events[0].id, pkbEventId, '切协会换了一套赛事');
+    assert.ok(eventsPage.data.view.meHint.includes('羽毛球'), '提示条点明是哪个协会');
+  } finally {
+    scope.resetAssociation();
     schoolMock.setDemoActor('demo_applicant');
     schoolSession.reset();
   }

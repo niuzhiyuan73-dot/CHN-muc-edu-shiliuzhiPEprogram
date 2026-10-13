@@ -103,11 +103,12 @@ Page({
    */
   async refresh() {
     try {
-      // 切到模拟学校（北航）时展示该校的演示赛事与积分榜：整页只读，发布 /
+      // 切到模拟学校（北航）时展示该校当前协会的演示赛事与积分榜：整页只读，发布 /
       // 置顶等入口一概不给。未开放学校维度的情况（云端数据源）回落到真实视图。
       const session = require('../../services/school-session.js');
+      const association = require('../../services/association-scope.js').getAssociation();
       const demo = isMockNow()
-        ? require('../../services/school-demo.js').schoolEvents(session.getSchoolId())
+        ? require('../../services/school-demo.js').schoolEvents(session.getSchoolId(), { association })
         : null;
       if (demo) {
         this.loaded = true;

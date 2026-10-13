@@ -82,11 +82,15 @@ Page({
    */
   async refresh() {
     try {
-      // 切到模拟学校（北航）时展示该校的演示榜单：整页只读，也没有「我」。
+      // 切到模拟学校（北航）时展示该校当前协会的演示榜单：整页只读，也没有「我」。
       // 未开放学校维度的房间（云端数据源）回落到真实榜单。
       const session = require('../../services/school-session.js');
+      const association = require('../../services/association-scope.js').getAssociation();
       const demo = isMockNow()
-        ? require('../../services/school-demo.js').schoolRank(session.getSchoolId(), { project: this.currentProject })
+        ? require('../../services/school-demo.js').schoolRank(session.getSchoolId(), {
+            project: this.currentProject,
+            association,
+          })
         : null;
       if (demo) {
         this.view = demo;
