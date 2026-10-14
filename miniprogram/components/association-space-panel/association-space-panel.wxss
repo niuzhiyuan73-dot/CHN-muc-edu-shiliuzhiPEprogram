@@ -6,6 +6,161 @@
  */
 @import "../../templates/rank-board.wxss";
 
+/* 训练页签的状态筛选：复用页签样式，紧贴列表上方 */
+.space-filters {
+  margin-bottom: var(--space-md);
+  flex-wrap: wrap;
+}
+
+/* 可点选的日期 / 时间选择器（picker 包一层容器给出可见样式） */
+.space-datetime {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.space-datetime picker {
+  flex: 1;
+}
+
+.space-picker-value {
+  padding: var(--space-sm) var(--space-md);
+  border: 1rpx solid var(--border-color);
+  border-radius: var(--radius-md);
+  font-size: var(--font-md);
+  color: var(--text-primary);
+}
+
+/* 报名范围：不限 / 限组的二选一 */
+.space-mode-row {
+  display: flex;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.space-mode {
+  flex: 1;
+  padding: var(--space-sm) 0;
+  text-align: center;
+  border: 1rpx solid var(--border-color);
+  border-radius: var(--radius-md);
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+}
+
+.space-mode.is-active {
+  border-color: var(--brand-color, #3a6ea5);
+  background: var(--brand-soft, #eef3ff);
+  color: var(--brand-color, #3a6ea5);
+  font-weight: 600;
+}
+
+/* 置顶开关一行：标签在左、开关在右 */
+.space-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* 通知卡片：标题行 + 元信息 + 正文（分组卡片复用 .space-group） */
+.space-card {
+  margin-bottom: var(--space-md);
+}
+
+.space-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.space-card-title {
+  font-size: var(--font-md);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.space-card-meta {
+  margin-top: 6rpx;
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+}
+
+.space-card-body {
+  margin-top: var(--space-sm);
+  font-size: var(--font-md);
+  color: var(--text-primary);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+/* 无权限空态：说明文案 + 换身份按钮 */
+.space-noaccess-hint {
+  margin-top: var(--space-sm);
+  padding: 0 var(--space-lg);
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.space-noaccess-btn {
+  margin-top: var(--space-lg);
+  width: 60%;
+}
+
+/* 通知的「已撤回」标记 */
+.space-status {
+  padding: 0 12rpx;
+  border-radius: var(--radius-sm, 6rpx);
+  font-size: var(--font-xs, 20rpx);
+  line-height: 1.8;
+  color: var(--text-secondary);
+  background: var(--bg-muted, #f0f0f0);
+}
+
+/* 训练状态徽标：按状态着色，与筛选口径一致 */
+.space-state {
+  padding: 2rpx 16rpx;
+  border-radius: var(--radius-sm, 6rpx);
+  font-size: var(--font-sm);
+  background: var(--bg-muted, #f0f0f0);
+  color: var(--text-secondary);
+}
+
+.space-state.is-open {
+  background: #eef7ee;
+  color: #2c7a3f;
+}
+
+.space-state.is-ongoing {
+  background: var(--brand-soft, #eef3ff);
+  color: var(--brand-color, #3a6ea5);
+}
+
+.space-state.is-canceled {
+  background: #fdeeee;
+  color: #b23b3b;
+}
+
+/* 详情报名区 */
+.space-signup {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1rpx solid var(--border-color);
+}
+
+.space-signup-state {
+  font-size: var(--font-md);
+  font-weight: 600;
+  color: #2c7a3f;
+}
+
+.space-signup-note {
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+}
+
 /* 顶栏：学校 + 协会 */
 .space-head {
   margin-bottom: var(--space-sm);

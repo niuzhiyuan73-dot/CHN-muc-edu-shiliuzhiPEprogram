@@ -59,12 +59,14 @@ const MANIFEST = [
   // 身份业务编排依赖注入仓储，不直接引用 wx、Node 或云 SDK。
   'services/school-context.js',
   'services/school-membership-service.js',
-  // 协会空间：权限、受众、成员搜索为纯模块；两个 service 只依赖注入的 repo 与上下文。
+  // 协会空间：权限、受众、成员搜索为纯模块；各 service 只依赖注入的 repo 与上下文。
   'services/association-space-permission.js',
   'services/association-audience.js',
   'services/association-member.js',
   'services/association-group-service.js',
   'services/association-member-service.js',
+  'services/association-notice-service.js',
+  'services/association-training-service.js',
   'services/exchange-service.js',
   'services/exchange-plan.js',
   'services/court.js',

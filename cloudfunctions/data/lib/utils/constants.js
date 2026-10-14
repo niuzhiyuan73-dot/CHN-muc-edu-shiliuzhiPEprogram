@@ -680,6 +680,13 @@ const COLLECTION = {
   ASSOCIATION_GROUPS: 'association_groups',
   // 组内成员关系：_id = scope + groupId + userId 的稳定唯一键，含退出/被移除状态。
   ASSOCIATION_GROUP_MEMBERS: 'association_group_members',
+  // 空间通知：协会内部公告，与本模块顶部的全局 announcements 各自独立——
+  // 空间通知只在本校本协会可见，绝不进首页 / 公告中心 / 全局统计（规划 §3.3）。
+  ASSOCIATION_NOTICES: 'association_notices',
+  // 空间训练活动：一个学校一个协会内的训练发布（规划 §5.4）。
+  ASSOCIATION_TRAININGS: 'association_trainings',
+  // 训练报名：_id = scope + trainingId + userId，含取消/移除与资格快照（规划 §5.5）。
+  TRAINING_REGISTRATIONS: 'training_registrations',
 };
 
 /** 本地缓存键名 */
@@ -718,6 +725,45 @@ const ANNOUNCEMENT_STATUS = {
 const ANNOUNCEMENT_STATUS_LABEL = {
   [ANNOUNCEMENT_STATUS.PUBLISHED]: '已发布',
   [ANNOUNCEMENT_STATUS.ARCHIVED]: '已下架',
+};
+
+/**
+ * 空间通知状态（协会空间内部，与全局公告各自独立）。
+ * 「撤回」不等于「删除」：记录留在管理列表里留痕，只是不再对本协会会员展示。
+ * 与全局公告的 published/archived 语义一致，但字段与集合分开，互不干扰。
+ */
+const ASSOCIATION_NOTICE_STATUS = {
+  PUBLISHED: 'published',
+  WITHDRAWN: 'withdrawn',
+};
+
+const ASSOCIATION_NOTICE_STATUS_LABEL = {
+  [ASSOCIATION_NOTICE_STATUS.PUBLISHED]: '已发布',
+  [ASSOCIATION_NOTICE_STATUS.WITHDRAWN]: '已撤回',
+};
+
+/**
+ * 训练活动状态（协会空间）。
+ * 取消后仍保留记录（留痕），不再对外显示为可报名。
+ */
+const TRAINING_STATUS = {
+  PUBLISHED: 'published',
+  FINISHED: 'finished',
+  CANCELED: 'canceled',
+};
+
+const TRAINING_STATUS_LABEL = {
+  [TRAINING_STATUS.PUBLISHED]: '可报名',
+  [TRAINING_STATUS.FINISHED]: '已结束',
+  [TRAINING_STATUS.CANCELED]: '已取消',
+};
+
+/**
+ * 训练报名状态。取消/移出保留记录（否则重报会丢历史），有效名额只数 registered。
+ */
+const TRAINING_SIGNUP_STATUS = {
+  REGISTERED: 'registered',
+  CANCELED: 'canceled',
 };
 
 /* ============================================================
@@ -1151,6 +1197,11 @@ module.exports = {
   ANNOUNCEMENT_CATEGORIES,
   ANNOUNCEMENT_STATUS,
   ANNOUNCEMENT_STATUS_LABEL,
+  ASSOCIATION_NOTICE_STATUS,
+  ASSOCIATION_NOTICE_STATUS_LABEL,
+  TRAINING_STATUS,
+  TRAINING_STATUS_LABEL,
+  TRAINING_SIGNUP_STATUS,
   LEG_DISCIPLINE,
   LEG_DISCIPLINE_LABEL,
   ALL_LEG_DISCIPLINES,

@@ -5,6 +5,9 @@
  */
 const groupService = require('../../lib/services/association-group-service.js');
 const memberService = require('../../lib/services/association-member-service.js');
+const noticeService = require('../../lib/services/association-notice-service.js');
+const trainingService = require('../../lib/services/association-training-service.js');
 
 module.exports = Object.fromEntries(
-  Object.entries({ ...groupService, ...memberService }).filter(([, value]) => typeof value === 'function'));
+  Object.entries({ ...groupService, ...memberService, ...noticeService, ...trainingService })
+    .filter(([, value]) => typeof value === 'function'));

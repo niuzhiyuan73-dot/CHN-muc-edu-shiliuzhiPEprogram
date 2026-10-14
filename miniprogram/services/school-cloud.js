@@ -40,6 +40,21 @@ function forAssociationSpace(input) {
     leaveAssociationGroup: payload => request('leaveAssociationGroup', payload),
     archiveAssociationGroup: payload => request('archiveAssociationGroup', payload),
     listAssociationMembers: payload => request('listAssociationMembers', payload),
+    listAssociationNotices: payload => request('listAssociationNotices', payload),
+    getAssociationNotice: payload => request('getAssociationNotice', payload),
+    publishAssociationNotice: payload => request('publishAssociationNotice', payload),
+    updateAssociationNotice: payload => request('updateAssociationNotice', payload),
+    withdrawAssociationNotice: payload => request('withdrawAssociationNotice', payload),
+    listTrainings: payload => request('listTrainings', payload),
+    getTraining: payload => request('getTraining', payload),
+    listTrainingRegistrations: payload => request('listTrainingRegistrations', payload),
+    publishTraining: payload => request('publishTraining', payload),
+    updateTraining: payload => request('updateTraining', payload),
+    cancelTraining: payload => request('cancelTraining', payload),
+    finishTraining: payload => request('finishTraining', payload),
+    registerTraining: payload => request('registerTraining', payload),
+    cancelTrainingRegistration: payload => request('cancelTrainingRegistration', payload),
+    removeTrainingRegistration: payload => request('removeTrainingRegistration', payload),
   });
 }
 

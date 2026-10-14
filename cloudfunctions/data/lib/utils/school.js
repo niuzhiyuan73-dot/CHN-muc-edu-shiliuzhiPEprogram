@@ -30,6 +30,29 @@ function schoolKey(kind, ...parts) {
   return [kind, ...parts].map(encodeURIComponent).join(':');
 }
 
+/**
+ * 把任意字符串折叠成固定长度（128 位 / 32 个十六进制字符）的确定性摘要。
+ * 纯 JS，不依赖 Node 或云 SDK，miniprogram 与云端跑同一份。仅用于生成对外
+ * 可见的短编号（如协会小组 _id 要能进 audienceGroupIds 受形态约束），
+ * **不是**密码学散列，不得用于安全用途。
+ */
+function keyDigest(input) {
+  let h1 = 1779033703, h2 = 3144134277, h3 = 1013904242, h4 = 2773480762;
+  for (let i = 0; i < input.length; i += 1) {
+    const k = input.charCodeAt(i);
+    h1 = h2 ^ Math.imul(h1 ^ k, 597399067);
+    h2 = h3 ^ Math.imul(h2 ^ k, 2869860233);
+    h3 = h4 ^ Math.imul(h3 ^ k, 951274213);
+    h4 = h1 ^ Math.imul(h4 ^ k, 2716044179);
+  }
+  h1 = Math.imul(h3 ^ (h1 >>> 18), 597399067);
+  h2 = Math.imul(h4 ^ (h2 >>> 22), 2869860233);
+  h3 = Math.imul(h1 ^ (h3 >>> 17), 951274213);
+  h4 = Math.imul(h2 ^ (h4 >>> 19), 2716044179);
+  return [(h1 ^ h2 ^ h3 ^ h4) >>> 0, (h2 ^ h1) >>> 0, (h3 ^ h1) >>> 0, (h4 ^ h1) >>> 0]
+    .map((word) => word.toString(16).padStart(8, '0')).join('');
+}
+
 const schoolMemberKey = (userId, schoolId) => schoolKey('sm', requireSchoolId(schoolId), userId);
 const schoolRoleKey = (userId, schoolId) => schoolKey('sr', requireSchoolId(schoolId), userId);
 const schoolAssociationKey = (scope) => {
@@ -50,9 +73,13 @@ const scopeKey = (scope) => {
   return schoolKey('scope', s.schoolId, s.association);
 };
 // 协会空间小组：_id 由服务端按 scope + 创建者 + 请求编号生成，翻不出别的学校/协会。
+// 小组编号会作为 audienceGroupIds 对外提交，受 GROUP_ID_PATTERN（[A-Za-z0-9_-]{1,64}）
+// 约束，而 schoolKey 复合键含 ':' 与 '%'。故这里保留同样的输入组成与幂等语义，只把
+// 完整、规范化的复合键折叠成固定长度、URL 安全的摘要。schoolKey 仍是内部键工具，
+// 其余记录的键规则不受影响。
 const associationGroupKey = (groupId, scope) => {
   const s = schoolScope(scope);
-  return schoolKey('ag', s.schoolId, s.association, groupId);
+  return `ag_${keyDigest(schoolKey('ag', s.schoolId, s.association, groupId))}`;
 };
 // 组内成员关系：scope + groupId + userId，稳定唯一，重复加入走同一键。
 const associationGroupMemberKey = (groupId, userId, scope) => {
@@ -63,6 +90,21 @@ const associationGroupMemberKey = (groupId, userId, scope) => {
 const associationGroupNameKey = (name, scope) => {
   const s = schoolScope(scope);
   return schoolKey('agn', s.schoolId, s.association, name);
+};
+// 空间通知：_id 由服务端按 scope + 服务端生成的请求编号构成，翻不出别的学校/协会。
+const associationNoticeKey = (noticeId, scope) => {
+  const s = schoolScope(scope);
+  return schoolKey('an', s.schoolId, s.association, noticeId);
+};
+// 空间训练：_id 由服务端按 scope + 服务端生成的请求编号构成。
+const associationTrainingKey = (trainingId, scope) => {
+  const s = schoolScope(scope);
+  return schoolKey('at', s.schoolId, s.association, trainingId);
+};
+// 训练报名：scope + trainingId + userId，稳定唯一，重复报名走同一键，无法跨范围伪造。
+const trainingRegistrationKey = (trainingId, userId, scope) => {
+  const s = schoolScope(scope);
+  return schoolKey('tr', s.schoolId, s.association, trainingId, userId);
 };
 function belongsToSchoolScope(doc, scope) {
   const s = schoolScope(scope);
@@ -75,4 +117,5 @@ module.exports = {
   schoolRoleKey, schoolAssociationKey, schoolMembershipKey, collegeKey, ratingKey,
   scopeKey, belongsToSchoolScope,
   associationGroupKey, associationGroupMemberKey, associationGroupNameKey,
+  associationNoticeKey, associationTrainingKey, trainingRegistrationKey,
 };

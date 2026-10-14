@@ -6,10 +6,13 @@ const { schoolScope, schoolKey } = require('../utils/school.js');
 const exchange = require('./exchange-service.js');
 const groupService = require('./association-group-service.js');
 const memberService = require('./association-member-service.js');
+const noticeService = require('./association-notice-service.js');
+const trainingService = require('./association-training-service.js');
 
 /** 协会空间处理器集合（仅函数；STATUS 常量等非函数条目不参与分发） */
 const spaceHandlers = Object.freeze(Object.fromEntries(
-  Object.entries({ ...groupService, ...memberService }).filter(([, value]) => typeof value === 'function')));
+  Object.entries({ ...groupService, ...memberService, ...noticeService, ...trainingService })
+    .filter(([, value]) => typeof value === 'function')));
 
 const DEMO_ACTORS = Object.freeze([
   { id: 'demo_applicant', label: '模拟申请人' },

@@ -5530,6 +5530,30 @@ test('协会空间 —— 首屏默认落在训练页签，标题带学校与协
   }
 });
 
+test('协会空间 —— 无权限身份：给说明与换身份入口，而不是打白整块面板', async () => {
+  const fx = spaceFixture();
+  // 默认演示身份就是「普通访客」（demo_applicant），没有学校归属
+  fx.to('demo_applicant');
+  try {
+    const page = instantiate(spacePanelConfig);
+    await page.onLoad();
+
+    assert.strictEqual(page.data.loading, false);
+    assert.strictEqual(page.data.noAccess, true, '没有读取权时进入无权限态');
+    assert.strictEqual(page.data.error, '', '无权限不是加载失败，不应落进 error（否则整块面板被打白）');
+    assert.ok(page.data.noAccessNote, '给出服务端返回的说明');
+    assert.strictEqual(page.data.canSwitchDemo, true, '演示环境提供换身份入口');
+    assert.deepStrictEqual(page.data.groups, []);
+    assert.strictEqual(page.data.activeSub, 'training', '无权限也不影响页签初值');
+
+    calls.navigations.length = 0;
+    page.onGoSchoolIdentity();
+    assert.deepStrictEqual(calls.navigations, ['/pages/school-identity/school-identity']);
+  } finally {
+    fx.restore();
+  }
+});
+
 test('协会空间 —— 成员页签首次切过去才拉取，关键字可过滤', async () => {
   const fx = spaceFixture();
   fx.to('demo_muc_member');
@@ -5676,6 +5700,96 @@ test('协会空间 —— 管理者可改组名，提交带版本号', async () 
     const after = page.data.groups.find((row) => row.groupId === groupId);
     assert.strictEqual(after.name, '新组名');
     assert.ok(after.revision > before.revision, '版本号自增');
+  } finally {
+    fx.restore();
+  }
+});
+
+test('协会空间 —— 通知页签：负责人可发布并撤回，会员只读且看不到撤回件', async () => {
+  const fx = spaceFixture();
+  try {
+    fx.to('demo_muc_admin');
+    const page = instantiate(spacePanelConfig);
+    await page.onLoad();
+    await page.onSwitchSub({ currentTarget: { dataset: { sub: 'notice' } } });
+    assert.strictEqual(page.data.activeSub, 'notice');
+    assert.strictEqual(page.data.mountedSub.notice, true);
+    assert.strictEqual(page.data.notices.length, 0, '初始没有空间通知');
+
+    page.onToggleNoticeCreate();
+    assert.strictEqual(page.data.showNoticeCreate, true);
+    page.onNoticeField({ currentTarget: { dataset: { field: 'title' } }, detail: { value: '空间通知一' } });
+    page.onNoticeField({ currentTarget: { dataset: { field: 'content' } }, detail: { value: '这是协会内部通知' } });
+    await page.onCreateNotice();
+
+    assert.strictEqual(page.data.error, '');
+    assert.strictEqual(page.data.notice, '通知已发布');
+    assert.strictEqual(page.data.notices.length, 1);
+    assert.strictEqual(page.data.notices[0].title, '空间通知一');
+    assert.strictEqual(page.data.notices[0].canEdit, true, '负责人可编辑');
+
+    const noticeId = page.data.notices[0].noticeId;
+    await page.onWithdrawNotice({ currentTarget: { dataset: { noticeid: noticeId, revision: page.data.notices[0].revision } } });
+    assert.strictEqual(page.data.notice, '通知已撤回');
+    assert.strictEqual(page.data.notices[0].withdrawn, true, '负责人仍可见撤回件以便审计');
+
+    // 普通会员只读：没有发布入口，撤回的通知对会员不可见
+    fx.to('demo_muc_member');
+    const memberPage = instantiate(spacePanelConfig);
+    await memberPage.onLoad();
+    await memberPage.onSwitchSub({ currentTarget: { dataset: { sub: 'notice' } } });
+    assert.strictEqual(memberPage.data.canManage, false, '会员不能管理通知');
+    assert.strictEqual(memberPage.data.notices.length, 0, '撤回的通知对会员不可见');
+  } finally {
+    fx.restore();
+  }
+});
+
+test('协会空间 —— 训练页签：负责人发布，会员报名与取消，状态可筛选', async () => {
+  const fx = spaceFixture();
+  try {
+    fx.to('demo_muc_admin');
+    const page = instantiate(spacePanelConfig);
+    await page.onLoad();
+    assert.strictEqual(page.data.activeSub, 'training', '训练是默认页签');
+    assert.strictEqual(page.trainingLoaded, true, '首屏即拉取训练');
+    assert.strictEqual(page.data.trainings.length, 0);
+
+    page.onToggleTrainingCreate();
+    assert.strictEqual(page.data.showTrainingCreate, true);
+    page.onTrainingField({ currentTarget: { dataset: { field: 'title' } }, detail: { value: '周末训练' } });
+    page.onTrainingField({ currentTarget: { dataset: { field: 'location' } }, detail: { value: '综合体育馆' } });
+    await page.onCreateTraining();
+
+    assert.strictEqual(page.data.error, '');
+    assert.strictEqual(page.data.notice, '训练已发布');
+    assert.strictEqual(page.data.trainings.length, 1);
+    assert.strictEqual(page.data.trainings[0].state, 'open');
+    const trainingId = page.data.trainings[0].trainingId;
+
+    // 会员报名：详情里可报名，报名后名单增加，可再取消
+    fx.to('demo_muc_member');
+    const memberPage = instantiate(spacePanelConfig);
+    await memberPage.onLoad();
+    await memberPage.onToggleTrainingDetail({ currentTarget: { dataset: { trainingid: trainingId } } });
+    assert.ok(memberPage.data.trainingDetail, '详情已拉到');
+    assert.strictEqual(memberPage.data.trainingDetail.canRegister, true,
+      memberPage.data.trainingDetail.registerNote);
+
+    await memberPage.onRegisterTraining();
+    assert.strictEqual(memberPage.data.notice, '报名成功');
+    assert.strictEqual(memberPage.data.trainingDetail.training.signupCount, 1);
+    assert.strictEqual(memberPage.data.trainingDetail.canCancel, true);
+    assert.strictEqual(memberPage.data.trainingRoster.length, 1);
+
+    await memberPage.onCancelRegistration();
+    assert.strictEqual(memberPage.data.notice, '已取消报名');
+    assert.strictEqual(memberPage.data.trainingDetail.training.signupCount, 0);
+
+    // 状态筛选：这条是「可报名」，切到「已取消」筛选后列表为空
+    await memberPage.onTrainingFilter({ currentTarget: { dataset: { key: 'canceled' } } });
+    assert.strictEqual(memberPage.data.trainingFilter, 'canceled');
+    assert.strictEqual(memberPage.data.trainings.length, 0, '已取消筛选下没有训练');
   } finally {
     fx.restore();
   }
