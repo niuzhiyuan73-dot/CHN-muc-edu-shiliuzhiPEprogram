@@ -64,6 +64,61 @@ async function buildDirectory(ctx) {
   };
 }
 
+/**
+ * 一次读齐本校的**学院目录**与在册会员，供学院赛（名单制）复用旧栈纯校验。
+ * ============================================================
+ * 旧栈学院赛认「学院全名」，且有效学院写死在全局 `COLLEGES`。学校维度要求
+ * 每校一份独立目录（改为稳定 `collegeId`），所以这里把本校 colleges 表读出来，
+ * 同时提供「编号 ↔ 全名」的互查，并给在册会员补上 `college` 全名与数字
+ * `status`——正是 `college-entry.validateCollegeEntry` 校验队员身份所需。
+ *
+ * 【为什么同时给编号与全名】
+ * 对外主键用**稳定编号**（`collegeEntryKey` 以 collegeId 组成），显示与旧栈
+ * 校验仍按**全名**（`managesCollege` / `member.college` 都是全名比对）。两者
+ * 一次读齐、就地互查，页面与服务不必各转一遍。
+ *
+ * @param {Object} ctx
+ * @returns {Promise<{
+ *   colleges:Array<Object>, collegeNames:Array<string>,
+ *   collegeIdOf:function(string):string, collegeOf:function(string):string,
+ *   collegeNameById:function(string):string, collegeIdByName:function(string):string,
+ *   memberIds:Array<string>, members:Array<Object>,
+ *   actorCollege:string, actorCollegeId:string,
+ * }>}
+ */
+async function buildCollegeDirectory(ctx) {
+  const [members, colleges, users] = await Promise.all([
+    ctx.repo.forScope(ctx).schoolMembers.list(),
+    ctx.repo.forScope(ctx).colleges.list(),
+    ctx.repo.users.list(),
+  ]);
+  const nameById = new Map(colleges.map(item => [item.collegeId, item.name]));
+  const idByName = new Map(colleges.map(item => [item.name, item.collegeId]));
+  const collegeIdOfMember = new Map(members.map(item => [item.userId, item.collegeId]));
+  const userById = new Map(users.map(item => [item._id, item]));
+  const active = members.filter(item => item.status === 'active');
+  const collegeIdOf = userId => collegeIdOfMember.get(userId) || '';
+  const collegeOf = userId => nameById.get(collegeIdOfMember.get(userId)) || '';
+  return {
+    colleges: colleges.slice(),
+    collegeNames: colleges.map(item => item.name),
+    collegeIdOf,
+    collegeOf,
+    collegeNameById: collegeId => nameById.get(collegeId) || '',
+    collegeIdByName: name => idByName.get(name) || '',
+    memberIds: active.map(item => item.userId),
+    // 会员档案补「学院全名 + 可用状态」，与旧栈校验所需形状对齐（status 恒 ACTIVE：
+    // 离校 / 停用者已被 active 过滤掉，走不到这里）。
+    members: active.map(item => {
+      const user = userById.get(item.userId);
+      if (!user) return null;
+      return { ...user, college: nameById.get(item.collegeId) || '', status: USER_STATUS.ACTIVE };
+    }).filter(Boolean),
+    actorCollege: collegeOf(ctx.actorId),
+    actorCollegeId: collegeIdOf(ctx.actorId),
+  };
+}
+
 /** 权限判定的公共入参：角色 + 操作者学院 + 编号→学院。 */
 function recordOptions(ctx, dir) {
   return { role: legacyRoleOf(ctx), college: dir.actorCollege, collegeOf: dir.collegeOf };
@@ -90,4 +145,6 @@ function legacyActorOf(ctx, dir) {
   };
 }
 
-module.exports = { legacyRoleOf, buildDirectory, recordOptions, legacyActorOf };
+module.exports = {
+  legacyRoleOf, buildDirectory, buildCollegeDirectory, recordOptions, legacyActorOf,
+};

@@ -6,7 +6,8 @@ const KEYS = ['users', 'schools', 'schoolAssociations', 'colleges', 'schoolMembe
   'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
   'associationGroups', 'associationGroupMembers',
   'associationNotices', 'associationTrainings', 'trainingRegistrations',
-  'events', 'eventSignups', 'matches', 'liveScores'];
+  'events', 'eventSignups', 'matches', 'liveScores',
+  'collegeEvents', 'collegeEntries', 'ties', 'lineups'];
 
 function createSchoolMemoryRepo(seed = {}) {
   let state = Object.fromEntries(KEYS.map(key => [key, new Map((seed[key] || []).map(doc => [doc._id, clone(doc)]))]));
@@ -34,7 +35,8 @@ function createSchoolMemoryRepo(seed = {}) {
       return Object.fromEntries(['colleges', 'schoolMembers', 'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
         'associationGroups', 'associationGroupMembers',
         'associationNotices', 'associationTrainings', 'trainingRegistrations',
-        'events', 'eventSignups', 'matches', 'liveScores'].map(key => [key, {
+        'events', 'eventSignups', 'matches', 'liveScores',
+        'collegeEvents', 'collegeEntries', 'ties', 'lineups'].map(key => [key, {
         list: async () => (await repo[key].list()).filter(doc => doc.schoolId === scope.schoolId &&
           (['colleges', 'schoolMembers'].includes(key) || doc.association === scope.association)),
       }]));

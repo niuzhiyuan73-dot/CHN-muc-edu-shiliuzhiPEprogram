@@ -126,6 +126,23 @@ const schoolLiveKey = (matchId, scope) => {
   const s = schoolScope(scope);
   return schoolKey('sls', s.schoolId, s.association, matchId);
 };
+// 学院赛：_id 由服务端按 scope + 发布者 + 请求编号生成，翻不出别的学校/协会。
+const collegeEventKey = (eventId, scope) => {
+  const s = schoolScope(scope);
+  return schoolKey('cev', s.schoolId, s.association, eventId);
+};
+// 学院赛名单：scope + eventId + collegeId，稳定唯一；重复提交覆盖同一条。
+// 键用学院稳定编号（每校独立目录），而非可能重名的学院全名。
+const collegeEntryKey = (eventId, collegeId, scope) => {
+  const s = schoolScope(scope);
+  return schoolKey('cen', s.schoolId, s.association, eventId, collegeId);
+};
+// 学院赛排阵：scope + tieId + collegeId，同一大场同一学院恒一条，重复提交覆盖同一条。
+// 同样用学院稳定编号而非全名，重名学院不会互相顶掉。
+const collegeLineupKey = (tieId, collegeId, scope) => {
+  const s = schoolScope(scope);
+  return schoolKey('cln', s.schoolId, s.association, tieId, collegeId);
+};
 function belongsToSchoolScope(doc, scope) {
   const s = schoolScope(scope);
   return Boolean(doc && doc.schoolId === s.schoolId && doc.association === s.association);
@@ -139,4 +156,5 @@ module.exports = {
   associationGroupKey, associationGroupMemberKey, associationGroupNameKey,
   associationNoticeKey, associationTrainingKey, trainingRegistrationKey,
   schoolEventKey, schoolEventSignupKey, schoolMatchKey, schoolLiveKey,
+  collegeEventKey, collegeEntryKey, collegeLineupKey,
 };

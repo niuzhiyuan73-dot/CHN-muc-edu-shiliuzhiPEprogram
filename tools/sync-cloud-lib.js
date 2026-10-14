@@ -75,6 +75,9 @@ const MANIFEST = [
   'services/school-event-service.js',
   'services/school-match-service.js',
   'services/school-live-service.js',
+  // M2：学院赛（发布 / 名单提交 / 审核）的学校维度服务，依赖纯规则 college-event.js /
+  // college-entry.js（每校独立学院目录，collegeId 成键、全名校验）。
+  'services/school-college-service.js',
   'services/exchange-service.js',
   'services/exchange-plan.js',
   'services/court.js',

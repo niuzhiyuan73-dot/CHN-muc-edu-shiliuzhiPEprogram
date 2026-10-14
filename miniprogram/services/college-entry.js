@@ -93,10 +93,14 @@ function canReviewCollegeEntry(actor, options = {}) {
  * @param {Object|null} ctx.event 学院赛记录
  * @param {Object|null} ctx.actor 提交人
  * @param {Array<Object>} [ctx.members] 全量会员，用于核验队员身份
+ * @param {Array<string>} [ctx.colleges] 本次有效的学院名单；缺省取全局 COLLEGES。
+ *   学校维度按「每校独立目录」传入（见 school-actor.buildCollegeDirectory），
+ *   旧栈不传，行为与从前完全一致。
  * @returns {{ok:boolean, message:string, memberIds:Array<string>, college:string}}
  */
 function validateCollegeEntry(payload = {}, ctx = {}) {
-  const { event = null, actor = null, members = [] } = ctx;
+  const { event = null, actor = null, members = [], colleges = null } = ctx;
+  const allowedColleges = Array.isArray(colleges) ? colleges : COLLEGES;
   const college = String(payload.college || '').trim();
   const raw = Array.isArray(payload.memberIds) ? payload.memberIds : [];
 
@@ -109,7 +113,7 @@ function validateCollegeEntry(payload = {}, ctx = {}) {
   if (!canSubmitCollegeEntry(event, actor, { college })) {
     return { ok: false, message: '只能提交本学院的名单', memberIds: [], college };
   }
-  if (!COLLEGES.includes(college)) {
+  if (!allowedColleges.includes(college)) {
     return { ok: false, message: '学院无效，请重新选择', memberIds: [], college };
   }
 
@@ -156,12 +160,13 @@ function validateCollegeEntry(payload = {}, ctx = {}) {
  * @param {Object} ctx.event
  * @param {Object} ctx.actor
  * @param {Array<Object>} [ctx.members]
+ * @param {Array<string>} [ctx.colleges] 本次有效的学院名单（每校独立目录）
  * @param {Date} [ctx.now=new Date()]
  * @returns {{ok:boolean, record:Object|null, message:string}}
  */
 function buildCollegeEntryRecord(payload = {}, ctx = {}) {
-  const { event = null, actor = null, members = [], now = new Date() } = ctx;
-  const check = validateCollegeEntry(payload, { event, actor, members });
+  const { event = null, actor = null, members = [], colleges = null, now = new Date() } = ctx;
+  const check = validateCollegeEntry(payload, { event, actor, members, colleges });
 
   if (!check.ok) {
     return { ok: false, record: null, message: check.message };

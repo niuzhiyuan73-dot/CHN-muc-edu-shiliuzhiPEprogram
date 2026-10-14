@@ -81,6 +81,20 @@ function forAssociationSpace(input) {
     undoSchoolRally: payload => request('undoSchoolRally', payload),
     finishSchoolLiveScore: payload => request('finishSchoolLiveScore', payload),
     getSchoolLiveScores: payload => request('getSchoolLiveScores', payload),
+    listCollegeEvents: payload => request('listCollegeEvents', payload),
+    getCollegeEvent: payload => request('getCollegeEvent', payload),
+    publishCollegeEvent: payload => request('publishCollegeEvent', payload),
+    listCollegeEntries: payload => request('listCollegeEntries', payload),
+    submitCollegeEntry: payload => request('submitCollegeEntry', payload),
+    reviewCollegeEntry: payload => request('reviewCollegeEntry', payload),
+    listCollegeTies: payload => request('listCollegeTies', payload),
+    drawCollegeEvent: payload => request('drawCollegeEvent', payload),
+    startCollegeEvent: payload => request('startCollegeEvent', payload),
+    listCollegeLineups: payload => request('listCollegeLineups', payload),
+    submitCollegeLineup: payload => request('submitCollegeLineup', payload),
+    startCollegeTie: payload => request('startCollegeTie', payload),
+    assignCollegeTieReferee: payload => request('assignCollegeTieReferee', payload),
+    finishCollegeEvent: payload => request('finishCollegeEvent', payload),
   });
 }
 
