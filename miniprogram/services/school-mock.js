@@ -17,11 +17,14 @@ const eventService = require('./school-event-service.js');
 const matchService = require('./school-match-service.js');
 const liveService = require('./school-live-service.js');
 const collegeService = require('./school-college-service.js');
+const announcementService = require('./school-announcement-service.js');
+const schoolMemberService = require('./school-member-service.js');
 
 /** 协会空间处理器集合（仅函数；STATUS 常量等非函数条目不参与分发） */
 const spaceHandlers = Object.freeze(Object.fromEntries(
   Object.entries({ ...groupService, ...memberService, ...noticeService, ...trainingService,
-    ...eventService, ...matchService, ...liveService, ...collegeService })
+    ...eventService, ...matchService, ...liveService, ...collegeService, ...announcementService,
+    ...schoolMemberService })
     .filter(([, value]) => typeof value === 'function')));
 
 const DEMO_ACTORS = Object.freeze([

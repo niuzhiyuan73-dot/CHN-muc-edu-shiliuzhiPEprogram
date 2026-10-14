@@ -78,6 +78,12 @@ const MANIFEST = [
   // M2：学院赛（发布 / 名单提交 / 审核）的学校维度服务，依赖纯规则 college-event.js /
   // college-entry.js（每校独立学院目录，collegeId 成键、全名校验）。
   'services/school-college-service.js',
+  // M3：公告（发布 / 下架 / 列表）的学校维度服务，依赖纯规则 announcement.js，
+  // 发布权收归平台管理员（同旧栈 canPublish 口径）。
+  'services/school-announcement-service.js',
+  // M3：会员档案 / 名录的学校维度服务（旧栈 getMembers / getMember 的对应物），
+  // 一次取齐本校在册会员，供赛事报名、比赛录入、学院赛名单的选手选择器使用。
+  'services/school-member-service.js',
   'services/exchange-service.js',
   'services/exchange-plan.js',
   'services/court.js',

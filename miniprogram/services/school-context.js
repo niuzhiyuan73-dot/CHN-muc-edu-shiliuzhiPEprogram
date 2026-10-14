@@ -22,8 +22,11 @@ async function buildSchoolContext({ repo, openId = '', actorId = '', scope, now 
     repo.memberships.get(schoolMembershipKey(actor._id, target)),
   ]) : [null, null, null];
   const owned = (doc) => doc && doc.schoolId === target.schoolId && doc.userId === actor._id ? doc : null;
-  return Object.freeze({ repo, ...target, now, actor, actorId: actor ? actor._id : '', school, schoolAssociation,
-    schoolMember: owned(member), schoolRole: owned(role),
+  // openId 供注册平台账号（M3-d）取用：尚无账号时只能凭微信身份开户，actorId 还不存在。
+  // 云端按 OpenID 解析 actor；模拟端按 actorId 解析，回填该账号的 openId 以对齐语义。
+  const resolvedOpenId = openId || (actor && actor.openId) || '';
+  return Object.freeze({ repo, ...target, now, actor, openId: resolvedOpenId, actorId: actor ? actor._id : '',
+    school, schoolAssociation, schoolMember: owned(member), schoolRole: owned(role),
     membership: owned(membership) && membership.association === target.association ? membership : null });
 }
 

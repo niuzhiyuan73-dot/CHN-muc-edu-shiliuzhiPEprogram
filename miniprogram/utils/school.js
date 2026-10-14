@@ -143,6 +143,14 @@ const collegeLineupKey = (tieId, collegeId, scope) => {
   const s = schoolScope(scope);
   return schoolKey('cln', s.schoolId, s.association, tieId, collegeId);
 };
+// 全校公告：_id 由服务端按 scope + 发布者 + 请求编号生成，翻不出别的学校/协会。
+const schoolAnnouncementKey = (announcementId, scope) => {
+  const s = schoolScope(scope);
+  return schoolKey('ann', s.schoolId, s.association, announcementId);
+};
+// 平台账号：_id 由微信 OpenID 派生，同一微信身份恒一条账号，重复注册走同一键。
+// 账号级、不含学校/协会——换学校不改账号，学号与学院另由学校身份（schoolMember）登记。
+const schoolAccountKey = (openId) => schoolKey('acc', openId);
 function belongsToSchoolScope(doc, scope) {
   const s = schoolScope(scope);
   return Boolean(doc && doc.schoolId === s.schoolId && doc.association === s.association);
@@ -156,5 +164,6 @@ module.exports = {
   associationGroupKey, associationGroupMemberKey, associationGroupNameKey,
   associationNoticeKey, associationTrainingKey, trainingRegistrationKey,
   schoolEventKey, schoolEventSignupKey, schoolMatchKey, schoolLiveKey,
-  collegeEventKey, collegeEntryKey, collegeLineupKey,
+  collegeEventKey, collegeEntryKey, collegeLineupKey, schoolAnnouncementKey,
+  schoolAccountKey,
 };

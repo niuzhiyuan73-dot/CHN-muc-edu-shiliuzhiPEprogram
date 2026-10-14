@@ -6,6 +6,7 @@ const KEYS = ['users', 'schools', 'schoolAssociations', 'colleges', 'schoolMembe
   'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
   'associationGroups', 'associationGroupMembers',
   'associationNotices', 'associationTrainings', 'trainingRegistrations',
+  'announcements',
   'events', 'eventSignups', 'matches', 'liveScores',
   'collegeEvents', 'collegeEntries', 'ties', 'lineups'];
 
@@ -35,6 +36,7 @@ function createSchoolMemoryRepo(seed = {}) {
       return Object.fromEntries(['colleges', 'schoolMembers', 'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
         'associationGroups', 'associationGroupMembers',
         'associationNotices', 'associationTrainings', 'trainingRegistrations',
+        'announcements',
         'events', 'eventSignups', 'matches', 'liveScores',
         'collegeEvents', 'collegeEntries', 'ties', 'lineups'].map(key => [key, {
         list: async () => (await repo[key].list()).filter(doc => doc.schoolId === scope.schoolId &&

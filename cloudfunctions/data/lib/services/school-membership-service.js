@@ -4,7 +4,8 @@ const {
   canSchoolAction, canReadSchool, canGrantPermission, grantablePermissions,
   isPlatformAdminCtx, permissionOf, permissionLabelOf, PERMISSION, PERMISSION_LABEL,
 } = require('./school-permission.js');
-const { buildSchoolApplication } = require('./school-member.js');
+const { buildSchoolApplication, buildSchoolAccount } = require('./school-member.js');
+const { buildProfilePatch } = require('./profile.js');
 const {
   schoolMemberKey, schoolRoleKey, schoolMembershipKey, collegeKey,
   PLATFORM_ROLE, PLATFORM_STATUS, SCHOOL_MEMBER_STATUS, SCHOOL_ROLE,
@@ -20,6 +21,52 @@ function createSchoolHandlers({ claimKey }) {
   const refused = (message) => ({ ok: false, account: null, message });
   const freshContext = (tx, ctx) => buildSchoolContext({ repo: tx, actorId: ctx.actorId,
     scope: { schoolId: ctx.schoolId, association: ctx.association }, now: ctx.now });
+  // 只下发展示字段，不下发 openId 等账号隐私。
+  const publicAccountOf = user => ({ userId: user._id, nickName: user.nickName || '',
+    realName: user.realName || '', gender: user.gender || '' });
+
+  /**
+   * 开通平台账号（协议 2，M3-d）。
+   *
+   * 【这一步补的是什么】
+   * 其余身份接口都要求账号已存在且 `platformStatus` 明确（见 S2 身份审核记录
+   * 「下一步 1. 新账号创建」），但此前没有任何接口为新微信用户开户。这里补上
+   * 旧栈 `registerMember` 的学校维度对应物：凭 OpenID 落一条平台账号，之后
+   * 才能走 `applySchoolMembership` 登记学号 / 学院。
+   *
+   * 【平台账号与学校身份分开（迁移清单 §7）】
+   * 真名 / 性别留在账号上（跨学校不变）；学号 / 学院归学校身份，由
+   * `applySchoolMembership` 另行登记。因此这里**不碰** payload 里的
+   * studentId / college / role / points——它们不是账号字段，进不了落库记录。
+   * 校验复用旧栈 `auth.PROFILE_RULES`（真名 / 性别两条，同一把尺子）。
+   *
+   * 【幂等与不改写实名】
+   * 编号由 OpenID 派生（`schoolAccountKey`），同一微信身份恒一条。已有账号
+   * （旧账号 / 演示身份 / 重复注册）一律原样返回，绝不用新表单覆盖既有实名——
+   * 实名是审核依据，只认首次登记。
+   *
+   * @param {Object} payload { profile: {realName, gender, nickName?, avatarUrl?} }
+   * @param {Object} ctx
+   * @returns {Promise<Object>} {ok, account, errors, firstError}
+   */
+  async function registerSchoolAccount(payload = {}, ctx) {
+    // 已解析出账号（旧账号 / 演示身份）：原样返回，不改写实名。
+    if (ctx.actor) return ok({ ok: true, account: publicAccountOf(ctx.actor), message: '' });
+    const built = buildSchoolAccount({ openId: ctx.openId, profile: payload.profile, now: ctx.now });
+    if (!built.ok) {
+      return ok({ ok: false, account: null, errors: built.errors, firstError: built.firstError });
+    }
+    const account = await ctx.repo.transaction(async tx => {
+      // 事务内复核：并发注册同一 OpenID 只落一条
+      const existing = await tx.users.getById(built.account._id);
+      if (existing) return publicAccountOf(existing);
+      await tx.users.set(built.account._id, built.account);
+      await tx.audit.append({ _id: `reg_${built.account._id}`, action: 'registerSchoolAccount',
+        schoolId: ctx.schoolId, actorId: built.account._id, userId: built.account._id, at: ctx.now });
+      return publicAccountOf(built.account);
+    });
+    return ok({ ok: true, account, errors: {}, firstError: '' });
+  }
 
   async function applySchoolMembership(payload = {}, ctx) {
     if (!ctx.actorId) return ok(refused('请先登录'));
@@ -244,8 +291,43 @@ function createSchoolHandlers({ claimKey }) {
     return ok(result);
   }
 
-  return { applySchoolMembership, reviewSchoolMembership, getMySchoolMembership, getSchoolApplications,
-    getSchoolDirectory, getSchoolIdentitySession, getSchoolMembers, grantSchoolPermission };
+  /**
+   * 修改自己的昵称与头像（协议 2，M3-c）。
+   *
+   * 【改的是谁，我说了不算】只认 ctx.actorId（由 OpenID 解析而来），payload 里塞
+   * 别人的编号也改不到；白名单由 profile.js 的 EDITABLE_FIELDS 把住——实名信息
+   * （真名 / 性别 / 学号 / 学院）与角色 / 积分 / 状态等在补丁清洗阶段直接丢掉，
+   * 本人改不了。空补丁与非法昵称由 buildProfilePatch 一并挡下。
+   *
+   * 【为什么不 bumpSeason】昵称 / 头像进了回放数据集，旧栈据此 +1 赛季版本刷新
+   * 缓存。学校维度的赛季版本落在 M4，本片只改账号资料，不碰赛季缓存（与 M1-c 同口径）。
+   *
+   * @param {Object} payload { patch: {nickName?, avatarUrl?} }
+   * @param {Object} ctx
+   */
+  async function updateSchoolProfile(payload = {}, ctx) {
+    if (!ctx.actorId) return ok(refused('请先登录'));
+    const built = buildProfilePatch(payload.patch);
+    if (!built.ok) {
+      return ok({ ok: false, account: null, errors: built.errors, firstError: built.firstError });
+    }
+    const result = await ctx.repo.transaction(async tx => {
+      const current = await tx.users.getById(ctx.actorId);
+      if (!current || current.platformStatus !== PLATFORM_STATUS.ACTIVE) {
+        return { ok: false, account: null, message: '找不到你的账号' };
+      }
+      const next = { ...current, ...built.patch };
+      await tx.users.set(ctx.actorId, next);
+      // 只回必要的展示字段，不下发 openId 等账号隐私。
+      return { ok: true, account: { userId: next._id, nickName: next.nickName || '',
+        avatarUrl: next.avatarUrl || '' }, message: '' };
+    });
+    return ok(result);
+  }
+
+  return { registerSchoolAccount, applySchoolMembership, reviewSchoolMembership, getMySchoolMembership,
+    getSchoolApplications, getSchoolDirectory, getSchoolIdentitySession, getSchoolMembers,
+    grantSchoolPermission, updateSchoolProfile };
 }
 
 module.exports = { createSchoolHandlers };

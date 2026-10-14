@@ -16,6 +16,7 @@ function requestFor(scope) {
 function forSchoolIdentity(input) {
   const request = requestFor(schoolScope(input));
   return Object.freeze({
+    registerSchoolAccount: payload => request('registerSchoolAccount', payload),
     applySchoolMembership: payload => request('applySchoolMembership', payload),
     reviewSchoolMembership: payload => request('reviewSchoolMembership', payload),
     getMySchoolMembership: () => request('getMySchoolMembership'),
@@ -24,6 +25,7 @@ function forSchoolIdentity(input) {
     getSchoolIdentitySession: () => request('getSchoolIdentitySession'),
     getSchoolMembers: () => request('getSchoolMembers'),
     grantSchoolPermission: payload => request('grantSchoolPermission', payload),
+    updateSchoolProfile: payload => request('updateSchoolProfile', payload),
   });
 }
 
@@ -95,6 +97,11 @@ function forAssociationSpace(input) {
     startCollegeTie: payload => request('startCollegeTie', payload),
     assignCollegeTieReferee: payload => request('assignCollegeTieReferee', payload),
     finishCollegeEvent: payload => request('finishCollegeEvent', payload),
+    listSchoolAnnouncements: payload => request('listSchoolAnnouncements', payload),
+    publishSchoolAnnouncement: payload => request('publishSchoolAnnouncement', payload),
+    archiveSchoolAnnouncement: payload => request('archiveSchoolAnnouncement', payload),
+    listSchoolMembers: payload => request('listSchoolMembers', payload),
+    getSchoolMember: payload => request('getSchoolMember', payload),
   });
 }
 
