@@ -31,6 +31,7 @@ const {
 } = require('../utils/constants.js');
 const { formatDateTime } = require('../utils/format.js');
 const { canManage } = require('./permission.js');
+const { isGlobalAdminMember } = require('./member-review.js');
 
 /** 标题长度下限与上限 */
 const TITLE_MIN = 2;
@@ -65,7 +66,7 @@ function sortAnnouncements(list) {
 }
 
 /**
- * 有没有发布资格。**仅管理员**。
+ * 有没有发布资格。**仅全局管理员**。
  *
  * 【为什么门槛是管理员而不是学院负责人】
  * 公告是发给全俱乐部的，发出去就收不回，还会顶在首页——这是「定盘子」
@@ -74,16 +75,29 @@ function sortAnnouncements(list) {
  * 而公告根本没有「某个学院的公告」这一说，做成学院负责人可发就必然越界：
  * 法学院的负责人能往全校发通知。所以这里连学院范围都没得收，只能收归管理员。
  *
+ * 【为什么还要卡 isGlobalAdmin，而不只看 role】
+ * 协会负责人在**本协会**的有效角色也是 ADMIN（见 context.effectiveRole 与
+ * mock 的角色补丁 / ASSOC_ROLE_SEED），若只判 role，协会负责人就会被当成
+ * 管理员，凭空多出首页公告的发布与下架权。公告没有协会边界，只该给账号级的
+ * 全局管理员。判定与任免协会负责人（member-review.isGlobalAdminMember）、
+ * 云端 role-handlers 一字不差。
+ *
  * 【为什么还要包一层】
- * 判定规则与审核入会一字不差，已抽到 permission.canManage；这里留住
- * 「发布」这个业务语义的函数名，并声明本业务自己的门槛。
+ * 判定规则与审核入会同源；这里留住「发布」这个业务语义的函数名，并声明
+ * 本业务自己的门槛。
  *
  * @param {Object|null} actor
- * @param {Object} [options] 透传给 permission.canManage（如 minRole）
+ * @param {Object} [options] 透传给 permission.canManage（如 minRole）；
+ *   可传 options.isGlobalAdmin 显式声明（云端 ctx.isGlobalAdmin），
+ *   缺省取 actor.isGlobalAdmin / 退回按 role 判定
  * @returns {boolean}
  */
 function canPublish(actor, options = {}) {
-  return canManage(actor, { ...options, minRole: ROLE.ADMIN });
+  const isGlobalAdmin =
+    options.isGlobalAdmin !== undefined
+      ? Boolean(options.isGlobalAdmin)
+      : isGlobalAdminMember(actor);
+  return canManage(actor, { ...options, minRole: ROLE.ADMIN }) && isGlobalAdmin;
 }
 
 /**

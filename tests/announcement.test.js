@@ -93,6 +93,19 @@ describe('canPublish —— 发布权', () => {
     assert.strictEqual(canPublish(staff({ college: '法学院' }), { targetCollege: '法学院' }), false);
   });
 
+  test('协会负责人不能发公告：本协会的有效角色虽是 ADMIN，但并非全局管理员', () => {
+    // 协会负责人在本协会的 role 被补丁成 ADMIN（见 mock 的 assocRoleSeedPatch /
+    // seed 的 ASSOC_ROLE_SEED）。公告没有协会边界，只认账号级的全局管理员，
+    // 若只看 role 就会让协会负责人凭空拿到首页公告的发布与下架权。
+    assert.strictEqual(canPublish(admin({ isGlobalAdmin: false })), false);
+  });
+
+  test('显式声明全局管理员身份时以它为准（云端 ctx.isGlobalAdmin 走这条）', () => {
+    assert.strictEqual(canPublish(member(), { isGlobalAdmin: true }), false, '角色仍不够');
+    assert.strictEqual(canPublish(admin(), { isGlobalAdmin: false }), false, '声明不是全局管理员就挡住');
+    assert.strictEqual(canPublish(admin(), { isGlobalAdmin: true }), true);
+  });
+
   test('显式传更宽的门槛也不会把学院负责人放进来', () => {
     // 调用方传进来的 minRole 不该能把业务自己的门槛冲掉
     assert.strictEqual(canPublish(staff(), { minRole: ROLE.STAFF }), false);

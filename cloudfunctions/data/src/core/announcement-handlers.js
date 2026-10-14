@@ -35,8 +35,9 @@ async function publishAnnouncement(payload = {}, ctx) {
   const guard = callerError(ctx);
   if (guard) return fail(guard);
 
-  // 严格口径：仅管理员能发布（学院负责人是学院范围角色，公告没有学院可言）
-  if (!canPublish(ctx.actor, { isMock: false })) {
+  // 严格口径：仅全局管理员能发布（学院负责人以学院为界、协会负责人在本协会
+  // 的有效角色虽是 ADMIN 也非全局管理员，公告都没有它们的边界）
+  if (!canPublish(ctx.actor, { isMock: false, isGlobalAdmin: ctx.isGlobalAdmin })) {
     return ok({
       ok: false,
       record: null,
@@ -80,7 +81,7 @@ async function archiveAnnouncement(payload = {}, ctx) {
   const guard = callerError(ctx);
   if (guard) return fail(guard);
 
-  if (!canPublish(ctx.actor, { isMock: false })) {
+  if (!canPublish(ctx.actor, { isMock: false, isGlobalAdmin: ctx.isGlobalAdmin })) {
     return ok({ ok: false, record: null, message: '当前账号没有管理公告的权限' });
   }
 
