@@ -6,9 +6,12 @@
  * 这是当初把业务逻辑与 wx-server-sdk 隔开的全部回报。
  *
  * 【事务怎么模拟】
- * 微信云开发的事务提供「读已提交 + 冲突重试」。这里不需要那么真：
- * 事务开始时把每个集合作一份浅拷贝当作草稿本，处理器在草稿本上读写；
- * 正常返回就把草稿本换回仓库，抛错就整份丢掉。
+ * 微信云开发的事务提供「读已提交 + 冲突重试」。这里照样模拟：
+ *   · 事务开始时把每个集合作一份浅拷贝当作草稿本，处理器在草稿本上读写；
+ *   · 正常返回就把草稿本换回仓库，抛错就整份丢掉；
+ *   · 提交前做冲突检测——本事务写过的集合若被外部（非事务）写入抢先改过
+ *     版本，就把草稿本整份丢弃、重跑事务（最多 5 次），与真库的冲突重试一致
+ *     （见 §9.2；写版本号由每个集合的写计数维护）。
  *
  * 浅拷贝是安全的：处理器从不就地修改读到的文档，一律 spread 出新的
  * （cloud-repo.js 那边也是同样的纪律，因为云开发的事务也要求这样）。
@@ -24,6 +27,23 @@ const { SCHOOL_COLLECTIONS, attachSchoolRepository } = require('../../cloudfunct
 
 function clone(doc) {
   return doc === null || typeof doc !== 'object' ? doc : { ...doc };
+}
+
+/** 会改动数据的集合方法名（用于给基础集合自动挂上「写」钩子） */
+const WRITE_METHODS = new Set(['set', 'insert', 'update', 'remove']);
+
+/**
+ * 给一个集合的操作对象套上「写钩子」：任何写方法被调用时先记一笔。
+ * 只读方法（list / getById / get / listByEvent …）原样透传。
+ */
+function withWriteHook(ops, key, onWrite) {
+  const out = {};
+  for (const [name, fn] of Object.entries(ops)) {
+    out[name] = WRITE_METHODS.has(name) && typeof fn === 'function'
+      ? (...args) => { onWrite(key); return fn(...args); }
+      : fn;
+  }
+  return out;
 }
 
 /**
@@ -69,12 +89,21 @@ function createMemoryRepo(seed = {}) {
     for (const doc of docs) store[key].set(doc._id, clone(doc));
   }
 
+  // 【集合写版本号：模拟真库的「读已提交 + 冲突重试」】
+  // 每个集合一个单调递增的写计数。事务开始时记下各集合的版本，提交前若发现
+  // 本事务写过的集合被「外部（非事务）写入」改过版本，就丢弃草稿本、重跑事务。
+  // 这补上了 §9.2 的 conflict 模拟：让「报名事务同步更新 membershipRevision」
+  // 这类依赖写写冲突的保护能够在测试里真正被触发，而不是只靠串行化蒙混过去。
+  const versions = new Map();
+  const bump = (key) => versions.set(key, (versions.get(key) || 0) + 1);
+
   /**
    * 在某个目标上组装集合操作。目标可以是真仓库，也可以是事务草稿本。
    * @param {Object} target
    * @param {boolean} inTx
+   * @param {Function} [onWrite] 每次写集合时回调，参数为集合名
    */
-  function collections(target, inTx) {
+  function collections(target, inTx, onWrite) {
     const list = (key) => {
       if (inTx) throw new Error(`事务内不允许整表读取（${key}），请改用 getById`);
       return [...target[key].values()].map(clone);
@@ -284,16 +313,31 @@ function createMemoryRepo(seed = {}) {
         },
       },
     };
-    return attachSchoolRepository(repo, {
+    const built = attachSchoolRepository(repo, {
       read,
-      set: async (key, id, doc) => { target[key].set(id, { ...doc, _id: id }); },
+      set: async (key, id, doc) => {
+        if (onWrite) onWrite(key);
+        target[key].set(id, { ...doc, _id: id });
+      },
       query: (key, where) => list(key).filter((doc) =>
         Object.keys(where).every((field) => doc[field] === where[field])
       ),
     }, inTx);
+
+    // 基础集合的写方法直接落在 target 上，不走 io.set，故按方法名套钩子。
+    // 学校专属集合（SCHOOL_COLLECTIONS）的写其实都经 io.set，已在上面的 set 里记过，
+    // 这里跳过以免重复计数。就地改写 built 而不另建对象——attachSchoolRepository
+    // 的 result.transaction 闭包引用的是同一个 repo，换对象会把它指丢。
+    if (onWrite) {
+      for (const [key, ops] of Object.entries(built)) {
+        if (SCHOOL_COLLECTIONS.includes(key) || !ops || typeof ops !== 'object') continue;
+        built[key] = withWriteHook(ops, key, onWrite);
+      }
+    }
+    return built;
   }
 
-  const repo = collections(store, false);
+  const repo = collections(store, false, bump);
 
   // 【事务排队：模拟真实数据库的冲突串行化】
   // 真云开发事务是「读已提交 + 冲突重试」：两个事务同时改同一批文档时，后到
@@ -302,19 +346,34 @@ function createMemoryRepo(seed = {}) {
   // 后提交的把先提交的整个盖掉——这会把 P0 要验的「并发占用最后名额」测成假绿。
   // 现在把事务排成一条队列：一个跑完（提交或回滚）再放行下一个，与真库的
   // 串行结果一致。业务代码仍必须自己用事务内共享文档做冲突点，不能依赖这一点。
+  const MAX_ATTEMPTS = 5;
   let queue = Promise.resolve();
   repo.transaction = (fn) => {
     const run = queue.then(async () => {
-      const scratch = emptyStore();
-      for (const key of Object.keys(scratch)) {
-        scratch[key] = key === 'auditLogs' ? [...store[key]] : new Map(store[key]);
+      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+        const scratch = emptyStore();
+        for (const key of Object.keys(scratch)) {
+          scratch[key] = key === 'auditLogs' ? [...store[key]] : new Map(store[key]);
+        }
+
+        const startVersions = new Map(versions);
+        const written = new Set();
+        const result = await fn(collections(scratch, true, (key) => written.add(key)));
+
+        // 提交前冲突检测：本事务写过的集合，若被外部（非事务）写入抢先改过版本，
+        // 说明草稿本建立在过期快照上，整份丢弃、重跑事务（与真库的冲突重试一致）。
+        let conflicted = false;
+        for (const key of written) {
+          if ((versions.get(key) || 0) !== (startVersions.get(key) || 0)) { conflicted = true; break; }
+        }
+        if (conflicted) continue;
+
+        // 走到这里说明没抛错、也没冲突，草稿本整体生效，并为写过的集合进一版
+        for (const key of Object.keys(store)) store[key] = scratch[key];
+        for (const key of written) versions.set(key, (startVersions.get(key) || 0) + 1);
+        return result;
       }
-
-      const result = await fn(collections(scratch, true));
-
-      // 走到这里说明没抛错，草稿本整体生效
-      for (const key of Object.keys(store)) store[key] = scratch[key];
-      return result;
+      throw new Error('事务冲突重试次数耗尽');
     });
     queue = run.then(() => undefined, () => undefined);
     return run;

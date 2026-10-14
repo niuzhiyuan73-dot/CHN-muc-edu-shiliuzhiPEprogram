@@ -32,6 +32,7 @@
 
 const { DATA_SOURCE } = require('../utils/constants.js');
 const { guardWrite, isWriteAction } = require('../utils/write.js');
+const { LEGACY_SCHOOL_ID } = require('../utils/school.js');
 const scope = require('./association-scope.js');
 const mock = require('./mock.js');
 
@@ -114,11 +115,57 @@ function forAssociation(id) {
   scope.validateAssociation(id);
   return createApi(id);
 }
+
+/** 非默认校调用旧门面时抛出的错误码，供上层辨认（写接口会收敛成 {ok:false}） */
+const LEGACY_SCHOOL_UNSUPPORTED = 'legacy-school-unsupported';
+
+/**
+ * 旧栈的「范围」适配层（迁移清单 M0-2 / M0-3）。
+ *
+ * 旧业务的数据模型只有 `association` 一维，主记录里没有 `schoolId`。学校维度
+ * 尚未迁移到旧业务的任何一页，因此这里把旧门面**钉死在默认校**（`muc`）：
+ *   · `schoolId` 缺省或等于默认校 → 与 `forAssociation(association)` 等价，
+ *     兼容读取既有的、来源不明的旧数据；
+ *   · 其他任何学校 → 一律拒绝：读接口抛错、写接口收敛成 `{ok:false}`。
+ *
+ * 这样做的目的只有一个：**堵死「借旧门面把第二所学校的数据写进默认校」**。
+ * 页面若在非默认校误用旧门面，会立刻得到明确报错，而不是静默串校——串校
+ * 一旦发生，是数据的静默污染，比报错难查得多。
+ *
+ * M1–M4 会把旧业务逐页迁到学校维度栈（`association-space.js` 那套
+ * `forScope`）；迁移完成前，任何一页仍走旧门面时都必须守在这里。
+ *
+ * @param {Object} input { schoolId, association }
+ * @returns {Object} 与门面同形的接口集合
+ */
+function forScope(input = {}) {
+  const schoolId = input.schoolId || LEGACY_SCHOOL_ID;
+  const association = input.association === undefined ? scope.getAssociation() : input.association;
+  scope.validateAssociation(association);
+
+  if (schoolId === LEGACY_SCHOOL_ID) return forAssociation(association);
+
+  const message = `旧业务尚未支持学校「${schoolId}」，请改用学校维度接口`;
+  const deny = {};
+  for (const name of Object.keys(mock)) {
+    if (typeof mock[name] !== 'function') continue;
+    const run = () => {
+      const err = new Error(message);
+      err.code = LEGACY_SCHOOL_UNSUPPORTED;
+      throw err;
+    };
+    deny[name] = isWriteAction(name) ? () => guardWrite(run) : run;
+  }
+  return deny;
+}
+
 const api = createApi();
 
 module.exports = {
   ...api,
   forAssociation,
+  forScope,
+  LEGACY_SCHOOL_UNSUPPORTED,
   setDataSource,
   getDataSource,
   isMockNow,
