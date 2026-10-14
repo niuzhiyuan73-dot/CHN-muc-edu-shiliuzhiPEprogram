@@ -46,6 +46,7 @@ const {
 } = require('../utils/elo.js');
 const { createEmptyRatings, applyMatchResult } = require('../utils/rating.js');
 const { calculateEventPoints, DEFAULT_POINT_CONFIG } = require('../utils/points.js');
+const { applyTrainingPointFacts } = require('./training-points.js');
 
 /**
  * 仅用于模拟、不对外暴露的字段。
@@ -265,10 +266,16 @@ function planInitialRatings({ members, observations, seasonStart, config = DEFAU
 /**
  * 结算赛事积分：按赛事计一次，记在参赛者该赛事的最后一场上。
  *
- * 【为什么积分不跟着每场比赛走】
- * 决策 9 把日常比赛的积分整个去掉了，积分只剩赛事一个来源；而一场赛事
- * 要打好几轮，名次却是赛完才知道的。若逐轮给分，等于按「赢了几场」发钱，
- * 与「拿了第几名」脱钩。所以统一在赛事这一层结账，只认最终名次（2.5）。
+ * 【积分不跟着每场比赛走】
+ * 决策 9 把日常比赛的积分整个去掉了，赛事只剩「名次」这一个结算口径；
+ * 而一场赛事要打好几轮，名次却是赛完才知道的。若逐轮给分，等于按
+ * 「赢了几场」发钱，与「拿了第几名」脱钩。所以统一在赛事这一层结账，
+ * 只认最终名次（2.5）。
+ *
+ * 【这里只管赛事积分】
+ * 另一类积分来源——训练签到的积分事实——不在这里结算：它由
+ * training-points.js 归一成事实，在 replaySeason 的两遍回放都跑完后
+ * 对最终结果统一叠加一次（见该文件顶部注释）。
  *
  * 【为什么记在最后一场】
  * 页面上的「本场 +N 分」需要一个落脚点。参赛者在该赛事的最后一场，正是
@@ -698,6 +705,8 @@ function runReplay({
  * @param {Object} [params.options.pointConfig] 覆盖积分规则
  * @param {string|Date} [params.options.seasonStart] 钉死的赛季锚点；不传则取流水里最早一场
  * @param {string|Date|null} [params.options.resetTime] 赛季分界点，用来切积分；不传表示从未重置
+ * @param {Array<Object>} [params.options.trainingPointFacts] 训练积分事实（training-points.buildTrainingPointFacts 的产物）
+ * @param {Array<Object>} [params.options.eloOverrides] 手工改分时间线
  * @returns {{
  *   users: Array<Object>,
  *   matches: Array<Object>,
@@ -726,6 +735,8 @@ function replaySeason({ members, matches, events = [], announcements = [], optio
     seasonStart,
     resetTime = null,
     eloOverrides = [],
+    // 训练积分事实（见 training-points.js）。默认空数组，旧调用行为不变。
+    trainingPointFacts = [],
   } = options;
 
   // 先把 ELO 参数合并成一份完整配置再使用。
@@ -759,8 +770,13 @@ function replaySeason({ members, matches, events = [], announcements = [], optio
   // 第二遍：带着定好的初始分正式回放
   const final = runReplay({ ...base, presets, collectPlacement: false });
 
+  // 训练积分：只在两遍回放都完成后，对最终结果统一叠加一次。
+  // 不放进 runReplay 内部——那里每遍都会跑到，训练分会被重复累加。
+  // 叠加只改 points，不碰等级分 / 场数 / 胜率（见 training-points.js）。
+  const users = applyTrainingPointFacts(final.users, trainingPointFacts, { resetTime });
+
   return {
-    users: final.users,
+    users,
     matches: final.matches,
     events: final.events,
     // 公告与计分无关，回放不碰它，只原样透传，避免在门面这一层被丢掉

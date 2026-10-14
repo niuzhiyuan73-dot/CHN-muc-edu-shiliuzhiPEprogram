@@ -6,12 +6,6 @@
       <view class="selection">{{schoolName}} <text>切换 ›</text></view>
     </picker>
   </view>
-  <view wx:if="{{isMock}}" class="card demo-card">
-    <view class="hint">模拟数据 · 北航学院为测试样本，申请记录仅在本次运行中保留。</view>
-    <picker range="{{demoActors}}" range-key="label" value="{{demoActorIndex}}" disabled="{{submitting}}" bindchange="onDemoActorChange">
-      <view class="selection">体验身份：{{demoActorName}} <text>切换 ›</text></view>
-    </picker>
-  </view>
   <view wx:if="{{error}}" class="card error-box">
     <view>{{error}}</view>
     <button size="mini" bindtap="onRetry" disabled="{{submitting}}">刷新</button>

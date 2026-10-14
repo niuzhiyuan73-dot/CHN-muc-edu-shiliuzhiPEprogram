@@ -2,16 +2,25 @@ const { createSchoolDemoSeed } = require('./school-seed.js');
 const { createSchoolMemoryRepo } = require('./school-memory-repo.js');
 const { createSchoolHandlers } = require('./school-membership-service.js');
 const { buildSchoolContext } = require('./school-context.js');
-const { schoolScope, schoolKey } = require('../utils/school.js');
+const {
+  LEGACY_SCHOOL_ID, schoolScope, schoolKey,
+  schoolMemberKey, schoolRoleKey, schoolMembershipKey, ratingKey,
+} = require('../utils/school.js');
+const { ROLE, COLLEGES } = require('../utils/constants.js');
+const { MEMBER_SEED, ASSOC_ROLE_SEED } = require('./seed.js');
 const exchange = require('./exchange-service.js');
 const groupService = require('./association-group-service.js');
 const memberService = require('./association-member-service.js');
 const noticeService = require('./association-notice-service.js');
 const trainingService = require('./association-training-service.js');
+const eventService = require('./school-event-service.js');
+const matchService = require('./school-match-service.js');
+const liveService = require('./school-live-service.js');
 
 /** 协会空间处理器集合（仅函数；STATUS 常量等非函数条目不参与分发） */
 const spaceHandlers = Object.freeze(Object.fromEntries(
-  Object.entries({ ...groupService, ...memberService, ...noticeService, ...trainingService })
+  Object.entries({ ...groupService, ...memberService, ...noticeService, ...trainingService,
+    ...eventService, ...matchService, ...liveService })
     .filter(([, value]) => typeof value === 'function')));
 
 const DEMO_ACTORS = Object.freeze([
@@ -23,6 +32,75 @@ const DEMO_ACTORS = Object.freeze([
   // 平台管理员排在最后，以免挪动既有演示身份的下标（页面与用例都按下标选择）。
   { id: 'demo_platform_admin', label: '平台管理员' },
 ]);
+
+/**
+ * 把旧版演示账号（u01–u24）接进学校维度。
+ *
+ * 【为什么需要】
+ * 旧版账号（`seed.js`）只在 mock.js 那一套台账里存在；学校维度的页面
+ * （协会空间 / 学校身份）与它们互不相识，演示时必须先去「学校身份」页换成
+ * 一个 S2 体验身份（demo_muc_admin 之类）才能进协会空间。这里把这批账号
+ * 一次性登记成**民大**的在册会员，于是改 `mock.js` 的
+ * DEFAULT_CURRENT_USER_ID 就能直接换演示身份，不必再切体验身份。
+ *
+ * 角色与旧版对齐：
+ *   · u01 是旧版全局管理员 → 在民大落成校管理员（schoolRole admin）；
+ *   · ASSOC_ROLE_SEED 登记的各协会负责人 / 学院负责人 → 落成对应协会的
+ *     membership（leader / staff）；u02 的学院负责人身份只在默认协会 pkb 成立。
+ *
+ * @param {Object} seed createSchoolDemoSeed() 产出的种子（会被就地补写）
+ */
+function attachLegacyMembers(seed) {
+  const collegeIdOf = new Map(COLLEGES.map((name, index) => [name, `c${String(index + 1).padStart(2, '0')}`]));
+  const legacy = MEMBER_SEED.map((item, index) => ({ item, userId: `u${String(index + 1).padStart(2, '0')}` }));
+  seed.users = seed.users.concat(legacy.map(({ item, userId }) => ({
+    _id: userId, openId: `mock_openid_${userId}`, nickName: item.nickName, realName: item.realName,
+    gender: item.gender || '', platformStatus: 'active', platformRole: 'member',
+    primarySchoolId: LEGACY_SCHOOL_ID, simulated: true,
+  })));
+  seed.schoolMembers = seed.schoolMembers.concat(legacy.map(({ item, userId }, index) => ({
+    _id: schoolMemberKey(userId, LEGACY_SCHOOL_ID), userId, schoolId: LEGACY_SCHOOL_ID,
+    collegeId: collegeIdOf.get(item.college) || '', studentId: '2023' + String(index + 1).padStart(4, '0'),
+    status: 'active', simulated: true,
+  })));
+  seed.schoolRoles = seed.schoolRoles.concat([{
+    _id: schoolRoleKey('u01', LEGACY_SCHOOL_ID), userId: 'u01', schoolId: LEGACY_SCHOOL_ID,
+    role: 'admin', status: 'active', simulated: true,
+  }]);
+  const memberships = [];
+  for (const [association, roles] of Object.entries(ASSOC_ROLE_SEED)) {
+    for (const [userId, role] of Object.entries(roles)) {
+      memberships.push({
+        _id: schoolMembershipKey(userId, { schoolId: LEGACY_SCHOOL_ID, association }),
+        userId, schoolId: LEGACY_SCHOOL_ID, association,
+        role: role === ROLE.ADMIN ? 'leader' : 'staff', status: 'active', simulated: true,
+      });
+    }
+  }
+  // u02 的学院负责人身份只在默认协会（pkb）成立，与旧版 scopeSeedRoles 同口径。
+  memberships.push({
+    _id: schoolMembershipKey('u02', { schoolId: LEGACY_SCHOOL_ID, association: 'pkb' }),
+    userId: 'u02', schoolId: LEGACY_SCHOOL_ID, association: 'pkb',
+    role: 'staff', status: 'active', simulated: true,
+  });
+  seed.memberships = seed.memberships.concat(memberships);
+  seed.memberRatings = seed.memberRatings.concat(legacy.map(({ userId }) => ({
+    _id: ratingKey(userId, { schoolId: LEGACY_SCHOOL_ID, association: 'pkb' }),
+    userId, schoolId: LEGACY_SCHOOL_ID, association: 'pkb',
+    initialElo: null, currentElo: { singles: [], doubles: [] },
+  })));
+}
+
+/**
+ * 学校维度的默认演示身份：跟随旧版 `mock.js` 的 DEFAULT_CURRENT_USER_ID。
+ * 从前这里默认是 S2 的「普通访客」demo_applicant（无学校归属），演示
+ * u01–u24 时协会空间会被判成无权限；旧版账号接入学校维度后，身份直接由
+ * mock.js 那一个常量决定，改编号即换人。
+ */
+function defaultActorId() {
+  return require('./mock.js').DEFAULT_CURRENT_USER_ID;
+}
+
 let actorId = DEMO_ACTORS[0].id;
 let repo;
 const handlers = createSchoolHandlers({ claimKey: (schoolId, studentId) => schoolKey('demo-claim', schoolId, studentId) });
@@ -33,8 +111,9 @@ function reset() {
   // 平台管理员：账号级身份，可跨校读、跨校指定权限；不带 primarySchoolId，不占某校身份。
   seed.users.push({ _id: 'demo_platform_admin', openId: 'mock_openid_platform_admin', nickName: '平台管理员',
     platformStatus: 'active', platformRole: 'admin', simulated: true });
+  attachLegacyMembers(seed);
   repo = createSchoolMemoryRepo(seed);
-  actorId = DEMO_ACTORS[0].id;
+  actorId = defaultActorId();
 }
 reset();
 function setDemoActor(id) {
@@ -70,7 +149,8 @@ function forAssociationSpace(input) {
   const boundRepo = repo;
   return Object.freeze(Object.fromEntries(Object.entries(spaceHandlers).map(([name, handler]) => [name, async payload => {
     const ctx = await buildSchoolContext({ repo: boundRepo, actorId: boundActor, scope: target });
-    return (await handler(payload || {}, ctx)).data;
+    // isMock 供比赛「对手确认」等口径在本地演示时放宽（见 school-match-service）。
+    return (await handler(payload || {}, Object.freeze({ ...ctx, isMock: true }))).data;
   }])));
 }
 module.exports.forAssociationSpace = forAssociationSpace;

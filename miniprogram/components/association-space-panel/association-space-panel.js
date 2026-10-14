@@ -10,8 +10,9 @@
  *
  * 【本阶段落了什么】
  * P1 落「分组」「成员」；P2 落「通知」（发布 / 编辑 / 撤回 / 置顶，会员只读）；
- * P3 落「训练」（发布 / 筛选 / 报名 / 取消 / 名单管理）。签到与积分属于 P5，
- * 本阶段不出现任何「签到成功」入口，避免可用但不计分的假动作（§12、§14）。
+ * P3 落「训练」（发布 / 筛选 / 报名 / 取消 / 名单管理）；P5 落「签到」：
+ * 本人在窗口内提交 → 只到「待确认」，负责人确认后才计 1 分，并可退回 / 撤销
+ * （见 training-points.js 与 association-training-service.js 的两步签到状态机）。
  *
  * 【取数一律绑定进入时的范围】
  * 学校取 school-session、协会取 association-scope，创建客户端时一次固定，
@@ -57,6 +58,9 @@ Component({
 
   data: {
     loading: true,
+    /* 首屏加载失败：只有这种「整块取不到数」才替换整个面板 */
+    loadError: '',
+    /* 表单 / 写操作的就地错误：显示在页签下方，不动面板结构 */
     error: '',
     notice: '',
     themeClass: '',
@@ -65,11 +69,11 @@ Component({
 
     /* 无权限：协会空间只对本校在册会员与管理者开放。
        与 error 分开——这不是「加载失败」，而是一道明确的准入线，
-       要给出说明与（演示环境下的）换身份入口，而不是一句报错把整块面板打白。 */
+       要给出说明与「去学校身份页」的去路，而不是一句报错把整块面板打白。 */
     noAccess: false,
     noAccessNote: '',
-    /** 演示环境才有可切换的体验身份；云端没有 */
-    canSwitchDemo: false,
+    /** 无权限时给一个去学校身份页办理身份的入口（本地与云端一致） */
+    canGoIdentity: false,
 
     /** 二级页签：[{ key, label, active }] */
     subTabs: SUB_TABS.map((def) => ({ ...def, active: def.key === DEFAULT_SUB })),
@@ -153,6 +157,12 @@ Component({
     trainingDetailError: '',
     trainingRoster: [],
     trainingDetailLoading: false,
+    /**
+     * 退回 / 撤销需要写原因。WXML 不便弹输入框，于是在名单行下方就地展开一个
+     * 原因输入。approvalAction = { userId, kind }：kind 为 'reject' | 'revoke'。
+     */
+    approvalAction: null,
+    approvalReason: '',
   },
 
   lifetimes: {
@@ -235,12 +245,13 @@ Component({
         const denied = !groupResult.ok;
         this.setData({
           loading: false,
+          loadError: '',
           error: '',
           noAccess: denied,
           noAccessNote: denied
             ? (groupResult.message || '协会空间仅对本校在册会员与管理者开放')
             : '',
-          canSwitchDemo: denied && identity.isMockNow(),
+          canGoIdentity: denied,
           spaceTitle: this.composeTitle(schoolName, associationName),
           themeClass: currentThemeClass(),
           groups: denied ? [] : (groupResult.groups || []).map((row) => this.describeGroup(row)),
@@ -255,7 +266,7 @@ Component({
       } catch (err) {
         console.error('[space] 加载失败', err);
         this.loaded = true;
-        this.setData({ loading: false, error: err.message || '协会空间加载失败，请下拉重试',
+        this.setData({ loading: false, loadError: err.message || '协会空间加载失败，请下拉重试',
           themeClass: currentThemeClass() });
       }
     },
@@ -302,6 +313,8 @@ Component({
         activeSub: sub,
         subTabs: SUB_TABS.map((def) => ({ ...def, active: def.key === sub })),
         [`mountedSub.${sub}`]: true,
+        // 上一个页签的表单错误不跟着漂到新页签
+        error: '',
       });
       // 成员 / 通知首次展开时才拉第一页；挂过之后保留状态，来回切不重拉。
       if (sub === 'member' && !this.memberLoaded) {
@@ -314,12 +327,12 @@ Component({
     },
 
     /**
-     * 无权限时的去路：跳到学校身份页换一个演示身份。
+     * 无权限时的去路：跳到「学校身份」页办理 / 查看本校身份。
      *
-     * 协会空间是学校维度的会员功能，而演示身份默认是「普通访客」
-     * （demo_applicant，无学校归属）。这不是故障，是准入线——但用户
-     * 得知道该去哪儿换身份，否则只会看到一句「没有权限」卡在原地。
-     * 换完身份回到本页时，工作台的 show 生命周期会触发重刷。
+     * 协会空间是学校维度的会员功能，只对本校在册会员与管理者开放。
+     * 当前身份若不是本校在册会员（例如在浏览外校），这不是故障，是准入线——
+     * 但用户得知道该去哪儿把身份办妥，否则只会看到一句「没有权限」卡在原地。
+     * 办妥后回到本页时，工作台的 show 生命周期会触发重刷。
      */
     onGoSchoolIdentity() {
       return wx.navigateTo({ url: '/pages/school-identity/school-identity' });
@@ -927,6 +940,7 @@ Component({
       this.setData({
         openTrainingId: trainingId, trainingDetail: null, trainingDetailError: '',
         trainingRoster: [], trainingDetailLoading: true,
+        approvalAction: null, approvalReason: '',
       });
       return Promise.all([
         this.api.getTraining({ trainingId }),
@@ -947,14 +961,26 @@ Component({
     describeRoster(result) {
       if (!result || !result.ok) return [];
       const rows = result.canManage ? (result.registrations || []) : (result.members || []);
-      return rows.map((row) => ({
-        userId: row.userId,
-        nickName: row.nickName || '会员',
-        avatarUrl: row.avatarUrl || '',
-        collegeName: row.collegeName || '',
-        canceled: row.signupStatus === 'canceled',
-        statusLabel: row.signupStatus === 'canceled' ? '已取消' : '已报名',
-      }));
+      return rows.map((row) => {
+        const attendance = row.attendanceStatus || 'not_submitted';
+        const canceled = row.signupStatus === 'canceled';
+        // 待确认是负责人唯一可操作的状态（确认 / 退回二选一）；
+        // 已确认可撤销回待确认。未签到者没有可操作的会员动作（T08）。
+        return {
+          userId: row.userId,
+          nickName: row.nickName || '会员',
+          avatarUrl: row.avatarUrl || '',
+          collegeName: row.collegeName || '',
+          canceled,
+          statusLabel: canceled ? '已取消' : '已报名',
+          attendanceStatus: attendance,
+          attendanceLabel: row.attendanceLabel || '',
+          rejectionReason: row.rejectionReason || '',
+          revision: Number(row.revision || 1),
+          canApprove: !canceled && attendance === 'pending',
+          canRevoke: !canceled && attendance === 'confirmed',
+        };
+      });
     },
 
     onRegisterTraining() {
@@ -977,6 +1003,63 @@ Component({
       if (!trainingId || !userId || this.data.groupBusy) return undefined;
       return this.writeSub(() => this.api.removeTrainingRegistration({ trainingId, userId }), '已移出该报名',
         () => this.reloadTrainingDetail(trainingId));
+    },
+
+    /* ---------- 签到（P5） ---------- */
+
+    /**
+     * 本人签到：只到「待确认」，负责人确认后才计分（§6.1）。
+     * 按钮是否出现由详情页的 canCheckIn 决定——那已经涵盖了「已报名 + 资格在 +
+     * 训练未取消 + 处于签到窗口 + 当前不是待确认 / 已确认」五条，页面不再重算。
+     */
+    onRequestCheckIn() {
+      const trainingId = this.data.openTrainingId;
+      if (!trainingId || !this.data.trainingDetail || this.data.groupBusy) return undefined;
+      return this.writeSub(() => this.api.requestTrainingCheckIn({ trainingId }),
+        '已提交签到，等待负责人确认', () => this.reloadTrainingDetail(trainingId));
+    },
+
+    /** 负责人确认：pending → confirmed，确认后才产生一条训练积分事实 */
+    onConfirmCheckIn(event) {
+      const trainingId = this.data.openTrainingId;
+      const userId = event.currentTarget.dataset.userid;
+      const revision = event.currentTarget.dataset.revision;
+      if (!trainingId || !userId || this.data.groupBusy) return undefined;
+      return this.writeSub(
+        () => this.api.confirmTrainingCheckIn({ trainingId, userId, expectedRevision: revision }),
+        '已确认签到', () => this.reloadTrainingDetail(trainingId));
+    },
+
+    /** 展开就地原因输入（退回 / 撤销都需要写原因，服务端强校验） */
+    onStartApproval(event) {
+      const { userid: userId, kind } = event.currentTarget.dataset;
+      if (!userId || (kind !== 'reject' && kind !== 'revoke')) return undefined;
+      return this.setData({ approvalAction: { userId, kind }, approvalReason: '', error: '' });
+    },
+
+    onApprovalReason(event) {
+      return this.setData({ approvalReason: event.detail.value });
+    },
+
+    onCancelApproval() {
+      return this.setData({ approvalAction: null, approvalReason: '' });
+    },
+
+    onSubmitApproval() {
+      const action = this.data.approvalAction;
+      const trainingId = this.data.openTrainingId;
+      if (!action || !trainingId || this.data.groupBusy) return undefined;
+      const reason = String(this.data.approvalReason || '').trim();
+      if (!reason) {
+        this.setData({ error: '请填写原因' });
+        return undefined;
+      }
+      const call = action.kind === 'reject' ? this.api.rejectTrainingCheckIn : this.api.revokeTrainingCheckIn;
+      return this.writeSub(
+        () => call({ trainingId, userId: action.userId, reason }),
+        action.kind === 'reject' ? '已退回该签到' : '已撤销确认',
+        () => this.reloadTrainingDetail(trainingId))
+        .then(() => { if (!this.data.error) this.setData({ approvalAction: null, approvalReason: '' }); });
     },
 
     /** 详情内的写操作后：列表（人数 / 状态会变）与当前详情一起重拉 */

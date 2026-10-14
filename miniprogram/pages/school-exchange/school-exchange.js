@@ -38,10 +38,13 @@ Page({
       if (seq !== this.sequence || this.unloaded) return;
       this.api = api;
       const actors = identity.getDemoActors();
-      const actorIndex = actors.findIndex(actor => actor.id === identity.getDemoActor());
+      // 当前演示身份未必在这份体验身份清单里（默认身份跟随 mock.js 的演示账号），
+      // 找不到就落到第一项，别让下拉 value 变成 -1。
+      const found = actors.findIndex(actor => actor.id === identity.getDemoActor());
+      const actorIndex = found >= 0 ? found : 0;
       const schoolIndex = directory.schools.findIndex(school => school.schoolId === target.schoolId);
       this.update({ schools: directory.schools, schoolIndex, schoolName: directory.schools[schoolIndex].name,
-        actors, actorIndex, actorName: actors[actorIndex].label,
+        actors, actorIndex, actorName: (actors[actorIndex] && actors[actorIndex].label) || '',
         canCreate: session.canManageAssociation, detail, scoreDraft: {},
         events: (result.events || []).map(event => ({ ...event, statusText: STATE[event.status],
           invitationText: INVITATION[event.invitations[target.schoolId]] })),

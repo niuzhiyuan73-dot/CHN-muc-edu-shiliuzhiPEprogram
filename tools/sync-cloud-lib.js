@@ -54,6 +54,8 @@ const MANIFEST = [
   'utils/standings.js',
   // 纯逻辑服务
   'services/replay.js',
+  // 训练积分事实归一（replay 依赖它把训练事实叠加到积分上）
+  'services/training-points.js',
   'services/school-permission.js',
   'services/school-member.js',
   // 身份业务编排依赖注入仓储，不直接引用 wx、Node 或云 SDK。
@@ -67,6 +69,12 @@ const MANIFEST = [
   'services/association-member-service.js',
   'services/association-notice-service.js',
   'services/association-training-service.js',
+  // M1：个人赛事 / 比赛 / 实时比分的学校维度服务，依赖纯规则 event.js /
+  // match-record.js / live-score.js。school-actor 是三者共用的角色 / 名单适配层。
+  'services/school-actor.js',
+  'services/school-event-service.js',
+  'services/school-match-service.js',
+  'services/school-live-service.js',
   'services/exchange-service.js',
   'services/exchange-plan.js',
   'services/court.js',

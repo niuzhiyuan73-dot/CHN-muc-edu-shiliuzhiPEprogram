@@ -106,6 +106,26 @@ const trainingRegistrationKey = (trainingId, userId, scope) => {
   const s = schoolScope(scope);
   return schoolKey('tr', s.schoolId, s.association, trainingId, userId);
 };
+// 个人赛事：_id 由服务端按 scope + 发布者 + 请求编号生成，翻不出别的学校/协会。
+const schoolEventKey = (eventId, scope) => {
+  const s = schoolScope(scope);
+  return schoolKey('sev', s.schoolId, s.association, eventId);
+};
+// 赛事报名：scope + eventId + userId，稳定唯一，重复报名走同一键，无法跨范围伪造。
+const schoolEventSignupKey = (eventId, userId, scope) => {
+  const s = schoolScope(scope);
+  return schoolKey('sevsu', s.schoolId, s.association, eventId, userId);
+};
+// 比赛记录：_id 由服务端按 scope + 录入者 + 请求编号生成，翻不出别的学校/协会。
+const schoolMatchKey = (matchId, scope) => {
+  const s = schoolScope(scope);
+  return schoolKey('sm', s.schoolId, s.association, matchId);
+};
+// 实时比分：一场比赛恒一条，_id 由 scope + 比赛编号构成，跨范围读不到也写不进。
+const schoolLiveKey = (matchId, scope) => {
+  const s = schoolScope(scope);
+  return schoolKey('sls', s.schoolId, s.association, matchId);
+};
 function belongsToSchoolScope(doc, scope) {
   const s = schoolScope(scope);
   return Boolean(doc && doc.schoolId === s.schoolId && doc.association === s.association);
@@ -118,4 +138,5 @@ module.exports = {
   scopeKey, belongsToSchoolScope,
   associationGroupKey, associationGroupMemberKey, associationGroupNameKey,
   associationNoticeKey, associationTrainingKey, trainingRegistrationKey,
+  schoolEventKey, schoolEventSignupKey, schoolMatchKey, schoolLiveKey,
 };

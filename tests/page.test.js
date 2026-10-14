@@ -5530,9 +5530,9 @@ test('协会空间 —— 首屏默认落在训练页签，标题带学校与协
   }
 });
 
-test('协会空间 —— 无权限身份：给说明与换身份入口，而不是打白整块面板', async () => {
+test('协会空间 —— 无权限身份：给说明与去学校身份页的入口，而不是打白整块面板', async () => {
   const fx = spaceFixture();
-  // 默认演示身份就是「普通访客」（demo_applicant），没有学校归属
+  // 「普通访客」（demo_applicant）没有学校归属，读不到协会空间
   fx.to('demo_applicant');
   try {
     const page = instantiate(spacePanelConfig);
@@ -5542,7 +5542,7 @@ test('协会空间 —— 无权限身份：给说明与换身份入口，而不
     assert.strictEqual(page.data.noAccess, true, '没有读取权时进入无权限态');
     assert.strictEqual(page.data.error, '', '无权限不是加载失败，不应落进 error（否则整块面板被打白）');
     assert.ok(page.data.noAccessNote, '给出服务端返回的说明');
-    assert.strictEqual(page.data.canSwitchDemo, true, '演示环境提供换身份入口');
+    assert.strictEqual(page.data.canGoIdentity, true, '提供去学校身份页的入口');
     assert.deepStrictEqual(page.data.groups, []);
     assert.strictEqual(page.data.activeSub, 'training', '无权限也不影响页签初值');
 
@@ -5745,6 +5745,32 @@ test('协会空间 —— 通知页签：负责人可发布并撤回，会员只
   }
 });
 
+test('协会空间 —— 表单校验失败只就地报错，不打白整块面板', async () => {
+  const fx = spaceFixture();
+  try {
+    fx.to('demo_muc_admin');
+    const page = instantiate(spacePanelConfig);
+    await page.onLoad();
+    await page.onSwitchSub({ currentTarget: { dataset: { sub: 'notice' } } });
+
+    // 标题留空直接发布：应当拒绝，但错误只出现在页签下方
+    page.onToggleNoticeCreate();
+    await page.onCreateNotice();
+
+    assert.ok(page.data.error, '校验失败要给出就地错误文案');
+    assert.strictEqual(page.data.loadError, '', '这不是加载失败，不能触发整块面板的错误态');
+    assert.strictEqual(page.data.noAccess, false);
+    assert.strictEqual(page.data.showNoticeCreate, true, '面板结构还在，发布表单没有被清掉');
+    assert.strictEqual(page.data.activeSub, 'notice', '页签没有被重置');
+
+    // 切到别的页签，上一条错误不应跟着漂过去
+    await page.onSwitchSub({ currentTarget: { dataset: { sub: 'group' } } });
+    assert.strictEqual(page.data.error, '', '换页签后清掉旧的表单错误');
+  } finally {
+    fx.restore();
+  }
+});
+
 test('协会空间 —— 训练页签：负责人发布，会员报名与取消，状态可筛选', async () => {
   const fx = spaceFixture();
   try {
@@ -5790,6 +5816,78 @@ test('协会空间 —— 训练页签：负责人发布，会员报名与取消
     await memberPage.onTrainingFilter({ currentTarget: { dataset: { key: 'canceled' } } });
     assert.strictEqual(memberPage.data.trainingFilter, 'canceled');
     assert.strictEqual(memberPage.data.trainings.length, 0, '已取消筛选下没有训练');
+  } finally {
+    fx.restore();
+  }
+});
+
+test('协会空间 —— 训练签到：本人提交，负责人确认 / 退回（须填原因）', async () => {
+  const fx = spaceFixture();
+  try {
+    // 签到窗口由训练时间决定，页面用例不便摆时钟，这里用桩 api 直接驱动面板行为。
+    fx.to('demo_muc_member');
+    const memberPage = instantiate(spacePanelConfig);
+    await memberPage.onLoad();
+    const memberCalls = [];
+    memberPage.api = {
+      ...memberPage.api,
+      getTraining: async () => ({ ok: true, canManage: false, canCheckIn: true, checkInNote: '',
+        training: { trainingId: 't1', title: '周末训练', description: '', signupCount: 1 },
+        myRegistration: { signupStatus: 'registered', attendanceStatus: 'not_submitted' }, message: '' }),
+      listTrainingRegistrations: async () => ({ ok: true, canManage: false, members: [] }),
+      requestTrainingCheckIn: async (payload) => {
+        memberCalls.push(payload);
+        return { ok: true, registration: { attendanceStatus: 'pending' } };
+      },
+    };
+    memberPage.setData({ openTrainingId: 't1' });
+    await memberPage.loadTrainingDetail('t1');
+    assert.strictEqual(memberPage.data.trainingDetail.canCheckIn, true);
+
+    await memberPage.onRequestCheckIn();
+    assert.deepStrictEqual(memberCalls, [{ trainingId: 't1' }], '本人签到只提交自己的训练编号');
+    assert.strictEqual(memberPage.data.notice, '已提交签到，等待负责人确认');
+
+    // 负责人：名单里一行「待确认」→ 可确认、可退回（退回须填原因）
+    fx.to('demo_muc_admin');
+    const adminPage = instantiate(spacePanelConfig);
+    await adminPage.onLoad();
+    const adminCalls = [];
+    adminPage.api = {
+      ...adminPage.api,
+      getTraining: async () => ({ ok: true, canManage: true, canCheckIn: false, checkInNote: '',
+        training: { trainingId: 't1', title: '周末训练', description: '', signupCount: 1 },
+        myRegistration: null, message: '' }),
+      listTrainingRegistrations: async () => ({ ok: true, canManage: true, members: [], registrations: [
+        { userId: 'demo_muc_member', nickName: '会员', collegeName: '', signupStatus: 'registered',
+          attendanceStatus: 'pending', attendanceLabel: '待确认', revision: 2 },
+      ] }),
+      confirmTrainingCheckIn: async (payload) => { adminCalls.push(['confirm', payload]); return { ok: true }; },
+      rejectTrainingCheckIn: async (payload) => { adminCalls.push(['reject', payload]); return { ok: true }; },
+      revokeTrainingCheckIn: async (payload) => { adminCalls.push(['revoke', payload]); return { ok: true }; },
+    };
+    adminPage.setData({ openTrainingId: 't1' });
+    await adminPage.loadTrainingDetail('t1');
+    const row = adminPage.data.trainingRoster[0];
+    assert.strictEqual(row.canApprove, true, '待确认行出现确认 / 退回入口');
+    assert.strictEqual(row.canRevoke, false, '未确认不能撤销');
+
+    await adminPage.onConfirmCheckIn({ currentTarget: { dataset: { userid: 'demo_muc_member', revision: 2 } } });
+    assert.deepStrictEqual(adminCalls[0], ['confirm',
+      { trainingId: 't1', userId: 'demo_muc_member', expectedRevision: 2 }]);
+
+    adminPage.onStartApproval({ currentTarget: { dataset: { userid: 'demo_muc_member', kind: 'reject' } } });
+    assert.deepStrictEqual(adminPage.data.approvalAction, { userId: 'demo_muc_member', kind: 'reject' });
+    await adminPage.onSubmitApproval();
+    assert.ok(adminPage.data.error, '未填原因给出就地错误');
+    assert.strictEqual(adminCalls.length, 1, '没填原因不调用退回接口');
+
+    adminPage.onApprovalReason({ detail: { value: '未到场' } });
+    await adminPage.onSubmitApproval();
+    assert.deepStrictEqual(adminCalls[1], ['reject',
+      { trainingId: 't1', userId: 'demo_muc_member', reason: '未到场' }]);
+    assert.strictEqual(adminPage.data.approvalAction, null, '提交后收起原因输入');
+    assert.strictEqual(adminPage.data.notice, '已退回该签到');
   } finally {
     fx.restore();
   }

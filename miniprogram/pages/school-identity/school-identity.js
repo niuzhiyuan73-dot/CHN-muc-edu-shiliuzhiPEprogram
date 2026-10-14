@@ -6,7 +6,6 @@ Page({
     schoolId: 'muc', schoolName: '中央民族大学', schools: [], schoolIndex: 0,
     colleges: [], collegeIndex: -1, collegeName: '', studentId: '',
     loading: true, submitting: false, error: '', notice: '',
-    isMock: false, demoActors: [], demoActorIndex: 0, demoActorName: '',
     user: null, account: null, statusText: '', canApply: false, canReview: false, applications: [],
     members: [], grants: [], readOnly: false,
   },
@@ -21,12 +20,9 @@ Page({
     const version = this.loadVersion = (this.loadVersion || 0) + 1;
     const schoolId = this.data.schoolId;
     const api = service.forSchoolIdentity({ schoolId, association: 'pkb' });
-    const actors = service.getDemoActors();
-    const actorIndex = Math.max(0, actors.findIndex(actor => actor.id === service.getDemoActor()));
     this.update({ loading: true, error: '', applications: [], canReview: false, canApply: false,
       members: [], grants: [], readOnly: false,
-      user: null, account: null, statusText: '', isMock: service.isMockNow(), demoActors: actors,
-      demoActorIndex: actorIndex, demoActorName: actors[actorIndex] && actors[actorIndex].label || '' });
+      user: null, account: null, statusText: '' });
     try {
       const [directory, session] = await Promise.all([api.getSchoolDirectory(), api.getSchoolIdentitySession()]);
       if (!directory.ok || !session.ok) throw new Error(directory.message || session.message || '读取学校信息失败');
@@ -74,13 +70,6 @@ Page({
     const school = this.data.schools[Number(event.detail.value)];
     if (!school || school.schoolId === this.data.schoolId) return;
     this.update({ schoolId: school.schoolId, schoolName: school.name, notice: '', studentId: '', collegeIndex: -1 });
-    return this.reload();
-  },
-  onDemoActorChange(event) {
-    if (this.data.submitting || !service.isMockNow()) return;
-    const actor = this.data.demoActors[Number(event.detail.value)];
-    if (!actor) return;
-    service.setDemoActor(actor.id);
     return this.reload();
   },
   onCollegeChange(event) {

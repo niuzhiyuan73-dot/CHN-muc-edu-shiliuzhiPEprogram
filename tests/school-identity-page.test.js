@@ -16,6 +16,8 @@ function page() {
 }
 const select = value => ({ detail: { value } });
 const reviewEvent = decision => ({ currentTarget: { dataset: { userId: 'demo_applicant', decision } } });
+/** 页面不再带体验身份切换器，用例直接设定身份后让页面重取（默认身份跟随 mock.js）。 */
+async function switchActor(p, name) { mock.setDemoActor(name); await p.reload(); }
 async function submit(p) {
   p.onCollegeChange(select(0));
   p.onStudentIdInput(select('NEW003'));
@@ -24,6 +26,7 @@ async function submit(p) {
 beforeEach(() => { facade.setDataSource('mock'); mock.reset(); scope.setAssociation('tt'); });
 
 test('page supports Beihang application and local-admin approval without changing old association', async () => {
+  mock.setDemoActor('demo_applicant');
   const p = page();
   await p.onLoad();
   assert.equal(p.data.canApply, true);
@@ -31,16 +34,16 @@ test('page supports Beihang application and local-admin approval without changin
   assert.equal(p.data.schoolName, '北京航空航天大学');
   await submit(p);
   assert.equal(p.data.statusText, '待审核');
-  await p.onDemoActorChange(select(1));
+  await switchActor(p, 'demo_muc_admin');
   assert.equal(p.data.canReview, false);
   assert.deepEqual(p.data.applications, []);
-  await p.onDemoActorChange(select(2));
+  await switchActor(p, 'demo_buaa_admin');
   assert.equal(p.data.canReview, true);
   assert.equal(p.data.applications.length, 1);
   assert.equal(p.data.applications[0].nickName, '模拟申请人');
   await p.onReview(reviewEvent('approve'));
   assert.equal(p.data.applications.length, 0);
-  await p.onDemoActorChange(select(0));
+  await switchActor(p, 'demo_applicant');
   assert.equal(p.data.statusText, '已通过');
   assert.equal(p.data.canApply, false);
   await p.onSchoolChange(select(0));
@@ -50,15 +53,16 @@ test('page supports Beihang application and local-admin approval without changin
 });
 
 test('rejection requires a reason, returns it to applicant and allows resubmission', async () => {
+  mock.setDemoActor('demo_applicant');
   const p = page();
   await p.onLoad();
   await submit(p);
-  await p.onDemoActorChange(select(1));
+  await switchActor(p, 'demo_muc_admin');
   await p.onReview(reviewEvent('reject'));
   assert.match(p.data.error, /理由/);
   p.onReasonInput({ currentTarget: { dataset: { userId: 'demo_applicant' } }, detail: { value: '请核实学号' } });
   await p.onReview(reviewEvent('reject'));
-  await p.onDemoActorChange(select(0));
+  await switchActor(p, 'demo_applicant');
   assert.equal(p.data.statusText, '已驳回');
   assert.equal(p.data.account.reviewReason, '请核实学号');
   await submit(p);
@@ -67,6 +71,7 @@ test('rejection requires a reason, returns it to applicant and allows resubmissi
 });
 
 test('duplicate clicks submit once and source scope is locked while writing', async () => {
+  mock.setDemoActor('demo_applicant');
   const p = page();
   await p.onLoad();
   p.onCollegeChange(select(0));
@@ -82,9 +87,7 @@ test('duplicate clicks submit once and source scope is locked while writing', as
   const pending = p.onApply();
   await p.onApply();
   await p.onSchoolChange(select(1));
-  await p.onDemoActorChange(select(2));
   assert.equal(p.data.schoolId, 'muc');
-  assert.equal(mock.getDemoActor(), 'demo_applicant');
   release();
   await pending;
   assert.equal(calls, 1);
@@ -93,6 +96,7 @@ test('duplicate clicks submit once and source scope is locked while writing', as
 });
 
 test('failed write releases button state and retains editable form', async () => {
+  mock.setDemoActor('demo_applicant');
   const p = page();
   await p.onLoad();
   p.onCollegeChange(select(0));
@@ -134,6 +138,7 @@ test('older responses and unloaded page do not overwrite the latest scope', asyn
 });
 
 test('demo client binds actor at creation and serializes competing approvals', async () => {
+  mock.setDemoActor('demo_applicant');
   const applicant = mock.forSchoolIdentity({ schoolId: 'muc', association: 'pkb' });
   await applicant.applySchoolMembership({ collegeId: 'c01', studentId: 'NEW100' });
   mock.setDemoActor('demo_muc_admin');
@@ -154,7 +159,7 @@ test('cloud mode hides demo controls and prevents demo actor selection', async (
 test('unified grant entry lets a school admin assign an association role', async () => {
   const p = page();
   await p.onLoad();
-  await p.onDemoActorChange(select(1)); // 民大校管理员
+  await switchActor(p, 'demo_muc_admin'); // 民大校管理员
   assert.deepEqual(p.data.grants.map(g => g.permission), ['associationLeader', 'collegeLeader']);
   assert.ok(p.data.members.some(m => m.userId === 'demo_muc_member'));
   await p.onGrant({ currentTarget: { dataset: { userId: 'demo_muc_member' } } });
@@ -166,10 +171,10 @@ test('unified grant entry lets a school admin assign an association role', async
 test('platform admin sees all three grants and cross-school browsing stays read-only', async () => {
   const p = page();
   await p.onLoad();
-  await p.onDemoActorChange(select(5)); // 平台管理员
+  await switchActor(p, 'demo_platform_admin'); // 平台管理员
   assert.deepEqual(p.data.grants.map(g => g.permission), ['schoolAdmin', 'associationLeader', 'collegeLeader']);
   assert.equal(p.data.readOnly, false);
-  await p.onDemoActorChange(select(1)); // 民大校管理员
+  await switchActor(p, 'demo_muc_admin'); // 民大校管理员
   await p.onSchoolChange(select(1)); // 切到北航
   assert.equal(p.data.readOnly, true);
   assert.deepEqual(p.data.grants, []);

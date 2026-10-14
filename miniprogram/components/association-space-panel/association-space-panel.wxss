@@ -182,7 +182,18 @@
   margin-bottom: var(--space-md);
 }
 
-/* 操作成功/失败的轻提示（成功绿，失败红在全局 error 里另有呈现） */
+/* 表单 / 动作错误：就地一条红字，不替换面板结构（否则一次校验失败会把四个页签全打白） */
+.space-error {
+  margin-bottom: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  background: #fdecea;
+  color: var(--color-danger);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+}
+
+/* 操作成功的轻提示（本次动作成功时显示，绿色） */
 .space-notice {
   margin-bottom: var(--space-md);
   padding: var(--space-sm) var(--space-md);
@@ -337,4 +348,22 @@
   margin-left: 12rpx;
   font-size: var(--font-sm);
   color: var(--text-secondary);
+}
+
+.space-roster-actions {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  flex-shrink: 0;
+}
+
+/* 退回 / 撤销的就地原因输入：挂在名单行下方，不弹窗 */
+.space-approval {
+  padding: 8rpx 0 12rpx;
+}
+
+.space-approval-actions {
+  display: flex;
+  gap: 12rpx;
+  margin-top: 8rpx;
 }

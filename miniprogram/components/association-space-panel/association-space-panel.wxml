@@ -13,15 +13,15 @@
   <view wx:elif="{{noAccess}}" class="empty-state">
     <view class="empty-state-icon">🔒</view>
     <view class="empty-state-text">{{noAccessNote}}</view>
-    <view class="space-noaccess-hint">协会空间仅对本校在册会员与管理者开放。当前演示身份若为「普通访客」，请先切换到本校会员或管理员。</view>
-    <button wx:if="{{canSwitchDemo}}" class="btn btn-primary space-noaccess-btn" bindtap="onGoSchoolIdentity">
-      切换体验身份
+    <view class="space-noaccess-hint">协会空间仅对本校在册会员与管理者开放。当前身份若不是本校在册会员，请先到「学校身份」页办理。</view>
+    <button wx:if="{{canGoIdentity}}" class="btn btn-primary space-noaccess-btn" bindtap="onGoSchoolIdentity">
+      去学校身份页
     </button>
   </view>
 
-  <view wx:elif="{{error}}" class="empty-state">
+  <view wx:elif="{{loadError}}" class="empty-state">
     <view class="empty-state-icon">⚠️</view>
-    <view class="empty-state-text">{{error}}</view>
+    <view class="empty-state-text">{{loadError}}</view>
   </view>
 
   <block wx:else>
@@ -46,6 +46,8 @@
     </view>
 
     <view wx:if="{{notice}}" class="space-notice">{{notice}}</view>
+    <!-- 表单 / 动作错误就地显示，绝不替换整块面板（否则一次校验失败会把四个页签全打白） -->
+    <view wx:if="{{error}}" class="space-error">{{error}}</view>
 
     <!-- ========== 分组 ========== -->
     <view wx:if="{{mountedSub.group}}" hidden="{{activeSub !== 'group'}}">
@@ -474,15 +476,49 @@
                 <text wx:elif="{{trainingDetail.registerNote}}" class="space-signup-note">{{trainingDetail.registerNote}}</text>
               </view>
 
+              <!-- 本人签到：只在窗口内、已报名、非待确认 / 已确认时出现；其余情况给一句说明 -->
+              <view wx:if="{{trainingDetail.canCheckIn}}" class="space-signup">
+                <text class="space-signup-note">签到后需负责人确认，确认成功计 1 分</text>
+                <button class="btn btn-primary space-mini" bindtap="onRequestCheckIn"
+                  disabled="{{groupBusy}}">我要签到</button>
+              </view>
+              <view wx:elif="{{trainingDetail.checkInNote}}" class="space-signup">
+                <text class="space-signup-note">{{trainingDetail.checkInNote}}</text>
+              </view>
+
               <view class="space-roster-note">报名名单（{{trainingRoster.length}}）</view>
               <view wx:if="{{trainingRoster.length === 0}}" class="space-roster-note">还没有人报名</view>
               <view wx:else>
-                <view wx:for="{{trainingRoster}}" wx:key="userId" wx:for-item="player" class="space-roster-row">
-                  <text class="space-roster-name">{{player.nickName}}
-                    <text wx:if="{{player.canceled}}" class="space-roster-meta">已取消</text></text>
-                  <text class="space-roster-meta">{{player.collegeName}}</text>
-                  <button wx:if="{{trainingDetail.canManage && !player.canceled}}" class="btn btn-danger space-mini"
-                    data-userid="{{player.userId}}" bindtap="onRemoveRegistration" disabled="{{groupBusy}}">移出</button>
+                <view wx:for="{{trainingRoster}}" wx:key="userId" wx:for-item="player" class="space-roster-item">
+                  <view class="space-roster-row">
+                    <text class="space-roster-name">{{player.nickName}}
+                      <text wx:if="{{player.canceled}}" class="space-roster-meta">已取消</text>
+                      <text wx:elif="{{player.attendanceLabel}}" class="space-roster-meta">{{player.attendanceLabel}}</text></text>
+                    <text class="space-roster-meta">{{player.collegeName}}</text>
+                    <view class="space-roster-actions">
+                      <button wx:if="{{trainingDetail.canManage && player.canApprove}}" class="btn btn-primary space-mini"
+                        data-userid="{{player.userId}}" data-revision="{{player.revision}}"
+                        bindtap="onConfirmCheckIn" disabled="{{groupBusy}}">确认签到</button>
+                      <button wx:if="{{trainingDetail.canManage && player.canApprove}}" class="btn btn-outline space-mini"
+                        data-userid="{{player.userId}}" data-kind="reject"
+                        bindtap="onStartApproval" disabled="{{groupBusy}}">退回</button>
+                      <button wx:if="{{trainingDetail.canManage && player.canRevoke}}" class="btn btn-outline space-mini"
+                        data-userid="{{player.userId}}" data-kind="revoke"
+                        bindtap="onStartApproval" disabled="{{groupBusy}}">撤销确认</button>
+                      <button wx:if="{{trainingDetail.canManage && !player.canceled}}" class="btn btn-danger space-mini"
+                        data-userid="{{player.userId}}" bindtap="onRemoveRegistration" disabled="{{groupBusy}}">移出</button>
+                    </view>
+                  </view>
+                  <view wx:if="{{approvalAction && approvalAction.userId === player.userId}}" class="space-approval">
+                    <input class="search-input" value="{{approvalReason}}" maxlength="200"
+                      placeholder="{{approvalAction.kind === 'reject' ? '退回原因（必填）' : '撤销原因（必填）'}}"
+                      bindinput="onApprovalReason" />
+                    <view class="space-approval-actions">
+                      <button class="btn btn-primary space-mini" bindtap="onSubmitApproval" disabled="{{groupBusy}}">提交</button>
+                      <button class="btn btn-outline space-mini" bindtap="onCancelApproval" disabled="{{groupBusy}}">取消</button>
+                    </view>
+                  </view>
+                  <view wx:if="{{player.rejectionReason}}" class="space-roster-note">退回原因：{{player.rejectionReason}}</view>
                 </view>
               </view>
             </block>

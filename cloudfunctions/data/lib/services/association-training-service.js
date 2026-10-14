@@ -44,6 +44,8 @@ const {
 const {
   TRAINING_STATUS, TRAINING_STATUS_LABEL, TRAINING_SIGNUP_STATUS,
 } = require('../utils/constants.js');
+// 签到状态与训练积分事实同源（training-points.js），避免两处各写一份状态机常量。
+const { ATTENDANCE_STATUS } = require('./training-points.js');
 
 const ok = data => ({ ok: true, data });
 const refused = (message, extra = {}) => ({ ok: false, message, ...extra });
@@ -71,9 +73,9 @@ const TRAINING_STATE = Object.freeze({
 const TRAINING_STATE_LABEL = Object.freeze({
   open: '可报名', ongoing: '进行中', finished: '已结束', canceled: '已取消',
 });
-/** 签到状态：本阶段只写 not_submitted，其余留给 P5 的状态机。 */
-const ATTENDANCE_STATUS = Object.freeze({
-  NOT_SUBMITTED: 'not_submitted', PENDING: 'pending', REJECTED: 'rejected', CONFIRMED: 'confirmed',
+/** 签到状态的展示文案（页面直用）。 */
+const ATTENDANCE_STATUS_LABEL = Object.freeze({
+  not_submitted: '未签到', pending: '待确认', rejected: '已退回', confirmed: '签到成功',
 });
 
 const isTrainingDoc = doc => Boolean(doc && doc.title && doc.startAt && doc.status);
@@ -84,6 +86,20 @@ const freshContext = (tx, ctx) => buildSchoolContext({
   repo: tx, actorId: ctx.actorId,
   scope: { schoolId: ctx.schoolId, association: ctx.association }, now: ctx.now,
 });
+
+/** 事务内为**任意用户**（不只是当前登录人）重建上下文，用于校验目标会员的资格。 */
+const contextFor = (tx, ctx, actorId) => buildSchoolContext({
+  repo: tx, actorId,
+  scope: { schoolId: ctx.schoolId, association: ctx.association }, now: ctx.now,
+});
+
+/** 本人签到窗口：checkInOpenAt <= now <= checkInCloseAt（§6.2）。 */
+const inCheckInWindow = (training, nowMs) => {
+  const open = Date.parse(training.checkInOpenAt);
+  const close = Date.parse(training.checkInCloseAt);
+  if (!Number.isFinite(open) || !Number.isFinite(close)) return false;
+  return nowMs >= open && nowMs <= close;
+};
 
 const trainingAuditKey = (trainingId, action, revision) =>
   schoolKey('atau', trainingId, action, String(revision));
@@ -163,11 +179,17 @@ function countRegistered(rows, trainingId) {
 /** 本人对某训练的一行报名状态（列表用，不下发隐私字段） */
 function myRegistrationDTO(reg) {
   if (!reg) return null;
+  const attendance = reg.attendanceStatus || ATTENDANCE_STATUS.NOT_SUBMITTED;
   return {
     signupStatus: reg.signupStatus,
-    attendanceStatus: reg.attendanceStatus || ATTENDANCE_STATUS.NOT_SUBMITTED,
+    attendanceStatus: attendance,
+    attendanceLabel: ATTENDANCE_STATUS_LABEL[attendance] || '',
     signedAt: reg.signedAt || null,
     canceledAt: reg.canceledAt || null,
+    requestedAt: reg.requestedAt || null,
+    confirmedAt: reg.confirmedAt || null,
+    rejectionReason: reg.rejectionReason || '',
+    revision: Number(reg.revision || 1),
   };
 }
 
@@ -287,10 +309,26 @@ async function getTraining(payload = {}, ctx) {
   const canCancel = registered && state === TRAINING_STATE.OPEN &&
     attendance !== ATTENDANCE_STATUS.PENDING && attendance !== ATTENDANCE_STATUS.CONFIRMED;
 
+  // 本人签到：报名有效 + 会员资格仍在 + 训练未取消 + 处于签到窗口，
+  // 且当前不是「待确认 / 已确认」（这两种状态只需等待或已成功）。
+  const windowOpen = inCheckInWindow(training, nowMs);
+  const canCheckIn = parts && registered && training.status === TRAINING_STATUS.PUBLISHED &&
+    windowOpen &&
+    (attendance === ATTENDANCE_STATUS.NOT_SUBMITTED || attendance === ATTENDANCE_STATUS.REJECTED);
+  let checkInNote = '';
+  if (registered) {
+    if (attendance === ATTENDANCE_STATUS.CONFIRMED) checkInNote = '签到已确认';
+    else if (attendance === ATTENDANCE_STATUS.PENDING) checkInNote = '已提交，等待负责人确认';
+    else if (training.status !== TRAINING_STATUS.PUBLISHED) checkInNote = '训练已取消或已结束';
+    else if (!parts) checkInNote = '已失去本协会会员身份，无法签到';
+    else if (nowMs < Date.parse(training.checkInOpenAt)) checkInNote = '签到尚未开始';
+    else if (nowMs > Date.parse(training.checkInCloseAt)) checkInNote = '签到已结束';
+  }
+
   return ok({
     ok: true, canManage, training: summary, canParticipate: parts,
     myRegistration: myRegistrationDTO(registration),
-    canRegister, canCancel, registerNote, message: '',
+    canRegister, canCancel, registerNote, canCheckIn, checkInNote, message: '',
   });
 }
 
@@ -363,7 +401,11 @@ async function listTrainingRegistrations(payload = {}, ctx) {
       collegeName: collegeName(member && member.collegeId),
       signupStatus: row.signupStatus,
       attendanceStatus: row.attendanceStatus || ATTENDANCE_STATUS.NOT_SUBMITTED,
+      attendanceLabel: ATTENDANCE_STATUS_LABEL[row.attendanceStatus || ATTENDANCE_STATUS.NOT_SUBMITTED] || '',
       signedAt: row.signedAt || null,
+      requestedAt: row.requestedAt || null,
+      confirmedAt: row.confirmedAt || null,
+      rejectionReason: row.rejectionReason || '',
       canceledAt: row.canceledAt || null,
       cancelReason: row.cancelReason || '',
       revision: Number(row.revision || 1),
@@ -700,12 +742,247 @@ async function removeTrainingRegistration(payload = {}, ctx) {
   return ok(result);
 }
 
+/* ------------------------------------------- 两步签到状态机（P5） */
+
+/** 事务内读取训练与目标用户的报名；不存在时返回 { error }。 */
+async function loadTrainingAndRegistration(tx, ctx, trainingId, userId) {
+  const training = await tx.associationTrainings.getById(trainingId);
+  if (!isTrainingDoc(training) || !belongsToSchoolScope(training, ctx)) {
+    return { error: refused('训练不存在') };
+  }
+  const key = trainingRegistrationKey(training._id, userId, ctx);
+  const reg = await tx.trainingRegistrations.getById(key);
+  return { training, reg, key };
+}
+
+/**
+ * 本人提交签到：registered / not_submitted（或 rejected）→ registered / pending。
+ * 提交成功只表示「待负责人确认」，**不加分**（§3.4、§6.1）。
+ */
+async function requestTrainingCheckIn(payload = {}, ctx) {
+  if (!ctx.actorId) return ok(refused('请先登录'));
+  if (typeof payload.trainingId !== 'string' || !payload.trainingId) return ok(refused('缺少训练编号'));
+  const userId = ctx.actorId;
+
+  const result = await ctx.repo.transaction(async tx => {
+    const fresh = await freshContext(tx, ctx);
+    if (!canParticipateInAssociation(fresh)) return refused('只有本协会有效会员可以签到');
+    const loaded = await loadTrainingAndRegistration(tx, fresh, payload.trainingId, userId);
+    if (loaded.error) return loaded.error;
+    const { training, reg, key } = loaded;
+    if (!reg || reg.signupStatus !== TRAINING_SIGNUP_STATUS.REGISTERED) return refused('请先报名再签到');
+    if (training.status === TRAINING_STATUS.CANCELED) return refused('训练已取消');
+    if (training.status !== TRAINING_STATUS.PUBLISHED) return refused('训练已结束，不能再签到');
+
+    const nowMs = fresh.now.getTime();
+    if (!inCheckInWindow(training, nowMs)) {
+      return refused(nowMs < Date.parse(training.checkInOpenAt) ? '签到尚未开始' : '签到已结束');
+    }
+    const attendance = reg.attendanceStatus || ATTENDANCE_STATUS.NOT_SUBMITTED;
+    if (attendance === ATTENDANCE_STATUS.CONFIRMED) return refused('签到已确认');
+    // 重复提交幂等：已是待确认就返回现状，不重复加版本、不重复写审计。
+    if (attendance === ATTENDANCE_STATUS.PENDING) {
+      return { ok: true, registration: myRegistrationDTO(reg),
+        training: trainingSummary(training, nowMs), message: '' };
+    }
+
+    const nowIso = iso(fresh.now);
+    const next = { ...reg, attendanceStatus: ATTENDANCE_STATUS.PENDING, requestedAt: nowIso,
+      rejectedAt: null, rejectedBy: '', rejectionReason: '', revision: reg.revision + 1 };
+    await tx.trainingRegistrations.set(key, next);
+    await tx.audit.append({ _id: signupAuditKey(key, 'requestTrainingCheckIn', next.revision),
+      action: 'requestTrainingCheckIn', schoolId: fresh.schoolId, association: fresh.association,
+      actorId: userId, trainingId: training._id, targetUserId: userId, at: nowIso });
+    return { ok: true, registration: myRegistrationDTO(next),
+      training: trainingSummary(training, nowMs), message: '' };
+  });
+  return ok(result);
+}
+
+/**
+ * 负责人确认签到：pending → confirmed，并复制 `pointEffectiveAt = training.startAt`。
+ *
+ * 【确认时复核身份（§8.2 / T25）】目标若已失去本协会会员身份，**拒绝确认**并在
+ * **同一事务**自动移除其报名、释放名额、写审计；不是「标记待处理」。
+ * 【会员动作不可跳过（T08）】只有 pending 才能确认，not_submitted 一律拒绝。
+ */
+async function confirmTrainingCheckIn(payload = {}, ctx) {
+  if (!ctx.actorId) return ok(refused('请先登录'));
+  if (typeof payload.trainingId !== 'string' || !payload.trainingId) return ok(refused('缺少训练编号'));
+  if (typeof payload.userId !== 'string' || !payload.userId) return ok(refused('缺少目标成员'));
+
+  const result = await ctx.repo.transaction(async tx => {
+    const fresh = await freshContext(tx, ctx);
+    if (!canManageAssociationSpace(fresh)) return refused('只有协会负责人及以上可以确认签到');
+    const loaded = await loadTrainingAndRegistration(tx, fresh, payload.trainingId, payload.userId);
+    if (loaded.error) return loaded.error;
+    const { training, reg, key } = loaded;
+    if (!reg || reg.signupStatus !== TRAINING_SIGNUP_STATUS.REGISTERED) return refused('该成员没有有效报名');
+    if (training.status === TRAINING_STATUS.CANCELED) return refused('训练已取消，不能确认签到');
+
+    const attendance = reg.attendanceStatus || ATTENDANCE_STATUS.NOT_SUBMITTED;
+    // 重复确认幂等：返回现状，不加版本、不写审计（§9.3）。
+    if (attendance === ATTENDANCE_STATUS.CONFIRMED) {
+      return { ok: true, registration: myRegistrationDTO(reg),
+        training: trainingSummary(training, fresh.now.getTime()), message: '' };
+    }
+    if (attendance !== ATTENDANCE_STATUS.PENDING) return refused('该成员尚未提交签到');
+    if (fresh.now.getTime() < Date.parse(training.startAt)) return refused('训练尚未开始，不能确认签到');
+    if (Number.isInteger(payload.expectedRevision) && payload.expectedRevision !== reg.revision) {
+      return refused('签到状态已更新，请刷新后重试');
+    }
+
+    const nowIso = iso(fresh.now);
+
+    // 目标身份复核：失效则拒绝确认，并自动移除其报名（同一事务）。
+    const targetCtx = await contextFor(tx, fresh, payload.userId);
+    if (!canParticipateInAssociation(targetCtx)) {
+      const autoReason = '已失去本协会会员身份，确认时自动移除';
+      await tx.trainingRegistrations.set(key, { ...reg, signupStatus: TRAINING_SIGNUP_STATUS.CANCELED,
+        canceledAt: nowIso, canceledBy: fresh.actorId, cancelReason: autoReason,
+        attendanceStatus: ATTENDANCE_STATUS.NOT_SUBMITTED, pointEffectiveAt: null,
+        revision: reg.revision + 1 });
+      const nextTraining = { ...training, signupCount: Math.max(0, Number(training.signupCount || 0) - 1),
+        revision: training.revision + 1, updatedAt: nowIso };
+      await tx.associationTrainings.set(nextTraining._id, nextTraining);
+      await tx.audit.append({ _id: signupAuditKey(key, 'autoRemoveOnConfirm', reg.revision + 1),
+        action: 'autoRemoveOnConfirm', schoolId: fresh.schoolId, association: fresh.association,
+        actorId: fresh.actorId, trainingId: training._id, targetUserId: payload.userId,
+        reason: autoReason, at: nowIso });
+      return refused('该成员已失去本协会会员身份，已自动移除其报名');
+    }
+
+    const next = { ...reg, attendanceStatus: ATTENDANCE_STATUS.CONFIRMED, confirmedAt: nowIso,
+      confirmedBy: fresh.actorId, rejectedAt: null, rejectedBy: '', rejectionReason: '',
+      pointEffectiveAt: training.startAt, revision: reg.revision + 1 };
+    await tx.trainingRegistrations.set(key, next);
+    await tx.audit.append({ _id: signupAuditKey(key, 'confirmTrainingCheckIn', next.revision),
+      action: 'confirmTrainingCheckIn', schoolId: fresh.schoolId, association: fresh.association,
+      actorId: fresh.actorId, trainingId: training._id, targetUserId: payload.userId, at: nowIso });
+    return { ok: true, registration: myRegistrationDTO(next),
+      training: trainingSummary(training, fresh.now.getTime()), message: '' };
+  });
+  return ok(result);
+}
+
+/** 负责人退回签到：pending → rejected，必须给出原因；会员可在窗口内重新提交（§6.1）。 */
+async function rejectTrainingCheckIn(payload = {}, ctx) {
+  if (!ctx.actorId) return ok(refused('请先登录'));
+  if (typeof payload.trainingId !== 'string' || !payload.trainingId) return ok(refused('缺少训练编号'));
+  if (typeof payload.userId !== 'string' || !payload.userId) return ok(refused('缺少目标成员'));
+  const reason = text(payload.reason, 200, { required: true, label: '退回原因' });
+  if (!reason.ok) return ok(refused(reason.message));
+
+  const result = await ctx.repo.transaction(async tx => {
+    const fresh = await freshContext(tx, ctx);
+    if (!canManageAssociationSpace(fresh)) return refused('只有协会负责人及以上可以退回签到');
+    const loaded = await loadTrainingAndRegistration(tx, fresh, payload.trainingId, payload.userId);
+    if (loaded.error) return loaded.error;
+    const { training, reg, key } = loaded;
+    if (!reg || reg.signupStatus !== TRAINING_SIGNUP_STATUS.REGISTERED) return refused('该成员没有有效报名');
+    if (training.status === TRAINING_STATUS.CANCELED) return refused('训练已取消，不能退回签到');
+    const attendance = reg.attendanceStatus || ATTENDANCE_STATUS.NOT_SUBMITTED;
+    if (attendance === ATTENDANCE_STATUS.REJECTED) {
+      return { ok: true, registration: myRegistrationDTO(reg),
+        training: trainingSummary(training, fresh.now.getTime()), message: '' };
+    }
+    if (attendance !== ATTENDANCE_STATUS.PENDING) return refused('只能退回「待确认」的签到');
+    if (Number.isInteger(payload.expectedRevision) && payload.expectedRevision !== reg.revision) {
+      return refused('签到状态已更新，请刷新后重试');
+    }
+
+    const nowIso = iso(fresh.now);
+    const next = { ...reg, attendanceStatus: ATTENDANCE_STATUS.REJECTED, rejectedAt: nowIso,
+      rejectedBy: fresh.actorId, rejectionReason: reason.value, revision: reg.revision + 1 };
+    await tx.trainingRegistrations.set(key, next);
+    await tx.audit.append({ _id: signupAuditKey(key, 'rejectTrainingCheckIn', next.revision),
+      action: 'rejectTrainingCheckIn', schoolId: fresh.schoolId, association: fresh.association,
+      actorId: fresh.actorId, trainingId: training._id, targetUserId: payload.userId,
+      reason: reason.value, at: nowIso });
+    return { ok: true, registration: myRegistrationDTO(next),
+      training: trainingSummary(training, fresh.now.getTime()), message: '' };
+  });
+  return ok(result);
+}
+
+/**
+ * 负责人撤销确认：confirmed → pending，必须给出原因；撤销即令对应训练积分资格失效
+ * （事实只在 confirmed 时成立，回到 pending 后不再计分，见 training-points.js）。
+ */
+async function revokeTrainingCheckIn(payload = {}, ctx) {
+  if (!ctx.actorId) return ok(refused('请先登录'));
+  if (typeof payload.trainingId !== 'string' || !payload.trainingId) return ok(refused('缺少训练编号'));
+  if (typeof payload.userId !== 'string' || !payload.userId) return ok(refused('缺少目标成员'));
+  const reason = text(payload.reason, 200, { required: true, label: '撤销原因' });
+  if (!reason.ok) return ok(refused(reason.message));
+
+  const result = await ctx.repo.transaction(async tx => {
+    const fresh = await freshContext(tx, ctx);
+    if (!canManageAssociationSpace(fresh)) return refused('只有协会负责人及以上可以撤销确认');
+    const loaded = await loadTrainingAndRegistration(tx, fresh, payload.trainingId, payload.userId);
+    if (loaded.error) return loaded.error;
+    const { training, reg, key } = loaded;
+    if (!reg || reg.signupStatus !== TRAINING_SIGNUP_STATUS.REGISTERED) return refused('该成员没有有效报名');
+    if (training.status === TRAINING_STATUS.CANCELED) return refused('训练已取消，不能撤销确认');
+    const attendance = reg.attendanceStatus || ATTENDANCE_STATUS.NOT_SUBMITTED;
+    if (attendance !== ATTENDANCE_STATUS.CONFIRMED) return refused('只能撤销「已确认」的签到');
+    if (Number.isInteger(payload.expectedRevision) && payload.expectedRevision !== reg.revision) {
+      return refused('签到状态已更新，请刷新后重试');
+    }
+
+    const nowIso = iso(fresh.now);
+    const next = { ...reg, attendanceStatus: ATTENDANCE_STATUS.PENDING, confirmedAt: null,
+      confirmedBy: '', pointEffectiveAt: null, rejectedAt: null, rejectedBy: '',
+      rejectionReason: '', revision: reg.revision + 1 };
+    await tx.trainingRegistrations.set(key, next);
+    await tx.audit.append({ _id: signupAuditKey(key, 'revokeTrainingCheckIn', next.revision),
+      action: 'revokeTrainingCheckIn', schoolId: fresh.schoolId, association: fresh.association,
+      actorId: fresh.actorId, trainingId: training._id, targetUserId: payload.userId,
+      reason: reason.value, at: nowIso });
+    return { ok: true, registration: myRegistrationDTO(next),
+      training: trainingSummary(training, fresh.now.getTime()), message: '' };
+  });
+  return ok(result);
+}
+
+/**
+ * 赛季重置：把本范围上一赛季尚未确认的 pending 签到自动退回（§6.3 第 1 条）。
+ * 返回被退回的条数。
+ *
+ * 【调用位置】赛季重置流程在推进 resetTime 的同时调用它。注意内存仓储的
+ * `forScope().list()` 不允许在事务内调用（§9.2），因此本函数在**事务之外**
+ * 扫描与逐条写入；真实数据库应把它并入同一个 reset 事务。未确认一律按
+ * 「未参加」处理，不产生积分；新赛季不提供任何补确认入口。
+ *
+ * @param {Object} repo 仓储
+ * @param {Object} ctx 固定 scope 的上下文（actorId 可为 system）
+ * @param {string} [reason]
+ * @returns {Promise<number>} 被退回的签到条数
+ */
+async function returnPendingOnSeasonReset(repo, ctx, reason = '赛季已重置，未确认自动退回') {
+  const nowIso = iso(ctx.now);
+  const rows = (await repo.forScope(ctx).trainingRegistrations.list())
+    .filter(reg => reg.signupStatus === TRAINING_SIGNUP_STATUS.REGISTERED &&
+      (reg.attendanceStatus || ATTENDANCE_STATUS.NOT_SUBMITTED) === ATTENDANCE_STATUS.PENDING);
+  for (const reg of rows) {
+    await repo.trainingRegistrations.set(reg._id, { ...reg,
+      attendanceStatus: ATTENDANCE_STATUS.NOT_SUBMITTED, rejectedAt: nowIso, rejectedBy: 'system',
+      rejectionReason: reason, revision: reg.revision + 1 });
+    await repo.audit.append({ _id: signupAuditKey(reg._id, 'seasonResetReturn', reg.revision + 1),
+      action: 'seasonResetReturn', schoolId: ctx.schoolId, association: ctx.association,
+      actorId: 'system', trainingId: reg.trainingId, targetUserId: reg.userId, reason, at: nowIso });
+  }
+  return rows.length;
+}
+
 module.exports = {
   TITLE_MIN, TITLE_MAX, DESCRIPTION_MAX, LOCATION_MAX, CAPACITY_MAX,
   DEFAULT_DURATION_MS, CHECKIN_LEAD_MS,
-  TRAINING_STATE, TRAINING_STATE_LABEL, ATTENDANCE_STATUS,
+  TRAINING_STATE, TRAINING_STATE_LABEL, ATTENDANCE_STATUS, ATTENDANCE_STATUS_LABEL,
   parseTime, normalizeCapacity, trainingState, countRegistered,
   listTrainings, getTraining, listTrainingRegistrations,
   publishTraining, updateTraining, cancelTraining, finishTraining,
   registerTraining, cancelTrainingRegistration, removeTrainingRegistration,
+  requestTrainingCheckIn, confirmTrainingCheckIn, rejectTrainingCheckIn, revokeTrainingCheckIn,
+  returnPendingOnSeasonReset,
 };
