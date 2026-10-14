@@ -1,5 +1,6 @@
 {
   "usingComponents": {
+    "association-space-panel": "/components/association-space-panel/association-space-panel",
     "rank-panel": "/components/rank-panel/rank-panel",
     "match-panel": "/components/match-panel/match-panel",
     "events-panel": "/components/events-panel/events-panel"

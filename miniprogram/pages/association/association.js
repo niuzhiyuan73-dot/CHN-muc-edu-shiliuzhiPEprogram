@@ -118,7 +118,7 @@ Page({
     return this.refresh().then(() => wx.stopPullDownRefresh());
   },
 
-  /** 点某个协会：先写全局当前协会，再进它的工作台（默认落在排行榜页签） */
+  /** 点某个协会：先写全局当前协会，再进它的工作台（默认落在协会空间页签） */
   onChooseAssociation(event) {
     const id = event.currentTarget.dataset.association;
     if (!id) return undefined;
@@ -128,7 +128,7 @@ Page({
       console.error('[association] 切换协会失败', err);
     }
     wx.navigateTo({
-      url: `/pages/association-home/association-home?association=${id}&tab=rank`,
+      url: `/pages/association-home/association-home?association=${id}&tab=space`,
     });
   },
 });

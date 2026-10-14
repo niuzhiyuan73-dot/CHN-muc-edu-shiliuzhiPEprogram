@@ -295,17 +295,29 @@ function createMemoryRepo(seed = {}) {
 
   const repo = collections(store, false);
 
-  repo.transaction = async (fn) => {
-    const scratch = emptyStore();
-    for (const key of Object.keys(scratch)) {
-      scratch[key] = key === 'auditLogs' ? [...store[key]] : new Map(store[key]);
-    }
+  // 【事务排队：模拟真实数据库的冲突串行化】
+  // 真云开发事务是「读已提交 + 冲突重试」：两个事务同时改同一批文档时，后到
+  // 的那个会被回滚重试，绝不会出现「两边都读到旧值、然后互相覆盖」的丢失更新。
+  // 早先这里直接 await fn(草稿本)，两个并发事务会各自基于同一份旧快照提交，
+  // 后提交的把先提交的整个盖掉——这会把 P0 要验的「并发占用最后名额」测成假绿。
+  // 现在把事务排成一条队列：一个跑完（提交或回滚）再放行下一个，与真库的
+  // 串行结果一致。业务代码仍必须自己用事务内共享文档做冲突点，不能依赖这一点。
+  let queue = Promise.resolve();
+  repo.transaction = (fn) => {
+    const run = queue.then(async () => {
+      const scratch = emptyStore();
+      for (const key of Object.keys(scratch)) {
+        scratch[key] = key === 'auditLogs' ? [...store[key]] : new Map(store[key]);
+      }
 
-    const result = await fn(collections(scratch, true));
+      const result = await fn(collections(scratch, true));
 
-    // 走到这里说明没抛错，草稿本整体生效
-    for (const key of Object.keys(store)) store[key] = scratch[key];
-    return result;
+      // 走到这里说明没抛错，草稿本整体生效
+      for (const key of Object.keys(store)) store[key] = scratch[key];
+      return result;
+    });
+    queue = run.then(() => undefined, () => undefined);
+    return run;
   };
 
   return repo;

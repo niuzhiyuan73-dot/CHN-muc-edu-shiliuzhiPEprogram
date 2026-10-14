@@ -1,18 +1,19 @@
 /**
  * 协会工作台（单页工作台）
  * ============================================================
- * 这是「协会」页点进来之后的下一层：一个页面里装着原来排行榜 / 比赛 / 赛事
- * 三页的内容，靠顶部的三个页签切换。三个板块各自是独立的自定义组件
- * （components/rank-panel、match-panel、events-panel），数据互不干扰，
- * 原来那三页的逻辑与 WXML 原样搬了过去。
+ * 这是「协会」页点进来之后的下一层：一个页面里装着协会空间 / 排行榜 / 比赛 /
+ * 赛事四块内容，靠顶部的四个页签切换。每块各自是独立的自定义组件
+ * （components/association-space-panel、rank-panel、match-panel、events-panel），
+ * 数据互不干扰；后三块是把原来那三页的逻辑与 WXML 原样搬了过来，协会空间是本阶段
+ * 新落的（见规划 §12）。
  *
  * 【当前协会从哪来】
  * 进来时带一个 association 查询参数（由「协会」页点按钮时写入），本页把它
- * 写回全局 association-scope——三个面板都按「全局当前协会」取数，写完就一致。
+ * 写回全局 association-scope——各面板都按「全局当前协会」取数，写完就一致。
  * 若没带参数（例如首页「看全部赛事」直接跳进来），就用全局里已有的那个。
  *
  * 【为什么页签懒挂载】
- * 三个面板一次全挂上会同时取三份数据（比赛面板还会起实时比分的轮询）。
+ * 各面板一次全挂上会同时取多份数据（比赛面板还会起实时比分的轮询）。
  * 这里只挂当前页签，其余等首次切过去再挂；挂过的保持挂载，来回切页签不丢状态。
  *
  * 【下拉刷新】
@@ -25,12 +26,15 @@ const { getAssociation, isKnownAssociation } = require('../../utils/associations
 const { applyBranding } = require('../../services/branding.js');
 const scope = require('../../services/association-scope.js');
 
-/** 页签定义。顺序即页面上的先后 */
+/** 页签定义。顺序即页面上的先后：协会空间排第一，且进入即默认展示它 */
 const TAB_DEFS = [
+  { tab: 'space', label: '协会空间' },
   { tab: 'rank', label: '排行榜' },
   { tab: 'match', label: '比赛' },
   { tab: 'events', label: '赛事' },
 ];
+/** 进入工作台的默认页签（原为排行榜，见规划 §3.1） */
+const DEFAULT_TAB = 'space';
 
 /** 是否是合法的页签名 */
 function isKnownTab(tab) {
@@ -46,14 +50,14 @@ Page({
     associationName: '',
     associationGlyph: '',
     /** 顶部页签：[{ tab, label, active }] */
-    tabs: TAB_DEFS.map((def) => ({ ...def, active: def.tab === 'rank' })),
+    tabs: TAB_DEFS.map((def) => ({ ...def, active: def.tab === DEFAULT_TAB })),
     /** 当前页签 */
-    activeTab: 'rank',
+    activeTab: DEFAULT_TAB,
     /**
-     * 哪些面板已经挂载过。默认只挂排行榜；切到别的页签时才挂上它，
+     * 哪些面板已经挂载过。默认只挂协会空间；切到别的页签时才挂上它，
      * 之后保持挂载——来回切页签不丢搜索词与滚动位置。
      */
-    mounted: { rank: true, match: false, events: false },
+    mounted: { space: true, rank: false, match: false, events: false },
   },
 
   /**
@@ -69,7 +73,7 @@ Page({
       console.error('[association-home] 切换协会失败', err);
     }
 
-    const tab = isKnownTab(options.tab) ? options.tab : 'rank';
+    const tab = isKnownTab(options.tab) ? options.tab : DEFAULT_TAB;
     const meta = this.resolveMeta(id);
 
     this.setData({
@@ -79,7 +83,7 @@ Page({
       themeClass: `assoc-${id}`,
       activeTab: tab,
       tabs: TAB_DEFS.map((def) => ({ ...def, active: def.tab === tab })),
-      mounted: { rank: tab === 'rank', match: tab === 'match', events: tab === 'events' },
+      mounted: { space: tab === 'space', rank: tab === 'rank', match: tab === 'match', events: tab === 'events' },
     });
     this.paintNav();
   },

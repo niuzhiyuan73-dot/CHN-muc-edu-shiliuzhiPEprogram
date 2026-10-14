@@ -191,6 +191,8 @@ require('../miniprogram/pages/live-score/live-score.js');
 // 「协会」页签与它的工作台（排行榜 / 比赛 / 赛事 收进了工作台），追加在末尾
 require('../miniprogram/pages/association/association.js');
 require('../miniprogram/pages/association-home/association-home.js');
+// 协会空间面板（工作台里的第一个页签），同样追加在末尾以免打乱既有下标
+require('../miniprogram/components/association-space-panel/association-space-panel.js');
 
 /**
  * 深拷贝页面初值。
@@ -287,6 +289,7 @@ const liveScoreConfig = registered[25];
 // 协会 tab 与它的工作台（排行榜 / 比赛 / 赛事 都收进了工作台）
 const associationConfig = registered[26];
 const associationHomeConfig = registered[27];
+const spacePanelConfig = registered[28];
 
 // 写接口（确认 / 撤销 / 录入）只改内存，跑完一条用例就得把内存退回种子状态，
 // 否则上一条确认过的比赛会让下一条拿到的榜单与台账都不一样
@@ -5354,8 +5357,8 @@ test('协会页 —— 点某个协会：写全局协会并进它的工作台', 
     assert.strictEqual(scope.getAssociation(), 'tt', '全局当前协会改成了点中的那个');
     assert.deepStrictEqual(
       calls.navigations,
-      ['/pages/association-home/association-home?association=tt&tab=rank'],
-      '进工作台，默认落在排行榜'
+      ['/pages/association-home/association-home?association=tt&tab=space'],
+      '进工作台，默认落在协会空间'
     );
   } finally {
     scope.setAssociation(before);
@@ -5401,7 +5404,7 @@ test('工作台 —— 带协会与页签进来：定协会、定页签、只挂
     assert.strictEqual(page.data.associationId, 'tt');
     assert.strictEqual(page.data.associationName, '民大乒乓');
     assert.strictEqual(page.data.activeTab, 'events');
-    assert.deepStrictEqual(page.data.mounted, { rank: false, match: false, events: true });
+    assert.deepStrictEqual(page.data.mounted, { space: false, rank: false, match: false, events: true });
     assert.deepStrictEqual(
       page.data.tabs.filter((item) => item.active).map((item) => item.tab),
       ['events']
@@ -5412,7 +5415,7 @@ test('工作台 —— 带协会与页签进来：定协会、定页签、只挂
   }
 });
 
-test('工作台 —— 不带参数时用全局协会，默认落在排行榜', async () => {
+test('工作台 —— 不带参数时用全局协会，默认落在协会空间', async () => {
   const schoolSession = require('../miniprogram/services/school-session');
   const scope = require('../miniprogram/services/association-scope.js');
   schoolSession.reset();
@@ -5423,8 +5426,8 @@ test('工作台 —— 不带参数时用全局协会，默认落在排行榜', 
     page.onLoad();
 
     assert.strictEqual(page.data.associationId, 'bd');
-    assert.strictEqual(page.data.activeTab, 'rank');
-    assert.deepStrictEqual(page.data.mounted, { rank: true, match: false, events: false });
+    assert.strictEqual(page.data.activeTab, 'space');
+    assert.deepStrictEqual(page.data.mounted, { space: true, rank: false, match: false, events: false });
   } finally {
     scope.setAssociation(before);
     schoolSession.reset();
@@ -5455,7 +5458,7 @@ test('工作台 —— 非法协会 / 非法页签参数回落到默认值', asy
     page.onLoad({ association: '不存在', tab: '不存在' });
 
     assert.strictEqual(page.data.associationId, 'pkb', '非法协会回落到全局协会');
-    assert.strictEqual(page.data.activeTab, 'rank', '非法页签回落到排行榜');
+    assert.strictEqual(page.data.activeTab, 'space', '非法页签回落到协会空间');
   } finally {
     scope.setAssociation(before);
     schoolSession.reset();
@@ -5474,4 +5477,206 @@ test('首页 —— 「看全部赛事」跳进工作台的赛事页签', async 
     calls.navigations,
     ['/pages/association-home/association-home?tab=events']
   );
+});
+
+/* ============================================================
+ * 协会空间面板（工作台的第一个页签）
+ * ============================================================ */
+
+/**
+ * 摆好协会空间的演示环境：民大、匹克球协会、重置过的内存仓储。
+ * 返回的 to() 用来切换演示身份（会员 / 校管理员），restore() 归位。
+ */
+function spaceFixture() {
+  const schoolSession = require('../miniprogram/services/school-session');
+  const schoolMock = require('../miniprogram/services/school-mock');
+  const scope = require('../miniprogram/services/association-scope.js');
+  schoolSession.reset();
+  schoolMock.reset();
+  // reset() 把浏览校清成空串；协会空间要按校取数，这里显式摆成民大
+  schoolSession.setSchoolId('muc');
+  const before = scope.getAssociation();
+  scope.setAssociation('pkb');
+  return {
+    to: (actor) => schoolMock.setDemoActor(actor),
+    spaceApi: () => require('../miniprogram/services/association-space.js')
+      .forScope({ schoolId: 'muc', association: 'pkb' }),
+    restore() {
+      scope.setAssociation(before);
+      schoolMock.setDemoActor('demo_applicant');
+      schoolMock.reset();
+      schoolSession.reset();
+    },
+  };
+}
+
+test('协会空间 —— 首屏默认落在训练页签，标题带学校与协会', async () => {
+  const fx = spaceFixture();
+  fx.to('demo_muc_member');
+  try {
+    const page = instantiate(spacePanelConfig);
+    await page.onLoad();
+
+    assert.strictEqual(page.data.loading, false);
+    assert.strictEqual(page.data.error, '');
+    assert.strictEqual(page.data.activeSub, 'training');
+    assert.deepStrictEqual(page.data.mountedSub, { group: false, notice: false, training: true, member: false });
+    assert.strictEqual(page.data.spaceTitle, '民大·匹克球');
+    assert.strictEqual(page.data.canManage, false, '普通会员不能管理小组');
+    assert.deepStrictEqual(page.data.groups, []);
+    assert.ok(page.data.roster.length > 0, '建组候选来自本协会在册会员');
+  } finally {
+    fx.restore();
+  }
+});
+
+test('协会空间 —— 成员页签首次切过去才拉取，关键字可过滤', async () => {
+  const fx = spaceFixture();
+  fx.to('demo_muc_member');
+  try {
+    const page = instantiate(spacePanelConfig);
+    await page.onLoad();
+    assert.deepStrictEqual(page.data.members, [], '没切过去就不拉成员');
+
+    await page.onSwitchSub({ currentTarget: { dataset: { sub: 'member' } } });
+    assert.strictEqual(page.data.activeSub, 'member');
+    assert.strictEqual(page.data.mountedSub.member, true);
+    const total = page.data.members.length;
+    assert.ok(total > 0, '切过去后拿到在册会员');
+
+    await page.onInputKeyword({ detail: { value: '一定不存在的人' } });
+    assert.deepStrictEqual(page.data.members, []);
+    assert.strictEqual(page.data.memberEmptyNote, '没有找到匹配的成员');
+
+    await page.onClearKeyword();
+    assert.strictEqual(page.data.members.length, total);
+    assert.strictEqual(page.data.searching, false);
+  } finally {
+    fx.restore();
+  }
+});
+
+test('协会空间 —— 点成员行进入个人主页', async () => {
+  const fx = spaceFixture();
+  fx.to('demo_muc_member');
+  try {
+    const page = instantiate(spacePanelConfig);
+    await page.onLoad();
+    await page.onSwitchSub({ currentTarget: { dataset: { sub: 'member' } } });
+    const first = page.data.members[0].userId;
+
+    calls.navigations.length = 0;
+    page.onOpenMember({ currentTarget: { dataset: { userid: first } } });
+    assert.deepStrictEqual(calls.navigations, [`/pages/member/member?userId=${first}`]);
+  } finally {
+    fx.restore();
+  }
+});
+
+test('协会空间 —— 管理者可建组并批量选人，建好后出现在列表', async () => {
+  const fx = spaceFixture();
+  fx.to('demo_muc_admin');
+  try {
+    const page = instantiate(spacePanelConfig);
+    await page.onLoad();
+    assert.strictEqual(page.data.canManage, true);
+
+    await page.onSwitchSub({ currentTarget: { dataset: { sub: 'group' } } });
+    page.onToggleCreate();
+    assert.strictEqual(page.data.showCreate, true);
+
+    page.onField({ currentTarget: { dataset: { field: 'name' } }, detail: { value: '新手一组' } });
+    page.onField({ currentTarget: { dataset: { field: 'description' } }, detail: { value: '练基础' } });
+
+    const pick = page.data.roster[0].userId;
+    page.onTogglePick({ currentTarget: { dataset: { userid: pick } } });
+    assert.deepStrictEqual(page.data.selectedMemberIds, [pick]);
+
+    await page.onCreateGroup();
+
+    assert.strictEqual(page.data.error, '');
+    assert.strictEqual(page.data.notice, '小组已创建');
+    assert.strictEqual(page.data.groups.length, 1);
+    assert.strictEqual(page.data.groups[0].name, '新手一组');
+    assert.strictEqual(page.data.groups[0].memberCount, 1);
+    assert.strictEqual(page.data.groups[0].joined, false, '建组人不自动入组');
+  } finally {
+    fx.restore();
+  }
+});
+
+test('协会空间 —— 组员本人退出；管理者随后可归档', async () => {
+  const fx = spaceFixture();
+  try {
+    // 先以校管理员身份直接建一个含「民大会员」的小组
+    fx.to('demo_muc_admin');
+    const created = await fx.spaceApi().createAssociationGroup({
+      requestId: 'ag_page_leave_1', name: '混双训练组', description: '',
+      memberIds: ['demo_muc_member'],
+    });
+    assert.strictEqual(created.ok, true);
+    const groupId = created.group.groupId;
+
+    // 组员进面板：能看到自己已加入，退出后人数归零
+    fx.to('demo_muc_member');
+    const memberPage = instantiate(spacePanelConfig);
+    await memberPage.onLoad();
+    await memberPage.onSwitchSub({ currentTarget: { dataset: { sub: 'group' } } });
+    const mine = memberPage.data.groups.find((row) => row.groupId === groupId);
+    assert.ok(mine && mine.joined, '组员能看到自己已加入');
+
+    await memberPage.onLeaveGroup({ currentTarget: { dataset: { groupid: groupId } } });
+    const afterLeave = memberPage.data.groups.find((row) => row.groupId === groupId);
+    assert.strictEqual(afterLeave.joined, false);
+    assert.strictEqual(afterLeave.memberCount, 0);
+
+    // 管理者进面板：归档后该组标为已归档
+    fx.to('demo_muc_admin');
+    const adminPage = instantiate(spacePanelConfig);
+    await adminPage.onLoad();
+    await adminPage.onSwitchSub({ currentTarget: { dataset: { sub: 'group' } } });
+    const before = adminPage.data.groups.find((row) => row.groupId === groupId);
+
+    await adminPage.onArchiveGroup({
+      currentTarget: { dataset: { groupid: groupId, revision: before.revision } },
+    });
+    assert.strictEqual(adminPage.data.notice, '小组已归档');
+    const archived = adminPage.data.groups.find((row) => row.groupId === groupId);
+    assert.strictEqual(archived.archived, true);
+  } finally {
+    fx.restore();
+  }
+});
+
+test('协会空间 —— 管理者可改组名，提交带版本号', async () => {
+  const fx = spaceFixture();
+  fx.to('demo_muc_admin');
+  try {
+    const created = await fx.spaceApi().createAssociationGroup({
+      requestId: 'ag_page_edit_1', name: '旧组名', description: '旧说明', memberIds: [],
+    });
+    assert.strictEqual(created.ok, true);
+    const groupId = created.group.groupId;
+
+    const page = instantiate(spacePanelConfig);
+    await page.onLoad();
+    await page.onSwitchSub({ currentTarget: { dataset: { sub: 'group' } } });
+    const before = page.data.groups.find((row) => row.groupId === groupId);
+
+    page.onToggleEdit({ currentTarget: { dataset: { groupid: groupId, revision: before.revision } } });
+    assert.strictEqual(page.data.editingId, groupId);
+    assert.strictEqual(page.data.groupForm.name, '旧组名');
+
+    page.onField({ currentTarget: { dataset: { field: 'name' } }, detail: { value: '新组名' } });
+    await page.onSaveEdit();
+
+    assert.strictEqual(page.data.error, '');
+    assert.strictEqual(page.data.notice, '小组已更新');
+    assert.strictEqual(page.data.editingId, '');
+    const after = page.data.groups.find((row) => row.groupId === groupId);
+    assert.strictEqual(after.name, '新组名');
+    assert.ok(after.revision > before.revision, '版本号自增');
+  } finally {
+    fx.restore();
+  }
 });

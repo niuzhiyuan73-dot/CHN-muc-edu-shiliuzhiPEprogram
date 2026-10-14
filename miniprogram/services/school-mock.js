@@ -4,6 +4,12 @@ const { createSchoolHandlers } = require('./school-membership-service.js');
 const { buildSchoolContext } = require('./school-context.js');
 const { schoolScope, schoolKey } = require('../utils/school.js');
 const exchange = require('./exchange-service.js');
+const groupService = require('./association-group-service.js');
+const memberService = require('./association-member-service.js');
+
+/** 协会空间处理器集合（仅函数；STATUS 常量等非函数条目不参与分发） */
+const spaceHandlers = Object.freeze(Object.fromEntries(
+  Object.entries({ ...groupService, ...memberService }).filter(([, value]) => typeof value === 'function')));
 
 const DEMO_ACTORS = Object.freeze([
   { id: 'demo_applicant', label: '模拟申请人' },
@@ -54,3 +60,14 @@ function forExchange(input) {
   }])));
 }
 module.exports.forExchange = forExchange;
+
+function forAssociationSpace(input) {
+  const target = schoolScope(input);
+  const boundActor = actorId;
+  const boundRepo = repo;
+  return Object.freeze(Object.fromEntries(Object.entries(spaceHandlers).map(([name, handler]) => [name, async payload => {
+    const ctx = await buildSchoolContext({ repo: boundRepo, actorId: boundActor, scope: target });
+    return (await handler(payload || {}, ctx)).data;
+  }])));
+}
+module.exports.forAssociationSpace = forAssociationSpace;

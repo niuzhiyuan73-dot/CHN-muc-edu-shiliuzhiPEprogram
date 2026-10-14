@@ -1,0 +1,216 @@
+<!--
+  协会空间面板（协会工作台内嵌）
+  二级页签：分组 / 通知 / 训练 / 成员，默认「训练」（见规划 §3.1）。
+  本阶段只落「分组」与「成员」；通知与训练在 P2 / P3 补齐，这里只给占位说明。
+  根节点不带 page-container：外层工作台已经提供了页面内边距。
+-->
+<view class="{{themeClass}}">
+
+  <view wx:if="{{loading}}" class="loading">正在加载…</view>
+
+  <view wx:elif="{{error}}" class="empty-state">
+    <view class="empty-state-icon">⚠️</view>
+    <view class="empty-state-text">{{error}}</view>
+  </view>
+
+  <block wx:else>
+
+    <!-- 顶栏：学校 + 协会，避免只显示「匹克球」分不清民大与北航 -->
+    <view class="space-head">
+      <view class="space-head-title">{{spaceTitle}}</view>
+      <view class="space-head-note">协会空间 · 分组 / 通知 / 训练 / 成员</view>
+    </view>
+
+    <!-- ========== 二级页签 ========== -->
+    <view class="pool-tabs space-tabs">
+      <view
+        wx:for="{{subTabs}}"
+        wx:key="key"
+        class="pool-tab {{item.active ? 'is-active' : ''}}"
+        data-sub="{{item.key}}"
+        bindtap="onSwitchSub"
+      >
+        <view class="pool-tab-label">{{item.label}}</view>
+      </view>
+    </view>
+
+    <view wx:if="{{notice}}" class="space-notice">{{notice}}</view>
+
+    <!-- ========== 分组 ========== -->
+    <view wx:if="{{mountedSub.group}}" hidden="{{activeSub !== 'group'}}">
+
+      <button wx:if="{{canManage}}" class="btn btn-outline btn-block space-new" bindtap="onToggleCreate">
+        {{showCreate ? '取消新建' : '新建小组'}}
+      </button>
+
+      <!-- 建组表单。成员多选只列本协会在册会员（后端已过滤），不提供自行加入 -->
+      <view wx:if="{{showCreate}}" class="card">
+        <view class="card-title">新建小组</view>
+        <view class="space-field">
+          <text class="space-label">小组名称</text>
+          <input class="search-input" value="{{groupForm.name}}" maxlength="30" placeholder="2～30 个字"
+            data-field="name" bindinput="onField" />
+        </view>
+        <view class="space-field">
+          <text class="space-label">说明（选填）</text>
+          <textarea class="space-textarea" value="{{groupForm.description}}" maxlength="300"
+            placeholder="这个小组是做什么的" data-field="description" bindinput="onField" />
+        </view>
+        <view class="space-field">
+          <text class="space-label">选入成员（已选 {{selectedMemberIds.length}} 人）</text>
+          <view wx:if="{{roster.length === 0}}" class="space-picker-note">本协会暂无可选会员</view>
+          <view wx:else class="space-picker">
+            <view
+              wx:for="{{roster}}"
+              wx:key="userId"
+              class="space-pick-row {{item.picked ? 'is-picked' : ''}}"
+              data-userid="{{item.userId}}"
+              bindtap="onTogglePick"
+            >
+              <text class="space-pick-name">{{item.nickName}}</text>
+              <text class="space-pick-check">{{item.picked ? '✓' : ''}}</text>
+            </view>
+          </view>
+        </view>
+        <button class="btn btn-primary btn-block" bindtap="onCreateGroup" disabled="{{groupBusy}}">
+          {{groupBusy ? '处理中…' : '创建小组'}}
+        </button>
+      </view>
+
+      <view wx:if="{{groups.length === 0}}" class="empty-state">
+        <view class="empty-state-icon">👥</view>
+        <view class="empty-state-text">本协会还没有小组</view>
+      </view>
+
+      <view
+        wx:for="{{groups}}"
+        wx:key="groupId"
+        wx:for-item="group"
+        class="card space-group {{group.archived ? 'is-archived' : ''}}"
+      >
+        <view class="space-group-head">
+          <view class="space-group-name">
+            {{group.name}}<text wx:if="{{group.joined}}" class="rank-me-tag">已加入</text>
+          </view>
+          <view class="space-group-count">{{group.memberCount}} 人</view>
+        </view>
+        <view wx:if="{{group.description}}" class="space-group-desc">{{group.description}}</view>
+
+        <view class="space-group-actions">
+          <button class="btn btn-outline space-mini" data-groupid="{{group.groupId}}" bindtap="onToggleGroupDetail">
+            {{openGroupId === group.groupId ? '收起名单' : '查看名单'}}
+          </button>
+          <button wx:if="{{group.joined && !group.archived}}" class="btn btn-danger space-mini"
+            data-groupid="{{group.groupId}}" bindtap="onLeaveGroup" disabled="{{groupBusy}}">退出</button>
+          <button wx:if="{{canManage && !group.archived}}" class="btn btn-outline space-mini"
+            data-groupid="{{group.groupId}}" data-revision="{{group.revision}}" bindtap="onToggleEdit"
+            disabled="{{groupBusy}}">{{editingId === group.groupId ? '取消编辑' : '编辑'}}</button>
+          <button wx:if="{{canManage && !group.archived}}" class="btn btn-outline space-mini"
+            data-groupid="{{group.groupId}}" data-revision="{{group.revision}}" bindtap="onArchiveGroup"
+            disabled="{{groupBusy}}">归档</button>
+        </view>
+
+        <!-- 编辑表单：管理者改组名 / 说明，提交带版本号 -->
+        <view wx:if="{{editingId === group.groupId}}" class="card space-edit">
+          <view class="space-field">
+            <text class="space-label">小组名称</text>
+            <input class="search-input" value="{{groupForm.name}}" maxlength="30" placeholder="2～30 个字"
+              data-field="name" bindinput="onField" />
+          </view>
+          <view class="space-field">
+            <text class="space-label">说明（选填）</text>
+            <textarea class="space-textarea" value="{{groupForm.description}}" maxlength="300"
+              placeholder="这个小组是做什么的" data-field="description" bindinput="onField" />
+          </view>
+          <button class="btn btn-primary btn-block" bindtap="onSaveEdit" disabled="{{groupBusy}}">
+            {{groupBusy ? '处理中…' : '保存修改'}}
+          </button>
+        </view>
+
+        <!-- 名册：仅管理者与组员可见（后端 canReadRoster 已把关） -->
+        <view wx:if="{{openGroupId === group.groupId}}" class="space-roster">
+          <view wx:if="{{detailLoading}}" class="space-roster-note">名单加载中…</view>
+          <view wx:elif="{{detailMembers.length === 0}}" class="space-roster-note">暂无组员</view>
+          <view wx:else>
+            <view wx:for="{{detailMembers}}" wx:key="userId" wx:for-item="member" class="space-roster-row">
+              <text class="space-roster-name">{{member.nickName}}</text>
+              <text class="space-roster-meta">{{member.collegeName}}{{member.permissionLabel}}</text>
+              <button class="btn btn-danger space-mini" data-groupid="{{group.groupId}}"
+                data-userid="{{member.userId}}" bindtap="onRemoveMember" disabled="{{groupBusy}}">移出</button>
+            </view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- ========== 通知（P2 补齐） ========== -->
+    <view wx:if="{{mountedSub.notice}}" hidden="{{activeSub !== 'notice'}}">
+      <view class="empty-state">
+        <view class="empty-state-icon">📣</view>
+        <view class="empty-state-text">通知页签将在下一阶段开放</view>
+      </view>
+    </view>
+
+    <!-- ========== 训练（默认页签；P3 补齐） ========== -->
+    <view wx:if="{{mountedSub.training}}" hidden="{{activeSub !== 'training'}}">
+      <view class="empty-state">
+        <view class="empty-state-icon">🏸</view>
+        <view class="empty-state-text">训练页签将在下一阶段开放</view>
+      </view>
+    </view>
+
+    <!-- ========== 成员 ========== -->
+    <view wx:if="{{mountedSub.member}}" hidden="{{activeSub !== 'member'}}">
+
+      <view class="search-bar">
+        <input
+          class="search-input"
+          type="text"
+          value="{{keyword}}"
+          confirm-type="search"
+          placeholder="输入昵称或姓名找会员"
+          bindinput="onInputKeyword"
+        />
+        <view wx:if="{{keyword}}" class="search-clear" catchtap="onClearKeyword">✕</view>
+      </view>
+
+      <view wx:if="{{memberError}}" class="empty-state">
+        <view class="empty-state-icon">⚠️</view>
+        <view class="empty-state-text">{{memberError}}</view>
+      </view>
+
+      <view wx:elif="{{members.length === 0 && !memberLoading}}" class="empty-state">
+        <view class="empty-state-icon">🔍</view>
+        <view class="empty-state-text">{{memberEmptyNote}}</view>
+      </view>
+
+      <view wx:else class="card">
+        <view
+          wx:for="{{members}}"
+          wx:key="userId"
+          wx:for-item="member"
+          class="rank-row"
+          data-userid="{{member.userId}}"
+          bindtap="onOpenMember"
+        >
+          <view class="rank-avatar">
+            <image wx:if="{{member.avatarUrl}}" class="rank-avatar-img" src="{{member.avatarUrl}}" mode="aspectFill" />
+            <text wx:else>{{member.nickName}}</text>
+          </view>
+          <view class="rank-main">
+            <view class="rank-name">
+              {{member.nickName}}<text wx:if="{{member.realName && member.realName !== member.nickName}}"
+                class="space-roster-meta">{{member.realName}}</text>
+            </view>
+            <view class="rank-detail">{{member.collegeName}}{{member.permissionLabel}}</view>
+          </view>
+        </view>
+      </view>
+
+      <button wx:if="{{memberHasMore}}" class="btn btn-outline btn-block" bindtap="onLoadMore" disabled="{{memberLoading}}">
+        {{memberLoading ? '加载中…' : '加载更多'}}
+      </button>
+    </view>
+
+  </block>
+</view>

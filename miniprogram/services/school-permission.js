@@ -142,6 +142,7 @@ function canSchoolAction(ctx, action, resource) {
 module.exports = {
   canSchoolAction,
   canReadSchool,
+  schoolReadable,
   isPlatformAdminCtx,
   isLocalActiveMember,
   permissionOf,

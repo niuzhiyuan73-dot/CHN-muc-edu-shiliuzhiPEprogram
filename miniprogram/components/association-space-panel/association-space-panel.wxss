@@ -1,0 +1,185 @@
+/*
+ * 协会空间面板样式
+ * 搜索框与名录行的样式复用 templates/rank-board.wxss（成员页签的搜索栏与
+ * 排行榜 / 比赛同款，见规划 §13.1）。页签（.pool-tabs）与卡片（.card）、
+ * 按钮（.btn）的样式在 app.wxss 里，靠组件的 styleIsolation: apply-shared 渗入。
+ */
+@import "../../templates/rank-board.wxss";
+
+/* 顶栏：学校 + 协会 */
+.space-head {
+  margin-bottom: var(--space-sm);
+}
+
+.space-head-title {
+  font-size: var(--font-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.space-head-note {
+  margin-top: 4rpx;
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+}
+
+.space-tabs {
+  margin-bottom: var(--space-md);
+}
+
+/* 操作成功/失败的轻提示（成功绿，失败红在全局 error 里另有呈现） */
+.space-notice {
+  margin-bottom: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  background: #eef7ee;
+  color: #2c7a3f;
+  font-size: var(--font-sm);
+}
+
+.space-new {
+  margin-bottom: var(--space-md);
+}
+
+/* 表单字段 */
+.space-field {
+  margin-bottom: var(--space-md);
+}
+
+.space-label {
+  display: block;
+  margin-bottom: 8rpx;
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+}
+
+.space-textarea {
+  width: 100%;
+  min-height: 120rpx;
+  padding: var(--space-sm) var(--space-md);
+  box-sizing: border-box;
+  border: 1rpx solid var(--border-color);
+  border-radius: var(--radius-md);
+  font-size: var(--font-md);
+  color: var(--text-primary);
+}
+
+/* 建组选人：一列一列的候选项，点一下选中 */
+.space-picker {
+  max-height: 360rpx;
+  overflow-y: auto;
+  border: 1rpx solid var(--border-color);
+  border-radius: var(--radius-md);
+}
+
+.space-picker-note {
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+}
+
+.space-pick-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) var(--space-md);
+  font-size: var(--font-md);
+  color: var(--text-primary);
+  border-bottom: 1rpx solid var(--border-color);
+}
+
+.space-pick-row:last-child {
+  border-bottom: none;
+}
+
+.space-pick-row.is-picked {
+  background: var(--brand-soft, #eef3ff);
+}
+
+.space-pick-check {
+  color: var(--brand-color, #3a6ea5);
+  font-weight: 600;
+}
+
+/* 分组卡片 */
+.space-group {
+  margin-bottom: var(--space-md);
+}
+
+.space-group.is-archived {
+  opacity: 0.7;
+}
+
+.space-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.space-group-name {
+  font-size: var(--font-md);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.space-group-count {
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+}
+
+.space-group-desc {
+  margin-top: 8rpx;
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.space-group-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+/* 小号按钮：卡片内的行内操作 */
+.space-mini {
+  margin: 0;
+  padding: 6rpx 20rpx;
+  font-size: var(--font-sm);
+  line-height: 1.6;
+}
+
+/* 组内编辑表单（复用建组那套字段样式） */
+.space-edit {
+  margin-top: var(--space-sm);
+}
+
+/* 名册 */
+.space-roster {
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1rpx solid var(--border-color);
+}
+
+.space-roster-note {
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+}
+
+.space-roster-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8rpx 0;
+}
+
+.space-roster-name {
+  flex: 1;
+  font-size: var(--font-md);
+  color: var(--text-primary);
+}
+
+.space-roster-meta {
+  margin-left: 12rpx;
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+}

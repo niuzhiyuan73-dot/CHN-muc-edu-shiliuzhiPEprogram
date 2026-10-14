@@ -49,6 +49,21 @@ const scopeKey = (scope) => {
   const s = schoolScope(scope);
   return schoolKey('scope', s.schoolId, s.association);
 };
+// 协会空间小组：_id 由服务端按 scope + 创建者 + 请求编号生成，翻不出别的学校/协会。
+const associationGroupKey = (groupId, scope) => {
+  const s = schoolScope(scope);
+  return schoolKey('ag', s.schoolId, s.association, groupId);
+};
+// 组内成员关系：scope + groupId + userId，稳定唯一，重复加入走同一键。
+const associationGroupMemberKey = (groupId, userId, scope) => {
+  const s = schoolScope(scope);
+  return schoolKey('agm', s.schoolId, s.association, groupId, userId);
+};
+// 同范围组名占位键：把「组名不重名」变成对同一文档的写冲突，而不是先查重再插入。
+const associationGroupNameKey = (name, scope) => {
+  const s = schoolScope(scope);
+  return schoolKey('agn', s.schoolId, s.association, name);
+};
 function belongsToSchoolScope(doc, scope) {
   const s = schoolScope(scope);
   return Boolean(doc && doc.schoolId === s.schoolId && doc.association === s.association);
@@ -59,4 +74,5 @@ module.exports = {
   LEGACY_SCHOOL_ID, requireSchoolId, schoolScope, schoolKey, schoolMemberKey,
   schoolRoleKey, schoolAssociationKey, schoolMembershipKey, collegeKey, ratingKey,
   scopeKey, belongsToSchoolScope,
+  associationGroupKey, associationGroupMemberKey, associationGroupNameKey,
 };

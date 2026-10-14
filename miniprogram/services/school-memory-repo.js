@@ -3,7 +3,8 @@ const { schoolScope } = require('../utils/school.js');
 const clone = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 const KEYS = ['users', 'schools', 'schoolAssociations', 'colleges', 'schoolMembers',
   'schoolRoles', 'memberships', 'studentIdClaims', 'auditLogs',
-  'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches'];
+  'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
+  'associationGroups', 'associationGroupMembers'];
 
 function createSchoolMemoryRepo(seed = {}) {
   let state = Object.fromEntries(KEYS.map(key => [key, new Map((seed[key] || []).map(doc => [doc._id, clone(doc)]))]));
@@ -28,7 +29,8 @@ function createSchoolMemoryRepo(seed = {}) {
     } };
     repo.forScope = input => {
       const scope = schoolScope(input);
-      return Object.fromEntries(['colleges', 'schoolMembers', 'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches'].map(key => [key, {
+      return Object.fromEntries(['colleges', 'schoolMembers', 'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
+        'associationGroups', 'associationGroupMembers'].map(key => [key, {
         list: async () => (await repo[key].list()).filter(doc => doc.schoolId === scope.schoolId &&
           (['colleges', 'schoolMembers'].includes(key) || doc.association === scope.association)),
       }]));

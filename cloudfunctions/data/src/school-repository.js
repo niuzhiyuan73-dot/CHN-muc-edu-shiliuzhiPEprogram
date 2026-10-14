@@ -2,13 +2,16 @@
 const { schoolScope } = require('../lib/utils/school.js');
 
 const SCHOOL_COLLECTIONS = ['schools', 'schoolAssociations', 'colleges', 'schoolMembers', 'schoolRoles', 'memberRatings', 'studentIdClaims',
-  'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches'];
+  'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
+  'associationGroups', 'associationGroupMembers'];
 const SCHOOL_ONLY = ['colleges', 'schoolMembers', 'schoolRoles'];
 const SCOPED_COLLECTIONS = [
   'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
   ...SCHOOL_ONLY, 'schoolAssociations', 'memberRatings', 'memberships',
   'matches', 'events', 'eventSignups', 'announcements', 'collegeEvents', 'collegeEntries',
   'ties', 'lineups', 'liveScores', 'seasons', 'rankings',
+  // 协会空间小组按「学校 + 协会」双维度范围，写入即校验归属。
+  'associationGroups', 'associationGroupMembers',
 ];
 
 function attachSchoolRepository(repo, io, inTx) {

@@ -675,6 +675,11 @@ const COLLECTION = {
   // 协会角色表：只在某人于某协会获得学院负责人/协会负责人时才有行，
   // 无行即普通会员。会员资格是隐式的，不逐条登记（见 utils/associations.js）。
   MEMBERSHIPS: 'memberships',
+  // 协会空间：成员小组（如「新手组」「校队组」）。与赛事签表的「小组」无关——
+  // 这里的 group 是长期会员小组，只存在于一个学校的一个协会内（规划 §5.2）。
+  ASSOCIATION_GROUPS: 'association_groups',
+  // 组内成员关系：_id = scope + groupId + userId 的稳定唯一键，含退出/被移除状态。
+  ASSOCIATION_GROUP_MEMBERS: 'association_group_members',
 };
 
 /** 本地缓存键名 */

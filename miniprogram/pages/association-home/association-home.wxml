@@ -1,7 +1,7 @@
 <!--
   协会工作台
-  顶部是当前协会的名头 + 「排行榜 / 比赛 / 赛事」三个页签，
-  下面按页签挂载对应的面板组件。三个面板各自取数，互不干扰。
+  顶部是当前协会的名头 + 「协会空间 / 排行榜 / 比赛 / 赛事」四个页签，
+  下面按页签挂载对应的面板组件。各面板各自取数，互不干扰。
 -->
 <view class="page-container {{themeClass}}">
 
@@ -10,7 +10,7 @@
     <view class="ws-head-glyph">{{associationGlyph}}</view>
     <view class="ws-head-main">
       <view class="ws-head-name">{{associationName}}</view>
-      <view class="ws-head-note">排行榜 · 比赛 · 赛事</view>
+      <view class="ws-head-note">协会空间 · 排行榜 · 比赛 · 赛事</view>
     </view>
   </view>
 
@@ -28,6 +28,9 @@
   </view>
 
   <!-- 面板：挂过的保持挂载，用 hidden 收起来，来回切页签不丢状态 -->
+  <view wx:if="{{mounted.space}}" hidden="{{activeTab !== 'space'}}">
+    <association-space-panel id="space" />
+  </view>
   <view wx:if="{{mounted.rank}}" hidden="{{activeTab !== 'rank'}}">
     <rank-panel id="rank" />
   </view>

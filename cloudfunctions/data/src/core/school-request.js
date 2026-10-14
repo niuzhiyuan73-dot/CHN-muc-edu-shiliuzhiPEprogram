@@ -1,7 +1,10 @@
-/** 协议 2 的首个业务切片：仅学校身份接口。未迁移的旧 action 不可借此跨校调用。 */
+/** 协议 2：学校身份 + 协会空间接口。未迁移的旧 action 不可借此跨校调用。 */
 const { fail } = require('../envelope.js');
 const { buildSchoolContext } = require('./school-context.js');
-const handlers = require('./school-member-handlers.js');
+const handlers = {
+  ...require('./school-member-handlers.js'),
+  ...require('./school-space-handlers.js'),
+};
 
 async function handleSchoolRequest(event, { repo, openId, now = new Date() }) {
   if (event.protocolVersion !== 2) return fail('学校接口需要协议版本 2，请升级客户端');
