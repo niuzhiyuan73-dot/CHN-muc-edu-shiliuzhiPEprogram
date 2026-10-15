@@ -1,12 +1,12 @@
 # AI 接手与后续施工指南
 
-更新日期：2026-10-16。代码基线：`75dac4b`。适用项目：石榴籽体育管理微信小程序。
+更新日期：2026-10-16。代码基线：`9016e85`。适用项目：石榴籽体育管理微信小程序。
 
 本文供后续 AI 直接组织施工。它说明当前进度、剩余顺序、不可破坏的约定、下一批的具体任务以及验收方式。本文不是“项目已全部完成”的声明。
 
 ## 1. 接手先看这一页
 
-**下一批工作是：统一登录与会话。** 不要重新迁移学院赛、个人赛事列表或普通比赛面板，这三块已经有代码、本地提交和自动化验收。
+**下一批工作是：B4 首页、榜单、个人资料与成绩展示。** 不要重做登录与会话（B3 已提交验收），也不要重新迁移学院赛、个人赛事列表或普通比赛面板，这些块都已经有代码、本地提交和自动化验收。
 
 用户的总体目标是把既有业务完整迁到学校维度，所有需要隔离的读写同时认 `schoolId + association`，最终完成联调、历史数据迁移准备和真实环境验收。不能只替换页面 import，也不能仅完成服务端就宣布页面闭环完成。
 
@@ -14,16 +14,16 @@
 
 | 项目 | 截至本文的事实 |
 |---|---|
-| 最近业务提交 | `75dac4b feat(school-matches): 完成普通比赛面板与录分页 S2 迁移` |
-| 上一批提交 | `aac84a9 feat(school-events): 完成个人赛事 S2 列表与积分闭环` |
+| 最近业务提交 | B3 登录与会话统一（本批，见 [验收记录](登录与会话-S2统一验收记录.md)） |
+| 上一批提交 | `75dac4b feat(school-matches): 完成普通比赛面板与录分页 S2 迁移` |
 | 学院赛提交 | `08648ab feat(school-dim): 接入赛事页面并完成学院赛 S2 闭环验收` |
-| 最近全量测试 | `npm test`：2462 条通过，0 失败 |
+| 最近全量测试 | 逐文件 `node --test-isolation=none --test`：2476 条通过，0 失败（Windows 沙箱下 `node --test` 无法 spawn 子进程，见 §10.2） |
 | 云端共享库 | `npm run check:cloud-sync`：55 个文件一致 |
 | Git 工作区 | 上述业务提交后干净；接手时必须重新检查 |
 | 云环境配置 | `miniprogram/config.js` 中 `CLOUD_ENV_ID` 仍为空 |
 | 验证层级 | Node 自动测试、页面装配测试、S2 内存仓储；没有完成真实云端和真机验收 |
 
-测试数量是历史基线，后续新增测试后应记录新的实际数字，不要硬编码成永远必须等于 2462。
+测试数量是历史基线，后续新增测试后应记录新的实际数字，不要硬编码成永远必须等于 2476。
 
 ## 2. 文档阅读顺序与冲突处理
 
@@ -136,7 +136,26 @@ DTO 不够用时可以增加必要字段或小型读端。不要为了原样复�
 - 普通比赛交手上限与提示采用本范围赛季重置时间。
 - 读错误清除旧数据，写异常释放提交状态；旧刷新不能覆盖新结果，隐藏/卸载停止实时轮询。
 
-### 5.4 更早已有成果
+### 5.4 B3 登录与会话统一
+
+关键文件：`services/app-session.js`（统一会话 + 兼容视图适配器）、`app.js`、
+`pages/login`、`services/school-mock.js`（模拟微信身份）、`school-identity.js`。
+
+已完成：
+
+- 登录 / 注册走 S2：一键登录 = `getSchoolIdentitySession`；新会员注册 =
+  `registerSchoolAccount` + `applySchoolMembership`，不再向旧 `registerMember` 写账号。
+- 平台账号（真名 / 性别，跨校不变）与学校身份（学号 / 学院，随学校走）分开；
+  手机号不再收集。
+- 统一会话派生兼容用户对象的单一适配入口；能力档位→旧角色、身份状态→旧数字
+  状态只在 `app-session.js` 映射，兼容角色不当授权依据。
+- 启动校正、切协会重解、切换演示身份、退出都刷新统一会话与浏览范围；
+  退出清「我的学校」，演示身份切换后兼容视图与 S2 写接口是同一个人。
+- 竞态防护：请求序号 + epoch，慢响应不回写、退出后晚到请求不恢复登录态。
+- 模拟端 `simulateNewWechat` 支持「新微信号注册」完整演示；`setDemoActor`
+  接受 u01–u24 与 demo_* 身份。
+
+### 5.5 更早已有成果
 
 学校身份审核、公告服务及三页、会员审核页、资料编辑页、学院赛推进服务、学校排行榜/赛季服务、协会空间训练签到与积分事实等已有实现，详见迁移清单各施工记录。
 
@@ -150,17 +169,20 @@ DTO 不够用时可以增加必要字段或小型读端。不要为了原样复�
 |---|---|---|---|
 | B1 | 个人赛事列表闭环 | 已完成 | 见 5.2 |
 | B2 | 普通比赛面板和录分页 | 已完成 | 见 5.3 |
-| B3 | 登录与会话统一 | 下一批，约 1 批 | 账号、学校身份、退出和切换不再各用一套身份 |
-| B4 | 首页、榜单、个人资料与成绩展示 | 约 2 批 | 所有展示源按学校/协会隔离，比赛结果能在相应页面回显 |
+| B3 | 登录与会话统一 | 已完成 | 见 5.4 与 [验收记录](登录与会话-S2统一验收记录.md) |
+| B4 | 首页、榜单、个人资料与成绩展示 | 下一批，约 2 批 | 所有展示源按学校/协会隔离，比赛结果能在相应页面回显 |
 | B5 | 计分、训练积分、赛季联动收尾 | 约 1～2 批 | 积分来源、撤销、赛季重置及失败回滚一致 |
 | B6 | 赛事小组限制与转校收尾 | 约 1～2 批 | 先盘点已有实现，再补规则、页面与状态变化验证 |
 | B7 | 跨校交流模块收尾 | 约 1 批 | 双方权限、名单、流程和隔离在真实入口闭环 |
 | B8 | 全项目集成与旧入口收敛 | 约 1～2 批 | 活跃业务链无旧库读写混用，保留的兼容壳有明确用途 |
 | B9 | 云环境、历史数据、真机与发布验收 | 约 3～4 批 | 有真实环境证据、迁移核对、回滚预案及用户确认的发布范围 |
 
-这是工作拆分估计，不是工期承诺。B3～B9 合计约 10～14 批；取决于核查出的缺口、真实数据质量和外部环境可用性。不能用测试通过率推算“项目完成百分比”。
+这是工作拆分估计，不是工期承诺。B4～B9 合计约 9～12 批；取决于核查出的缺口、真实数据质量和外部环境可用性。不能用测试通过率推算“项目完成百分比”。
 
-## 7. B3 详细任务：登录与会话统一
+## 7. B3 详细任务：登录与会话统一（已完成）
+
+> B3 已于 2026-10-16 完成并验收，见 [验收记录](登录与会话-S2统一验收记录.md)。
+> 本节保留实施要点，供 B8 收敛与后续会话维护时核对口径。
 
 ### 7.1 先读这些代码
 
@@ -267,6 +289,9 @@ DTO 不够用时可以增加必要字段或小型读端。不要为了原样复�
 - 学院赛页面可参考 `tests/helpers/school-college-fixture.js`。
 - 普通比赛页面可参考 `tests/helpers/school-match-fixture.js`。它保留旧演示姓名编号，但业务读写实际执行 S2 处理器；不要把它误当生产登录逻辑。
 - 个人赛事和演示身份闭环可参考 `tests/page.test.js` 中 `schoolEventFixture`。
+- 登录与会话（B3）可参考 `tests/login-session.test.js` 与 `tests/app-session.test.js`：
+  模拟「新微信号」用 `schoolIdentity.simulateNewWechat(openId)`，切演示身份用
+  `app.switchDemoActor(id)`（u01–u24 与 demo_* 均可）。
 - 服务规则测试使用 `createSchoolMemoryRepo` 和 `buildSchoolContext`；涉及云仓储时补云端适配测试。
 - 用真实处理器验证权限和状态机。只有故障、延迟等难以自然构造的场景才替换接口，不伪造成功 capability 来证明权限正确。
 - mock 可放宽参赛者确认，正式环境仍需严格对手/裁判/管理员规则；至少保留严格口径服务测试。
@@ -275,13 +300,25 @@ DTO 不够用时可以增加必要字段或小型读端。不要为了原样复�
 
 ```powershell
 # 先选本批相关测试，例如登录会话：
-node --test tests/app-session.test.js tests/auth.test.js tests/page.test.js
+node --test-isolation=none --test tests/login-session.test.js tests/app-session.test.js tests/page.test.js
+
+# 全量（Windows 沙箱下 node --test 会为每个文件 spawn 子进程，被沙箱以 EPERM 拒绝；
+# 逐文件跑进程内隔离模式等价于原 npm test 的进程隔离）：
+$files = Get-ChildItem tests -Filter *.test.js | Sort-Object Name
+$pass = 0; $fail = 0; $failed = @()
+foreach ($f in $files) {
+  $out = node --test-isolation=none --test $f.FullName 2>&1
+  $pass += [int](($out | Select-String -Pattern 'pass (\d+)' | ForEach-Object { $_.Matches[0].Groups[1].Value } | Select-Object -Last 1))
+  $fl = [int](($out | Select-String -Pattern 'fail (\d+)' | ForEach-Object { $_.Matches[0].Groups[1].Value } | Select-Object -Last 1))
+  $fail += $fl
+  if ($fl -gt 0) { $failed += $f.Name }
+}
+Write-Output "TOTAL pass=$pass fail=$fail"; Write-Output $failed
 
 # 改到共享模块后同步；不要只改云端 lib 镜像：
 npm run sync:cloud
 
 # 收尾验证：
-npm test
 npm run check:cloud-sync
 git diff --check
 git status --short
@@ -307,7 +344,7 @@ git status --short
 
 可把下面这段直接作为新会话任务：
 
-> 请先阅读 `docs/AI接手与后续施工指南.md` 和最近三份 S2 验收记录，核对当前 Git 状态。按队列继续 B3 登录与会话统一：检查 app 启动、登录注册、退出、学校身份及演示身份切换，复用 S2 账号与会话接口，修复旧全局身份与 S2 actor 不一致的问题。保留已完成的学院赛、个人赛事和普通比赛闭环，补身份切换、权限失效和慢请求回写测试。完成必要同步、全量验证与验收记录后保存本地提交，不推送远程、不部署或改真实数据。不要仅给计划，直接开始本批实现；发现确实需要产品选择的问题时说明具体分歧，同时继续独立工作。
+> 请先阅读 `docs/AI接手与后续施工指南.md` 和最近三份 S2 验收记录，核对当前 Git 状态。按队列继续 B4 首页、榜单、个人资料与成绩展示：检查 `pages/index`、`pages/association`、`pages/association-home`、`components/rank-panel`、`pages/profile`、`pages/profile-detail`、`pages/member` 与 `home-view / rank-view / profile-view` 的实际读写，把展示源统一到学校维度并复用 `school-rank-service.js`、`school-member-service.js` 和已迁移视图模块；核对排名、走势、交锋、搭档、荣誉逐项不落。保留已完成的学院赛、个人赛事、普通比赛与登录会话闭环，补两校 / 两协会 / 本人他人 / 空数据 / 已撤销比赛 / 已结束赛事与跨协会汇总边界测试。完成必要同步、全量验证与验收记录后保存本地提交，不推送远程、不部署或改真实数据。不要仅给计划，直接开始本批实现；发现确实需要产品选择的问题时说明具体分歧，同时继续独立工作。
 
 ## 12. 后续 AI 必须回填的记录模板
 

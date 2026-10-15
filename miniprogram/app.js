@@ -11,7 +11,9 @@
 const { STORAGE_KEY, DATA_SOURCE } = require('./utils/constants.js');
 const { CLOUD_ENV_ID } = require('./config.js');
 const { defaultAssociationId } = require('./utils/associations.js');
+const { LEGACY_SCHOOL_ID } = require('./utils/school.js');
 const facade = require('./services/index.js');
+const appSession = require('./services/app-session.js');
 
 App({
   /**
@@ -235,37 +237,21 @@ App({
   },
 
   /**
-   * 拿权威数据校正本地登录态。
+   * 读取并校正统一会话（B3）。
    *
-   * 【为什么必须有这一步】登录态是在注册/登录那一刻整份写进本地缓存的
-   * （见 setUserInfo），而所有页面读的都是这份缓存，没有一处会主动回查。
-   * 于是管理员在后台把人审核通过、或调整了角色，客户端并不知道：那个人
-   * 会一直卡在「待审核」，模板上写着「通过后即可录入成绩」，可他怎么点都
-   * 不行，也没有任何提示告诉他「重新登录一次」。启动时静默校正一次，
-   * 就把这个死结解开了。
+   * 【为什么从旧栈 login/getMember 换成 S2】
+   * 登录态过去整份写在本地缓存，页面只读缓存、从不回查；而 S2 页面的身份与
+   * 能力来自 getSchoolIdentitySession。两套并存时，「缓存里是管理员、S2 里是
+   * 会员」的分裂状态会一直存在。这里统一以 S2 会话为准：账号、学校身份、
+   * 能力布尔量一次取齐，兼容用户对象由 app-session 单一适配器派生。
    *
-   * 【两条来源，各按各的规矩】云端按微信身份重新取一次账号（login）。
-   * mock 没有服务端，但数据源里的人是可以就地读的——按缓存里的 _id 回查
-   * 本人，取他当前的样子（含角色变化，如 college-demo 把人提为学院负责人）。
+   * 【失败与「没有账号」分开处理】
+   * 会话拉取失败（网络 / 云函数故障）保留本地缓存，不因一次抖动踢人；
+   * 服务端明确回答「这个微信身份没有账号」（session.user 为 null）才清本地。
    *
-   * 【演示身份为什么以「当前演示账号」为准】mock 的登录人由编译期常量
-   * mock.js 的 DEFAULT_CURRENT_USER_ID 决定。缓存里若是**另一个种子会员**
-   * （把常量改成别人再编译的情形），说明演示身份已经换人，这里整体切成新
-   * 那位——于是「改常量 + 重新编译」就能切换演示账号，不必手动退出登录。
-   * 缓存里的人若已查不到（如本地注册、重启后内存清空的账号），原样保留。
-   *
-   * 【mock 为什么也要校正】演示场景会把当前用户提为某学院负责人
-   * （见 college-demo.js），而登录快照是更早写下的「普通会员」。不回查的话，
-   * 界面按快照判权限，学院负责人照样进不了排阵——正是这一步要防的不同步。
-   *
-   * 【失败/none 为什么一律保留缓存】拉取失败多半是网络抖动或云函数偶发
-   * 故障；mock 下回查不到，意味着这个 _id 既不在种子也不在申请里。无论
-   * 哪种，把人踢回未登录都比让他多看一会儿旧状态糟糕得多。只有云端明确
-   * 回答「没有这个账号」（例如账号文档被删）才清本地——那种情况下留着
-   * 一份账号，会让每次写操作都报「请先登录」，反而更难排查。
-   *
-   * 【未登录为什么不自动登录】mock 下没有缓存则保持访客态，不自动以演示
-   * 账号登录——登录与否是登录页的决定，这里只负责校正已有会话。
+   * 【为什么必须在刷新前绑定学校与协会】
+   * 会话的能力按「学校 + 协会」解析，范围不固定时读到的身份可能张冠李戴。
+   * 学校取当前浏览学校（缺省回落默认校），协会取当前协会。
    *
    * @returns {Promise<void>}
    */
@@ -273,59 +259,128 @@ App({
     const cached = this.getUserInfo();
     if (!cached) return;
 
-    if (this.globalData.dataSource === DATA_SOURCE.CLOUD) {
-      try {
-        // 延迟取用：与 services/auth.js 里 login() 的写法一致，
-        // 避免 app → auth → 门面 → mock 的加载期环
-        const { login } = require('./services/auth.js');
-        const { ok, user } = await login();
-
-        if (ok && user) this.setUserInfo(user);
-        else this.clearUserInfo();
-      } catch (err) {
-        console.error('[app] 校正登录态失败，继续沿用本地缓存', err);
-      }
+    const startEpoch = appSession.epochNow();
+    let dto = null;
+    try {
+      dto = await this.loadSchoolSession();
+    } catch (err) {
+      console.error('[app] 校正登录态失败，继续沿用本地缓存', err);
       return;
     }
+    // 拉取期间已有更新的会话写入（登录 / 退出 / 切换身份）：丢弃这次旧响应。
+    if (appSession.epochNow() !== startEpoch) return;
 
-    try {
-      // 按缓存里的 _id 回查本人：种子会员都在，本地注册的账号重启后不在。
-      const fresh = await facade.getMember(cached._id);
-      if (!fresh) return; // 查不到：原样保留快照（见上「失败/none 为什么保留缓存」）
-
-      // 演示身份以「当前演示账号」（mock.js 的 DEFAULT_CURRENT_USER_ID）为准：
-      // 常量已改指向别人（缓存里是另一个种子会员）时整体切换，改常量再编译
-      // 即可换人；是同一个人则用回查到的当前样子刷新角色。
-      const current = await facade.getCurrentUser();
-      this.setUserInfo(current && current._id !== cached._id ? current : fresh);
-    } catch (err) {
-      console.error('[app] 校正本地登录态失败，继续沿用缓存', err);
-    }
+    if (dto) this.applySchoolSession(dto);
+    else this.clearUserInfo();
   },
 
   /**
-   * 按**当前协会**重解登录者的有效角色，并回写登录态。
+   * 从 S2 取齐一份会话（B3）：平台账号 / 学校身份 / 能力布尔量，外加本协会
+   * 会员档案（拿学院全名等展示字段）。档案读不到时降级为 null——兼容视图
+   * 仍可用会话里的昵称 / 实名 / 性别兜底，不因此中断登录。
+   *
+   * 学校与协会在调用前绑定（一次操作开始时固定范围，异步等待后不再重读全局）。
+   *
+   * @returns {Promise<{session: Object, profile: Object|null}|null>}
+   *   session.user 为 null（无账号 / 账号停用以外的「无账号」情形）时返回 null
+   */
+  async loadSchoolSession() {
+    const schoolSession = require('./services/school-session.js');
+    const identity = require('./services/school-identity.js');
+    const space = require('./services/association-space.js');
+    const schoolId = schoolSession.getSchoolId() || LEGACY_SCHOOL_ID;
+    const association = this.getAssociation() || defaultAssociationId();
+    const session = await identity.forSchoolIdentity({ schoolId, association }).getSchoolIdentitySession();
+    if (!session || !session.user) return null;
+    let profile = null;
+    try {
+      const result = await space.forScope({ schoolId, association }).getSchoolMember({ userId: session.user.userId });
+      profile = (result && result.member) || null;
+    } catch (err) {
+      console.warn('[app] 读取本人会员档案失败，兼容视图降级', err);
+    }
+    return { session, profile };
+  },
+
+  /**
+   * 写入统一会话：app-session 落 DTO，「我的学校」随之更新，兼容用户对象
+   * 写进 globalData 与本地缓存（未迁移页面仍从这两处读）。
+   *
+   * @param {Object} dto { session, profile? }
+   * @returns {Object|null} 派生出的兼容用户对象
+   */
+  applySchoolSession(dto) {
+    appSession.apply(dto);
+    const compat = appSession.buildCompatUser(dto);
+    const schoolSession = require('./services/school-session.js');
+    if (dto && dto.session && dto.session.user) {
+      schoolSession.setHomeSchoolId(dto.session.user.primarySchoolId || '');
+    }
+    this.setUserInfo(compat);
+    return compat;
+  },
+
+  /**
+   * 切换演示身份（仅本地模拟，B3 §7.2.5）。
+   *
+   * 【为什么不再只是 school-mock 的一个开关】
+   * 过去切身份只改 mock 的 actorId，globalData.userInfo、学校会话、兼容视图
+   * 全都原地不动——切完人后「按钮是管理员、提交是会员」的分裂随之而来。
+   * 这里切完立即按新身份刷新统一会话：本人学校、当前浏览范围、成员状态、
+   * 能力与兼容用户对象一起落定。
+   *
+   * 【未登录为什么不顺手自动登录】切换演示身份只是演示工具；登录与否仍由
+   * 登录页决定。未登录时只校正「我的学校」（浏览范围跟着新身份走），不写登录态。
+   *
+   * @param {string} id 演示身份编号（school-identity.DEMO_ACTORS 之一）
+   * @returns {Promise<Object|null>} 新身份的会话 DTO；无账号时为 null
+   */
+  async switchDemoActor(id) {
+    const identity = require('./services/school-identity.js');
+    if (!identity.isMockNow()) throw new Error('云端不可切换模拟身份');
+    identity.setDemoActor(id);
+
+    if (!this.isLoggedIn()) {
+      // 访客：只校正浏览范围，不自动登录
+      const schoolSession = require('./services/school-session.js');
+      const dto = await this.loadSchoolSession();
+      if (dto) schoolSession.setHomeSchoolId(dto.session.user.primarySchoolId || '');
+      return dto;
+    }
+
+    const startEpoch = appSession.epochNow();
+    const dto = await this.loadSchoolSession();
+    if (appSession.epochNow() !== startEpoch) return dto; // 期间有更新的会话写入，丢弃
+    if (dto) {
+      this.applySchoolSession(dto);
+      // 显式等协会校正落定：不 fire-and-forget，否则下一次切身份可能插进
+      // 这条链的中间，把新身份的会话写进旧身份的收尾里。
+      await this.syncAssociationForUser();
+    } else {
+      this.clearUserInfo();
+    }
+    return dto;
+  },
+
+  /**
+   * 按**当前协会**重解登录者的有效能力并回写会话（B3）。
    *
    * 【为什么切协会后必须重解】协会角色是「协会内」的：同一个人在 A 协会可能
-   * 只是普通会员、在 B 协会却是负责人（见 seed.js 的 ASSOC_ROLE_SEED）。登录
-   * 快照是切协会之前写下的，不重解就会拿旧协会的角色判权限——例如某协会的
-   * 负责人被默认落到别的协会时被当成会员，连本协会比赛的裁判都指派不了。
-   *
-   * 【为什么与 refreshSession 分开】refreshSession 在 mock 下带着「当前演示
-   * 账号」的换人逻辑（改常量即换演示身份，见上），切协会时不能顺手换人；
-   * 这里只按 _id 回查**同一个人**在当前协会里的样子。
-   *
-   * 【查不到为什么保留旧快照】本地注册、重启后内存清空的账号回查为空，此时
-   * 保留原快照比清成访客稳妥。
+   * 只是普通会员、在 B 协会却是负责人。会话是按切换前那个协会解出的，不重解
+   * 就会拿旧协会的能力判权限。这里不换人——只按同一微信身份在当前范围重新
+   * 取会话，兼容角色 / 能力随之更新。
    *
    * @returns {Promise<void>}
    */
   async refreshViewerRole() {
     const cached = this.getUserInfo();
     if (!cached || !cached._id) return;
+    const startEpoch = appSession.epochNow();
     try {
-      const fresh = await facade.getMember(cached._id);
-      if (fresh) this.setUserInfo(fresh);
+      const dto = await this.loadSchoolSession();
+      if (appSession.epochNow() !== startEpoch) return; // 期间已有更新的会话写入
+      if (!dto) return; // 拉取不到就沿用旧快照（与旧行为一致：不因回查为空踢人）
+      this.applySchoolSession(dto);
     } catch (err) {
       console.error('[app] 切协会后刷新本人角色失败，沿用旧快照', err);
     }
@@ -361,6 +416,10 @@ App({
 
   /**
    * 清除登录态。用户退出登录或账号被禁用时调用。
+   *
+   * 【为什么连会话与学校范围一起清】退出后若只清 userInfo，统一会话里还留着
+   * 上一人的账号 / 能力，「我的学校」还指向上一个人的学校——再进任何页都可能
+   * 看到旧管理入口或旧内部台账。这里三处一起复位（B3 §7.2.5）。
    */
   clearUserInfo() {
     this.globalData.userInfo = null;
@@ -369,6 +428,8 @@ App({
     } catch (err) {
       console.error('[app] 清除本地登录态失败', err);
     }
+    appSession.clear();
+    require('./services/school-session.js').reset();
   },
 
   /**

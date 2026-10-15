@@ -78,9 +78,15 @@ Page({
     if (this.data.busy) return;
     const actor = this.data.actors[Number(event.detail.value)];
     if (!actor) return;
-    identity.setDemoActor(actor.id);
+    // 切换演示身份统一经 app（B3）：登录态、兼容视图与浏览范围跟着新身份
+    // 一起刷新，避免「按钮是管理员、提交是会员」的分裂。测试环境没有 app
+    // 实例时退回只切 mock 身份。
+    const app = typeof getApp === 'function' ? getApp() : null;
+    const switched = app && typeof app.switchDemoActor === 'function'
+      ? app.switchDemoActor(actor.id).catch(err => { this.update({ error: err.message || '切换身份失败' }); })
+      : Promise.resolve(identity.setDemoActor(actor.id));
     this.requestId = '';
-    return this.reload(this.data.detail && this.data.detail.event._id || '');
+    return switched.then(() => this.reload(this.data.detail && this.data.detail.event._id || ''));
   },
   onField(event) {
     if (this.data.busy) return;

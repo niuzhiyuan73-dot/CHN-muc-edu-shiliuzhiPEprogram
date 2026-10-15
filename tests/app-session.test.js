@@ -1,13 +1,18 @@
 /**
- * 启动时的会话校正
+ * 启动时的会话校正（B3：登录与会话统一）
  * ============================================================
- * 守的是一个真实踩过的坑：登录态在注册那一刻整份写进本地缓存
- * （app.setUserInfo），而所有页面读的都是这份缓存，没有一处会回查服务端。
- * 于是管理员在后台把人审核通过后，那个人的客户端仍然显示「待审核」，
- * 成绩录不了，界面也不提示他要重新登录一次——只能靠自己猜。
+ * 旧版守的是一个真实踩过的坑：登录态在注册那一刻整份写进本地缓存，页面
+ * 只读缓存、从不回查，后台审核通过后客户端永远停在「待审核」。
  *
- * app.js 之前没有任何测试覆盖（页面测试用的是替身 app，见 tests/page.test.js），
- * 所以这里搭一个最小运行环境，把 onLaunch 真跑一遍。
+ * B3 之后，启动校正不再走旧栈 login/getMember，而是统一走 S2 的
+ * getSchoolIdentitySession：账号、学校身份、能力布尔量一次取齐，兼容用户
+ * 对象由 app-session 单一适配器派生。这里守的是：
+ *
+ *   1. 启动用 S2 会话覆盖本地缓存（角色 / 状态 / 学校随之校正）；
+ *   2. 服务端明确「没有这个账号」才清本地，故障保留缓存；
+ *   3. mock 下按当前演示身份校正（改演示身份即换人）；
+ *   4. 切换演示身份后登录态、兼容视图、浏览范围一起刷新（B3 §7.2.5）；
+ *   5. 退出登录把统一会话与学校范围一起清掉。
  * ============================================================
  */
 
@@ -16,6 +21,9 @@ const assert = require('node:assert');
 const { beforeEach } = require('node:test');
 
 const facade = require('../miniprogram/services/index.js');
+const appSession = require('../miniprogram/services/app-session.js');
+const schoolSession = require('../miniprogram/services/school-session.js');
+const schoolMock = require('../miniprogram/services/school-mock.js');
 const { resolveAuthState } = require('../miniprogram/services/auth.js');
 const { DEFAULT_CURRENT_USER_ID } = require('../miniprogram/services/mock.js');
 const { defaultAssociationId } = require('../miniprogram/utils/associations.js');
@@ -28,8 +36,8 @@ const { DATA_SOURCE, STORAGE_KEY, ROLE, USER_STATUS } = require('../miniprogram/
 /** 假的 wx.setStorageSync / getStorageSync 后端 */
 let storage = {};
 
-/** wx.cloud.callFunction 的返回值，以及被调用的次数、按动作名记录的调用序列 */
-let cloudResult = null;
+/** wx.cloud.callFunction 的返回值（按 action 分发），以及被调用的次数与序列 */
+let cloudResults = {};
 let cloudCalls = 0;
 let cloudActions = [];
 
@@ -54,7 +62,8 @@ global.wx = {
     callFunction: async (options) => {
       cloudCalls += 1;
       cloudActions.push(options && options.data ? options.data.action : '');
-      return { result: cloudResult };
+      const result = cloudResults[options.data.action] || cloudResults['*'] || { ok: true, data: null };
+      return { result };
     },
   },
 };
@@ -71,7 +80,7 @@ require('../miniprogram/app.js');
  * 用例脚手架
  * ============================================================ */
 
-/** 一名刚注册、还没通过实名审核的会员 */
+/** 一名刚注册、还没通过审核的会员（旧栈缓存形状） */
 function pendingMember() {
   return {
     _id: 'u_3f2a',
@@ -82,14 +91,29 @@ function pendingMember() {
   };
 }
 
-/** 同一个人，已被管理员审核通过并提为管理员 */
-function approvedMember() {
+/** 组装一份 S2 会话（getSchoolIdentitySession 的返回形状） */
+function sessionDto(overrides = {}) {
   return {
-    _id: 'u_3f2a',
-    nickName: '马小雨',
-    realName: '马小雨',
-    role: ROLE.ADMIN,
-    status: USER_STATUS.ACTIVE,
+    user: {
+      userId: 'u_3f2a',
+      nickName: '马小雨',
+      realName: '马小雨',
+      gender: 'M',
+      avatarUrl: '',
+      primarySchoolId: 'muc',
+      platformStatus: 'active',
+    },
+    account: { userId: 'u_3f2a', schoolId: 'muc', collegeId: 'c01', studentId: '2023001234', status: 'active' },
+    permission: 'schoolAdmin',
+    permissionLabel: '校级管理员',
+    canManageCollege: true,
+    isPlatformAdmin: false,
+    canReview: true,
+    canManageAssociation: true,
+    readOnly: false,
+    grants: [],
+    message: '',
+    ...overrides,
   };
 }
 
@@ -119,28 +143,76 @@ beforeEach(() => {
   storage = {};
   cloudCalls = 0;
   cloudActions = [];
-  cloudResult = { ok: true, data: null };
-  // 门面是模块级单例，用例之间必须复位，否则上一条的 cloud 会漏给下一条
+  cloudResults = {};
+  // 门面、统一会话、学校范围、S2 演示身份都是模块级单例，用例之间必须复位
   facade.setDataSource(DATA_SOURCE.MOCK);
+  appSession.clear();
+  schoolSession.reset();
+  schoolMock.reset();
 });
 
 /* ============================================================
- * 校正
+ * 兼容视图派生（单一适配入口）
  * ============================================================ */
 
-test('启动时会用服务端的最新状态覆盖本地缓存 —— 后台审核通过后不必手动重新登录', async () => {
+test('buildCompatUser —— 由 S2 会话派生旧栈形状，能力档位映射角色', () => {
+  const compat = appSession.buildCompatUser({ session: sessionDto() });
+  assert.strictEqual(compat._id, 'u_3f2a');
+  assert.strictEqual(compat.role, ROLE.ADMIN, '校管理员映射为管理员');
+  assert.strictEqual(compat.status, USER_STATUS.ACTIVE);
+  assert.strictEqual(compat.isGlobalAdmin, false);
+  assert.strictEqual(compat.realName, '马小雨');
+  assert.strictEqual(compat.studentId, '2023001234');
+
+  // 平台管理员：账号级管理员，跨校也按管理员
+  const platform = appSession.buildCompatUser({
+    session: sessionDto({ permission: '', isPlatformAdmin: true }),
+  });
+  assert.strictEqual(platform.role, ROLE.ADMIN);
+  assert.strictEqual(platform.isGlobalAdmin, true);
+
+  // 学院负责人 → 学院职员；普通会员 → 会员
+  assert.strictEqual(
+    appSession.buildCompatUser({ session: sessionDto({ permission: 'collegeLeader' }) }).role,
+    ROLE.STAFF
+  );
+  assert.strictEqual(
+    appSession.buildCompatUser({ session: sessionDto({ permission: '' }) }).role,
+    ROLE.MEMBER
+  );
+
+  // 无账号会话 → null；兼容角色只是展示，不该带 S2 之外的授权信息
+  assert.strictEqual(appSession.buildCompatUser({ session: { user: null } }), null);
+});
+
+test('buildCompatUser —— 状态映射：无身份=待审核、驳回/停用=已禁用、离校=已离校', () => {
+  const withStatus = (status) => appSession.buildCompatUser({ session: sessionDto({ account: { status } }) }).status;
+  assert.strictEqual(withStatus('active'), USER_STATUS.ACTIVE);
+  assert.strictEqual(withStatus('pending'), USER_STATUS.PENDING);
+  assert.strictEqual(withStatus('rejected'), USER_STATUS.DISABLED, '已驳回与旧栈 rejectMember 同口径');
+  assert.strictEqual(withStatus('left'), USER_STATUS.LEFT);
+  assert.strictEqual(appSession.buildCompatUser({ session: sessionDto({ account: null }) }).status, USER_STATUS.PENDING);
+
+  const disabled = appSession.buildCompatUser({
+    session: sessionDto({ user: { ...sessionDto().user, platformStatus: 'disabled' } }),
+  });
+  assert.strictEqual(disabled.status, USER_STATUS.DISABLED);
+});
+
+/* ============================================================
+ * 云端：启动校正走 S2 会话
+ * ============================================================ */
+
+test('启动时用 S2 会话覆盖本地缓存 —— 后台审核通过 / 提权后不必手动重新登录', async () => {
   // 本地缓存里是注册那一刻的快照：待审核、普通会员
   storage[STORAGE_KEY.USER_INFO] = pendingMember();
-  cloudResult = { ok: true, data: approvedMember() };
+  cloudResults = { getSchoolIdentitySession: { ok: true, data: sessionDto() } };
 
   await launch({ envId: 'test-env' });
 
-  // 启动还会为「比赛最多的协会」各协会读一份项目快照，故总调用数不止一次；
-  // 这里只守「账号回查恰好一次」，别把新的读也算进来
-  assert.strictEqual(
-    cloudActions.filter((action) => action === 'getCurrentUser').length,
-    1,
-    '云端模式下启动应当回查账号一次'
+  assert.ok(
+    cloudActions.filter((action) => action === 'getSchoolIdentitySession').length >= 1,
+    '云端模式下启动应当回查 S2 会话'
   );
   assert.strictEqual(appConfig.globalData.userInfo.status, USER_STATUS.ACTIVE);
   assert.strictEqual(appConfig.globalData.userInfo.role, ROLE.ADMIN);
@@ -154,23 +226,24 @@ test('启动时会用服务端的最新状态覆盖本地缓存 —— 后台审
   assert.strictEqual(state.canRecord, true);
 });
 
-test('服务端查不到这个账号时清掉本地会话，而不是留着一个幽灵登录态', async () => {
-  storage[STORAGE_KEY.USER_INFO] = approvedMember();
-  // 账号文档被删掉的情形：接口正常返回，但内容是空
-  cloudResult = { ok: true, data: null };
+test('服务端说这个微信身份没有账号时清掉本地会话，而不是留着一个幽灵登录态', async () => {
+  storage[STORAGE_KEY.USER_INFO] = { ...pendingMember(), status: USER_STATUS.ACTIVE };
+  // 接口正常返回，但会话里没有账号（session.user 为 null）
+  cloudResults = { getSchoolIdentitySession: { ok: true, data: { ...sessionDto(), user: null, account: null } } };
 
   await launch({ envId: 'test-env' });
 
   assert.strictEqual(appConfig.globalData.userInfo, null);
   assert.strictEqual(storage[STORAGE_KEY.USER_INFO], undefined, '本地缓存也要清掉');
+  assert.strictEqual(appSession.get(), null, '统一会话一并清掉');
   assert.strictEqual(resolveAuthState(null).loggedIn, false);
 });
 
 test('云端故障时保留本地登录态，不因为一次抖动把人踢下线', async () => {
-  const cached = approvedMember();
+  const cached = pendingMember();
   storage[STORAGE_KEY.USER_INFO] = cached;
-  // 顶层 ok:false 表示基础设施故障，cloud.js 会据此抛错
-  cloudResult = { ok: false, message: '数据库连接失败' };
+  // 顶层 ok:false 表示基础设施故障，school-cloud 会据此抛错
+  cloudResults = { getSchoolIdentitySession: { ok: false, message: '数据库连接失败' } };
 
   await launch({ envId: 'test-env' });
 
@@ -180,48 +253,33 @@ test('云端故障时保留本地登录态，不因为一次抖动把人踢下�
 });
 
 /* ============================================================
- * 不该发生的事
+ * mock：启动校正按当前 S2 演示身份
  * ============================================================ */
 
-test('mock 模式一次云端请求都不发，也不拿演示会员覆盖刚注册的账号', async () => {
-  const cached = pendingMember();
-  storage[STORAGE_KEY.USER_INFO] = cached;
-  // mock 的 login() 会返回种子里的演示会员（已通过审核），一旦用它去覆盖，
-  // 刚注册的人会莫名其妙变成正式会员。所以 mock 的校正走「按 _id 回查」：
-  // 'u_3f2a' 既不在种子里也不在申请里，回查为空，原快照原样留着。
-  cloudResult = { ok: true, data: approvedMember() };
+test('mock 模式一次云端请求都不发，缓存里的旧角色被 S2 会话校正', async () => {
+  // 登录快照是更早写下的「管理员」；S2 里当前演示身份 u06 只是普通会员。
+  // 不回查的话，界面按快照判权限，会员会带着管理员的旧入口。
+  storage[STORAGE_KEY.USER_INFO] = {
+    _id: DEFAULT_CURRENT_USER_ID,
+    nickName: '赵明宇',
+    role: ROLE.ADMIN,
+    status: USER_STATUS.ACTIVE,
+  };
+  cloudResults = { getSchoolIdentitySession: { ok: true, data: sessionDto() } };
 
   await launch({ envId: '' });
 
   assert.strictEqual(cloudCalls, 0, 'mock 模式不该请求云端');
-  assert.strictEqual(appConfig.globalData.userInfo, cached);
-  assert.strictEqual(appConfig.globalData.userInfo.status, USER_STATUS.PENDING);
-});
-
-test('mock 模式按 _id 校正角色 —— 数据源把人提为学院负责人，排阵权限不该还停在旧快照', async () => {
-  // 登录快照是更早写下的「普通会员」；数据源里同一人已被提为学院负责人。
-  // 不回查的话，界面按快照判权限，学院负责人照样进不了排阵。
-  const stale = {
-    _id: DEFAULT_CURRENT_USER_ID,
-    nickName: '赵明宇',
-    realName: '赵明宇',
-    role: ROLE.MEMBER,
-    status: USER_STATUS.ACTIVE,
-  };
-  storage[STORAGE_KEY.USER_INFO] = stale;
-
-  await launch({ envId: '' });
-
   const user = appConfig.globalData.userInfo;
-  assert.strictEqual(cloudCalls, 0, 'mock 模式仍然一次云端请求都不发');
-  assert.strictEqual(user.role, ROLE.STAFF, '角色应被数据源里的最新值覆盖');
-  assert.ok(user.college, '学院也一并带回，排阵判权限要用它');
-  assert.strictEqual(storage[STORAGE_KEY.USER_INFO].role, ROLE.STAFF, '缓存同步更新');
+  assert.strictEqual(user._id, DEFAULT_CURRENT_USER_ID);
+  assert.strictEqual(user.role, ROLE.MEMBER, '角色应被 S2 会话里的实际档位覆盖');
+  assert.strictEqual(user.isGlobalAdmin, false);
+  assert.strictEqual(storage[STORAGE_KEY.USER_INFO].role, ROLE.MEMBER, '缓存同步更新');
 });
 
 test('mock 模式改了「当前演示账号」，启动会把旧演示账号换成新那位', async () => {
-  // 缓存里是上一次演示用的**另一个种子会员**（u03）；当前常量指向 u06。
-  // 这正是「把 DEFAULT_CURRENT_USER_ID 改成别人再编译」要能切换演示身份的场合。
+  // 缓存里是上一次演示用的另一个种子会员（u03）；当前 S2 演示身份跟随
+  // mock.js 的 DEFAULT_CURRENT_USER_ID（u06）。这正是切换演示身份要能换人的场合。
   const otherDemo = {
     _id: 'u03',
     nickName: '李思远',
@@ -236,7 +294,7 @@ test('mock 模式改了「当前演示账号」，启动会把旧演示账号换
 
   const user = appConfig.globalData.userInfo;
   assert.strictEqual(cloudCalls, 0, 'mock 模式不该请求云端');
-  assert.strictEqual(user._id, DEFAULT_CURRENT_USER_ID, '应整体切到当前演示账号');
+  assert.strictEqual(user._id, DEFAULT_CURRENT_USER_ID, '应整体切到当前演示身份');
   assert.strictEqual(
     storage[STORAGE_KEY.USER_INFO]._id,
     DEFAULT_CURRENT_USER_ID,
@@ -244,11 +302,136 @@ test('mock 模式改了「当前演示账号」，启动会把旧演示账号换
   );
 });
 
+test('mock 模式旧栈本地注册账号的残留缓存，被 S2 当前演示身份覆盖', async () => {
+  // 旧流程 registerMember 写出的本地账号重启后不在 S2 里；B3 之后注册走 S2，
+  // 不会再产生这种账号。残留缓存按「过期快照」处理：切到当前演示身份。
+  const cached = pendingMember(); // _id 'u_3f2a'，S2 里不存在
+  storage[STORAGE_KEY.USER_INFO] = cached;
+
+  await launch({ envId: '' });
+
+  const user = appConfig.globalData.userInfo;
+  assert.strictEqual(user._id, DEFAULT_CURRENT_USER_ID, '残留缓存不应挡住当前演示身份');
+  assert.strictEqual(user.status, USER_STATUS.ACTIVE);
+});
+
 test('本地没有登录态时不发起校正请求', async () => {
   await launch({ envId: 'test-env' });
 
   assert.strictEqual(cloudCalls, 0, '没登录就没有可校正的东西');
   assert.strictEqual(appConfig.globalData.userInfo, null);
+  assert.strictEqual(appSession.get(), null);
+});
+
+/* ============================================================
+ * 切换演示身份 / 退出（B3 §7.2.5 / §7.3）
+ * ============================================================ */
+
+test('切换演示身份后登录态、兼容视图与学校范围一起刷新', async () => {
+  storage[STORAGE_KEY.USER_INFO] = {
+    _id: DEFAULT_CURRENT_USER_ID,
+    role: ROLE.MEMBER,
+    status: USER_STATUS.ACTIVE,
+  };
+  await launch({ envId: '' });
+
+  await appConfig.switchDemoActor('demo_muc_admin');
+
+  const user = appConfig.globalData.userInfo;
+  assert.strictEqual(user._id, 'demo_muc_admin', '兼容视图跟着新身份走');
+  assert.strictEqual(user.role, ROLE.ADMIN, '校管理员的兼容角色是管理员');
+  assert.strictEqual(schoolSession.getHomeSchoolId(), 'muc', '我的学校随新身份刷新');
+  assert.strictEqual(appSession.get().session.user.userId, 'demo_muc_admin', '统一会话是同一份');
+});
+
+test('切换演示身份后学院负责人的兼容角色来自 S2 档位', async () => {
+  storage[STORAGE_KEY.USER_INFO] = {
+    _id: DEFAULT_CURRENT_USER_ID,
+    role: ROLE.MEMBER,
+    status: USER_STATUS.ACTIVE,
+  };
+  await launch({ envId: '' });
+
+  await appConfig.switchDemoActor('demo_muc_college_leader');
+
+  const user = appConfig.globalData.userInfo;
+  assert.strictEqual(user._id, 'demo_muc_college_leader');
+  assert.strictEqual(user.role, ROLE.STAFF, '学院负责人映射为学院职员');
+  assert.ok(user.college, '兼容视图带上学院全名（排阵等展示要按它）');
+});
+
+test('访客切换演示身份不自动登录，只校正浏览范围', async () => {
+  await launch({ envId: '' });
+
+  await appConfig.switchDemoActor('demo_buaa_member');
+
+  assert.strictEqual(appConfig.globalData.userInfo, null, '切换身份不等于登录');
+  assert.strictEqual(schoolSession.getHomeSchoolId(), 'buaa', '浏览范围跟着新身份走');
+});
+
+test('退出登录把统一会话与学校范围一起清掉', async () => {
+  storage[STORAGE_KEY.USER_INFO] = {
+    _id: DEFAULT_CURRENT_USER_ID,
+    role: ROLE.MEMBER,
+    status: USER_STATUS.ACTIVE,
+  };
+  await launch({ envId: '' });
+  assert.ok(appConfig.globalData.userInfo, '前提：已登录');
+  assert.strictEqual(schoolSession.getHomeSchoolId(), 'muc');
+
+  appConfig.clearUserInfo();
+
+  assert.strictEqual(appConfig.globalData.userInfo, null);
+  assert.strictEqual(storage[STORAGE_KEY.USER_INFO], undefined);
+  assert.strictEqual(appSession.get(), null, '统一会话清掉，旧能力不残留');
+  assert.strictEqual(schoolSession.getHomeSchoolId(), '', '我的学校不复用上一人的');
+  assert.strictEqual(schoolSession.getSchoolId(), '', '浏览学校不复用上一人的');
+});
+
+test('切换协会后按新协会重解能力 —— 协会负责人不该被当成会员', async () => {
+  // u04 王浩然：pkb 普通会员、tt 协会负责人、bd 学院负责人（见 docs/mock演示账号.md）。
+  // 登录快照里的角色是切协会之前写下的；切换后必须按新协会重解，否则他在 tt 会
+  // 被当成会员，连本协会比赛的裁判都指派不了。
+  appConfig.globalData = {
+    dataSource: DATA_SOURCE.MOCK,
+    cloudEnvId: '',
+    userInfo: {
+      _id: 'u04',
+      nickName: '王浩然',
+      role: ROLE.MEMBER,
+      status: USER_STATUS.ACTIVE,
+    },
+    systemInfo: null,
+  };
+  // S2 的「当前微信身份」也要是 u04——两套身份来源必须一致（B3 的前提）。
+  await appConfig.switchDemoActor('u04');
+  assert.strictEqual(appConfig.globalData.userInfo._id, 'u04');
+
+  appConfig.setAssociation('pkb');
+  await flush();
+  assert.strictEqual(appConfig.globalData.userInfo.role, ROLE.MEMBER, 'pkb 里是普通会员');
+
+  appConfig.setAssociation('tt');
+  await flush();
+  assert.strictEqual(
+    appConfig.globalData.userInfo.role,
+    ROLE.ADMIN,
+    'tt 里是协会负责人（有效角色即管理员）'
+  );
+  assert.strictEqual(
+    appConfig.globalData.userInfo.isGlobalAdmin,
+    false,
+    '协会负责人不是全局管理员'
+  );
+
+  appConfig.setAssociation('bd');
+  await flush();
+  // bd 里 u04 的 staff 档没有落学院（S2 口径：学院负责人必须绑定学院），
+  // 权限档推导为普通会员——切协会不能把别的协会的角色带过来。
+  assert.strictEqual(appConfig.globalData.userInfo.role, ROLE.MEMBER, 'bd 里不带学院的 staff 不算学院负责人');
+
+  // 复位，别把协会状态漏给后续用例
+  appConfig.setAssociation(defaultAssociationId());
 });
 
 /* ============================================================
@@ -309,7 +492,7 @@ test('未登录时冷启动把协会复位到兜底默认，且不落盘', async
 test('已登录时按「比赛最多的协会」定默认，不认缓存里的旧协会', async () => {
   // 同一个人的登录快照；缓存里还留着别的协会——按 §11.1 应被忽略
   storage[STORAGE_KEY.USER_INFO] = {
-    ...approvedMember(),
+    ...pendingMember(),
     _id: DEFAULT_CURRENT_USER_ID,
     role: ROLE.MEMBER,
     status: USER_STATUS.ACTIVE,
@@ -340,45 +523,4 @@ test('setAssociation 切换会话、不写缓存，未知协会抛错', async ()
   assert.throws(() => appConfig.setAssociation('nope'), /未知的协会 id/);
   // 抛错后仍停在原协会，不落到半个态
   assert.strictEqual(facade.getAssociation(), 'bd');
-});
-
-test('setAssociation 切协会后按新协会重解本人角色 —— 协会负责人不该被当成会员', async () => {
-  // u04 王浩然：pkb 普通会员、tt 协会负责人、bd 学院负责人（见 docs/mock演示账号.md）。
-  // 登录快照里的角色是切协会之前写下的；切换后必须按新协会重解，否则他在 tt 会
-  // 被当成会员，连本协会比赛的裁判都指派不了。
-  appConfig.globalData = {
-    dataSource: DATA_SOURCE.MOCK,
-    cloudEnvId: '',
-    userInfo: {
-      _id: 'u04',
-      nickName: '王浩然',
-      role: ROLE.MEMBER,
-      status: USER_STATUS.ACTIVE,
-    },
-    systemInfo: null,
-  };
-
-  appConfig.setAssociation('pkb');
-  await flush();
-  assert.strictEqual(appConfig.globalData.userInfo.role, ROLE.MEMBER, 'pkb 里是普通会员');
-
-  appConfig.setAssociation('tt');
-  await flush();
-  assert.strictEqual(
-    appConfig.globalData.userInfo.role,
-    ROLE.ADMIN,
-    'tt 里是协会负责人（有效角色即管理员）'
-  );
-  assert.strictEqual(
-    appConfig.globalData.userInfo.isGlobalAdmin,
-    false,
-    '协会负责人不是全局管理员'
-  );
-
-  appConfig.setAssociation('bd');
-  await flush();
-  assert.strictEqual(appConfig.globalData.userInfo.role, ROLE.STAFF, 'bd 里是学院负责人');
-
-  // 复位，别把协会状态漏给后续用例
-  appConfig.setAssociation(defaultAssociationId());
 });

@@ -27,6 +27,8 @@
 
       <view wx:if="{{existing.notice}}" class="account-notice">{{existing.notice}}</view>
 
+      <!-- 有账号但还没学校身份（或被驳回）：给申请入口，不要把人晾在首页外 -->
+      <button wx:if="{{existing.needsApplication}}" class="btn btn-primary btn-block login-btn" bindtap="onGoRegister">申请学校身份</button>
       <button class="btn btn-primary btn-block login-btn" bindtap="onGoHome">进入首页</button>
       <button class="btn btn-danger btn-block login-btn" bindtap="onLogout">退出登录</button>
     </view>
@@ -45,6 +47,9 @@
       >{{submitting ? '登录中…' : '微信一键登录'}}</button>
 
       <button class="btn btn-outline btn-block login-btn" bindtap="onGoRegister">新会员注册</button>
+
+      <!-- 仅本地演示：模拟一台没有账号的新微信号，走完整注册闭环 -->
+      <button wx:if="{{isMock}}" class="btn btn-outline btn-block login-btn demo-btn" bindtap="onSimulateNewWechat">演示：模拟一个新微信号</button>
 
       <view wx:if="{{errorText}}" class="form-error login-error">{{errorText}}</view>
     </view>
@@ -116,25 +121,12 @@
 
       <view class="form-item">
         <view class="form-label">学院 <text class="form-required">*</text></view>
-        <picker mode="selector" range="{{colleges}}" value="{{collegeIndex}}" bindchange="onPickCollege">
-          <view class="form-input form-picker {{errors.college ? 'is-error' : ''}} {{form.college ? '' : 'is-placeholder'}}">
+        <picker mode="selector" range="{{colleges}}" range-key="name" value="{{collegeIndex}}" bindchange="onPickCollege">
+          <view class="form-input form-picker {{errors.college ? 'is-error' : ''}} {{form.collegeId ? '' : 'is-placeholder'}}">
             {{form.college || '请选择所属学院'}}
           </view>
         </picker>
         <view wx:if="{{errors.college}}" class="form-error">{{errors.college}}</view>
-      </view>
-
-      <view class="form-item">
-        <view class="form-label">联系方式 <text class="form-required">*</text></view>
-        <input
-          class="form-input {{errors.phone ? 'is-error' : ''}}"
-          type="number"
-          placeholder="请填写手机号"
-          value="{{form.phone}}"
-          data-field="phone"
-          bindinput="onInput"
-        />
-        <view wx:if="{{errors.phone}}" class="form-error">{{errors.phone}}</view>
       </view>
 
       <view wx:if="{{errorText}}" class="form-error login-error">{{errorText}}</view>

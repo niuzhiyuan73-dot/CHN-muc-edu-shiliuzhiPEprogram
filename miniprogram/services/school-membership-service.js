@@ -217,8 +217,18 @@ function createSchoolHandlers({ claimKey }) {
     const readOnly = Boolean(active && ctx.actor.primarySchoolId && ctx.actor.primarySchoolId !== ctx.schoolId);
     const manageable = active && !readOnly;
     const collegeId = (ctx.schoolMember && ctx.schoolMember.collegeId) || '';
-    return ok({ ok: true, user: active ? { userId: ctx.actorId, nickName: ctx.actor.nickName || '',
-      primarySchoolId: ctx.actor.primarySchoolId || '' } : null,
+    // user 是**本人账号**的展示字段：真名 / 性别 / 头像随账号走（跨校不变），
+    // platformStatus 让客户端分清「没有账号 / 账号停用」两种情形（B3：登录页
+    // 不能把停用账号当新用户引导去注册）。
+    return ok({ ok: true, user: ctx.actor ? {
+      userId: ctx.actorId,
+      nickName: ctx.actor.nickName || '',
+      realName: ctx.actor.realName || '',
+      gender: ctx.actor.gender || '',
+      avatarUrl: ctx.actor.avatarUrl || '',
+      primarySchoolId: ctx.actor.primarySchoolId || '',
+      platformStatus: ctx.actor.platformStatus || '',
+    } : null,
       account: active ? ctx.schoolMember : null,
       // 本人权限档位：校级 / 协会 / 学院，普通会员为空串（展示标签退回「会员」）。
       permission: manageable ? permissionOf(ctx.schoolRole, ctx.membership) : '',

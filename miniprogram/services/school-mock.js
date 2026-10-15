@@ -109,6 +109,14 @@ function defaultActorId() {
 }
 
 let actorId = DEMO_ACTORS[0].id;
+/**
+ * 模拟的「当前微信身份」OpenID（B3）。真实设备上 OpenID 由微信给出，换设备即换
+ * OpenID；模拟端把它做成一个可变状态：默认空串，客户端按 actorId 解析（与从前
+ * 行为一致）。`simulateNewWechat` 把它拨到一个尚无账号的新 OpenID，从而演示
+ * 「新微信号注册 → 开通平台账号 → 申请学校身份」的完整链路——这是旧栈
+ * `registerMember` 的 S2 对应路径。
+ */
+let wechatOpenId = '';
 let repo;
 const handlers = createSchoolHandlers({ claimKey: (schoolId, studentId) => schoolKey('demo-claim', schoolId, studentId) });
 /**
@@ -155,30 +163,59 @@ function reset(options = {}) {
   }
   repo = createSchoolMemoryRepo(seed);
   actorId = defaultActorId();
+  wechatOpenId = '';
 }
 reset();
+/** 旧版演示账号编号（u01–u24）也已接入 S2，可作演示身份切换（B3）。 */
+const LEGACY_ACTOR_IDS = Object.freeze(MEMBER_SEED.map((_, index) => `u${String(index + 1).padStart(2, '0')}`));
+const isValidActor = (id) => DEMO_ACTORS.some((actor) => actor.id === id) || LEGACY_ACTOR_IDS.includes(id);
+
 function setDemoActor(id) {
-  if (!DEMO_ACTORS.some(actor => actor.id === id)) throw new Error('未知模拟身份');
+  if (!isValidActor(id)) throw new Error('未知模拟身份');
   actorId = id;
+  // 演示身份与微信身份只认一个：切回 actor 演示时清掉「新微信号」模拟，
+  // 否则两个身份来源并存，写接口与展示会各认一个人。
+  wechatOpenId = '';
+}
+/**
+ * 模拟一台「换了新微信号」的设备：把当前微信身份拨到一个尚无账号的 OpenID。
+ * 之后身份 / 空间 / 交流客户端都按这个 OpenID 解析（actorId 清空），注册走
+ * `registerSchoolAccount` 凭 OpenID 开户，与云端语义一致。
+ * @param {string} [openId] 指定 OpenID（测试用）；缺省生成一个不重复的
+ * @returns {string} 生效的模拟 OpenID
+ */
+function simulateNewWechat(openId) {
+  wechatOpenId = typeof openId === 'string' && openId ? openId
+    : `mock_openid_new_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  actorId = '';
+  return wechatOpenId;
+}
+/**
+ * 创建身份客户端时绑定的解析入口：有模拟微信身份就按 OpenID（新设备），
+ * 否则按演示 actorId（既有演示账号）。两者在同一处收敛，避免身份 / 空间 /
+ * 交流三套客户端各认一个人。
+ */
+function actorBinding() {
+  return wechatOpenId ? { actorId: '', openId: wechatOpenId } : { actorId, openId: '' };
 }
 function forSchoolIdentity(input) {
   const scope = schoolScope(input);
-  const boundActor = actorId;
+  const binding = actorBinding();
   const boundRepo = repo;
   return Object.freeze(Object.fromEntries(Object.entries(handlers).map(([name, handler]) => [name, async payload => {
-    const ctx = await buildSchoolContext({ repo: boundRepo, actorId: boundActor, scope });
+    const ctx = await buildSchoolContext({ repo: boundRepo, ...binding, scope });
     const result = await handler(payload || {}, ctx);
     if (!result.ok) throw new Error(result.message);
     return result.data;
   }])));
 }
-module.exports = { forSchoolIdentity, setDemoActor, getDemoActor: () => actorId, DEMO_ACTORS, reset };
+module.exports = { forSchoolIdentity, setDemoActor, getDemoActor: () => actorId, simulateNewWechat, DEMO_ACTORS, reset };
 function forExchange(input) {
   const target = schoolScope(input);
-  const boundActor = actorId;
+  const binding = actorBinding();
   const boundRepo = repo;
   return Object.freeze(Object.fromEntries(Object.entries(exchange).map(([name, handler]) => [name, async payload => {
-    const ctx = await buildSchoolContext({ repo: boundRepo, actorId: boundActor, scope: target });
+    const ctx = await buildSchoolContext({ repo: boundRepo, ...binding, scope: target });
     return (await handler(payload || {}, ctx)).data;
   }])));
 }
@@ -186,10 +223,10 @@ module.exports.forExchange = forExchange;
 
 function forAssociationSpace(input) {
   const target = schoolScope(input);
-  const boundActor = actorId;
+  const binding = actorBinding();
   const boundRepo = repo;
   return Object.freeze(Object.fromEntries(Object.entries(spaceHandlers).map(([name, handler]) => [name, async payload => {
-    const ctx = await buildSchoolContext({ repo: boundRepo, actorId: boundActor, scope: target });
+    const ctx = await buildSchoolContext({ repo: boundRepo, ...binding, scope: target });
     // isMock 供比赛「对手确认」等口径在本地演示时放宽（见 school-match-service）。
     return (await handler(payload || {}, Object.freeze({ ...ctx, isMock: true }))).data;
   }])));

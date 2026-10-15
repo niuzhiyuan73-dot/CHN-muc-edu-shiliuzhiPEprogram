@@ -11,4 +11,9 @@ module.exports = {
     if (!isMockNow()) throw new Error('云端不可切换模拟身份');
     mock.setDemoActor(id);
   },
+  /** 模拟「新微信号」（仅本地演示）：拨到尚无账号的 OpenID，用于注册闭环演示。 */
+  simulateNewWechat(openId) {
+    if (!isMockNow()) throw new Error('云端不可模拟微信身份');
+    return mock.simulateNewWechat(openId);
+  },
 };

@@ -205,7 +205,10 @@ test('identity session exposes local review capability without disclosing global
   const repo = fixture();
   const local = (await request(repo, 'getSchoolIdentitySession', {}, 'mock_openid_muc_admin')).data;
   assert.equal(local.canReview, true);
-  assert.deepEqual(Object.keys(local.user).sort(), ['nickName', 'primarySchoolId', 'userId']);
+  // user 只含本人账号展示字段（B3：昵称 / 实名 / 性别 / 头像随账号走）与
+  // primarySchoolId / platformStatus，不下发 openId / 学号占用等账号隐私。
+  assert.deepEqual(Object.keys(local.user).sort(),
+    ['avatarUrl', 'gender', 'nickName', 'platformStatus', 'primarySchoolId', 'realName', 'userId']);
   const remote = (await request(repo, 'getSchoolIdentitySession', {}, 'mock_openid_muc_admin', 'buaa')).data;
   assert.equal(remote.canReview, false);
   assert.equal(remote.account, null);

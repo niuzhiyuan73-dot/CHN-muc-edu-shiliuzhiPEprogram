@@ -132,7 +132,14 @@ global.wx = {
  * 最小可用的 app 实例。
  * 页面通过 getApp() 读数据源与登录态，登录页还会往里写登录态，
  * 所以这里带的三个方法要和 app.js 的语义一致：内存与「缓存」同步更新。
+ * B3 之后登录页改走 S2，这里补上统一会话写入（applySchoolSession）与
+ * 演示身份切换（switchDemoActor）的最小实现。
  */
+const appSession = require('../miniprogram/services/app-session.js');
+const schoolSession = require('../miniprogram/services/school-session.js');
+const schoolMock = require('../miniprogram/services/school-mock.js');
+const schoolIdentity = require('../miniprogram/services/school-identity.js');
+
 const app = {
   globalData: { dataSource: 'mock', userInfo: null },
   getUserInfo() {
@@ -143,6 +150,30 @@ const app = {
   },
   clearUserInfo() {
     this.globalData.userInfo = null;
+    appSession.clear();
+  },
+  getAssociation() {
+    return facade.getAssociation();
+  },
+  isLoggedIn() {
+    return Boolean(this.globalData.userInfo);
+  },
+  /** 与 app.js 同语义：统一会话 + 兼容视图一起落。 */
+  applySchoolSession(dto) {
+    appSession.apply(dto);
+    this.setUserInfo(appSession.buildCompatUser(dto));
+  },
+  /** 与 app.js 同语义：切演示身份后刷新兼容视图（未登录则只切身份）。 */
+  async switchDemoActor(id) {
+    schoolIdentity.setDemoActor(id);
+    if (!this.isLoggedIn()) return null;
+    const api = schoolIdentity.forSchoolIdentity({
+      schoolId: schoolSession.getSchoolId() || 'muc',
+      association: this.getAssociation() || 'pkb',
+    });
+    const session = await api.getSchoolIdentitySession();
+    if (session && session.user) this.applySchoolSession({ session, profile: null });
+    return session || null;
   },
 };
 
@@ -293,10 +324,14 @@ const spacePanelConfig = registered[28];
 
 // 写接口（确认 / 撤销 / 录入）只改内存，跑完一条用例就得把内存退回种子状态，
 // 否则上一条确认过的比赛会让下一条拿到的榜单与台账都不一样
+// B3 之后登录页 / 首页还要读统一会话、学校范围与 S2 演示身份，一并复位。
 beforeEach(() => {
   facade.resetCache();
   calls.modals.length = 0;
   calls.modalConfirmed = true;
+  appSession.clear();
+  schoolSession.reset();
+  schoolMock.reset();
 });
 
 /** 每一条用例开始前把登录态清干净，避免互相串味 */
@@ -2566,75 +2601,86 @@ test('录入名次 —— 双打一行摊到两名成员（按队录入的落库
 });
 
 /* ============================================================
- * 登录 / 注册
+ * 登录 / 注册（B3：统一走学校维度 S2）
  * ============================================================ */
 
-test('登录页 —— 未登录时停在入口，提供登录与注册两个选择', () => {
+test('登录页 —— 未登录时停在入口，提供登录与注册两个选择', async () => {
   resetSession();
   const page = instantiate(loginConfig);
-  page.onLoad();
+  await page.onLoad();
 
   assert.strictEqual(page.data.step, 'entry');
   assert.strictEqual(page.data.existing.loggedIn, false);
   assert.strictEqual(page.data.isMock, true);
 });
 
-test('登录页 —— 已登录时显示账号卡片，可退出登录', () => {
+test('登录页 —— 已登录时显示账号卡片，可退出登录', async () => {
   resetSession();
   app.globalData.userInfo = fakeMember();
 
   const page = instantiate(loginConfig);
-  page.onLoad();
+  await page.onLoad();
   assert.strictEqual(page.data.existing.loggedIn, true);
-  assert.strictEqual(page.data.existing.nickName, '赵明宇');
+  // S2 权威会话覆盖旧快照：u06 的昵称按账号真实值校正
+  assert.strictEqual(page.data.existing.nickName, '明宇');
   assert.strictEqual(page.data.existing.statusLabel, '正常');
 
   page.onLogout();
   assert.strictEqual(app.globalData.userInfo, null, '退出登录要把全局登录态清掉');
   assert.strictEqual(page.data.existing.loggedIn, false);
+  assert.strictEqual(appSession.get(), null, '统一会话一并清掉');
 });
 
-test('登录页 —— 一键登录写入全局登录态并回到首页', async () => {
+test('登录页 —— 一键登录写入统一会话并回到首页', async () => {
   resetSession();
   const page = instantiate(loginConfig);
-  page.onLoad();
+  await page.onLoad();
 
   calls.tabSwitches.length = 0;
   await page.onLogin();
 
   assert.ok(app.globalData.userInfo, '登录态没有写进全局');
-  assert.strictEqual(app.globalData.userInfo._id, 'u06');
+  assert.strictEqual(app.globalData.userInfo._id, 'u06', '默认演示身份是 u06');
+  assert.strictEqual(appSession.get().session.user.userId, 'u06', '统一会话与兼容视图是同一个人');
   assert.strictEqual(page.data.submitting, false);
   assert.deepStrictEqual(calls.tabSwitches, ['/pages/index/index']);
 });
 
 test('登录页 —— 服务端没有这个账号时，引导去注册而不是让人干重试', async () => {
   resetSession();
+  // 换台设备最常见的情形：这个微信身份在服务端还没有账号
+  schoolIdentity.simulateNewWechat('no_account_1');
 
-  // 换台设备最常见的情形：这个 OpenID 在服务端还没有账号
-  const originalGetCurrentUser = mock.getCurrentUser;
-  mock.getCurrentUser = async () => undefined;
+  const page = instantiate(loginConfig);
+  await page.onLoad();
 
-  try {
-    const page = instantiate(loginConfig);
-    page.onLoad();
+  calls.tabSwitches.length = 0;
+  await page.onLogin();
 
-    calls.tabSwitches.length = 0;
-    await page.onLogin();
+  assert.strictEqual(page.data.submitting, false);
+  assert.strictEqual(app.globalData.userInfo, null, '没有账号就不该写入登录态');
+  assert.match(page.data.errorText, /新会员注册/, '要告诉他下一步该点哪里');
+  assert.deepStrictEqual(calls.tabSwitches, [], '没登录成功不能回首页');
+});
 
-    assert.strictEqual(page.data.submitting, false);
-    assert.strictEqual(app.globalData.userInfo, null, '没有账号就不该写入登录态');
-    assert.match(page.data.errorText, /新会员注册/, '要告诉他下一步该点哪里');
-    assert.deepStrictEqual(calls.tabSwitches, [], '没登录成功不能回首页');
-  } finally {
-    mock.getCurrentUser = originalGetCurrentUser;
-  }
+test('登录页 —— 演示「模拟新微信号」把登录态清掉并进入无账号引导', async () => {
+  resetSession();
+  app.globalData.userInfo = fakeMember();
+  const page = instantiate(loginConfig);
+  await page.onLoad();
+  assert.strictEqual(page.data.existing.loggedIn, true);
+
+  await page.onSimulateNewWechat();
+
+  assert.strictEqual(app.globalData.userInfo, null, '换微信身份等于换登录人');
+  assert.strictEqual(page.data.existing.loggedIn, false);
+  assert.strictEqual(page.data.step, 'entry');
 });
 
 test('登录页 —— 表单校验不过时不提交，并逐字段报错', async () => {
   resetSession();
   const page = instantiate(loginConfig);
-  page.onLoad();
+  await page.onLoad();
   page.onGoRegister();
 
   assert.strictEqual(page.data.step, 'profile');
@@ -2642,23 +2688,25 @@ test('登录页 —— 表单校验不过时不提交，并逐字段报错', asy
   // 注册要走数据源，onSubmit 因此是异步的——不等它跑完，断言会跑在错误之前
   await page.onSubmit();
 
-  // 一项都没填，四个必填字段都该有错误提示
+  // 一项都没填，四个必填字段都该有错误提示（学号 / 学院归学校身份，仍必填）
   assert.ok(page.data.errors.realName);
+  assert.ok(page.data.errors.gender);
   assert.ok(page.data.errors.studentId);
   assert.ok(page.data.errors.college);
-  assert.ok(page.data.errors.phone);
   assert.strictEqual(page.data.errorText, page.data.errors.realName);
   assert.strictEqual(page.data.step, 'profile', '校验失败不能跳到待审核');
   assert.strictEqual(app.globalData.userInfo, null, '校验失败不该写入登录态');
 });
 
-test('登录页 —— 填写完整后提交，申请落进数据源并停在待审核', async () => {
+test('登录页 —— 填写完整后提交，申请落进 S2 数据源并停在待审核', async () => {
   resetSession();
+  schoolIdentity.simulateNewWechat('newreg_1');
   const page = instantiate(loginConfig);
-  page.onLoad();
+  await page.onLoad();
   page.onGoRegister();
 
-  const membersBefore = (await facade.getMembers()).length;
+  // 旧栈申请台账的基线：S2 注册不该往里写任何东西（B3 §7.2.3）
+  const legacyApplicationsBefore = await facade.getMemberApplications();
 
   fillValidForm(page);
   await page.onSubmit();
@@ -2667,42 +2715,37 @@ test('登录页 —— 填写完整后提交，申请落进数据源并停在待
   assert.strictEqual(page.data.pending.statusLabel, '待审核');
   assert.strictEqual(page.data.pending.realName, '马小雨');
   assert.ok(page.data.pending.studentId);
-  assert.ok(page.data.errors.realName === undefined || page.data.errors.realName === '');
   assert.strictEqual(page.data.submitting, false, '提交完要把按钮解冻');
 
   assert.ok(app.globalData.userInfo, '注册后应把账号写进登录态');
-  assert.strictEqual(app.globalData.userInfo.status, 0, '新账号必须是待审核');
+  assert.strictEqual(app.globalData.userInfo.status, 0, '新账号的兼容状态是待审核');
   assert.strictEqual(page.data.existing.isPending, true);
 
-  // 光有登录态还不够：不落到数据源，审核页就永远看不到这条申请
-  const applications = await facade.getMemberApplications();
-  assert.ok(
-    applications.some((item) => item.realName === '马小雨' && item.status === USER_STATUS.PENDING),
-    '注册产生的申请应当进入待审列表'
-  );
-  assert.strictEqual(
-    (await facade.getMembers()).length,
-    membersBefore,
-    '还没通过审核的人不能被当成正式会员'
-  );
+  // 申请落在 S2：同一微信身份读得到自己的待审核学校身份
+  const session = await schoolIdentity.forSchoolIdentity({ schoolId: 'muc', association: 'pkb' })
+    .getSchoolIdentitySession();
+  assert.strictEqual(session.account.status, 'pending', '学校身份申请应落在 S2');
+  assert.strictEqual(session.account.studentId, '2023001234');
+  assert.ok(session.user.userId, '平台账号已开通');
+
+  // 旧栈申请台账一条都没多：不向旧 registerMember 再写账号
+  const legacyApplicationsAfter = await facade.getMemberApplications();
+  assert.strictEqual(legacyApplicationsAfter.length, legacyApplicationsBefore.length, '旧栈台账不应被 S2 注册污染');
 });
 
-test('登录页 —— 已经有账号的人再提交，结果页不说「申请已提交」', () => {
+test('登录页 —— 已经有账号的人再提交，结果页不说「申请已提交」', async () => {
   resetSession();
+  // 默认演示身份 u06 已有账号且学校身份正常：注册入口原样返回，不改写实名
   const page = instantiate(loginConfig);
-  page.onLoad();
-
-  // 同一个 OpenID 只有一条账号，重复注册时服务端把现有账号原样返回
-  page.showPending(fakeMember({ _id: 'u01' }), {
-    isPending: false,
-    isActive: true,
-    statusLabel: '正常',
-    notice: '',
-  });
+  await page.onLoad();
+  page.onGoRegister();
+  fillValidForm(page);
+  await page.onSubmit();
 
   assert.strictEqual(page.data.pending.title, '你已经是会员了');
   assert.strictEqual(page.data.pending.actionLabel, '进入首页');
   assert.strictEqual(page.data.pending.statusClass, 'tag-success', '已经是正常会员，不能再挂黄色的待审核标签');
+  assert.strictEqual(app.globalData.userInfo._id, 'u06', '登录态是原有账号');
 });
 
 test('登录页 —— 真的待审核时结果页仍是「申请已提交」', () => {
@@ -2710,22 +2753,57 @@ test('登录页 —— 真的待审核时结果页仍是「申请已提交」', 
   const page = instantiate(loginConfig);
   page.onLoad();
 
-  page.showPending(fakeMember({ _id: 'local_1', status: 0 }), {
-    isPending: true,
-    isActive: false,
-    statusLabel: '待审核',
-    notice: '实名信息正在审核，通过后即可录入比赛成绩',
+  const described = page.describe({
+    session: {
+      user: { userId: 'acc_x', nickName: '马小雨', realName: '马小雨', gender: 'M', avatarUrl: '',
+        primarySchoolId: 'muc', platformStatus: 'active' },
+      account: { status: 'pending', studentId: '2023001234', collegeId: 'c01' },
+      permission: '', permissionLabel: '会员', isPlatformAdmin: false,
+    },
+    profile: null,
+    collegeName: '',
   });
+  page.showPending(described);
 
   assert.strictEqual(page.data.pending.title, '申请已提交');
   assert.strictEqual(page.data.pending.actionLabel, '先随便逛逛');
   assert.strictEqual(page.data.pending.statusClass, 'tag-warning');
 });
 
+test('登录页 —— 已驳回的会员登录时明确告知，并给重新申请入口', async () => {
+  resetSession();
+  // 造一个「申请被驳回」的微信身份：先注册申请，再由管理员驳回
+  schoolIdentity.simulateNewWechat('rejected_1');
+  const page = instantiate(loginConfig);
+  await page.onLoad();
+  page.onGoRegister();
+  fillValidForm(page);
+  await page.onSubmit();
+  assert.strictEqual(page.data.pending.statusLabel, '待审核');
+
+  schoolMock.setDemoActor('demo_muc_admin');
+  const adminApi = schoolIdentity.forSchoolIdentity({ schoolId: 'muc', association: 'pkb' });
+  const applications = await adminApi.getSchoolApplications();
+  const row = applications.applications[0];
+  await adminApi.reviewSchoolMembership({ userId: row.userId, decision: 'reject', revision: row.revision, reason: '请核实学号' });
+
+  // 切回被驳回的微信身份重新进入登录页
+  schoolIdentity.simulateNewWechat('rejected_1');
+  const again = instantiate(loginConfig);
+  await again.onLoad();
+  await again.onLogin();
+
+  assert.strictEqual(again.data.step, 'pending');
+  assert.strictEqual(again.data.pending.title, '申请已被驳回');
+  assert.strictEqual(again.data.existing.isRejected, true);
+  assert.strictEqual(again.data.existing.needsApplication, true);
+});
+
 test('登录页 —— 待审核那一步也能退出登录，并退回入口', async () => {
   resetSession();
+  schoolIdentity.simulateNewWechat('newreg_2');
   const page = instantiate(loginConfig);
-  page.onLoad();
+  await page.onLoad();
   page.onGoRegister();
   fillValidForm(page);
   await page.onSubmit();
@@ -2741,7 +2819,7 @@ test('登录页 —— 待审核那一步也能退出登录，并退回入口', 
 test('登录页 —— 输入或选择学院会把该项的旧错误清掉', async () => {
   resetSession();
   const page = instantiate(loginConfig);
-  page.onLoad();
+  await page.onLoad();
   page.onGoRegister();
   await page.onSubmit();
   assert.ok(page.data.errors.realName);
@@ -2752,17 +2830,18 @@ test('登录页 —— 输入或选择学院会把该项的旧错误清掉', asy
 
   page.onPickCollege({ detail: { value: 0 } });
   assert.strictEqual(page.data.errors.college, '');
-  assert.ok(page.data.form.college);
+  assert.ok(page.data.form.collegeId);
+  assert.ok(page.data.form.college, '学院全名跟着目录一起填上');
 });
 
-/** 往注册表单里填一份合法数据 */
+/** 往注册表单里填一份合法数据（学院候选来自 S2 学校目录） */
 function fillValidForm(page) {
-  const values = { realName: '马小雨', studentId: '2023001234', phone: '13800138000' };
+  const values = { realName: '马小雨', studentId: '2023001234' };
   for (const [field, value] of Object.entries(values)) {
     page.onInput({ currentTarget: { dataset: { field } }, detail: { value } });
   }
   page.onPickGender({ detail: { value: 0 } }); // 下拉第 1 项 = 男
-  page.onPickCollege({ detail: { value: 0 } });
+  page.onPickCollege({ detail: { value: 0 } }); // 目录第一所学院
 }
 
 /* ============================================================
