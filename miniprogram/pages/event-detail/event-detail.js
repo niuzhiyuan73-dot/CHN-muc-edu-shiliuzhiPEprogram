@@ -425,7 +425,7 @@ Page({
   onRecordMatch(event) {
     const matchId = event.currentTarget.dataset.matchId;
     if (!matchId) return;
-    wx.navigateTo({ url: `/pages/match-entry/match-entry?matchId=${matchId}` });
+    wx.navigateTo({ url: `/pages/live-score/live-score?matchId=${encodeURIComponent(matchId)}` });
   },
 
   /** 确认一场已录分的比赛，成绩随即计入等级分 */
@@ -543,7 +543,7 @@ Page({
 
   /** 进名次录入页 */
   onOpenPlacement() {
-    wx.navigateTo({ url: `/pages/event-placement/event-placement?eventId=${this.eventId}` });
+    wx.navigateTo({ url: `/pages/event-placement/event-placement?eventId=${encodeURIComponent(this.eventId)}` });
   },
 
   /** 点名单上的人，去看他的主页 */

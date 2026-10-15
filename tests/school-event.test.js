@@ -54,6 +54,48 @@ const valid = (extra = {}) => ({
   startTime: startAt, courtCount: 2, ...extra,
 });
 
+test('列表分页：超过 50 场可读完，不重复、不跨学校', async () => {
+  const repo = fixture();
+  for (let i = 0; i < 52; i += 1) await publish(repo, `page_${i}`);
+  const first = await call(repo, 'listSchoolEvents', { limit: 50 });
+  const second = await call(repo, 'listSchoolEvents', { limit: 50, offset: first.nextOffset });
+  assert.equal(first.events.length, 50);
+  assert.equal(first.hasMore, true);
+  assert.equal(second.events.length, 2);
+  assert.equal(second.hasMore, false);
+  assert.equal(new Set([...first.events, ...second.events].map(row => row.eventId)).size, 52);
+  const other = await call(repo, 'listSchoolEvents', {}, { schoolId: 'buaa', actor: 'demo_buaa_admin' });
+  assert.equal(other.events.length, 0);
+});
+
+test('置顶：管理员可改且重试幂等，会员及跨范围请求不能改', async () => {
+  const repo = fixture();
+  const event = await publish(repo, 'pin');
+  const payload = { eventId: event.eventId, pinned: true };
+  assert.equal((await call(repo, 'setSchoolEventPinned', payload, { actor: 'demo_muc_member' })).ok, false);
+  assert.equal((await call(repo, 'setSchoolEventPinned', payload, { actor: 'demo_platform_admin', schoolId: 'buaa' })).ok, false);
+  assert.equal((await call(repo, 'setSchoolEventPinned', payload, { actor: 'demo_platform_admin', association: 'tt' })).ok, false);
+  assert.equal((await call(repo, 'setSchoolEventPinned', { ...payload, pinned: 'true' })).ok, false);
+  assert.equal((await call(repo, 'setSchoolEventPinned', payload)).event.pinned, true);
+  const stored = await repo.events.getById(event.eventId);
+  await call(repo, 'setSchoolEventPinned', payload);
+  assert.deepEqual(await repo.events.getById(event.eventId), stored);
+  assert.equal((await call(repo, 'setSchoolEventPinned', { ...payload, pinned: false })).event.pinned, false);
+});
+
+test('置顶：审计失败会回滚赛事修改', async () => {
+  const repo = fixture();
+  const event = await publish(repo, 'pin_rollback');
+  const before = await repo.events.getById(event.eventId);
+  const transaction = repo.transaction.bind(repo);
+  repo.transaction = work => transaction(tx => {
+    tx.audit.append = async () => { throw new Error('audit unavailable'); };
+    return work(tx);
+  });
+  await assert.rejects(call(repo, 'setSchoolEventPinned', { eventId: event.eventId, pinned: true }), /audit unavailable/);
+  assert.deepEqual(await repo.events.getById(event.eventId), before);
+});
+
 async function publish(repo, token, extra = {}, opts = {}) {
   const result = await call(repo, 'publishSchoolEvent', { requestId: token, ...valid(extra) }, opts);
   assert.equal(result.ok, true, result.message);

@@ -182,14 +182,16 @@ async function trainingFactsOf(ctx) {
  */
 async function replayScope(ctx) {
   const season = await loadSeason(ctx);
-  const [members, matches, trainingPointFacts] = await Promise.all([
+  const [members, matches, trainingPointFacts, events] = await Promise.all([
     replayMembersOf(ctx),
     replayMatchesOf(ctx, season),
     trainingFactsOf(ctx),
+    ctx.repo.forScope(ctx).events.list(),
   ]);
   const replayed = replaySeason({
     members,
     matches,
+    events,
     options: {
       // 锚点由赛季文档钉死；尚未定下时传 null，回放退回「流水里最早一场」。
       seasonStart: season.anchorTime,

@@ -4,7 +4,7 @@
  * 原来是一个独立的 tabBar 页面。中间三个页签收进「协会工作台」之后，这一页
  * 变成一个自定义组件，由工作台按当前协会挂载。
  * 面板只做四件事：渲染、点人跳转、点赛事跳详情、按名字筛选积分榜。
- * 取数与整形全在 services/events-view.js 里。
+ * 取数与整形全在 services/school-events-panel-view.js 里。
  *
  * 【这一面板现在有什么】
  *   1. 赛事列表：近期有哪些赛事、我报了哪一场，是赛事闭环的入口；
@@ -12,25 +12,19 @@
  *      只展示前 10 名，其余靠搜索框定位。
  * 积分榜是「积分」这把尺子的展示面；「等级分」那把尺子是工作台里的「排行榜」页签。
  *
- * 【登录态为什么由面板传进去】
- * mock 的 getCurrentUser() 永远答 u06。若让视图模型自己去问，一个没登录
- * 的访客也会被当成 u06，凭空拿到报名与管理权限。所以这里把 getApp() 里的
- * 登录态明确传下去，传 null 就是访客。
+ * 身份与权限来自 S2 会话及读端能力，列表、积分和置顶使用相同学校 / 协会范围。
  * ============================================================
  */
 
-const { loadEventsView } = require('../../services/events-view.js');
+const { loadSchoolEventsPanelView } = require('../../services/school-events-panel-view.js');
 // 积分榜的搜索框与排行榜页是同一套逻辑，直接复用它的纯函数，
 // 免得「怎么算命中、怎么拼文案」在两处各写一份、改一处漏一处。
 const { describeSearch } = require('../../services/rank-view.js');
 const {
-  setEventPinned,
   isMock,
-  isMockNow,
 } = require('../../services/index.js');
 const { currentThemeClass } = require('../../services/branding.js');
-// 学院赛已迁到学校维度：列表行取自 S2（见 events-view.loadEventsView），置顶就必须
-// 写回同一份 S2 台账，否则「列表按 S2 读、置顶按旧栈写」，点了也没反应。
+// 两类赛事的读取与置顶均走同一 S2 范围。
 const schoolSession = require('../../services/school-session.js');
 const associationScope = require('../../services/association-scope.js');
 const space = require('../../services/association-space.js');
@@ -49,7 +43,7 @@ Component({
     error: '',
     /** 当前协会的主题类，挂在面板根节点上 */
     themeClass: '',
-    // 视图模型，形状见 services/events-view.js。
+    // 视图模型，形状见 services/school-events-panel-view.js。
     // 初值给空对象而不是 null，WXML 里的 {{view.xxx}} 才不会报错。
     view: {},
     /** 开发期在页脚标注数据来源 */
@@ -116,43 +110,17 @@ Component({
       return this.refresh().then(() => wx.stopPullDownRefresh());
     },
 
-    /** 读取全局登录态。app 可能还没初始化好，逐层兜底 */
-    currentUser() {
-      const app = getApp();
-      if (!app) return null;
-      if (typeof app.getUserInfo === 'function') return app.getUserInfo();
-      return app.globalData ? app.globalData.userInfo : null;
-    },
-
     /**
      * 重新装载整页数据。
      * @returns {Promise<void>}
      */
     async refresh() {
+      const scope = { schoolId: schoolSession.getSchoolId() || LEGACY_SCHOOL_ID, association: associationScope.getAssociation() };
+      this.scope = scope;
+      const request = this.loadRequest = (this.loadRequest || 0) + 1;
       try {
-        // 切到模拟学校（北航）时展示该校当前协会的演示赛事与积分榜：整页只读，发布 /
-        // 置顶等入口一概不给。未开放学校维度的情况（云端数据源）回落到真实视图。
-        const session = require('../../services/school-session.js');
-        const association = require('../../services/association-scope.js').getAssociation();
-        const demo = isMockNow()
-          ? require('../../services/school-demo.js').schoolEvents(session.getSchoolId(), { association })
-          : null;
-        if (demo) {
-          this.loaded = true;
-          this.view = demo;
-          this.setData({
-            loading: false,
-            error: '',
-            view: demo,
-            demoSchool: true,
-            demoSchoolName: demo.schoolName,
-            themeClass: currentThemeClass(),
-          });
-          this.applyKeyword(this.data.keyword);
-          return;
-        }
-
-        const view = await loadEventsView({ user: this.currentUser(), isMock });
+        const view = await loadSchoolEventsPanelView(scope);
+        if (request !== this.loadRequest) return;
         this.loaded = true;
         // 整个视图模型另存一份。里面的完整榜 allRows 不参与渲染，
         // 只当筛选的数据源，所以不用塞进 data——省一次 setData 的开销。
@@ -168,13 +136,16 @@ Component({
         // 重新装载后保留搜索词，重新算一遍要显示的行
         this.applyKeyword(this.data.keyword);
       } catch (err) {
+        if (request !== this.loadRequest) return;
         console.error('[events] 加载失败', err);
         this.loaded = true;
+        this.view = {};
         this.setData({
           loading: false,
           demoSchool: false,
           demoSchoolName: '',
-          error: '赛事页加载失败，请下拉重试',
+          view: {}, rows: [], empty: true, playerCountText: '',
+          error: err.message || '赛事页加载失败，请下拉重试',
           themeClass: currentThemeClass(),
         });
       }
@@ -223,25 +194,20 @@ Component({
     },
 
     /**
-     * 置顶 / 取消置顶的共用流程：判登录 → 调接口 → 提示 → 整页重载。
+     * 置顶 / 取消置顶的共用流程：调用 S2 接口判权 → 提示 → 整页重载。
      * 两个列表共用一套，避免「赛事能置顶、学院赛漏了登录判断」这类偏差。
      *
-     * @param {(actorId:string) => Promise<Object>} write 写接口
+     * @param {() => Promise<Object>} write 写接口
      * @param {string} successText 成功后的提示
      * @returns {Promise<void>}
      */
     async runPin(write, successText) {
       if (this.data.pinning) return undefined;
 
-      const user = this.currentUser();
-      if (!user) {
-        this.showToast('请先登录后再操作');
-        return undefined;
-      }
-
       this.setData({ pinning: true });
-      const result = await write(user._id);
-      this.setData({ pinning: false });
+      let result;
+      try { result = await write(); } catch (error) { result = { ok: false, message: error.message || '操作失败，请重试' }; }
+      finally { this.setData({ pinning: false }); }
 
       if (!result || !result.ok) {
         this.showToast((result && (result.firstError || result.message)) || '操作失败');
@@ -258,7 +224,7 @@ Component({
       if (!eventId) return undefined;
       const next = !pinned;
       return this.runPin(
-        (actorId) => setEventPinned(eventId, next, actorId),
+        () => space.forScope(this.scope).setSchoolEventPinned({ eventId, pinned: next }),
         next ? '已置顶' : '已取消置顶'
       );
     },
@@ -266,35 +232,18 @@ Component({
     /**
      * 管理员置顶 / 取消置顶一场学院赛。
      *
-     * 与个人赛不同，这一步走学校维度：列表已按 S2 读，置顶也得写回 S2 的学院赛
+     * 与个人赛一致，这一步走学校维度：列表已按 S2 读，置顶也得写回 S2 的学院赛
      * 主记录（见 school-college-service.setCollegeEventPinned）。权限与登录都由
      * 服务端判，未登录 / 无管理权时读端返回 ok:false，页面只负责把话说清楚。
      *
      * @param {Object} event currentTarget.dataset = { eventId, pinned }
      * @returns {Promise<void>}
      */
-    async onToggleCollegePin(event) {
+    onToggleCollegePin(event) {
       const { eventId, pinned } = event.currentTarget.dataset;
-      if (!eventId) return undefined;
-      if (this.data.pinning) return undefined;
-
-      const next = !pinned;
-      const scope = {
-        schoolId: schoolSession.getSchoolId() || LEGACY_SCHOOL_ID,
-        association: associationScope.getAssociation(),
-      };
-
-      this.setData({ pinning: true });
-      const result = await space.forScope(scope).setCollegeEventPinned({ eventId, pinned: next });
-      this.setData({ pinning: false });
-
-      if (!result || result.ok === false) {
-        this.showToast((result && (result.firstError || result.message)) || '操作失败');
-        return undefined;
-      }
-
-      this.showToast(next ? '已置顶' : '已取消置顶', 'success');
-      return this.refresh();
+      if (!eventId) return;
+      return this.runPin(() => space.forScope(this.scope).setCollegeEventPinned({ eventId, pinned: !pinned }),
+        pinned ? '已取消置顶' : '已置顶');
     },
 
     /** 进「全部赛事」，看没被截断的完整列表 */
@@ -326,7 +275,7 @@ Component({
       const eventId = event.currentTarget.dataset.eventId;
       if (!eventId) return;
 
-      wx.navigateTo({ url: `/pages/event-detail/event-detail?eventId=${eventId}` });
+      wx.navigateTo({ url: `/pages/event-detail/event-detail?eventId=${encodeURIComponent(eventId)}` });
     },
 
     /** 管理员发布赛事。无发布权时按钮根本不会渲染出来 */

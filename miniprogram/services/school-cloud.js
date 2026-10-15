@@ -62,6 +62,7 @@ function forAssociationSpace(input) {
     rejectTrainingCheckIn: payload => request('rejectTrainingCheckIn', payload),
     revokeTrainingCheckIn: payload => request('revokeTrainingCheckIn', payload),
     listSchoolEvents: payload => request('listSchoolEvents', payload),
+    setSchoolEventPinned: payload => request('setSchoolEventPinned', payload),
     getSchoolEvent: payload => request('getSchoolEvent', payload),
     publishSchoolEvent: payload => request('publishSchoolEvent', payload),
     signUpSchoolEvent: payload => request('signUpSchoolEvent', payload),

@@ -438,10 +438,20 @@ async function loadSchoolEventListView(options = {}) {
   const { schoolId, association, actorId = null, limit } = options;
   const api = space.forScope({ schoolId, association });
   const payload = Number.isInteger(limit) && limit > 0 ? { limit } : {};
-  const dto = await api.listSchoolEvents(payload);
+  let dto = await api.listSchoolEvents(limit === Infinity ? { limit: 50, offset: 0 } : payload);
+  if (!dto || !dto.ok) throw new Error((dto && dto.message) || '赛事列表读取失败');
+  const summaries = [...asArray(dto.events)];
+  let offset = 0;
+  while (limit === Infinity && dto.hasMore) {
+    if (!(dto.nextOffset > offset)) throw new Error('赛事列表分页没有前进');
+    offset = dto.nextOffset;
+    dto = await api.listSchoolEvents({ limit: 50, offset });
+    if (!dto || !dto.ok) throw new Error((dto && dto.message) || '赛事列表读取失败');
+    summaries.push(...asArray(dto.events));
+  }
 
   const canManage = Boolean(dto && dto.canManage);
-  const events = asArray(dto && dto.events).map(summary => buildListRow(summary, { actorId, canManage }));
+  const events = summaries.map(summary => buildListRow(summary, { actorId, canManage }));
   return {
     events,
     hasEvents: events.length > 0,

@@ -231,13 +231,33 @@ async function listSchoolEvents(payload = {}, ctx) {
   });
   const limit = Number.isInteger(payload.limit) && payload.limit > 0
     ? Math.min(payload.limit, EVENT_LIST_MAX) : EVENT_LIST_LIMIT;
-  const page = sorted.slice(0, limit);
+  const offset = Number.isInteger(payload.offset) && payload.offset >= 0 ? payload.offset : 0;
+  const page = sorted.slice(offset, offset + limit);
   return ok({
     ok: true, canManage,
-    hasMore: sorted.length > page.length,
+    hasMore: sorted.length > offset + page.length,
+    nextOffset: offset + page.length,
     events: page.map(doc => eventSummary(doc, signupOf(signups.filter(s => s.eventId === doc._id), myId))),
     message: '',
   });
+}
+
+async function setSchoolEventPinned(payload = {}, ctx) {
+  if (typeof payload.eventId !== 'string' || !payload.eventId) return ok(refused('缺少赛事编号'));
+  if (typeof payload.pinned !== 'boolean') return ok(refused('置顶状态必须为布尔值'));
+  return ok(await ctx.repo.transaction(async tx => {
+    const fresh = await freshContext(tx, ctx);
+    if (!canManageAssociationSpace(fresh)) return refused('没有管理赛事的权限');
+    const doc = await tx.events.getById(payload.eventId);
+    if (!isEventDoc(doc) || !belongsToSchoolScope(doc, fresh)) return refused('赛事不存在');
+    if (Boolean(doc.pinned) === payload.pinned) return { ok: true, event: eventSummary(doc), message: '' };
+    const next = { ...doc, pinned: payload.pinned, revision: Number(doc.revision || 1) + 1, updatedAt: iso(fresh.now) };
+    await tx.events.set(doc._id, next);
+    await tx.audit.append({ _id: eventAuditKey(doc._id, 'setSchoolEventPinned', next.revision),
+      action: 'setSchoolEventPinned', schoolId: fresh.schoolId, association: fresh.association,
+      actorId: fresh.actorId, eventId: doc._id, pinned: next.pinned, at: iso(fresh.now) });
+    return { ok: true, event: eventSummary(next), message: '' };
+  }));
 }
 
 async function getSchoolEvent(payload = {}, ctx) {
@@ -699,7 +719,7 @@ async function advanceSchoolEvent(ctx, eventId) {
 module.exports = {
   EVENT_LIST_LIMIT, EVENT_LIST_MAX,
   isEventDoc, eventSummary, activeSignupCount,
-  listSchoolEvents, getSchoolEvent, listSchoolEventSignups, publishSchoolEvent,
+  listSchoolEvents, getSchoolEvent, listSchoolEventSignups, publishSchoolEvent, setSchoolEventPinned,
   signUpSchoolEvent, cancelSchoolEventSignup,
   startSchoolEvent, drawSchoolEvent, checkInSchoolEvent, finishSchoolEvent,
   // 内部动作：供 school-match-service 在 confirm / forfeit 后补排下一轮。

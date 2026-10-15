@@ -332,6 +332,15 @@ test('详情：赛事不存在时给出与旧栈同形的空视图', async () =>
  * 纯适配单测
  * ============================================================ */
 
+test('全量列表装载器：连续取完超过 50 场的 S2 分页', async () => {
+  const repo = fixture();
+  const admin = spaceClient(repo);
+  for (let i = 0; i < 52; i += 1) await publish(admin, `list_${i}`);
+  const result = await asSpace(repo, {}, () => view.loadSchoolEventListView({ schoolId: 'muc', association: 'pkb', limit: Infinity }));
+  assert.equal(result.events.length, 52);
+  assert.equal(new Set(result.events.map(row => row.id)).size, 52);
+});
+
 test('纯适配：DTO 形状翻译与权限注入', () => {
   const event = view.toLegacyEvent({ eventId: 'e1', isDoubles: true, drawn: true });
   assert.equal(event._id, 'e1');

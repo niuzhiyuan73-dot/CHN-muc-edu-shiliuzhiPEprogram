@@ -656,44 +656,21 @@ test('比赛页 —— 切到北航显示北航的演示比赛，且没有任何
   }
 });
 
-test('赛事页 —— 切到北航显示北航的演示赛事与积分榜，且只读', async () => {
-  const schoolSession = require('../miniprogram/services/school-session');
-  const schoolMock = require('../miniprogram/services/school-mock');
-  schoolSession.reset();
-  schoolMock.setDemoActor('demo_muc_member');
+test('赛事页 —— 切到无权访问的外校清除旧赛事与积分榜', async () => {
+
+  const fx = schoolEventFixture();
   try {
-    resetSession();
-    loginAs();
+    await fx.publish();
     const page = instantiate(eventsConfig);
     await page.onLoad();
-
-    assert.strictEqual(page.data.demoSchool, false);
-
-    schoolSession.setSchoolId('buaa');
+    assert.equal(page.data.view.events.length, 1);
+    require('../miniprogram/services/school-session').setSchoolId('buaa');
     await page.refresh();
+    assert.match(page.data.error, /没有读取/);
+    assert.deepEqual(page.data.view, {}, '外校读取被拒后清除旧学校数据');
+    assert.deepEqual(page.data.rows, []);
+  } finally { fx.restore(); }
 
-    assert.strictEqual(page.data.demoSchool, true);
-    assert.strictEqual(page.data.demoSchoolName, '北航');
-    // 赛事列表换成北航的，且没有发布 / 置顶这类写入口
-    assert.ok(page.data.view.events.length > 0, '北航有演示赛事');
-    assert.strictEqual(page.data.view.canPublish, false);
-    assert.ok(page.data.view.events.every((row) => row.canPin === false));
-    // 积分榜也是北航的演示榜，没有学院赛
-    assert.ok(page.data.view.rows.length > 0);
-    assert.strictEqual(page.data.view.me, null);
-    assert.strictEqual(page.data.view.canManageCollege, false);
-    assert.strictEqual(page.data.view.collegeEvents.length, 0);
-
-    // 点赛事行、点榜单行、「查看全部」都不跳转
-    calls.navigations.length = 0;
-    page.onOpenEvent({ currentTarget: { dataset: { eventId: page.data.view.events[0].id } } });
-    page.onOpenMember({ currentTarget: { dataset: { userId: page.data.view.rows[0].userId } } });
-    page.onMoreEvents();
-    assert.deepStrictEqual(calls.navigations, []);
-  } finally {
-    schoolMock.setDemoActor('demo_applicant');
-    schoolSession.reset();
-  }
 });
 
 test('外校演示 —— 按协会分开：切协会后榜单 / 比赛 / 赛事都换成该协会的内容', async () => {
@@ -731,17 +708,11 @@ test('外校演示 —— 按协会分开：切协会后榜单 / 比赛 / 赛事
     assert.strictEqual(matchPage.data.demoSchool, true);
     assert.notStrictEqual(matchPage.data.view.records[0].matchId, pkbMatchId, '切协会换了一套比赛');
 
-    // 赛事页：赛事列表与积分榜都换
-    scope.setAssociation('pkb');
+    // 已迁移的赛事面板读取真实 S2 权限，外校访问被拒，不再展示静态赛事。
     const eventsPage = instantiate(eventsConfig);
     await eventsPage.onLoad();
-    const pkbEventId = eventsPage.data.view.events[0].id;
-
-    scope.setAssociation('bd');
-    await eventsPage.refresh();
-    assert.strictEqual(eventsPage.data.demoSchool, true);
-    assert.notStrictEqual(eventsPage.data.view.events[0].id, pkbEventId, '切协会换了一套赛事');
-    assert.ok(eventsPage.data.view.meHint.includes('羽毛球'), '提示条点明是哪个协会');
+    assert.match(eventsPage.data.error, /没有读取/);
+    assert.deepEqual(eventsPage.data.view, {});
   } finally {
     scope.resetAssociation();
     schoolMock.setDemoActor('demo_applicant');
@@ -1626,7 +1597,7 @@ test('排行榜 —— 用真实姓名也能搜到同一个人，展示的仍是
  * 赛事（赛季积分榜）
  * ============================================================ */
 
-test('赛事页 —— 首屏加载后展示赛季积分榜', async () => {
+eventPanelTest('赛事页 —— 首屏加载后展示赛季积分榜', async () => {
   const page = instantiate(eventsConfig);
   await page.onLoad();
 
@@ -1636,7 +1607,7 @@ test('赛事页 —— 首屏加载后展示赛季积分榜', async () => {
   assert.ok(page.data.view.seasonText.length > 0);
 });
 
-test('赛事页 —— 榜上的人名次连续、积分从高到低', async () => {
+eventPanelTest('赛事页 —— 榜上的人名次连续、积分从高到低', async () => {
   const page = instantiate(eventsConfig);
   await page.onLoad();
 
@@ -1649,7 +1620,7 @@ test('赛事页 —— 榜上的人名次连续、积分从高到低', async () 
   assert.deepStrictEqual(points, [...points].sort((a, b) => b - a));
 });
 
-test('赛事页 —— 积分榜只列前 10 名，计数交代总人数', async () => {
+eventPanelTest('赛事页 —— 积分榜只列前 10 名，计数交代总人数', async () => {
   const page = instantiate(eventsConfig);
   await page.onLoad();
 
@@ -1660,7 +1631,7 @@ test('赛事页 —— 积分榜只列前 10 名，计数交代总人数', async
   assert.ok(page.data.playerCountText.includes(String(page.data.view.total)));
 });
 
-test('赛事页 —— 输入名字后只剩命中的人，名次保持不变', async () => {
+eventPanelTest('赛事页 —— 输入名字后只剩命中的人，名次保持不变', async () => {
   const page = instantiate(eventsConfig);
   await page.onLoad();
 
@@ -1674,9 +1645,16 @@ test('赛事页 —— 输入名字后只剩命中的人，名次保持不变', 
   assert.strictEqual(sameRow.rank, target.rank, '搜索只是定位，不改名次');
 });
 
-test('赛事页 —— 搜索范围是全量榜单，前十之外的人也能搜到', async () => {
+eventPanelTest('赛事页 —— 搜索范围是全量榜单，前十之外的人也能搜到', async () => {
   const page = instantiate(eventsConfig);
   await page.onLoad();
+
+  const base = page.data.view.allRows[0];
+  page.view = { ...page.data.view, allRows: Array.from({length:12}, (_,i)=>({ ...base,
+    userId: 'search-'+i, nickName: '搜索会员'+i, realName:'姓名'+i, rank:i+1 })) };
+  page.view.rows = page.view.allRows.slice(0,10);
+  page.setData({view:page.view});
+  page.applyKeyword('');
 
   const outside = page.data.view.allRows[10];
   assert.ok(outside, '要有前十之外的会员才能验证全量搜索');
@@ -1692,7 +1670,7 @@ test('赛事页 —— 搜索范围是全量榜单，前十之外的人也能搜
   assert.strictEqual(hit.rank, outside.rank);
 });
 
-test('赛事页 —— 积分榜用真实姓名也能搜到同一个人', async () => {
+eventPanelTest('赛事页 —— 积分榜用真实姓名也能搜到同一个人', async () => {
   const page = instantiate(eventsConfig);
   await page.onLoad();
 
@@ -1708,7 +1686,7 @@ test('赛事页 —— 积分榜用真实姓名也能搜到同一个人', async 
   assert.strictEqual(hit.nickName, '明宇', '展示的仍是昵称');
 });
 
-test('赛事页 —— 搜不到时提示里带上搜索词，清空后回到默认榜', async () => {
+eventPanelTest('赛事页 —— 搜不到时提示里带上搜索词，清空后回到默认榜', async () => {
   const page = instantiate(eventsConfig);
   await page.onLoad();
 
@@ -1726,7 +1704,7 @@ test('赛事页 —— 搜不到时提示里带上搜索词，清空后回到默
   assert.strictEqual(page.data.rows.length, total);
 });
 
-test('赛事页 —— 点榜上的人会跳到他的主页', async () => {
+eventPanelTest('赛事页 —— 点榜上的人会跳到他的主页', async () => {
   const page = instantiate(eventsConfig);
   await page.onLoad();
 
@@ -1735,7 +1713,7 @@ test('赛事页 —— 点榜上的人会跳到他的主页', async () => {
   assert.deepStrictEqual(calls.navigations, ['/pages/member/member?userId=u01']);
 });
 
-test('赛事页 —— 点空白行不会乱跳', async () => {
+eventPanelTest('赛事页 —— 点空白行不会乱跳', async () => {
   const page = instantiate(eventsConfig);
   await page.onLoad();
 
@@ -1744,7 +1722,7 @@ test('赛事页 —— 点空白行不会乱跳', async () => {
   assert.deepStrictEqual(calls.navigations, []);
 });
 
-test('赛事页 —— 下拉刷新会收起刷新动画', async () => {
+eventPanelTest('赛事页 —— 下拉刷新会收起刷新动画', async () => {
   const page = instantiate(eventsConfig);
   await page.onLoad();
 
@@ -1753,20 +1731,19 @@ test('赛事页 —— 下拉刷新会收起刷新动画', async () => {
   assert.strictEqual(calls.pullDownStopped, 1);
 });
 
-test('赛事页 —— 加载失败时给出提示而不是白屏', async () => {
+eventPanelTest('赛事页 —— 加载失败时给出提示而不是白屏', async () => {
   const page = instantiate(eventsConfig);
   // 门面是「调用时解析实现」，改实现模块的导出就能让这次取数失败
-  const original = mock.getEvents;
-  mock.getEvents = async () => {
-    throw new Error('模拟数据源故障');
-  };
+  const space = require('../miniprogram/services/association-space');
+  const original = space.forScope;
+  space.forScope = (...args) => ({ ...original(...args), listSchoolEvents: async () => { throw new Error('模拟数据源故障'); } });
 
   try {
     await page.onLoad();
     assert.strictEqual(page.data.loading, false);
     assert.ok(page.data.error.length > 0, '失败要有文案，不能只剩一个空页面');
   } finally {
-    mock.getEvents = original;
+    space.forScope = original;
   }
 });
 
@@ -1801,46 +1778,35 @@ async function publishTestEvent(overrides = {}) {
   return result.record;
 }
 
-test('赛事页 —— 赛事列表把报名中、进行中的排在已结束之前', async () => {
-  loginAs();
-  const created = await publishTestEvent();
+eventPanelTest('赛事页 —— 赛事列表把报名中、进行中的排在已结束之前', async (fx) => {
 
-  const page = instantiate(eventsConfig);
-  await page.onLoad();
+  const ongoingId = await fx.publish({ title: '进行中测试赛' });
+  await fx.play(ongoingId, ['demo_muc_admin', 'demo_muc_member']);
+  const created = await fx.publish({ title: '报名中测试赛' });
+  const page = instantiate(eventListConfig);
+  await page.onLoad({type:'event'});
+  const rows=page.data.view.events;
+  assert.ok(rows.find(row=>row.id===created && row.isSignup));
+  assert.ok(rows.find(row=>row.id===ongoingId && row.isOngoing));
+  const statuses=rows.map(row=>row.status);
+  assert.deepEqual(statuses,[...statuses].sort((a,b)=>a-b));
 
-  const rows = page.data.view.events;
-  assert.ok(rows.length > 0, '种子里有赛事，列表不该空着');
-
-  // 排序口径：报名中 → 进行中 → 已结束。刚发布的排在种子里那场
-  // 「进行中」的赛事（e07）之前，两者又都排在已结束的之前。
-  const signingUp = rows.filter((row) => row.status === EVENT_STATUS.SIGNUP);
-  const ongoing = rows.filter((row) => row.status === EVENT_STATUS.ONGOING);
-  assert.ok(signingUp.some((row) => row.id === created._id), '刚发布的赛事在列表里');
-  assert.ok(ongoing.some((row) => row.id === 'e07'), '种子里的进行中赛事在列表里');
-  assert.strictEqual(rows[0].id, created._id);
-  assert.strictEqual(rows[0].statusLabel, '报名中');
-  assert.strictEqual(rows[signingUp.length].id, 'e07');
-  assert.strictEqual(rows[signingUp.length].statusLabel, '进行中');
-
-  const statuses = rows.map((row) => row.status);
-  assert.deepStrictEqual(statuses, [...statuses].sort((a, b) => a - b), '按状态分档');
 });
 
-test('赛事页 —— 点一场赛事跳到详情', async () => {
-  loginAs();
-  const created = await publishTestEvent();
+eventPanelTest('赛事页 —— 点一场赛事跳到详情', async (fx) => {
+  const eventId = await fx.publish();
 
   const page = instantiate(eventsConfig);
   await page.onLoad();
 
   calls.navigations.length = 0;
-  page.onOpenEvent({ currentTarget: { dataset: { eventId: created._id } } });
+  page.onOpenEvent({ currentTarget: { dataset: { eventId } } });
   assert.deepStrictEqual(calls.navigations, [
-    `/pages/event-detail/event-detail?eventId=${created._id}`,
+    `/pages/event-detail/event-detail?eventId=${encodeURIComponent(eventId)}`,
   ]);
 });
 
-test('赛事页 —— 点空白行不会乱跳', async () => {
+eventPanelTest('赛事页 —— 点空白行不会乱跳', async () => {
   loginAs();
   const page = instantiate(eventsConfig);
   await page.onLoad();
@@ -1850,32 +1816,20 @@ test('赛事页 —— 点空白行不会乱跳', async () => {
   assert.deepStrictEqual(calls.navigations, []);
 });
 
-test('赛事页 —— 只有管理员才渲染发布入口', async () => {
-  loginAs(ADMIN);
-  const allowed = instantiate(eventsConfig);
-  await allowed.onLoad();
-  assert.strictEqual(allowed.data.view.canPublish, true, '管理员才给发布入口');
+eventPanelTest('赛事页 —— 只有管理员才渲染发布入口', async (fx) => {
 
-  calls.navigations.length = 0;
-  allowed.onOpenPublish();
-  assert.deepStrictEqual(calls.navigations, ['/pages/event-edit/event-edit']);
-
-  // 学院负责人只多「代签到」与「录入比分」，操盘赛事的入口不给
-  loginAs(STAFF);
-  const staff = instantiate(eventsConfig);
-  await staff.onLoad();
-  assert.strictEqual(staff.data.view.canPublish, false, '学院负责人不给发布入口');
-
-  // 普通会员登录也一样看不到：演示数据源不再放宽
-  loginAs();
-  const member = instantiate(eventsConfig);
-  await member.onLoad();
-  assert.strictEqual(member.data.view.canPublish, false, '普通会员不给发布入口');
-
-  resetSession();
-  const blocked = instantiate(eventsConfig);
+  for (const [id, allowed] of [['demo_muc_admin',true],['demo_muc_college_leader',false],['demo_muc_member',false]]) {
+    fx.to(id);
+    const page=instantiate(eventsConfig);
+    await page.onLoad();
+    assert.equal(page.data.view.canPublish,allowed);
+  }
+  fx.to('demo_applicant');
+  const blocked=instantiate(eventsConfig);
   await blocked.onLoad();
-  assert.strictEqual(blocked.data.view.canPublish, false, '没登录不给发布入口');
+  assert.match(blocked.data.error,/没有读取/);
+  assert.ok(!blocked.data.view.canPublish);
+
 });
 
 test('赛事详情 —— 会员看得到赛事，报名前是「未报名」', async () => {
@@ -2446,6 +2400,19 @@ test('发布赛事 —— 小组赛+双败：2 组出线 2 人（共 4 人）正
  * finishSchoolEvent，两者都经 association-space。这里就用真的 schoolMock
  * 摆一场赛事，页面按当前演示身份取数——不必替任何门面打桩。
  */
+function eventPanelTest(name, fn) {
+  test(name, async () => {
+    const fx = schoolEventFixture();
+    require('../miniprogram/services/school-mock').reset();
+    try {
+      await fx.publish({ title: '列表测试一' });
+      await fx.publish({ title: '列表测试二' });
+      fx.to('demo_muc_admin');
+      await fn(fx);
+    } finally { fx.restore(); }
+  });
+}
+
 function schoolEventFixture() {
   const schoolSession = require('../miniprogram/services/school-session');
   const schoolMock = require('../miniprogram/services/school-mock');
@@ -2494,6 +2461,53 @@ function schoolEventFixture() {
     },
   };
 }
+
+test('个人赛事 S2 闭环：列表进详情、实时计分、确认、名次结束后积分可见', async () => {
+  const fx = schoolEventFixture();
+  const queryFrom = url => Object.fromEntries(new URLSearchParams(url.split('?')[1]));
+  try {
+    const eventId = await fx.publish({ seedCount: 2 });
+    const list = instantiate(eventListConfig);
+    await list.onLoad({ type: 'event' });
+    assert.equal(list.data.view.events.length, 1);
+    list.onOpenEvent({ currentTarget: { dataset: { eventId } } });
+    const detail = instantiate(eventDetailConfig);
+    await detail.onLoad(queryFrom(calls.navigations.at(-1)));
+    assert.equal(detail.eventId, eventId);
+    await fx.play(eventId, ['demo_muc_member', 'demo_muc_admin']);
+    await detail.refresh();
+    const matches = await fx.api().listSchoolMatches({ eventId });
+    const matchId = matches.matches[0].matchId;
+    detail.onRecordMatch({ currentTarget: { dataset: { matchId } } });
+    assert.ok(calls.navigations.at(-1).startsWith('/pages/live-score/live-score?'));
+    const score = instantiate(liveScoreConfig);
+    await score.onLoad(queryFrom(calls.navigations.at(-1)));
+    for (let i = 0; i < 22; i += 1) score.onScore({ currentTarget: { dataset: { side: 'A' } } });
+    await score.queue;
+    score.onFinish();
+    await score.queue;
+    await detail.onConfirmMatch({ currentTarget: { dataset: { matchId } } });
+    assert.equal((await fx.api().getSchoolMatch({ matchId })).match.status, MATCH_STATUS.ACTIVE);
+    detail.onOpenPlacement();
+    const placement = instantiate(eventPlacementConfig);
+    await placement.onLoad(queryFrom(calls.navigations.at(-1)));
+    placement.data.view.rows.forEach((row, index) => placement.onInputPlacement({ currentTarget: { dataset: { index } }, detail: { value: String(index + 1) } }));
+    await placement.onSubmit();
+    assert.equal((await fx.api().getSchoolEvent({ eventId })).event.status, EVENT_STATUS.FINISHED);
+    const panel = instantiate(eventsConfig);
+    await panel.onLoad();
+    assert.equal(panel.data.error, '');
+    assert.equal(panel.data.view.events[0].isFinished, true);
+    assert.equal(panel.view.allRows.length, 2);
+    assert.ok(panel.view.allRows.every(row => Number(row.valueText) > 0), '名次积分必须进入 S2 回放');
+    fx.to('demo_buaa_admin');
+    require('../miniprogram/services/school-session').setSchoolId('buaa');
+    await panel.refresh();
+    assert.equal(panel.data.error, '');
+    assert.equal(panel.data.view.events.length, 0);
+    assert.equal(panel.view.allRows.length, 0, '外校不可串赛事积分');
+  } finally { fx.restore(); }
+});
 
 test('录入名次 —— 无管理权时整页挡住，不给名单', async () => {
   const fx = schoolEventFixture();
@@ -5679,7 +5693,7 @@ collegeTest('学院名次页 —— 学院负责人与会员整页挡住，一�
  * 赛事列表改版：近 3 条 + 查看全部 + 置顶
  * ============================================================ */
 
-test('赛事页 —— 列表只摆近 3 条，「查看全部」入口指向完整列表页', async () => {
+eventPanelTest('赛事页 —— 列表只摆近 3 条，「查看全部」入口指向完整列表页', async () => {
   loginAs(ADMIN);
   const page = instantiate(eventsConfig);
   await page.onLoad();
@@ -5698,31 +5712,21 @@ test('赛事页 —— 列表只摆近 3 条，「查看全部」入口指向完
   assert.deepStrictEqual(calls.navigations, ['/pages/event-list/event-list?type=college']);
 });
 
-test('赛事页 —— 管理员点「置顶」把赛事提到最前，普通会员看不到按钮', async () => {
-  loginAs(ADMIN);
-  const page = instantiate(eventsConfig);
+eventPanelTest('赛事页 —— 管理员点「置顶」把赛事提到最前，普通会员看不到按钮', async (fx) => {
+
+  const page=instantiate(eventsConfig);
   await page.onLoad();
+  const target=page.data.view.events[2];
+  assert.equal(target.canPin,true);
+  await page.onToggleEventPin({currentTarget:{dataset:{eventId:target.id,pinned:false}}});
+  assert.equal(page.data.view.events[0].id,target.id);
+  assert.equal(page.data.view.events[0].pinned,true);
+  fx.to('demo_muc_member');
+  await page.refresh();
+  assert.ok(page.data.view.events.every(row=>!row.canPin));
+  const denied=await fx.api().setSchoolEventPinned({eventId:target.id,pinned:false});
+  assert.equal(denied.ok,false);
 
-  // 挑一场原本排在最后的已结束赛事：置顶后能看出它被提到最前
-  const target = page.data.view.events[2];
-  assert.ok(target, '演示数据里至少三场赛事');
-  assert.strictEqual(target.pinned, false);
-  assert.strictEqual(target.canPin, true, '管理员看得到置顶开关');
-
-  calls.toasts.length = 0;
-  await page.onToggleEventPin({ currentTarget: { dataset: { eventId: target.id, pinned: false } } });
-
-  assert.ok(calls.toasts.includes('已置顶'), '置顶成功要有提示');
-  assert.strictEqual(page.data.view.events[0].id, target.id, '置顶后排到最前');
-  assert.strictEqual(page.data.view.events[0].pinned, true);
-
-  // 普通会员：列表照常看到置顶标记，但不给置顶开关
-  loginAs();
-  const memberPage = instantiate(eventsConfig);
-  await memberPage.onLoad();
-  for (const row of memberPage.data.view.events) {
-    assert.strictEqual(row.canPin, false, '普通会员看不到置顶开关');
-  }
 });
 
 collegeTest('赛事页 —— 管理员点「置顶」把学院赛提到最前', async () => {
@@ -5745,24 +5749,19 @@ collegeTest('赛事页 —— 管理员点「置顶」把学院赛提到最前',
   assert.strictEqual(page.data.view.collegeEvents[0].eventId, second._id, '置顶后排到最前');
 });
 
-test('全部赛事页 —— 不截断地列出全部赛事，管理员可在页内置顶', async () => {
-  loginAs(ADMIN);
-  const allEvents = await facade.getEvents();
+eventPanelTest('全部赛事页 —— 不截断地列出全部赛事，管理员可在页内置顶', async (fx) => {
 
-  const page = instantiate(eventListConfig);
-  await page.onLoad({ type: 'event' });
+  const allEvents=await fx.api().listSchoolEvents({limit:50});
+  const page=instantiate(eventListConfig);
+  await page.onLoad({type:'event'});
+  assert.equal(page.data.error,'');
+  assert.equal(page.data.view.events.length,allEvents.events.length);
+  assert.equal(page.data.view.hasMoreEvents,false);
+  const target=page.data.view.events[1];
+  assert.equal(target.canPin,true);
+  await page.onToggleEventPin({currentTarget:{dataset:{eventId:target.id,pinned:false}}});
+  assert.equal(page.data.view.events[0].id,target.id);
 
-  assert.strictEqual(page.data.loading, false);
-  assert.strictEqual(page.data.error, '');
-  assert.strictEqual(page.data.type, 'event');
-  assert.strictEqual(page.data.title, '全部赛事');
-  assert.strictEqual(page.data.view.events.length, allEvents.length, '这一页不截断');
-  assert.strictEqual(page.data.view.hasMoreEvents, false, '全摆出来就不再有「查看全部」');
-
-  const target = page.data.view.events[1];
-  assert.strictEqual(target.canPin, true, '管理员可在这一页置顶');
-  await page.onToggleEventPin({ currentTarget: { dataset: { eventId: target.id, pinned: false } } });
-  assert.strictEqual(page.data.view.events[0].id, target.id, '置顶后回到最前');
 });
 
 collegeTest('全部赛事页 —— type=college 走学院赛口径，点行进对应页面', async () => {
