@@ -1,7 +1,8 @@
 <!--
-  会员审核页
-  数据形状见 services/member-review-view.js 的 loadMemberReviewView。
+  会员审核页（学校维度）
+  数据形状见 services/school-member-review-view.js 的 loadSchoolMemberReviewView。
   canApprove / canReject 是视图模型算好的，这里不做任何权限推导。
+  学校维度只有一份待审台账（通过即转正、驳回不另设列表），故不再有标签页。
 -->
 <view class="page-container {{themeClass}}">
 
@@ -25,22 +26,6 @@
 
   <block wx:else>
 
-    <!-- ========== 标签 ========== -->
-    <view class="pool-tabs {{switching ? 'is-switching' : ''}}">
-      <view
-        wx:for="{{view.tabs}}"
-        wx:key="tab"
-        class="pool-tab {{item.active ? 'is-active' : ''}}"
-        data-tab="{{item.tab}}"
-        bindtap="onSwitchTab"
-      >
-        <view class="pool-tab-label">
-          {{item.label}}
-          <text wx:if="{{item.count > 0}}" class="tab-count">{{item.count}}</text>
-        </view>
-      </view>
-    </view>
-
     <!-- ========== 申请列表 ========== -->
     <view class="card">
       <view wx:if="{{view.rows.length === 0}}" class="empty-note">{{view.emptyText}}</view>
@@ -60,12 +45,8 @@
           <text wx:if="{{item.genderText}}" class="application-meta-item">{{item.genderText}}</text>
           <text wx:if="{{item.studentId}}" class="application-meta-item">学号 {{item.studentId}}</text>
           <text wx:if="{{item.college}}" class="application-meta-item">学院 {{item.college}}</text>
-          <text wx:if="{{item.phone}}" class="application-meta-item">手机 {{item.phone}}</text>
           <text class="application-meta-item">申请于 {{item.appliedAtText}}</text>
         </view>
-
-        <!-- 驳回过的申请把理由亮出来，否则只看到「已驳回」会一头雾水 -->
-        <view wx:if="{{item.reason}}" class="application-reason">驳回理由：{{item.reason}}</view>
 
         <!-- 自己的申请一律不给按钮，把原因写出来，免得以为是页面坏了 -->
         <view wx:if="{{item.isSelf}}" class="application-self">这是你自己的入会申请，不能由本人审核</view>
@@ -75,12 +56,14 @@
             wx:if="{{item.canApprove}}"
             class="mini-btn is-primary"
             data-application-id="{{item.applicationId}}"
+            data-revision="{{item.revision}}"
             bindtap="onOpenApprove"
           >通过</view>
           <view
             wx:if="{{item.canReject}}"
             class="mini-btn is-danger"
             data-application-id="{{item.applicationId}}"
+            data-revision="{{item.revision}}"
             bindtap="onOpenReject"
           >驳回</view>
         </view>
@@ -94,9 +77,8 @@
 
   <!-- ========== 审核面板 ========== -->
   <!--
-    用页内面板而不是 wx.showModal：
-      - 驳回理由需要校验（不填不给提交）
-      - 通过时可以选填初始等级分（老队员不必从头慢慢定级）
+    用页内面板而不是 wx.showModal：通过不可逆、驳回理由必填，都需要留下来做校验。
+    学校维度暂不收初始等级分（等级分由计分 / 赛季链路管理），故面板里只在驳回时放理由框。
   -->
   <view wx:if="{{action.open}}" class="sheet-mask" bindtap="onCancelAction">
     <view class="sheet" catchtap="noop">
@@ -109,14 +91,6 @@
         placeholder="{{action.placeholder}}"
         maxlength="60"
         bindinput="onInputReason"
-      />
-      <input
-        wx:else
-        class="sheet-input is-single"
-        type="number"
-        value="{{rating}}"
-        placeholder="{{action.placeholder}}"
-        bindinput="onInputRating"
       />
       <view wx:if="{{actionError}}" class="sheet-error">{{actionError}}</view>
       <view class="sheet-actions">

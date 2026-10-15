@@ -8,7 +8,9 @@ const KEYS = ['users', 'schools', 'schoolAssociations', 'colleges', 'schoolMembe
   'associationNotices', 'associationTrainings', 'trainingRegistrations',
   'announcements',
   'events', 'eventSignups', 'matches', 'liveScores',
-  'collegeEvents', 'collegeEntries', 'ties', 'lineups'];
+  'collegeEvents', 'collegeEntries', 'ties', 'lineups',
+  // M4：赛季文档（每范围一份，_id 由 scopeKey 组成，跨范围读不到也改不掉）
+  'seasons'];
 
 function createSchoolMemoryRepo(seed = {}) {
   let state = Object.fromEntries(KEYS.map(key => [key, new Map((seed[key] || []).map(doc => [doc._id, clone(doc)]))]));

@@ -1,4 +1,4 @@
-const { createSchoolDemoSeed } = require('./school-seed.js');
+const { createSchoolDemoSeed, createSchoolDemoContent } = require('./school-seed.js');
 const { createSchoolMemoryRepo } = require('./school-memory-repo.js');
 const { createSchoolHandlers } = require('./school-membership-service.js');
 const { buildSchoolContext } = require('./school-context.js');
@@ -19,12 +19,13 @@ const liveService = require('./school-live-service.js');
 const collegeService = require('./school-college-service.js');
 const announcementService = require('./school-announcement-service.js');
 const schoolMemberService = require('./school-member-service.js');
+const rankService = require('./school-rank-service.js');
 
 /** 协会空间处理器集合（仅函数；STATUS 常量等非函数条目不参与分发） */
 const spaceHandlers = Object.freeze(Object.fromEntries(
   Object.entries({ ...groupService, ...memberService, ...noticeService, ...trainingService,
     ...eventService, ...matchService, ...liveService, ...collegeService, ...announcementService,
-    ...schoolMemberService })
+    ...schoolMemberService, ...rankService })
     .filter(([, value]) => typeof value === 'function')));
 
 const DEMO_ACTORS = Object.freeze([
@@ -108,7 +109,18 @@ function defaultActorId() {
 let actorId = DEMO_ACTORS[0].id;
 let repo;
 const handlers = createSchoolHandlers({ claimKey: (schoolId, studentId) => schoolKey('demo-claim', schoolId, studentId) });
-function reset() {
+/**
+ * 重置学校维度内存仓储。
+ *
+ * 默认连同**民大匹克球协会的演示内容**（公告 / 赛事 / 比赛）一起挂上，协会
+ * 空间与排行榜一进去就有东西可看。需要干净台账的用例（如公告页夹具要先自己
+ * 摆几条再数条数）传 `{ withDemoContent: false }` 关掉——演示内容与业务数据
+ * 混在一起数，会让「一共几条」这类断言随演示内容的多寡漂移。
+ *
+ * @param {Object} [options]
+ * @param {boolean} [options.withDemoContent=true] 是否挂演示内容
+ */
+function reset(options = {}) {
   const seed = createSchoolDemoSeed();
   seed.users.push({ _id: 'demo_applicant', openId: 'mock_openid_applicant', nickName: '模拟申请人',
     platformStatus: 'active', platformRole: 'member', simulated: true });
@@ -116,6 +128,10 @@ function reset() {
   seed.users.push({ _id: 'demo_platform_admin', openId: 'mock_openid_platform_admin', nickName: '平台管理员',
     platformStatus: 'active', platformRole: 'admin', simulated: true });
   attachLegacyMembers(seed);
+  if (options.withDemoContent !== false) {
+    const content = createSchoolDemoContent();
+    for (const key of Object.keys(content)) seed[key] = (seed[key] || []).concat(content[key]);
+  }
   repo = createSchoolMemoryRepo(seed);
   actorId = defaultActorId();
 }

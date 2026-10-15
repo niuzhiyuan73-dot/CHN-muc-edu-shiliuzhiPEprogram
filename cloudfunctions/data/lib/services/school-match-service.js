@@ -12,6 +12,12 @@
  * 由 `school-event-service.advanceSchoolEvent` 提供，确认 / 弃权生效后调用它
  * （「只补不覆盖」，见 format-plan.js）。日常约球没有 eventId，自然跳过。
  *
+ * 【既有赛程比赛的补录】
+ * 抽签排定的比赛（个人赛签表场次、学院赛小场）在库里已有主：补录只补比分与
+ * 录入人，对阵 / 赛制 / 时间一律取自那条记录本身，绝不另立新记录（否则签表里
+ * 写的是一组对阵、比赛页里却是另一组）。见 `submitScheduledMatch`，与旧栈
+ * `submitMatch` 的 id 分支同一把尺子（`fillScheduledMatch`）。
+ *
  * 【确认口径为什么分 mock / 云端】
  * 沿用旧栈：生产是「对手确认」，本地演示只有一个账号，mock 下放宽为「参与即可」。
  * 由 mock 端在 ctx 上打 `isMock: true`，云端不设该字段（默认严格）。
@@ -34,10 +40,14 @@ const {
 } = require('../utils/constants.js');
 const {
   canRecordScore, canConfirm, canRevoke, canAssignReferee, canForfeit, needsScore,
-  isParticipant, buildMatchRecord, buildRefereePatch, buildForfeitPatch,
+  isParticipant, buildMatchRecord, fillScheduledMatch, buildRefereePatch, buildForfeitPatch,
 } = require('./match-record.js');
 const { checkSubmitAllowed } = require('./rating-cap.js');
 const { advanceSchoolEvent } = require('./school-event-service.js');
+// 学院赛小场生效 / 撤销后的收尾：把结果写回大场、必要时排出下一轮（M2-c2）。
+const {
+  advanceCollegeAfterLeg, collegeLegRevokeBlocker, revertCollegeAfterRevoke,
+} = require('./school-college-advance.js');
 
 const ok = data => ({ ok: true, data });
 const refused = (message, extra = {}) => ({ ok: false, message, ...extra });
@@ -136,12 +146,16 @@ async function getSchoolMatch(payload = {}, ctx) {
 
 async function submitSchoolMatch(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
-  const token = payload.requestId;
-  if (typeof token !== 'string' || !REQUEST_ID_PATTERN.test(token)) return ok(refused('录入请求编号无效'));
-  // 既有赛程比赛的补录（带 matchId）依赖抽签签表，见 M1-a2；本片只收日常约球。
-  if (payload.matchId) return ok(refused('赛程比赛请从赛程中选择录入'));
 
   const dir = await buildDirectory(ctx);
+
+  // 既有赛程比赛（个人赛签表 / 学院赛小场）的补录：只补比分，对阵 / 赛制 / 时间
+  // 一律取自那条记录本身，走独立通路、不另立新记录（见 submitScheduledMatch）。
+  if (payload.matchId) return ok(await submitScheduledMatch(payload, ctx, dir));
+
+  const token = payload.requestId;
+  if (typeof token !== 'string' || !REQUEST_ID_PATTERN.test(token)) return ok(refused('录入请求编号无效'));
+
   const roster = dir.memberIds;
   const built = buildMatchRecord(
     { ...payload, recorder: ctx.actorId },
@@ -180,6 +194,61 @@ async function submitSchoolMatch(payload = {}, ctx) {
   return ok(result);
 }
 
+/**
+ * 既有赛程比赛的补录（带 matchId）：个人赛签表场次与学院赛小场都走这条。
+ * ============================================================
+ * 抽签已把「谁打谁、第几轮、哪个签位」定死，补录只该补比分与录入人——对阵 /
+ * 赛制 / 时间全部取自那条待确认记录（`fillScheduledMatch` 只收比分、不改阵容），
+ * 与旧栈 `submitMatch` 的 id 分支、云端 `submitScheduledMatch` 是同一把尺子。
+ * 录分权限同样复用 `canRecordScore`：场上的人、本学院有人上场的负责人、管理员。
+ *
+ * 【为什么不另立记录】赛程比赛在签表 / 大场里占着位置，另立一条会让签表与比赛页
+ * 各认一份，签表就自相矛盾了（见 fillScheduledMatch 头注）。
+ * 【为什么不用 requestId 键】这条记录的编号本身就是稳定键；待确认时重复补录是
+ * 允许的（改错比分），确认生效后由 `fillScheduledMatch` 挡下（非「待确认」）。
+ * 【比赛时间为什么回填 doc.matchTime】签表钉死的时间不因补录而变，原样保留 ISO
+ * 字符串，避免把 Date 对象写进库（各处按字符串解析）。
+ *
+ * @param {Object} payload { matchId, scoreA, scoreB }
+ * @param {Object} ctx
+ * @param {Object} dir buildDirectory 的结果（权限判定与阵容校验共用）
+ * @returns {Promise<Object>} {ok, match, message}
+ */
+async function submitScheduledMatch(payload, ctx, dir) {
+  return ctx.repo.transaction(async tx => {
+    const fresh = await freshContext(tx, ctx);
+    if (!canReadAssociationSpace(fresh)) return refused('没有读取协会空间的权限');
+    const doc = await tx.matches.getById(payload.matchId);
+    if (!isMatchDoc(doc) || !belongsToSchoolScope(doc, fresh)) return refused('找不到这场比赛');
+    if (!canRecordScore(doc, fresh.actorId, recordOptions(fresh, dir))) {
+      return refused('只有参赛者、本学院负责人或管理员可以录入这场比赛的成绩');
+    }
+
+    const filled = fillScheduledMatch(doc, { scoreA: payload.scoreA, scoreB: payload.scoreB }, {
+      // 阵容校验取在册名单；时间下界不设（与日常约球同口径，S2 赛季锚点归 M4）。
+      members: dir.memberIds, now: fresh.now, recorder: fresh.actorId,
+    });
+    if (!filled.ok) {
+      return refused(filled.firstError, { errors: filled.errors, scoreErrors: filled.scoreErrors });
+    }
+
+    const nowIso = iso(fresh.now);
+    const next = {
+      ...doc, ...filled.patch,
+      // 赛程时间由签表钉死，补录不改；范围与版本显式盖回。
+      matchTime: doc.matchTime,
+      schoolId: fresh.schoolId, association: fresh.association,
+      status: MATCH_STATUS.PENDING, action: 'submit', actor: fresh.actorId, actedAt: nowIso,
+      revision: Number(doc.revision || 1) + 1,
+    };
+    await tx.matches.set(doc._id, next);
+    await tx.audit.append({ _id: matchAuditKey(doc._id, 'submitScheduledMatch', next.revision),
+      action: 'submitScheduledMatch', schoolId: fresh.schoolId, association: fresh.association,
+      actorId: fresh.actorId, matchId: doc._id, at: nowIso });
+    return { ok: true, match: matchSummary(next, fresh, dir), message: '' };
+  });
+}
+
 async function confirmSchoolMatch(payload = {}, ctx) {
   const result = await transition(payload, ctx, {
     action: 'confirm',
@@ -189,7 +258,8 @@ async function confirmSchoolMatch(payload = {}, ctx) {
     requireWinner: true,
     patch: () => ({ status: MATCH_STATUS.ACTIVE }),
   });
-  return ok(await advanceAfterResolved(ctx, result.data));
+  const resolved = await advanceAfterResolved(ctx, result.data);
+  return ok(await advanceCollegeAfterResolved(ctx, resolved));
 }
 
 /** 一场签表比赛确认 / 弃权生效后补排下一轮；日常约球（无 eventId）跳过。 */
@@ -197,6 +267,28 @@ async function advanceAfterResolved(ctx, result) {
   if (result && result.ok && result.match && result.match.eventId) {
     await advanceSchoolEvent(ctx, result.match.eventId);
   }
+  return result;
+}
+
+/**
+ * 学院赛小场生效后的收尾：把结果写回大场、定出大场胜负，并在本轮打完时排出下一轮。
+ * 走的是与个人赛不同的一条链路（小场 `eventId` 留空，`advanceAfterResolved` 会跳过）。
+ * 只读一次原始文档再交给 `advanceCollegeAfterLeg`——matchSummary 不带 tieId / legNo。
+ */
+async function advanceCollegeAfterResolved(ctx, result) {
+  if (!result || !result.ok || !result.match) return result;
+  if (result.match.competition !== MATCH_COMPETITION.COLLEGE) return result;
+  const doc = await ctx.repo.matches.getById(result.match.matchId);
+  if (doc) await advanceCollegeAfterLeg(ctx, doc);
+  return result;
+}
+
+/** 撤销学院赛小场后的收尾：把结果从大场里收回来。 */
+async function revertCollegeAfterRevoked(ctx, result) {
+  if (!result || !result.ok || !result.match) return result;
+  if (result.match.competition !== MATCH_COMPETITION.COLLEGE) return result;
+  const doc = await ctx.repo.matches.getById(result.match.matchId);
+  if (doc) await revertCollegeAfterRevoke(ctx, doc);
   return result;
 }
 
@@ -216,7 +308,11 @@ async function rejectSchoolMatch(payload = {}, ctx) {
 async function revokeSchoolMatch(payload = {}, ctx) {
   const reason = String(payload.reason || '').trim();
   if (!reason) return ok(refused('请填写撤销理由'));
-  return transition(payload, ctx, {
+  // 学院赛小场的下游在大场那一侧（下一轮按胜者落成真实记录），matches 表里的依赖检查
+  // 够不着，先单独拦一道（与云端 revokeMatch 的 collegeLegRevokeBlocker 同源）。
+  const blocked = await collegeRevokeBlockerFor(ctx, payload.matchId);
+  if (blocked) return ok(refused(blocked));
+  const result = await transition(payload, ctx, {
     action: 'revoke',
     auditAction: 'revokeMatch',
     message: '你无权撤销这场比赛',
@@ -224,6 +320,15 @@ async function revokeSchoolMatch(payload = {}, ctx) {
     notRevoked: true,
     patch: () => ({ status: MATCH_STATUS.REVOKED, reason }),
   });
+  return ok(await revertCollegeAfterRevoked(ctx, result.data));
+}
+
+/** 待撤销的若是学院赛小场，先问一句「撤得动吗」；其余比赛不拦。 */
+async function collegeRevokeBlockerFor(ctx, matchId) {
+  if (typeof matchId !== 'string' || !matchId) return '';
+  const doc = await ctx.repo.matches.getById(matchId);
+  if (!doc || doc.competition !== MATCH_COMPETITION.COLLEGE) return '';
+  return collegeLegRevokeBlocker(ctx, doc);
 }
 
 /** confirm / reject / revoke 共用的状态机：取记录 → 判权 → 写状态 + 审计。 */
@@ -278,7 +383,8 @@ async function forfeitSchoolMatch(payload = {}, ctx) {
       actorId: ctx.actorId, matchId: doc._id, targetUserId: forfeitBy, at: nowIso });
     return { ok: true, match: matchSummary(next, ctx, dir), message: '' };
   });
-  return ok(await advanceAfterResolved(ctx, result));
+  const resolved = await advanceAfterResolved(ctx, result);
+  return ok(await advanceCollegeAfterResolved(ctx, resolved));
 }
 
 async function assignSchoolMatchReferee(payload = {}, ctx) {

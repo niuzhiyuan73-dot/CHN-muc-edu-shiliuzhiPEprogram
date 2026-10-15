@@ -2,7 +2,8 @@
  * 发布公告
  * ============================================================
  * 只做一件事：把一张填好的单子变成一条「已发布」的公告。
- * 校验与组装在 services/announcement.js（纯函数），这里负责交互与 setData。
+ * 内容校验与落库记录在 services/announcement.js（纯函数），发布本身走学校
+ * 维度服务（association-space 的 forScope），这里负责交互与 setData。
  *
  * 【为什么独立成页而不是管理页里的一个弹层】
  * 标题、分类、正文、置顶四项，正文还要一大块输入区，弹层里挤不下；
@@ -10,15 +11,29 @@
  *
  * 【没有发布权为什么不让进】
  * 用户可能绕过管理页直接从小程序码进来。填完再被拒，比一开始就说清楚
- * 糟得多，所以进来先判一道，不给表单。校验与判权都是纯函数，
- * 这里只是把它们的结果渲染出来。
+ * 糟得多，所以进来先判一道，不给表单。发布权只有平台管理员有——取自学校
+ * 维度身份会话（isPlatformAdmin），与旧栈的「全局管理员」同一口径。
+ *
+ * 【requestId 是什么】
+ * 学校维度发布接口按 requestId 派生稳定编号：同一次提交重试（网络重发、
+ * 连点）落到同一条；改了内容却复用同号则被拒。所以每次提交现生成一个。
  * ============================================================
  */
 
 const { ANNOUNCEMENT_CATEGORIES } = require('../../utils/constants.js');
-const { TITLE_MAX, CONTENT_MAX, canPublish } = require('../../services/announcement.js');
-const { publishAnnouncement, isMock } = require('../../services/index.js');
+const { TITLE_MAX, CONTENT_MAX } = require('../../services/announcement.js');
+const { isMock } = require('../../services/index.js');
 const { currentThemeClass } = require('../../services/branding.js');
+const schoolSession = require('../../services/school-session.js');
+const associationScope = require('../../services/association-scope.js');
+const space = require('../../services/association-space.js');
+const identity = require('../../services/school-identity.js');
+const { LEGACY_SCHOOL_ID } = require('../../utils/school.js');
+
+/** 生成一次提交的请求编号：时间戳 + 随机后缀，满足服务端的编号字符集要求 */
+function nextRequestId() {
+  return `pub_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
 
 Page({
   data: {
@@ -47,24 +62,39 @@ Page({
     errorText: '',
   },
 
-  onLoad() {
-    const user = this.currentUser();
-    const allowed = canPublish(user, { isMock });
-    this.setData({ blockReason: this.describeBlock(allowed, user), themeClass: currentThemeClass() });
+  async onLoad() {
+    const scope = this.currentScope();
+    this.scope = scope;
+
+    let session = null;
+    try {
+      session = await identity.forSchoolIdentity(scope).getSchoolIdentitySession();
+    } catch (err) {
+      console.error('[announcement-edit] 读取学校身份失败', err);
+    }
+
+    const allowed = Boolean(session && session.isPlatformAdmin);
+    this.setData({ blockReason: this.describeBlock(allowed, session), themeClass: currentThemeClass() });
   },
 
-  /** 不能发布的原因。能发布时返回空串 */
-  describeBlock(allowed, user) {
+  /** 当前「学校 + 协会」范围。写操作复用它，避免异步期间全局范围被切走 */
+  currentScope() {
+    return {
+      schoolId: schoolSession.getSchoolId() || LEGACY_SCHOOL_ID,
+      association: associationScope.getAssociation(),
+    };
+  },
+
+  /**
+   * 不能发布的原因。能发布时返回空串。
+   * 有没有在册学校身份（account）决定是「去登录」还是「没权限」——演示账号里
+   * 没有停用的平台账号，拿 user 判不出「没有学校身份」。
+   */
+  describeBlock(allowed, session) {
     if (allowed) return '';
-    return user ? '当前账号没有发布公告的权限，请联系管理员' : '请先登录后再发布公告';
-  },
-
-  /** 读取全局登录态。app 可能还没初始化好，逐层兜底 */
-  currentUser() {
-    const app = getApp();
-    if (!app) return null;
-    if (typeof app.getUserInfo === 'function') return app.getUserInfo();
-    return app.globalData ? app.globalData.userInfo : null;
+    return session && session.account
+      ? '当前账号没有发布公告的权限，请联系管理员'
+      : '请先登录后再发布公告';
   },
 
   /** 轻提示。测试环境里可能没有这个 API */
@@ -117,20 +147,15 @@ Page({
     if (this.data.submitting) return undefined;
     if (this.data.blockReason) return undefined;
 
-    const user = this.currentUser();
-    if (!user) {
-      this.showToast('请先登录后再发布公告');
-      return undefined;
-    }
-
     this.setData({ submitting: true, errors: {}, errorText: '' });
-    const result = await publishAnnouncement(this.data.form, user._id);
+    const result = await space.forScope(this.scope || this.currentScope())
+      .publishSchoolAnnouncement({ ...this.data.form, requestId: nextRequestId() });
 
     if (!result.ok) {
       this.setData({
         submitting: false,
         errors: result.errors || {},
-        errorText: result.firstError || '发布失败',
+        errorText: result.firstError || result.message || '发布失败',
       });
       return undefined;
     }

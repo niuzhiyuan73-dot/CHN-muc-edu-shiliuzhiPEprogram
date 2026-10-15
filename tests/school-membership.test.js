@@ -213,3 +213,41 @@ test('identity session exposes local review capability without disclosing global
   assert.equal(guest.user, null);
   assert.equal(guest.canReview, false);
 });
+
+test('identity session discloses the actor own permission tier and college-manage ability', async () => {
+  const repo = fixture();
+  const session = (openId, schoolId = 'muc') =>
+    request(repo, 'getSchoolIdentitySession', {}, openId, schoolId).then(res => res.data);
+
+  // 校管理员：校级档，能管本校任意学院（含自己的）
+  const admin = await session('mock_openid_muc_admin');
+  assert.equal(admin.permission, 'schoolAdmin');
+  assert.equal(admin.permissionLabel, '校级管理员');
+  assert.equal(admin.canManageCollege, true);
+
+  // 普通会员：无权限档，展示标签退回「会员」，也管不了学院
+  const member = await session('mock_openid_muc_member');
+  assert.equal(member.permission, '');
+  assert.equal(member.permissionLabel, '会员');
+  assert.equal(member.canManageCollege, false);
+
+  // 授予学院负责人后：档位与「管得动本学院」同时为真——这正是旧栈会话里
+  // 无从分辨、页面推不出来的那一档
+  await request(repo, 'grantSchoolPermission',
+    { userId: 'demo_muc_member', permission: 'collegeLeader', make: true, collegeId: 'c01' },
+    'mock_openid_muc_admin', 'muc');
+  const leader = await session('mock_openid_muc_member');
+  assert.equal(leader.permission, 'collegeLeader');
+  assert.equal(leader.permissionLabel, '学院负责人');
+  assert.equal(leader.canManageCollege, true);
+
+  // 跨校只读与访客：不下发权限档，也管不了任何学院
+  const remote = await session('mock_openid_muc_admin', 'buaa');
+  assert.equal(remote.permission, '');
+  assert.equal(remote.permissionLabel, '');
+  assert.equal(remote.canManageCollege, false);
+
+  const guest = await session('');
+  assert.equal(guest.permission, '');
+  assert.equal(guest.canManageCollege, false);
+});

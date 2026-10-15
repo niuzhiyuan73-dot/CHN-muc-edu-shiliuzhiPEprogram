@@ -1,32 +1,40 @@
 /**
- * 编辑资料
+ * 编辑资料（学校维度）
  * ============================================================
- * 只开放昵称与头像两项。真实姓名与学号是注册时核过的实名信息，改不得——
+ * 只开放昵称与头像两项。真实姓名、性别与学号是入会审核的依据，改不得——
  * 白名单写在 services/profile.js 的 EDITABLE_FIELDS 里，服务端还会再挡一道。
  *
+ * 取数与判权全在 services/school-profile-view.js 的学校维度装载器：向身份接口
+ * 问会话（我是谁），再向协会空间问自己的会员档案（实名 / 性别 / 学院 / 头像）。
+ * 「能改的是谁、不能改的是什么」由服务端把关，页面只做交互与 setData。
+ *
  * 头像选择沿用登录页那套微信官方写法（open-type="chooseAvatar" +
- * bindchooseavatar），选完立刻走 uploadAvatar 落云存储；本地模拟没有云
- * 存储可传，原路径返回即可。校验与组装复用 buildProfilePatch（纯函数），
- * 本文件只负责交互与 setData。
+ * bindchooseavatar），选完立刻走 uploadAvatar 落云存储；本地模拟没有云存储
+ * 可传，原路径返回即可。
  * ============================================================
  */
 
-const { NICKNAME_MAX, resolveNameDisplay } = require('../../services/profile.js');
 const { uploadAvatar } = require('../../services/avatar.js');
-const { updateProfile, isMock } = require('../../services/index.js');
-const { GENDER_LABEL } = require('../../utils/constants.js');
+const { loadSchoolProfileEditView, schoolProfilePatch } = require('../../services/school-profile-view.js');
+const { isMock } = require('../../services/index.js');
+const schoolSession = require('../../services/school-session.js');
+const associationScope = require('../../services/association-scope.js');
+const identity = require('../../services/school-identity.js');
+const { LEGACY_SCHOOL_ID } = require('../../utils/school.js');
 
 Page({
   data: {
+    /** 首屏加载中 */
+    loading: true,
     /** 提交中，防止连点重复提交 */
     submitting: false,
     isMock,
 
-    /** 没有登录态时的原因，非空就在页面上顶掉整张表单 */
+    /** 没有登录态时的原因（或装载失败），非空就在页面上顶掉整张表单 */
     blockReason: '',
 
     /** 昵称长度上限，交给 maxlength 属性 */
-    nicknameMax: NICKNAME_MAX,
+    nicknameMax: 12,
 
     /** 可改的两项 */
     form: { nickName: '', avatarUrl: '' },
@@ -44,38 +52,33 @@ Page({
     errorText: '',
   },
 
+  /**
+   * 返回 Promise 是有意为之：小程序不关心返回值，
+   * 但测试需要一个句柄等首屏装载完。
+   */
   onLoad() {
-    const user = this.currentUser();
-    this.setData({ blockReason: user ? '' : '请先登录后再修改资料' });
-    if (user) this.fill(user);
+    return this.refresh();
   },
 
-  /** 把当前会员填进表单 */
-  fill(user) {
-    const display = resolveNameDisplay(user);
-    this.setData({
-      form: { nickName: display.nickName, avatarUrl: user.avatarUrl || '' },
-      avatarText: (display.nickName || '?').slice(0, 1),
-      realName: display.realName,
-      genderText: GENDER_LABEL[user.gender] || '',
-      studentId: user.studentId || '',
-    });
+  /** 当前「学校 + 协会」范围。保存时复用它，避免异步期间全局范围被切走 */
+  currentScope() {
+    return {
+      schoolId: schoolSession.getSchoolId() || LEGACY_SCHOOL_ID,
+      association: associationScope.getAssociation(),
+    };
   },
 
-  /** 读取全局登录态。app 可能还没初始化好，逐层兜底 */
-  currentUser() {
-    const app = getApp();
-    if (!app) return null;
-    if (typeof app.getUserInfo === 'function') return app.getUserInfo();
-    return app.globalData ? app.globalData.userInfo : null;
-  },
-
-  /** 写入全局登录态。app.setUserInfo 负责同时落本地缓存 */
-  saveSession(user) {
-    const app = getApp();
-    if (!app) return;
-    if (typeof app.setUserInfo === 'function') app.setUserInfo(user);
-    else if (app.globalData) app.globalData.userInfo = user;
+  /** 重新装载整页数据 */
+  async refresh() {
+    const scope = this.currentScope();
+    this.scope = scope;
+    try {
+      const view = await loadSchoolProfileEditView(scope);
+      this.setData({ loading: false, ...view, errorText: '' });
+    } catch (err) {
+      console.error('[profile-edit] 资料装载失败', err);
+      this.setData({ loading: false, blockReason: '资料加载失败，请稍后重试' });
+    }
   },
 
   /** 轻提示。测试环境里可能没有这个 API */
@@ -118,27 +121,23 @@ Page({
   async onSubmit() {
     if (this.data.submitting || this.data.blockReason) return undefined;
 
-    const user = this.currentUser();
-    if (!user) {
-      this.showToast('请先登录后再修改资料');
-      return undefined;
-    }
-
     this.setData({ submitting: true, errors: {}, errorText: '' });
 
     // 云端调用是会失败的：网络断了、云函数还没更新（「未知的操作」）……
     // 不接住的话 submitting 会一直停在 true，页面看起来就是「点了没反应」，
     // 连个错都不报。这里统一收口，失败也要把按钮放回来。
-    const result = await this.save(user);
+    const result = await this.save();
 
     if (!result.ok) {
-      this.setData({ submitting: false, errors: result.errors, errorText: result.firstError });
-      this.showToast(result.firstError);
+      this.setData({
+        submitting: false,
+        errors: result.errors || {},
+        errorText: result.firstError || '保存失败',
+      });
+      this.showToast(result.firstError || '保存失败');
       return undefined;
     }
 
-    // 登录态是所有页面的取数来源：不更新它，返回「我的」后新昵称新头像不会出现
-    this.saveSession(result.account || user);
     this.setData({ submitting: false });
     this.showToast('已保存', 'success');
     wx.navigateBack();
@@ -149,14 +148,16 @@ Page({
    * 真正落库的一步。异常一律转成与业务失败同形的返回值，
    * 调用方只需看 ok / firstError，不必分两套分支。
    *
-   * @param {Object} user 当前登录会员
    * @returns {Promise<{ok:boolean, account:Object|null, errors:Object, firstError:string}>}
    */
-  async save(user) {
+  async save() {
     try {
       // 已经是 fileID 的话 uploadAvatar 原样返回，不会重复上传
       const avatarUrl = await uploadAvatar(this.data.form.avatarUrl);
-      return await updateProfile({ nickName: this.data.form.nickName, avatarUrl }, user._id);
+      const patch = schoolProfilePatch({ ...this.data.form, avatarUrl });
+      const result = await identity.forSchoolIdentity(this.scope || this.currentScope())
+        .updateSchoolProfile({ patch });
+      return result && typeof result === 'object' ? result : { ok: false, firstError: '保存失败' };
     } catch (err) {
       console.error('[profile-edit] 保存资料失败', err);
       return { ok: false, account: null, errors: {}, firstError: '保存失败，请检查网络后重试' };

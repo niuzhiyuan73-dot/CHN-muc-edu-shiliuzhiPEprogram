@@ -13,9 +13,10 @@ const liveService = require('../../lib/services/school-live-service.js');
 const collegeService = require('../../lib/services/school-college-service.js');
 const announcementService = require('../../lib/services/school-announcement-service.js');
 const schoolMemberService = require('../../lib/services/school-member-service.js');
+const rankService = require('../../lib/services/school-rank-service.js');
 
 module.exports = Object.fromEntries(
   Object.entries({ ...groupService, ...memberService, ...noticeService, ...trainingService,
     ...eventService, ...matchService, ...liveService, ...collegeService, ...announcementService,
-    ...schoolMemberService })
+    ...schoolMemberService, ...rankService })
     .filter(([, value]) => typeof value === 'function'));

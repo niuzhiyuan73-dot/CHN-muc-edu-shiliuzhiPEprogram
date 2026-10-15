@@ -176,6 +176,71 @@ test('弃权：日常约球不能弃；赛事比赛本人可弃，胜方判给�
   assert.equal(forfeited.match.winner, 'B', '甲弃权则乙获胜');
 });
 
+/* ---------- M1-a2 剩余：既有赛程比赛按 matchId 补录 ---------- */
+
+/** 种一条抽签排定的待确认比赛（个人赛签表场次）。 */
+async function seedScheduled(repo, id, extra = {}) {
+  const matchId = schoolMatchKey(schoolKey('m', 'demo_muc_admin', id), { schoolId: 'muc', association: 'pkb' });
+  await repo.matches.set(matchId, {
+    _id: matchId, schoolId: 'muc', association: 'pkb', eventId: 'evt1', round: 1, stage: 'main', slot: 1,
+    matchType: MATCH_TYPE.SINGLES, pool: 1, teamA: ['demo_muc_member'], teamB: ['demo_muc_member_2'],
+    scoreA: [], scoreB: [], winner: '', gamePoints: 11, bestOf: 1, location: '一号场',
+    matchTime: at(-HOUR), recorder: 'demo_muc_member', status: MATCH_STATUS.PENDING, revision: 1,
+    ...extra,
+  });
+  return matchId;
+}
+
+test('补录：既有赛程比赛按 matchId 补分，就地更新、不另立记录', async () => {
+  const repo = fixture();
+  const matchId = await seedScheduled(repo, 'sch1');
+  const before = await repo.matches.getById(matchId);
+
+  const filled = await call(repo, 'submitSchoolMatch', { matchId, scoreA: [11], scoreB: [7] },
+    { actor: 'demo_muc_member' });
+  assert.equal(filled.ok, true, filled.message);
+  assert.equal(filled.match.matchId, matchId, '就地更新，编号不变');
+  assert.equal(filled.match.status, MATCH_STATUS.PENDING);
+  assert.equal(filled.match.winner, 'A', '胜负由比分推');
+  assert.equal(filled.match.location, '一号场', '场地取自原记录');
+  assert.deepEqual(filled.match.teamA, ['demo_muc_member'], '对阵取自原记录');
+
+  // 库里仍只有这一条（补录不改立新记录）
+  const all = await repo.forScope({ schoolId: 'muc', association: 'pkb' }).matches.list();
+  assert.equal(all.length, 1);
+  // 版本递增；比赛时间保持原 ISO 字符串（不写 Date 对象进库）
+  const after = await repo.matches.getById(matchId);
+  assert.equal(after.revision, 2);
+  assert.equal(after.matchTime, before.matchTime);
+});
+
+test('补录：非参赛的普通会员被拒；确认生效后不能再补录', async () => {
+  const repo = fixture();
+  const matchId = await seedScheduled(repo, 'sch1');
+
+  const stranger = await call(repo, 'submitSchoolMatch', { matchId, scoreA: [11], scoreB: [7] },
+    { actor: 'demo_muc_member_3' });
+  assert.equal(stranger.ok, false);
+  assert.match(stranger.message, /参赛者/);
+
+  // 参赛者补分 → 对手确认生效 → 再补录被拒（非「待确认」）
+  await call(repo, 'submitSchoolMatch', { matchId, scoreA: [11], scoreB: [7] }, { actor: 'demo_muc_member' });
+  await call(repo, 'confirmSchoolMatch', { matchId }, { actor: 'demo_muc_member_2' });
+  const again = await call(repo, 'submitSchoolMatch', { matchId, scoreA: [11], scoreB: [3] },
+    { actor: 'demo_muc_member' });
+  assert.equal(again.ok, false);
+  assert.match(again.message, /待确认/);
+});
+
+test('补录：跨校补不进', async () => {
+  const repo = fixture();
+  const matchId = await seedScheduled(repo, 'sch1');
+  const buaa = await call(repo, 'submitSchoolMatch', { matchId, scoreA: [11], scoreB: [7] },
+    { schoolId: 'buaa', actor: 'demo_buaa_member' });
+  assert.equal(buaa.ok, false);
+  assert.match(buaa.message, /找不到/);
+});
+
 test('指派裁判：仅管理员；裁判须在册，生效后不能改派', async () => {
   const repo = fixture();
   const match = await record(repo, 'r1');

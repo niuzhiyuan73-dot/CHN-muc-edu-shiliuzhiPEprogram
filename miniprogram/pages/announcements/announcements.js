@@ -5,9 +5,10 @@
  * 就是它该去的地方：全部协会的公告，顶部一栏协会标签切换，再按分类筛选。
  *
  * 【为什么任何人都能看】
- * 公告本就是公开内容。取数与筛选在 services/announcement-view.js，
- * 那里给每一行传的 actor 是 null，于是管理按钮天然不会冒出来——
- * 公开页不需要、也不应该判权限。
+ * 公告本就是公开内容。取数与筛选在 services/announcement-view.js 的学校维度
+ * 装载器（loadSchoolAnnouncementListView），它给每一行恒下发 canArchive: false，
+ * 于是管理按钮天然不会冒出来——公开页不需要、也不应该判权限。
+ * 数据按「当前学校 + 协会」取，跨协会时逐个协会各取一次。
  *
  * 【onShow 为什么不需要守卫】
  * 这一页没有下级页面（发布走的是另一页），返回时内容不会变，
@@ -15,8 +16,10 @@
  * ============================================================
  */
 
-const { loadAnnouncementListView } = require('../../services/announcement-view.js');
+const { loadSchoolAnnouncementListView } = require('../../services/announcement-view.js');
 const { isMock } = require('../../services/index.js');
+const schoolSession = require('../../services/school-session.js');
+const { LEGACY_SCHOOL_ID } = require('../../utils/school.js');
 
 Page({
   data: {
@@ -55,7 +58,8 @@ Page({
    */
   async refresh() {
     try {
-      const view = await loadAnnouncementListView({
+      const view = await loadSchoolAnnouncementListView({
+        schoolId: schoolSession.getSchoolId() || LEGACY_SCHOOL_ID,
         tab: this.currentTab,
         association: this.currentAssociation,
       });

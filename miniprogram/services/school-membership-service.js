@@ -149,14 +149,34 @@ function createSchoolHandlers({ claimKey }) {
     return ok({ ok: true, account: ctx.schoolMember, message: '' });
   }
 
+  /**
+   * 本校待审核入会申请台账。**只返回待审核记录**——通过的人已是正式会员
+   * （进 `getSchoolMembers` 名单），驳回的人留在学校身份记录里但不再出现在
+   * 这份待办台账里（学校维度没有「已驳回」列表，与旧栈的已处理标签不同，
+   * 见迁移清单 M3-b）。
+   *
+   * 【下发的字段】
+   * 除编号与状态外，带上审核时要核对的展示信息：昵称、实名、性别、学院名
+   * （与旧栈 `member-review.buildApplicationRow` 同口径，供审核页直接渲染）。
+   * 手机号不在下发之列——学校维度统一不收手机号（与名录同一隐私口径）。
+   *
+   * @param {Object} _payload
+   * @param {Object} ctx
+   */
   async function getSchoolApplications(_payload, ctx) {
     if (!canSchoolAction(ctx, 'reviewMembers', ctx)) return ok({ ok: false, applications: [], message: '没有本校审核权限' });
+    const colleges = await ctx.repo.forScope(ctx).colleges.list();
+    const collegeName = id => (colleges.find(row => row.collegeId === id) || {}).name || '';
     const rows = await ctx.repo.forScope(ctx).schoolMembers.list();
     const applications = await Promise.all(rows.filter(row => row.status === 'pending').map(async row => {
       const user = await ctx.repo.users.getById(row.userId);
-      return { userId: row.userId, schoolId: row.schoolId, collegeId: row.collegeId,
+      return { userId: row.userId, schoolId: row.schoolId,
+        collegeId: row.collegeId, collegeName: collegeName(row.collegeId),
         studentId: row.studentId, revision: row.revision, appliedAt: row.appliedAt,
-        nickName: user && user.nickName || '申请人' };
+        nickName: user && user.nickName || '申请人',
+        realName: user && user.realName || '',
+        gender: user && user.gender || '',
+        avatarUrl: user && user.avatarUrl || '' };
     }));
     return ok({ ok: true, applications, message: '' });
   }
@@ -171,18 +191,47 @@ function createSchoolHandlers({ claimKey }) {
     return ok({ ok: true, schools, colleges, message: '' });
   }
 
+  /**
+   * 当前身份在本范围下的会话。除「能不能审 / 能不能管协会 / 能授哪些权限」外，
+   * 还下发**操作者本人的权限档位**（`permission` / `permissionLabel`）与
+   * **能不能管自己的学院**（`canManageCollege`）。
+   *
+   * 【为什么要下发本人的权限档位】
+   * 学院赛名单页要判断「本人能不能替本学院提交名单」，旧栈口径是
+   * `managesCollege(actor, actorCollege)`。会话原先只给 `canReview` /
+   * `canManageAssociation` / `grants`——普通学院负责人（membership role='staff'）
+   * 这三项分别是 false / false / []，与普通会员在会话里**无从分辨**，页面自己
+   * 也推不出来。这里把权限档位与派生的 `canManageCollege` 一并下发，让
+   * 判定回到 `canSchoolAction(ctx, 'manageCollege', ...)` 这一把尺子，页面照着用。
+   *
+   * 【只读不下发权限】
+   * 浏览外校时 `account` 为 null、权限档位留空、`canManageCollege` 为假——
+   * 「看得到外校名单」不能被当成「管得了外校」。
+   *
+   * @param {Object} _payload
+   * @param {Object} ctx
+   */
   async function getSchoolIdentitySession(_payload, ctx) {
     const active = ctx.actor && ctx.actor.platformStatus === 'active';
     // 浏览的是不是外校：本校身份只在 primarySchoolId 上，当前范围与它不一致即只读。
     const readOnly = Boolean(active && ctx.actor.primarySchoolId && ctx.actor.primarySchoolId !== ctx.schoolId);
+    const manageable = active && !readOnly;
+    const collegeId = (ctx.schoolMember && ctx.schoolMember.collegeId) || '';
     return ok({ ok: true, user: active ? { userId: ctx.actorId, nickName: ctx.actor.nickName || '',
       primarySchoolId: ctx.actor.primarySchoolId || '' } : null,
       account: active ? ctx.schoolMember : null,
+      // 本人权限档位：校级 / 协会 / 学院，普通会员为空串（展示标签退回「会员」）。
+      permission: manageable ? permissionOf(ctx.schoolRole, ctx.membership) : '',
+      permissionLabel: manageable ? permissionLabelOf(ctx.schoolRole, ctx.membership) : '',
+      // 能不能管**自己的学院**（学院赛名单提交的判据）。校级 / 协会负责人可管任一本校学院；
+      // 学院负责人只在本学院上有权；平台管理员跨校也可管。口径与 canSchoolAction 同源。
+      canManageCollege: manageable ? canSchoolAction(ctx, 'manageCollege',
+        { schoolId: ctx.schoolId, association: ctx.association, collegeId }) : false,
       isPlatformAdmin: isPlatformAdminCtx(ctx),
       canReview: canSchoolAction(ctx, 'reviewMembers', ctx),
       canManageAssociation: canSchoolAction(ctx, 'manageAssociation', ctx),
       readOnly,
-      grants: active && !readOnly ? grantOptions(ctx) : [],
+      grants: manageable ? grantOptions(ctx) : [],
       message: active ? '' : '当前账号尚未开通学校身份，请联系管理员' });
   }
 

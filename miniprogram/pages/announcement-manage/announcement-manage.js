@@ -2,13 +2,14 @@
  * 公告管理页
  * ============================================================
  * 两件事：发布新公告、下架已有公告。
- * 取数与权限判定全在 services/announcement-view.js，页面只做渲染与交互
- * ——那一层不碰 wx API，因而权限规则能在 Node 里逐条测。
+ * 取数与权限判定全在 services/announcement-view.js 的学校维度装载器，
+ * 页面只做渲染与交互——那一层不碰 wx API，因而权限规则能在 Node 里逐条测。
+ * 数据按「当前学校 + 协会」取（学校维度下公告不再跨协会成大台账）。
  *
- * 【登录态由页面传进去，不让数据源自己猜】
- * mock 数据源永远认为当前用户是 u06。若让视图模型自己去问，一个没登录
- * 的访客也会被当成 u06，凭空拿到发布与下架的权限。所以这里把 getApp()
- * 里的登录态明确传下去，传 null 就是访客。
+ * 【身份来自学校维度会话，不猜默认演示账号】
+ * 「能不能管公告」由 S2 服务端回答（只有平台管理员能管）。页面另外取一次
+ * 学校身份会话，只用来分辨「去登录」还是「没这个权限」——服务端只答
+ * 「能不能管」，答不了「为什么不能管」。
  *
  * 【为什么只做下架不做删除】
  * 公告是发出去给人看过的，直接抹掉会让「上周那条通知哪去了」无从追溯。
@@ -22,9 +23,14 @@
  * ============================================================
  */
 
-const { loadAnnouncementManageView } = require('../../services/announcement-view.js');
-const { archiveAnnouncement, isMock } = require('../../services/index.js');
+const { loadSchoolAnnouncementManageView } = require('../../services/announcement-view.js');
+const { isMock } = require('../../services/index.js');
 const { currentThemeClass } = require('../../services/branding.js');
+const schoolSession = require('../../services/school-session.js');
+const associationScope = require('../../services/association-scope.js');
+const space = require('../../services/association-space.js');
+const identity = require('../../services/school-identity.js');
+const { LEGACY_SCHOOL_ID } = require('../../utils/school.js');
 
 /** 下架前的二次确认文案 */
 const ARCHIVE_CONFIRM = '下架后这条公告不再对会员显示，但仍会留在台账里，确定下架吗？';
@@ -61,12 +67,12 @@ Page({
     return this.refresh().then(() => this.stopPullDown());
   },
 
-  /** 读取全局登录态。app 可能还没初始化好，逐层兜底 */
-  currentUser() {
-    const app = getApp();
-    if (!app) return null;
-    if (typeof app.getUserInfo === 'function') return app.getUserInfo();
-    return app.globalData ? app.globalData.userInfo : null;
+  /** 当前「学校 + 协会」范围。写操作复用它，避免异步期间全局范围被切走 */
+  currentScope() {
+    return {
+      schoolId: schoolSession.getSchoolId() || LEGACY_SCHOOL_ID,
+      association: associationScope.getAssociation(),
+    };
   },
 
   /** stopPullDownRefresh 在测试环境里可能没有，做个保护 */
@@ -109,10 +115,22 @@ Page({
    * @returns {Promise<void>}
    */
   async refresh() {
-    const user = this.currentUser();
+    const scope = this.currentScope();
+    this.scope = scope;
+
+    // 有没有学校身份只影响「去登录 / 没权限」的措辞，判权仍由服务端负责。
+    // 取 account（在册学校身份）而不是 user：演示账号里没有停用的平台账号，
+    // 连「模拟申请人」都是有效账号（user 恒非空），拿 user 判不出「没有学校身份」。
+    let loggedIn = false;
+    try {
+      const session = await identity.forSchoolIdentity(scope).getSchoolIdentitySession();
+      loggedIn = Boolean(session && session.account);
+    } catch (err) {
+      console.error('[announcement-manage] 读取学校身份失败', err);
+    }
 
     try {
-      const view = await loadAnnouncementManageView({ user });
+      const view = await loadSchoolAnnouncementManageView({ ...scope, loggedIn });
       this.loaded = true;
       this.setData({ loading: false, error: '', view, themeClass: currentThemeClass() });
     } catch (err) {
@@ -132,17 +150,12 @@ Page({
     const id = event.currentTarget.dataset.id;
     if (!id || this.data.acting) return undefined;
 
-    const user = this.currentUser();
-    if (!user) {
-      this.showToast('请先登录后再操作');
-      return undefined;
-    }
-
     const confirmed = await this.confirm(ARCHIVE_CONFIRM);
     if (!confirmed) return undefined;
 
     this.setData({ acting: true });
-    const result = await archiveAnnouncement(id, user._id);
+    const result = await space.forScope(this.scope || this.currentScope())
+      .archiveSchoolAnnouncement({ announcementId: id });
     this.setData({ acting: false });
 
     if (!result.ok) {

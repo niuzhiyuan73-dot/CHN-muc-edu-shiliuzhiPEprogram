@@ -32,10 +32,15 @@
  */
 
 const { ANNOUNCEMENT_CATEGORIES } = require('../utils/constants.js');
-const { sortAnnouncements, buildAnnouncementRow, canPublish } = require('./announcement.js');
+const { activeAssociations } = require('../utils/associations.js');
+const { formatDateTime } = require('../utils/format.js');
+const {
+  sortAnnouncements, buildAnnouncementRow, canPublish, DEFAULT_CATEGORY,
+} = require('./announcement.js');
 const { getAnnouncementRecords } = require('./index.js');
 const { brandOf } = require('./branding.js');
 const scope = require('./association-scope.js');
+const space = require('./association-space.js');
 
 /** 「全部」标签：不分分类 */
 const ALL_TAB = 'all';
@@ -193,10 +198,174 @@ async function loadAnnouncementManageView(options = {}) {
   };
 }
 
+/* ============================================================
+ * 学校维度装载器（协议 2）
+ * ============================================================
+ * 与上面的旧栈装载器并存一段过渡期：页面改接后只用下面这两个，旧栈装载器
+ * 留到旧门面下线（M5）时一并移除。数据来自 association-space 的 forScope
+ * （本地演示与云端跑同一份服务实现），按 (schoolId, association) 取公告。
+ *
+ * 与旧栈的两点差别，都是学校维度带来的、必须显式的：
+ *   1. 取数按「学校 + 协会」——列表页跨协会聚合时逐个协会各取一次；
+ *   2. 管理台账只覆盖**当前**学校 + 协会（旧栈是跨协会的大台账）。
+ * ============================================================
+ */
+
+/**
+ * 学校维度公告摘要（school-announcement-service.announcementSummary）→ 页面行。
+ *
+ * 权限布尔量随 withManage 决定：公开列表恒不下发管理按钮（withManage 缺省 false），
+ * 只有管理台账才照服务端判好的 canArchive 下发——公开页不该因为看的人恰好是
+ * 管理员就冒出下架按钮。状态与文案由服务端算好，这里只做字段名与展示格式的适配。
+ *
+ * @param {Object} summary 服务端公告摘要
+ * @param {boolean} [withManage] 是否下发管理按钮
+ * @returns {Object}
+ */
+function schoolAnnouncementRow(summary, withManage = false) {
+  return {
+    id: summary.announcementId,
+    title: summary.title || '（无标题）',
+    content: summary.content || '',
+    category: summary.category || DEFAULT_CATEGORY,
+    pinned: Boolean(summary.pinned),
+    publishText: summary.publishTime ? formatDateTime(summary.publishTime) : '',
+    statusLabel: summary.statusLabel || '',
+    archived: Boolean(summary.archived),
+    publisherName: summary.publisherName || '',
+    canArchive: Boolean(withManage && summary.canArchive),
+  };
+}
+
+/**
+ * 学校维度：公开公告列表——跨全部启用协会聚合，顶部一栏协会标签切换。
+ * 输出形状与旧栈 loadAnnouncementListView 对齐，页面 WXML 基本不动。
+ *
+ * @param {Object} [options]
+ * @param {string} options.schoolId 当前学校
+ * @param {string} [options.tab] 当前分类，非法值退回「全部」
+ * @param {string} [options.association] 当前协会，非法值退回全局所在协会
+ * @returns {Promise<Object>}
+ */
+async function loadSchoolAnnouncementListView(options = {}) {
+  const { schoolId, tab = ALL_TAB, association } = options;
+  const activeTab = VALID_TABS.includes(tab) ? tab : ALL_TAB;
+  const fallback = scope.getAssociation();
+
+  const groups = [];
+  for (const assoc of activeAssociations()) {
+    const api = space.forScope({ schoolId, association: assoc.id });
+    const result = await api.listSchoolAnnouncements({});
+    // 服务端已按「置顶优先 → 发布时间倒序」排好（复用旧栈 sortAnnouncements），这里不再重排
+    const rows = (result.announcements || []).map((summary) => ({
+      ...schoolAnnouncementRow(summary),
+      association: assoc.id,
+      associationName: assoc.shortName,
+      associationGlyph: assoc.logoGlyph,
+    }));
+    groups.push({
+      associationId: assoc.id,
+      label: assoc.sportName,
+      glyph: assoc.logoGlyph,
+      themeClass: brandOf(assoc.id).rootClass,
+      rows,
+    });
+  }
+
+  // 选中的协会：入参合法就用它；否则跟随全局所在协会；再不行退回第一个。
+  const has = (id) => groups.some((group) => group.associationId === id);
+  const activeAssociation = has(association)
+    ? association
+    : has(fallback)
+      ? fallback
+      : groups[0]
+        ? groups[0].associationId
+        : '';
+
+  const current = groups.find((group) => group.associationId === activeAssociation) || null;
+  const scopedRows = current ? current.rows : [];
+  const rows =
+    activeTab === ALL_TAB
+      ? scopedRows
+      : scopedRows.filter((row) => row.category === activeTab);
+
+  const associationTabs = groups.map((group) => ({
+    associationId: group.associationId,
+    label: group.label,
+    glyph: group.glyph,
+    count: group.rows.length,
+    active: group.associationId === activeAssociation,
+  }));
+
+  return {
+    activeAssociation,
+    themeClass: current ? current.themeClass : '',
+    associationTabs,
+    activeTab,
+    tabs: categoryTabs(scopedRows, activeTab),
+    rows,
+    total: scopedRows.length,
+    visibleCount: rows.length,
+    emptyText:
+      activeTab === ALL_TAB ? '这个协会暂时还没有公告' : `「${activeTab}」分类下暂时没有公告`,
+  };
+}
+
+/**
+ * 学校维度：公告管理台账——单「学校 + 协会」范围。
+ *
+ * 闸门来自服务端：`canManage` 为假时一条都不下发（尤其是已下架的）。
+ * 是否已登录由页面传入，用来区分「去登录」与「没这个权限」——服务端只回答
+ * 「能不能管」，回答不了「为什么不能管」。
+ *
+ * @param {Object} [options]
+ * @param {string} options.schoolId 当前学校
+ * @param {string} options.association 当前协会
+ * @param {boolean} [options.loggedIn] 是否已登录
+ * @returns {Promise<Object>}
+ */
+async function loadSchoolAnnouncementManageView(options = {}) {
+  const { schoolId, association, loggedIn = false } = options;
+  const api = space.forScope({ schoolId, association });
+  const result = await api.listSchoolAnnouncements({});
+
+  if (!result.canManage) {
+    return {
+      allowed: false,
+      blockedText: loggedIn
+        ? '当前账号没有管理公告的权限，请联系管理员'
+        : '请先登录后再管理公告',
+      viewer: { userId: '', loggedIn },
+      rows: [],
+      total: 0,
+      publishedCount: 0,
+      archivedCount: 0,
+    };
+  }
+
+  const rows = (result.announcements || [])
+    .map((summary) => schoolAnnouncementRow(summary, true))
+    // 已下架的沉到底部，好让「还能操作的那些」先被看到（sort 稳定，组内保持原序）
+    .sort((a, b) => Number(a.archived) - Number(b.archived));
+
+  return {
+    allowed: true,
+    blockedText: '',
+    viewer: { userId: '', loggedIn: true },
+    rows,
+    total: rows.length,
+    publishedCount: rows.filter((row) => !row.archived).length,
+    archivedCount: rows.filter((row) => row.archived).length,
+  };
+}
+
 module.exports = {
   ALL_TAB,
   VALID_TABS,
   categoryTabs,
   loadAnnouncementListView,
   loadAnnouncementManageView,
+  schoolAnnouncementRow,
+  loadSchoolAnnouncementListView,
+  loadSchoolAnnouncementManageView,
 };

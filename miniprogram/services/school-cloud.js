@@ -102,6 +102,9 @@ function forAssociationSpace(input) {
     archiveSchoolAnnouncement: payload => request('archiveSchoolAnnouncement', payload),
     listSchoolMembers: payload => request('listSchoolMembers', payload),
     getSchoolMember: payload => request('getSchoolMember', payload),
+    getSchoolRanking: payload => request('getSchoolRanking', payload),
+    getSchoolSeason: payload => request('getSchoolSeason', payload),
+    resetSchoolSeason: payload => request('resetSchoolSeason', payload),
   });
 }
 

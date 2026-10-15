@@ -3427,195 +3427,239 @@ test('录入页 —— 裁判本人与管理员仍可照常录入', async () => 
 });
 
 /* ============================================================
- * 会员审核
+ * 会员审核（学校维度）
  * ============================================================ */
 
-test('会员审核页 —— 访客被整页挡住，一行申请人的资料都拿不到', async () => {
-  resetSession();
-  const page = instantiate(memberReviewConfig);
-  await page.onLoad();
+/**
+ * 摆好会员审核页的学校维度环境：民大 / 匹克球协会 / 重置过的内存仓储。
+ * 「模拟申请人」是一个没有学校归属、但有平台账号的账号，用来提交待审申请；
+ * to() 换演示身份（民大管理员 / 民大会员），restore() 归位。
+ */
+function memberReviewFixture() {
+  const schoolSession = require('../miniprogram/services/school-session');
+  const schoolMock = require('../miniprogram/services/school-mock');
+  const identity = require('../miniprogram/services/school-identity.js');
+  const scope = require('../miniprogram/services/association-scope.js');
+  schoolSession.reset();
+  schoolMock.reset();
+  // reset() 把浏览校清成空串；审核按校取数，这里显式摆成民大
+  schoolSession.setSchoolId('muc');
+  const before = scope.getAssociation();
+  scope.setAssociation('pkb');
+  const api = () => identity.forSchoolIdentity({ schoolId: 'muc', association: 'pkb' });
+  return {
+    // 让申请人提交一条待审申请（进入本校待审核台账）
+    apply: async (overrides = {}) => {
+      schoolMock.setDemoActor('demo_applicant');
+      return api().applySchoolMembership({ studentId: 'APP001', collegeId: 'c01', ...overrides });
+    },
+    to: (actor) => schoolMock.setDemoActor(actor),
+    api,
+    restore() {
+      scope.setAssociation(before);
+      schoolMock.setDemoActor('demo_applicant');
+      schoolMock.reset();
+      schoolSession.reset();
+    },
+  };
+}
 
-  assert.strictEqual(page.data.loading, false);
-  assert.strictEqual(page.data.view.allowed, false);
-  assert.deepStrictEqual(page.data.view.rows, [], '没权限就不该下发任何一行申请');
-  assert.match(page.data.view.blockedText, /登录/);
+test('会员审核页 —— 没有审核权的人被整页挡住，一行申请人的资料都拿不到', async () => {
+  const fx = memberReviewFixture();
+  try {
+    await fx.apply();
+    // 民大会员是本校在册会员，但没有入会审核权
+    fx.to('demo_muc_member');
 
-  // 防泄漏不能只测 rows：整页数据里都不能出现申请人的学号
-  const text = JSON.stringify(page.data.view);
-  assert.ok(!text.includes('20240117'), '访客的页面数据里漏出了申请人的学号');
+    const page = instantiate(memberReviewConfig);
+    await page.onLoad();
+
+    assert.strictEqual(page.data.loading, false);
+    assert.strictEqual(page.data.view.allowed, false);
+    assert.deepStrictEqual(page.data.view.rows, [], '没权限就不该下发任何一行申请');
+    assert.match(page.data.view.blockedText, /权限/);
+
+    // 防泄漏不能只测 rows：整页数据里都不能出现申请人的学号
+    const text = JSON.stringify(page.data.view);
+    assert.ok(!text.includes('APP001'), '无权限者的页面数据里漏出了申请人的学号');
+  } finally {
+    fx.restore();
+  }
 });
 
-test('会员审核页 —— 待审核账号自己还没转正，不能去审别人', async () => {
-  resetSession();
-  // 本地注册的账号状态是待审核，能登录，但资格还没被核对
-  app.globalData.userInfo = fakeMember({ _id: 'local_1', nickName: '新会员', status: 0 });
+test('会员审核页 —— 申请人自己没有审核权，也看不到台账', async () => {
+  const fx = memberReviewFixture();
+  try {
+    await fx.apply();
+    fx.to('demo_applicant');
 
-  const page = instantiate(memberReviewConfig);
-  await page.onLoad();
+    const page = instantiate(memberReviewConfig);
+    await page.onLoad();
 
-  assert.strictEqual(page.data.view.allowed, false);
-  assert.deepStrictEqual(page.data.view.rows, []);
-  assert.match(page.data.view.blockedText, /权限/);
+    assert.strictEqual(page.data.view.allowed, false);
+    assert.deepStrictEqual(page.data.view.rows, [], '申请人看自己的台账也要走审核权这一关');
+    assert.match(page.data.view.blockedText, /权限/);
+  } finally {
+    fx.restore();
+  }
 });
 
-test('会员审核页 —— 学院负责人被整页挡住：学院负责人是学院范围角色，管不到入会审核', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember(STAFF);
+test('会员审核页 —— 校管理员看到待审申请，字段齐整', async () => {
+  const fx = memberReviewFixture();
+  try {
+    await fx.apply();
+    fx.to('demo_muc_admin');
 
-  const page = instantiate(memberReviewConfig);
-  await page.onLoad();
+    const page = instantiate(memberReviewConfig);
+    await page.onLoad();
 
-  assert.strictEqual(page.data.view.allowed, false);
-  assert.deepStrictEqual(page.data.view.rows, [], '学院负责人不该拿到申请人的实名资料');
-  assert.match(page.data.view.blockedText, /权限/);
-});
+    assert.strictEqual(page.data.view.allowed, true);
+    assert.strictEqual(page.data.view.rows.length, 1);
+    assert.strictEqual(page.data.view.pendingCount, 1);
+    // 学校维度只有一份待审台账，没有「已处理」标签页
+    assert.strictEqual(page.data.view.tabs, undefined);
 
-test('会员审核页 —— 管理员看到两条待审申请', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember(ADMIN);
+    const row = page.data.view.rows[0];
+    assert.strictEqual(row.userId, 'demo_applicant');
+    assert.strictEqual(row.applicationId, 'demo_applicant');
+    assert.strictEqual(row.studentId, 'APP001');
+    assert.strictEqual(row.college, '中华民族共同体学院');
+    assert.strictEqual(row.statusLabel, '待审核');
+    assert.strictEqual(row.canApprove, true);
+    assert.strictEqual(row.canReject, true);
+    assert.strictEqual(row.isSelf, false);
 
-  const page = instantiate(memberReviewConfig);
-  await page.onLoad();
-
-  assert.strictEqual(page.data.view.allowed, true);
-  assert.strictEqual(page.data.view.rows.length, 2);
-  assert.strictEqual(page.data.view.pendingCount, 2);
-  assert.strictEqual(page.data.view.tabs.filter((item) => item.active).length, 1);
-  assert.strictEqual(page.data.view.viewer.roleLabel, '管理员');
-
-  const text = JSON.stringify(page.data.view);
-  assert.ok(!text.includes('undefined'), '视图数据里出现了 undefined');
-  assert.ok(!text.includes('null'), '视图数据里出现了 null');
-  assert.ok(!text.includes('NaN'), '视图数据里出现了 NaN');
+    const text = JSON.stringify(page.data.view);
+    assert.ok(!text.includes('undefined'), '视图数据里出现了 undefined');
+    assert.ok(!text.includes('NaN'), '视图数据里出现了 NaN');
+  } finally {
+    fx.restore();
+  }
 });
 
 test('会员审核页 —— 通过后申请离开待审列表，申请人成为正式会员', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember(ADMIN);
+  const fx = memberReviewFixture();
+  try {
+    await fx.apply();
+    fx.to('demo_muc_admin');
 
-  const page = instantiate(memberReviewConfig);
-  await page.onLoad();
+    const page = instantiate(memberReviewConfig);
+    await page.onLoad();
 
-  const applicationId = page.data.view.rows[0].applicationId;
-  const membersBefore = (await facade.getMembers()).length;
+    const row = page.data.view.rows[0];
+    calls.toasts.length = 0;
+    await page.onOpenApprove({
+      currentTarget: { dataset: { applicationId: row.applicationId, revision: row.revision } },
+    });
+    await page.onSubmitAction();
 
-  calls.toasts.length = 0;
-  // 通过要先过一块面板确认；不填初始分就是纯通过
-  await page.onOpenApprove({ currentTarget: { dataset: { applicationId } } });
-  await page.onSubmitAction();
+    assert.strictEqual(page.data.view.rows.length, 0, '处理过的申请不该还留在待审里');
+    assert.ok(calls.toasts.some((text) => /已通过/.test(text)));
 
-  assert.strictEqual(page.data.view.rows.length, 1, '处理过的申请不该还留在待审里');
-  assert.strictEqual((await facade.getMembers()).length, membersBefore + 1);
-  assert.ok(calls.toasts.some((text) => /已通过/.test(text)));
-  // 通过的人立刻进入会员名单，录入页的选手选择器就能选到他
-  assert.ok((await facade.getMembers()).some((item) => item._id === applicationId));
+    // 通过的人立刻成为民大在册会员，名录里就能找到他
+    fx.to('demo_applicant');
+    const members = await fx.api().getSchoolMembers();
+    assert.ok(members.members.some((item) => item.userId === 'demo_applicant'));
+  } finally {
+    fx.restore();
+  }
 });
 
-test('会员审核页 —— 通过时填的初始分会落到账号上', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember(ADMIN);
+test('会员审核页 —— 申请版本过期时被挡下，提示刷新', async () => {
+  const fx = memberReviewFixture();
+  try {
+    await fx.apply();
+    fx.to('demo_muc_admin');
 
-  const page = instantiate(memberReviewConfig);
-  await page.onLoad();
+    const page = instantiate(memberReviewConfig);
+    await page.onLoad();
 
-  const applicationId = page.data.view.rows[0].applicationId;
-  await page.onOpenApprove({ currentTarget: { dataset: { applicationId } } });
-  page.onInputRating({ detail: { value: '1620' } });
-  await page.onSubmitAction();
+    // 页面手里拿的是 rev 1
+    const row = page.data.view.rows[0];
+    assert.strictEqual(row.revision, 1);
 
-  const account = await facade.getMember(applicationId);
-  assert.strictEqual(account.status, USER_STATUS.ACTIVE);
-  assert.strictEqual(account.initialElo, 1620);
+    // 申请人改了学号重新提交，申请升到 rev 2（仍是待审）
+    await fx.apply({ studentId: 'APP002' });
+    fx.to('demo_muc_admin');
+
+    await page.onOpenApprove({
+      currentTarget: { dataset: { applicationId: row.applicationId, revision: row.revision } },
+    });
+    await page.onSubmitAction();
+
+    assert.match(page.data.actionError, /刷新/);
+    assert.strictEqual(page.data.action.open, true, '提交失败时面板不该关掉');
+  } finally {
+    fx.restore();
+  }
 });
 
-test('会员审核页 —— 初始分越界时挡在本地，申请保持待审核', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember(ADMIN);
+test('会员审核页 —— 驳回必须填理由；理由留痕后申请离开待审列表', async () => {
+  const fx = memberReviewFixture();
+  try {
+    await fx.apply();
+    fx.to('demo_muc_admin');
 
-  const page = instantiate(memberReviewConfig);
-  await page.onLoad();
+    const page = instantiate(memberReviewConfig);
+    await page.onLoad();
 
-  const applicationId = page.data.view.rows[0].applicationId;
-  await page.onOpenApprove({ currentTarget: { dataset: { applicationId } } });
-  page.onInputRating({ detail: { value: '99999' } });
-  await page.onSubmitAction();
+    const row = page.data.view.rows[0];
+    await page.onOpenReject({
+      currentTarget: { dataset: { applicationId: row.applicationId, revision: row.revision } },
+    });
 
-  assert.match(page.data.actionError, /之间/);
-  assert.strictEqual(page.data.action.open, true, '校验失败时面板不该关掉');
+    // 没填理由不给提交，申请原样留在待审
+    await page.onSubmitAction();
+    assert.strictEqual(page.data.actionError, '请填写驳回理由');
+    assert.strictEqual(page.data.action.open, true, '校验失败时面板不该关掉');
 
-  const account = await facade.getMember(applicationId);
-  assert.strictEqual(account.status, USER_STATUS.PENDING);
+    page.onInputReason({ detail: { value: '学号与姓名对不上' } });
+    calls.toasts.length = 0;
+    await page.onSubmitAction();
+
+    assert.strictEqual(page.data.view.rows.length, 0, '驳回的申请也该离开待审列表');
+    assert.ok(calls.toasts.some((text) => /已驳回/.test(text)));
+
+    // 被驳回的人不是在册会员，进不了名录
+    fx.to('demo_applicant');
+    const members = await fx.api().getSchoolMembers();
+    assert.ok(!members.members.some((item) => item.userId === 'demo_applicant'));
+  } finally {
+    fx.restore();
+  }
 });
 
-test('会员审核页 —— 驳回不填理由被拦下，申请原样不动', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember(ADMIN);
+test('会员审核页 —— 没有待审申请时给一句空态文案', async () => {
+  const fx = memberReviewFixture();
+  try {
+    fx.to('demo_muc_admin');
 
-  const page = instantiate(memberReviewConfig);
-  await page.onLoad();
+    const page = instantiate(memberReviewConfig);
+    await page.onLoad();
 
-  const applicationId = page.data.view.rows[0].applicationId;
-  await page.onOpenReject({ currentTarget: { dataset: { applicationId } } });
-  await page.onSubmitAction();
-
-  assert.strictEqual(page.data.actionError, '请填写驳回理由');
-  assert.strictEqual(page.data.action.open, true, '校验失败时面板不该关掉');
-
-  const account = await facade.getMember(applicationId);
-  assert.strictEqual(account.status, USER_STATUS.PENDING, '没有理由就不能驳回');
-});
-
-test('会员审核页 —— 驳回后进「已处理」标签页，理由留在卡片上', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember(ADMIN);
-
-  const page = instantiate(memberReviewConfig);
-  await page.onLoad();
-
-  const applicationId = page.data.view.rows[0].applicationId;
-  await page.onOpenReject({ currentTarget: { dataset: { applicationId } } });
-  page.onInputReason({ detail: { value: '学号与姓名对不上' } });
-
-  calls.toasts.length = 0;
-  await page.onSubmitAction();
-
-  assert.strictEqual(page.data.view.rows.length, 1, '驳回的申请也该离开待审列表');
-  assert.ok(calls.toasts.some((text) => /已驳回/.test(text)));
-
-  await page.onSwitchTab({ currentTarget: { dataset: { tab: 'handled' } } });
-
-  const row = page.data.view.rows.find((item) => item.applicationId === applicationId);
-  assert.ok(row, '驳回过的申请应当出现在「已处理」里');
-  assert.strictEqual(row.statusLabel, '已驳回');
-  assert.strictEqual(row.reason, '学号与姓名对不上');
-  assert.strictEqual(row.canApprove, false, '处理过的申请不该再有按钮');
-  assert.strictEqual(row.canReject, false);
-});
-
-test('会员审核页 —— 重复点当前标签不做无谓的重新加载', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember(ADMIN);
-
-  const page = instantiate(memberReviewConfig);
-  await page.onLoad();
-
-  const before = page.data.view;
-  await page.onSwitchTab({ currentTarget: { dataset: { tab: page.data.view.activeTab } } });
-
-  // 视图模型对象被整体替换过就说明真的重算了
-  assert.strictEqual(page.data.view, before);
+    assert.strictEqual(page.data.view.allowed, true);
+    assert.deepStrictEqual(page.data.view.rows, []);
+    assert.strictEqual(page.data.view.pendingCount, 0);
+    assert.match(page.data.view.emptyText, /没有待审核/);
+  } finally {
+    fx.restore();
+  }
 });
 
 test('会员审核页 —— 下拉刷新会收起刷新动画', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember(ADMIN);
+  const fx = memberReviewFixture();
+  try {
+    fx.to('demo_muc_admin');
 
-  const page = instantiate(memberReviewConfig);
-  await page.onLoad();
+    const page = instantiate(memberReviewConfig);
+    await page.onLoad();
 
-  calls.pullDownStopped = 0;
-  await page.onPullDownRefresh();
-  assert.strictEqual(calls.pullDownStopped, 1);
+    calls.pullDownStopped = 0;
+    await page.onPullDownRefresh();
+    assert.strictEqual(calls.pullDownStopped, 1);
+  } finally {
+    fx.restore();
+  }
 });
 
 /* ============================================================
@@ -3633,367 +3677,538 @@ test('首页 —— 点公告卡片跳到公告列表页', async () => {
   assert.deepStrictEqual(calls.navigations, ['/pages/announcements/announcements']);
 });
 
-test('公告列表页 —— 未登录也能看，顶部协会标签，默认看当前协会且绝无管理按钮', async () => {
-  resetSession();
-  facade.setAssociation('pkb');
+/**
+ * 摆好公告页的学校维度演示环境：民大 / 匹克球协会 / 重置过的内存仓储。
+ * 公告只能由平台管理员发布（发布权只在平台管理员），发布后 to() 换成读的人。
+ */
+function announcementFixture() {
+  const schoolSession = require('../miniprogram/services/school-session');
+  const schoolMock = require('../miniprogram/services/school-mock');
+  const scope = require('../miniprogram/services/association-scope.js');
+  const space = require('../miniprogram/services/association-space.js');
+  schoolSession.reset();
+  // 公告用例要自己摆几条再数条数，这里关掉演示内容，免得「一共几条」随它漂移。
+  schoolMock.reset({ withDemoContent: false });
+  // reset() 把浏览校清成空串；公告按校取数，这里显式摆成民大
+  schoolSession.setSchoolId('muc');
+  const before = scope.getAssociation();
+  scope.setAssociation('pkb');
 
-  const page = instantiate(announcementsConfig);
-  await page.onLoad();
+  let seq = 0;
+  const publish = async (association, form) => {
+    schoolMock.setDemoActor('demo_platform_admin');
+    return space.forScope({ schoolId: 'muc', association })
+      .publishSchoolAnnouncement({ ...form, requestId: `req-${(seq += 1)}` });
+  };
+  const seed = async (association, list) => {
+    for (const form of list) await publish(association, form);
+  };
 
-  assert.strictEqual(page.data.loading, false);
-  assert.strictEqual(page.data.error, '');
-  // 顶部一栏协会标签：每个启用协会一个，按注册表次序
-  assert.deepStrictEqual(
-    page.data.view.associationTabs.map((tab) => tab.associationId),
-    ['pkb', 'tt', 'bd']
-  );
-  // 没指定时停在全局所在协会，只展示它的公告
-  assert.strictEqual(page.data.view.activeAssociation, 'pkb');
-  assert.strictEqual(page.data.view.total, 6);
-  assert.strictEqual(page.data.view.rows[0].pinned, true);
-  // 公开页的每一行都不带管理按钮——视图模型给的是 actor: null
-  for (const row of page.data.view.rows) assert.strictEqual(row.canArchive, false);
+  return {
+    publish,
+    seed,
+    to: (actor) => schoolMock.setDemoActor(actor),
+    api: (association) => space.forScope({ schoolId: 'muc', association }),
+    restore() {
+      scope.setAssociation(before);
+      schoolMock.setDemoActor('demo_applicant');
+      schoolMock.reset();
+      schoolSession.reset();
+    },
+  };
+}
+
+/** 匹克球协会的公告种子（分类分布：通知 2 / 赛事 2 / 战报 2） */
+const PKB_ANNOUNCEMENTS = [
+  { title: '开训通知', content: '本周起常规训练。', category: '通知', pinned: true },
+  { title: '男子单打赛报名', content: '本周六开赛。', category: '赛事', pinned: false },
+  { title: '女子单打赛报名', content: '本周六开赛。', category: '赛事', pinned: false },
+  { title: '首场单打赛战报', content: '名次已录入。', category: '战报', pinned: false },
+  { title: '等级分计算规则说明', content: 'ELO 算法。', category: '通知', pinned: false },
+  { title: '双打赛战报', content: '双打名次已更新。', category: '战报', pinned: false },
+];
+/** 乒乓协会的公告种子（4 条，用来验证切协会） */
+const TT_ANNOUNCEMENTS = [
+  { title: '乒乓开训通知', content: '周三训练。', category: '通知', pinned: true },
+  { title: '乒乓团体赛报名', content: '下月开赛。', category: '赛事', pinned: false },
+  { title: '场地调整通知', content: '改到二号馆。', category: '通知', pinned: false },
+  { title: '乒乓团体赛战报', content: '名次已出。', category: '战报', pinned: false },
+];
+
+test('公告列表页 —— 本校成员能看，顶部协会标签，默认看当前协会且绝无管理按钮', async () => {
+  const fx = announcementFixture();
+  try {
+    await fx.seed('pkb', PKB_ANNOUNCEMENTS);
+    await fx.seed('tt', TT_ANNOUNCEMENTS);
+    fx.to('demo_muc_member');
+
+    const page = instantiate(announcementsConfig);
+    await page.onLoad();
+
+    assert.strictEqual(page.data.loading, false);
+    assert.strictEqual(page.data.error, '');
+    // 顶部一栏协会标签：每个启用协会一个，按注册表次序
+    assert.deepStrictEqual(
+      page.data.view.associationTabs.map((tab) => tab.associationId),
+      ['pkb', 'tt', 'bd']
+    );
+    // 没指定时停在全局所在协会，只展示它的公告
+    assert.strictEqual(page.data.view.activeAssociation, 'pkb');
+    assert.strictEqual(page.data.view.total, 6);
+    assert.strictEqual(page.data.view.rows[0].pinned, true);
+    // 公开页的每一行都不带管理按钮——装载器给的是 withManage: false
+    for (const row of page.data.view.rows) assert.strictEqual(row.canArchive, false);
+  } finally {
+    fx.restore();
+  }
 });
 
 test('公告列表页 —— 点协会标签只看该协会，分类计数跟着换', async () => {
-  resetSession();
-  facade.setAssociation('pkb');
+  const fx = announcementFixture();
+  try {
+    await fx.seed('pkb', PKB_ANNOUNCEMENTS);
+    await fx.seed('tt', TT_ANNOUNCEMENTS);
+    fx.to('demo_muc_member');
 
-  const page = instantiate(announcementsConfig);
-  await page.onLoad();
+    const page = instantiate(announcementsConfig);
+    await page.onLoad();
 
-  await page.onSwitchAssociation({ currentTarget: { dataset: { association: 'tt' } } });
+    await page.onSwitchAssociation({ currentTarget: { dataset: { association: 'tt' } } });
 
-  assert.strictEqual(page.data.view.activeAssociation, 'tt');
-  assert.strictEqual(page.data.view.total, 4);
-  for (const row of page.data.view.rows) assert.strictEqual(row.association, 'tt');
-  assert.strictEqual(page.data.view.tabs[0].count, 4);
+    assert.strictEqual(page.data.view.activeAssociation, 'tt');
+    assert.strictEqual(page.data.view.total, 4);
+    for (const row of page.data.view.rows) assert.strictEqual(row.association, 'tt');
+    assert.strictEqual(page.data.view.tabs[0].count, 4);
+  } finally {
+    fx.restore();
+  }
 });
 
 test('公告列表页 —— 点分类标签整页换成该分类，别的分类计数不归零', async () => {
-  resetSession();
-  facade.setAssociation('pkb');
+  const fx = announcementFixture();
+  try {
+    await fx.seed('pkb', PKB_ANNOUNCEMENTS);
+    fx.to('demo_muc_member');
 
-  const page = instantiate(announcementsConfig);
-  await page.onLoad();
+    const page = instantiate(announcementsConfig);
+    await page.onLoad();
 
-  await page.onSwitchTab({ currentTarget: { dataset: { tab: '赛事' } } });
+    await page.onSwitchTab({ currentTarget: { dataset: { tab: '赛事' } } });
 
-  assert.strictEqual(page.data.view.activeTab, '赛事');
-  assert.strictEqual(page.data.view.visibleCount, 2);
-  for (const row of page.data.view.rows) assert.strictEqual(row.category, '赛事');
-  assert.strictEqual(page.data.view.tabs.find((t) => t.tab === '通知').count, 2);
+    assert.strictEqual(page.data.view.activeTab, '赛事');
+    assert.strictEqual(page.data.view.visibleCount, 2);
+    for (const row of page.data.view.rows) assert.strictEqual(row.category, '赛事');
+    assert.strictEqual(page.data.view.tabs.find((t) => t.tab === '通知').count, 2);
+  } finally {
+    fx.restore();
+  }
 });
 
 test('公告列表页 —— 重复点当前标签不做无谓的重新加载', async () => {
-  resetSession();
-  facade.setAssociation('pkb');
+  const fx = announcementFixture();
+  try {
+    await fx.seed('pkb', PKB_ANNOUNCEMENTS);
+    fx.to('demo_muc_member');
 
-  const page = instantiate(announcementsConfig);
-  await page.onLoad();
+    const page = instantiate(announcementsConfig);
+    await page.onLoad();
 
-  const before = page.data.view;
-  await page.onSwitchTab({ currentTarget: { dataset: { tab: page.data.view.activeTab } } });
+    const before = page.data.view;
+    await page.onSwitchTab({ currentTarget: { dataset: { tab: page.data.view.activeTab } } });
 
-  assert.strictEqual(page.data.view, before);
+    assert.strictEqual(page.data.view, before);
+  } finally {
+    fx.restore();
+  }
 });
 
 test('公告列表页 —— 下拉刷新会收起刷新动画', async () => {
-  resetSession();
+  const fx = announcementFixture();
+  try {
+    fx.to('demo_muc_member');
+    const page = instantiate(announcementsConfig);
+    await page.onLoad();
 
-  const page = instantiate(announcementsConfig);
-  await page.onLoad();
-
-  calls.pullDownStopped = 0;
-  await page.onPullDownRefresh();
-  assert.strictEqual(calls.pullDownStopped, 1);
+    calls.pullDownStopped = 0;
+    await page.onPullDownRefresh();
+    assert.strictEqual(calls.pullDownStopped, 1);
+  } finally {
+    fx.restore();
+  }
 });
 
 /* ============================================================
  * 公告管理页
  * ============================================================ */
 
-test('公告管理页 —— 访客被整页挡住，一条公告台账都拿不到', async () => {
-  resetSession();
+test('公告管理页 —— 没有学校身份的访客被整页挡住，一条公告台账都拿不到', async () => {
+  const fx = announcementFixture();
+  try {
+    await fx.seed('pkb', PKB_ANNOUNCEMENTS);
+    fx.to('demo_applicant');
 
-  const page = instantiate(announcementManageConfig);
-  await page.onLoad();
+    const page = instantiate(announcementManageConfig);
+    await page.onLoad();
 
-  assert.strictEqual(page.data.view.allowed, false);
-  assert.deepStrictEqual(page.data.view.rows, []);
-  assert.match(page.data.view.blockedText, /登录/);
+    assert.strictEqual(page.data.view.allowed, false);
+    assert.deepStrictEqual(page.data.view.rows, []);
+    assert.match(page.data.view.blockedText, /登录/);
+  } finally {
+    fx.restore();
+  }
 });
 
-test('公告管理页 —— 学院负责人被整页挡住：公告是发给全俱乐部的，学院负责人没有这个范围', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember(STAFF);
+test('公告管理页 —— 普通会员被整页挡住：公告只由平台管理员管理', async () => {
+  const fx = announcementFixture();
+  try {
+    await fx.seed('pkb', PKB_ANNOUNCEMENTS);
+    fx.to('demo_muc_member');
 
-  const page = instantiate(announcementManageConfig);
-  await page.onLoad();
+    const page = instantiate(announcementManageConfig);
+    await page.onLoad();
 
-  assert.strictEqual(page.data.view.allowed, false);
-  assert.deepStrictEqual(page.data.view.rows, [], '学院负责人不该拿到公告台账，尤其是已下架的');
-  assert.match(page.data.view.blockedText, /权限/);
+    assert.strictEqual(page.data.view.allowed, false);
+    assert.deepStrictEqual(page.data.view.rows, [], '普通会员不该拿到公告台账，尤其是已下架的');
+    assert.match(page.data.view.blockedText, /权限/);
+  } finally {
+    fx.restore();
+  }
 });
 
-test('发布公告页 —— 学院负责人填不了表，整页只给一句提示', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember(STAFF);
+test('发布公告页 —— 普通会员填不了表，整页只给一句提示', async () => {
+  const fx = announcementFixture();
+  try {
+    fx.to('demo_muc_member');
+    const page = instantiate(announcementEditConfig);
+    await page.onLoad();
 
-  const page = instantiate(announcementEditConfig);
-  await page.onLoad();
-
-  assert.match(page.data.blockReason, /权限/);
+    assert.match(page.data.blockReason, /权限/);
+  } finally {
+    fx.restore();
+  }
 });
 
-test('公告管理页 —— 管理员看到台账', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember(ADMIN);
+test('公告管理页 —— 平台管理员看到台账', async () => {
+  const fx = announcementFixture();
+  try {
+    await fx.seed('pkb', PKB_ANNOUNCEMENTS);
+    fx.to('demo_platform_admin');
 
-  const page = instantiate(announcementManageConfig);
-  await page.onLoad();
+    const page = instantiate(announcementManageConfig);
+    await page.onLoad();
 
-  assert.strictEqual(page.data.view.allowed, true);
-  assert.strictEqual(page.data.view.total, 6);
-  assert.strictEqual(page.data.view.publishedCount, 6);
-  assert.strictEqual(page.data.view.archivedCount, 0);
-  // 有发布权时每一行都给下架按钮
-  assert.strictEqual(page.data.view.rows[0].canArchive, true);
+    assert.strictEqual(page.data.view.allowed, true);
+    assert.strictEqual(page.data.view.total, 6);
+    assert.strictEqual(page.data.view.publishedCount, 6);
+    assert.strictEqual(page.data.view.archivedCount, 0);
+    // 有发布权时每一行都给下架按钮
+    assert.strictEqual(page.data.view.rows[0].canArchive, true);
+  } finally {
+    fx.restore();
+  }
 });
 
 test('公告管理页 —— 下架后台账里仍在、沉到底部且不再给按钮，公开页少一条', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember(ADMIN);
+  const fx = announcementFixture();
+  try {
+    await fx.seed('pkb', PKB_ANNOUNCEMENTS);
+    fx.to('demo_platform_admin');
 
-  const page = instantiate(announcementManageConfig);
-  await page.onLoad();
+    const page = instantiate(announcementManageConfig);
+    await page.onLoad();
 
-  const target = page.data.view.rows[0].id;
-  await page.onArchive({ currentTarget: { dataset: { id: target } } });
+    const target = page.data.view.rows[0].id;
+    await page.onArchive({ currentTarget: { dataset: { id: target } } });
 
-  assert.strictEqual(page.data.view.total, 6);
-  assert.strictEqual(page.data.view.publishedCount, 5);
-  assert.strictEqual(page.data.view.archivedCount, 1);
+    assert.strictEqual(page.data.view.total, 6);
+    assert.strictEqual(page.data.view.publishedCount, 5);
+    assert.strictEqual(page.data.view.archivedCount, 1);
 
-  const last = page.data.view.rows[page.data.view.rows.length - 1];
-  assert.strictEqual(last.id, target);
-  assert.strictEqual(last.archived, true);
-  assert.strictEqual(last.canArchive, false);
+    const last = page.data.view.rows[page.data.view.rows.length - 1];
+    assert.strictEqual(last.id, target);
+    assert.strictEqual(last.archived, true);
+    assert.strictEqual(last.canArchive, false);
 
-  assert.strictEqual((await facade.getAnnouncements()).length, 5);
+    // 平台管理员视角仍含已下架；换成普通会员就少一条
+    const adminView = await fx.api('pkb').listSchoolAnnouncements({});
+    assert.strictEqual(adminView.announcements.length, 6);
+    fx.to('demo_muc_member');
+    const memberView = await fx.api('pkb').listSchoolAnnouncements({});
+    assert.strictEqual(memberView.announcements.length, 5);
+  } finally {
+    fx.restore();
+  }
 });
 
 test('公告管理页 —— 点发布跳到发布页', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember(ADMIN);
+  const fx = announcementFixture();
+  try {
+    fx.to('demo_platform_admin');
+    const page = instantiate(announcementManageConfig);
+    await page.onLoad();
 
-  const page = instantiate(announcementManageConfig);
-  await page.onLoad();
-
-  calls.navigations.length = 0;
-  page.onGoPublish();
-  assert.deepStrictEqual(calls.navigations, ['/pages/announcement-edit/announcement-edit']);
+    calls.navigations.length = 0;
+    page.onGoPublish();
+    assert.deepStrictEqual(calls.navigations, ['/pages/announcement-edit/announcement-edit']);
+  } finally {
+    fx.restore();
+  }
 });
 
 test('公告管理页 —— 从发布页返回时刷新台账', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember(ADMIN);
+  const fx = announcementFixture();
+  try {
+    await fx.seed('pkb', PKB_ANNOUNCEMENTS);
+    fx.to('demo_platform_admin');
 
-  const page = instantiate(announcementManageConfig);
-  await page.onLoad();
-  assert.strictEqual(page.data.view.total, 6);
+    const page = instantiate(announcementManageConfig);
+    await page.onLoad();
+    assert.strictEqual(page.data.view.total, 6);
 
-  // 模拟在发布页里发了一条，返回时 onShow 应当把它带出来
-  await facade.publishAnnouncement(
-    { title: '临时通知', content: '明天停训一次。', category: '通知' },
-    ADMIN._id
-  );
-  await page.onShow();
+    // 模拟在发布页里发了一条，返回时 onShow 应当把它带出来
+    await fx.publish('pkb', { title: '临时通知', content: '明天停训一次。', category: '通知', pinned: false });
+    await page.onShow();
 
-  assert.strictEqual(page.data.view.total, 7);
+    assert.strictEqual(page.data.view.total, 7);
+  } finally {
+    fx.restore();
+  }
 });
 
 /* ============================================================
  * 发布公告页
  * ============================================================ */
 
-test('发布公告页 —— 未登录被整页挡住，表单都不给', () => {
-  resetSession();
+test('发布公告页 —— 没有学校身份被整页挡住，表单都不给', async () => {
+  const fx = announcementFixture();
+  try {
+    fx.to('demo_applicant');
+    const page = instantiate(announcementEditConfig);
+    await page.onLoad();
 
-  const page = instantiate(announcementEditConfig);
-  page.onLoad();
-
-  assert.match(page.data.blockReason, /登录/);
+    assert.match(page.data.blockReason, /登录/);
+  } finally {
+    fx.restore();
+  }
 });
 
-test('发布公告页 —— 管理员能填表，填好后提交落进数据源并返回上一页', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember(ADMIN);
+test('发布公告页 —— 平台管理员能填表，填好后提交落进数据源并返回上一页', async () => {
+  const fx = announcementFixture();
+  try {
+    fx.to('demo_platform_admin');
+    const page = instantiate(announcementEditConfig);
+    await page.onLoad();
+    assert.strictEqual(page.data.blockReason, '');
 
-  const page = instantiate(announcementEditConfig);
-  page.onLoad();
-  assert.strictEqual(page.data.blockReason, '');
+    page.onInputTitle({ detail: { value: '周末训练改到周六' } });
+    page.onInputContent({ detail: { value: '因场地检修，本周训练顺延一天。' } });
 
-  page.onInputTitle({ detail: { value: '周末训练改到周六' } });
-  page.onInputContent({ detail: { value: '因场地检修，本周训练顺延一天。' } });
+    calls.backCount = 0;
+    await page.onSubmit();
 
-  calls.backCount = 0;
-  await page.onSubmit();
+    assert.strictEqual(page.data.submitting, false);
+    assert.deepStrictEqual(page.data.errors, {});
+    assert.strictEqual(calls.backCount, 1);
 
-  assert.strictEqual(page.data.submitting, false);
-  assert.deepStrictEqual(page.data.errors, {});
-  assert.strictEqual(calls.backCount, 1);
-
-  const list = await facade.getAnnouncements();
-  assert.ok(list.some((item) => item.title === '周末训练改到周六'));
+    const view = await fx.api('pkb').listSchoolAnnouncements({});
+    assert.ok(view.announcements.some((item) => item.title === '周末训练改到周六'));
+  } finally {
+    fx.restore();
+  }
 });
 
 test('发布公告页 —— 标题为空时不提交，逐字段报错', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember(ADMIN);
+  const fx = announcementFixture();
+  try {
+    fx.to('demo_platform_admin');
+    const page = instantiate(announcementEditConfig);
+    await page.onLoad();
 
-  const page = instantiate(announcementEditConfig);
-  page.onLoad();
+    const before = (await fx.api('pkb').listSchoolAnnouncements({})).announcements.length;
+    page.onInputContent({ detail: { value: '只有正文，没有标题。' } });
 
-  const before = (await facade.getAnnouncements()).length;
-  page.onInputContent({ detail: { value: '只有正文，没有标题。' } });
+    calls.backCount = 0;
+    await page.onSubmit();
 
-  calls.backCount = 0;
-  await page.onSubmit();
-
-  assert.ok(page.data.errors.title);
-  assert.ok(page.data.errorText);
-  assert.strictEqual(calls.backCount, 0);
-  // 校验不过不许留下任何痕迹
-  assert.strictEqual((await facade.getAnnouncements()).length, before);
+    assert.ok(page.data.errors.title);
+    assert.ok(page.data.errorText);
+    assert.strictEqual(calls.backCount, 0);
+    // 校验不过不许留下任何痕迹
+    assert.strictEqual((await fx.api('pkb').listSchoolAnnouncements({})).announcements.length, before);
+  } finally {
+    fx.restore();
+  }
 });
 
 test('发布公告页 —— 输入标题会把该项的旧错误清掉', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember(ADMIN);
+  const fx = announcementFixture();
+  try {
+    fx.to('demo_platform_admin');
+    const page = instantiate(announcementEditConfig);
+    await page.onLoad();
 
-  const page = instantiate(announcementEditConfig);
-  page.onLoad();
+    await page.onSubmit();
+    assert.ok(page.data.errors.title);
 
-  await page.onSubmit();
-  assert.ok(page.data.errors.title);
-
-  page.onInputTitle({ detail: { value: '训练通知' } });
-  assert.strictEqual(page.data.errors.title, '');
+    page.onInputTitle({ detail: { value: '训练通知' } });
+    assert.strictEqual(page.data.errors.title, '');
+  } finally {
+    fx.restore();
+  }
 });
 
 /* ============================================================
- * 编辑资料页
+ * 编辑资料页（学校维度）
  * ============================================================ */
 
-/** 一位带实名信息的已登录会员，编辑页要拿它填只读的姓名与学号 */
-function loggedInWithRealName(overrides = {}) {
-  return loginAs({ realName: '赵明宇', studentId: '20230006', ...overrides });
+/**
+ * 摆好编辑资料页的学校维度环境：民大 / 匹克球协会 / 重置过的内存仓储。
+ * to() 换演示身份，spaceApi() 拿协会空间客户端核对落库结果（会员档案在那边），
+ * restore() 归位。
+ */
+function schoolProfileFixture() {
+  const schoolSession = require('../miniprogram/services/school-session');
+  const schoolMock = require('../miniprogram/services/school-mock');
+  const space = require('../miniprogram/services/association-space.js');
+  const assoc = require('../miniprogram/services/association-scope.js');
+  schoolSession.reset();
+  schoolMock.reset();
+  schoolSession.setSchoolId('muc');
+  const before = assoc.getAssociation();
+  assoc.setAssociation('pkb');
+  return {
+    to: (actor) => schoolMock.setDemoActor(actor),
+    spaceApi: () => space.forScope({ schoolId: 'muc', association: 'pkb' }),
+    restore() {
+      assoc.setAssociation(before);
+      schoolMock.setDemoActor('demo_applicant');
+      schoolMock.reset();
+      schoolSession.reset();
+    },
+  };
 }
 
-test('编辑资料页 —— 未登录被整页挡住，表单都不给', () => {
-  resetSession();
+test('编辑资料页 —— 已登录时填入当前昵称，学号只读展示', async () => {
+  const fx = schoolProfileFixture();
+  try {
+    fx.to('demo_muc_member');
 
-  const page = instantiate(profileEditConfig);
-  page.onLoad();
+    const page = instantiate(profileEditConfig);
+    await page.onLoad();
 
-  assert.match(page.data.blockReason, /登录/);
+    assert.strictEqual(page.data.loading, false);
+    assert.strictEqual(page.data.blockReason, '');
+    assert.strictEqual(page.data.form.nickName, '民大模拟会员');
+    assert.strictEqual(page.data.avatarText, '民');
+    // 自己的学号从学校身份取；姓名 / 性别演示身份没填，留空由模板兜底成「—」
+    assert.strictEqual(page.data.studentId, 'TEST002');
+    assert.strictEqual(page.data.realName, '');
+    assert.strictEqual(page.data.genderText, '');
+  } finally {
+    fx.restore();
+  }
 });
 
-test('编辑资料页 —— 已登录时填入当前昵称，真名与学号只读展示', () => {
-  resetSession();
-  loggedInWithRealName();
+test('编辑资料页 —— 改昵称保存：落进数据源并返回上一页', async () => {
+  const fx = schoolProfileFixture();
+  try {
+    fx.to('demo_muc_member');
 
-  const page = instantiate(profileEditConfig);
-  page.onLoad();
+    const page = instantiate(profileEditConfig);
+    await page.onLoad();
 
-  assert.strictEqual(page.data.blockReason, '');
-  assert.strictEqual(page.data.form.nickName, '赵明宇');
-  assert.strictEqual(page.data.realName, '赵明宇');
-  assert.strictEqual(page.data.studentId, '20230006');
-});
+    page.onInputNickname({ detail: { value: '小明' } });
 
-test('编辑资料页 —— 改昵称保存：落进数据源、更新登录态、返回上一页', async () => {
-  resetSession();
-  loggedInWithRealName();
+    calls.backCount = 0;
+    await page.onSubmit();
 
-  const page = instantiate(profileEditConfig);
-  page.onLoad();
+    assert.strictEqual(page.data.submitting, false);
+    assert.deepStrictEqual(page.data.errors, {});
+    assert.strictEqual(calls.backCount, 1);
 
-  page.onInputNickname({ detail: { value: '小明' } });
-
-  calls.backCount = 0;
-  await page.onSubmit();
-
-  assert.strictEqual(page.data.submitting, false);
-  assert.deepStrictEqual(page.data.errors, {});
-  assert.strictEqual(calls.backCount, 1);
-
-  // 数据层与本地登录态都要更新，否则「我的」页返回后仍是旧名字
-  assert.strictEqual((await facade.getMember('u06')).nickName, '小明');
-  assert.strictEqual(app.globalData.userInfo.nickName, '小明');
-  // 实名信息不因改昵称而变动
-  assert.strictEqual(app.globalData.userInfo.realName, '赵明宇');
+    // 账号资料真的落库了：再读自己的会员档案，昵称已更新
+    const me = await fx.spaceApi().getSchoolMember({ userId: 'demo_muc_member' });
+    assert.strictEqual(me.ok, true);
+    assert.strictEqual(me.member.nickName, '小明');
+  } finally {
+    fx.restore();
+  }
 });
 
 test('编辑资料页 —— 昵称清空时不提交，逐字段报错且不返回', async () => {
-  resetSession();
-  loggedInWithRealName();
+  const fx = schoolProfileFixture();
+  try {
+    fx.to('demo_muc_member');
 
-  const page = instantiate(profileEditConfig);
-  page.onLoad();
+    const page = instantiate(profileEditConfig);
+    await page.onLoad();
 
-  page.onInputNickname({ detail: { value: '   ' } });
+    page.onInputNickname({ detail: { value: '   ' } });
 
-  calls.backCount = 0;
-  await page.onSubmit();
+    calls.backCount = 0;
+    await page.onSubmit();
 
-  assert.ok(page.data.errors.nickName);
-  assert.ok(page.data.errorText);
-  assert.strictEqual(calls.backCount, 0);
-  assert.strictEqual((await facade.getMember('u06')).nickName, '明宇');
+    assert.ok(page.data.errors.nickName);
+    assert.ok(page.data.errorText);
+    assert.strictEqual(calls.backCount, 0);
+
+    const me = await fx.spaceApi().getSchoolMember({ userId: 'demo_muc_member' });
+    assert.strictEqual(me.member.nickName, '民大模拟会员');
+  } finally {
+    fx.restore();
+  }
 });
 
 test('编辑资料页 —— 选择头像写入表单，本地模拟下原样保留临时路径', async () => {
-  resetSession();
-  loggedInWithRealName();
+  const fx = schoolProfileFixture();
+  try {
+    fx.to('demo_muc_member');
 
-  const page = instantiate(profileEditConfig);
-  page.onLoad();
+    const page = instantiate(profileEditConfig);
+    await page.onLoad();
 
-  await page.onChooseAvatar({ detail: { avatarUrl: 'http://tmp/abc.png' } });
-  assert.strictEqual(page.data.form.avatarUrl, 'http://tmp/abc.png');
+    await page.onChooseAvatar({ detail: { avatarUrl: 'http://tmp/abc.png' } });
+    assert.strictEqual(page.data.form.avatarUrl, 'http://tmp/abc.png');
+  } finally {
+    fx.restore();
+  }
 });
 
 test('编辑资料页 —— 输入昵称会把旧的错误提示清掉', async () => {
-  resetSession();
-  loggedInWithRealName();
+  const fx = schoolProfileFixture();
+  try {
+    fx.to('demo_muc_member');
 
-  const page = instantiate(profileEditConfig);
-  page.onLoad();
+    const page = instantiate(profileEditConfig);
+    await page.onLoad();
 
-  page.setData({ 'form.nickName': '' });
-  await page.onSubmit();
-  assert.ok(page.data.errors.nickName);
+    page.setData({ 'form.nickName': '' });
+    await page.onSubmit();
+    assert.ok(page.data.errors.nickName);
 
-  page.onInputNickname({ detail: { value: '新昵称' } });
-  assert.strictEqual(page.data.errors.nickName, '');
-  assert.strictEqual(page.data.errorText, '');
+    page.onInputNickname({ detail: { value: '新昵称' } });
+    assert.strictEqual(page.data.errors.nickName, '');
+    assert.strictEqual(page.data.errorText, '');
+  } finally {
+    fx.restore();
+  }
 });
 
 test('编辑资料页 —— 调用抛异常时也要给出提示并恢复按钮，不能点了没反应', async () => {
-  resetSession();
-  loggedInWithRealName();
-
-  // 云端未部署新版（「未知的操作」）或网络断开时，取数层是直接抛错的
-  const original = mock.updateProfile;
-  mock.updateProfile = async () => {
-    throw new Error('未知的操作：updateProfile');
-  };
-
+  const fx = schoolProfileFixture();
+  const identity = require('../miniprogram/services/school-identity.js');
+  const original = identity.forSchoolIdentity;
   try {
+    fx.to('demo_muc_member');
+
     const page = instantiate(profileEditConfig);
-    page.onLoad();
+    await page.onLoad();
+
+    // 装载走的是真实现；只在保存这一步换成会抛错的客户端——
+    // 模拟云端未部署新版（「未知的操作」）或网络断开
+    identity.forSchoolIdentity = () => ({
+      updateSchoolProfile: async () => { throw new Error('未知的操作：updateSchoolProfile'); },
+    });
     page.onInputNickname({ detail: { value: '新名字' } });
 
     calls.backCount = 0;
@@ -4003,7 +4218,8 @@ test('编辑资料页 —— 调用抛异常时也要给出提示并恢复按钮
     assert.ok(page.data.errorText);
     assert.strictEqual(calls.backCount, 0, '没保存成功就不能返回');
   } finally {
-    mock.updateProfile = original;
+    identity.forSchoolIdentity = original;
+    fx.restore();
   }
 });
 

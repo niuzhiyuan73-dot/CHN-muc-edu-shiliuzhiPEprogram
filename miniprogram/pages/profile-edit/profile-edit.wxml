@@ -1,12 +1,15 @@
 <!--
-  编辑资料
-  只改昵称与头像；真实姓名与学号是注册时核过的实名信息，这里只读展示。
-  校验在 services/profile.js，本页只渲染并把用户的操作交回去。
+  编辑资料（学校维度）
+  只改昵称与头像；姓名、性别与学号是入会核过的实名信息，这里只读展示。
+  取数与白名单见 services/school-profile-view.js 与 profile.js，本页只渲染并交回操作。
 -->
 <view class="page-container">
 
+  <!-- 装载中。必须排在挡住之前，否则首屏会一闪而过地打白 -->
+  <view wx:if="{{loading}}" class="loading">正在加载…</view>
+
   <!-- 没有登录态时不给表单：填完再被拒，比一开始就说清楚糟得多 -->
-  <view wx:if="{{blockReason}}" class="empty-state">
+  <view wx:elif="{{blockReason}}" class="empty-state">
     <view class="empty-state-icon">🔒</view>
     <view class="empty-state-text">{{blockReason}}</view>
     <view class="btn btn-outline block-back" bindtap="onCancel">返回</view>
