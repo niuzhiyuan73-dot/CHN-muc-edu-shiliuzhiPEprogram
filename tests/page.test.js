@@ -611,49 +611,18 @@ test('排行榜 —— 切到北航显示北航的演示榜单且整页只读', 
   }
 });
 
-test('比赛页 —— 切到北航显示北航的演示比赛，且没有任何操作入口', async () => {
-  const schoolSession = require('../miniprogram/services/school-session');
-  const schoolMock = require('../miniprogram/services/school-mock');
-  schoolSession.reset();
-  schoolMock.setDemoActor('demo_muc_member');
+test('比赛页 —— 切到无权访问的外校清空比赛并关闭录入', async () => {
+  const fx = schoolEventFixture();
   try {
-    resetSession();
-    app.globalData.userInfo = activeMember();
+    fx.to('demo_muc_member');
     const page = instantiate(matchConfig);
     await page.onLoad();
-
-    assert.strictEqual(page.data.demoSchool, false);
-
-    schoolSession.setSchoolId('buaa');
+    require('../miniprogram/services/school-session').setSchoolId('buaa');
     await page.refresh();
-
-    assert.strictEqual(page.data.demoSchool, true);
-    assert.strictEqual(page.data.demoSchoolName, '北航');
-    assert.strictEqual(page.data.auth.canRecord, false);
-
-    const rows = page.data.view.records;
-    assert.ok(rows.length > 0, '北航有演示比赛');
-    // 只剩一排「全部比赛」——浏览者不是该校会员，没有「我的比赛 / 待确认」
-    assert.deepStrictEqual(page.data.view.tabs.map((item) => item.label), ['全部比赛']);
-    // 任何写入口都被关掉
-    assert.ok(
-      rows.every(
-        (row) =>
-          !row.canRecord && !row.canConfirm && !row.canRevoke && !row.canForfeit && !row.canAssignReferee
-      )
-    );
-
-    // 点队名不跳转、点录入不进录入页
-    calls.navigations.length = 0;
-    calls.toasts.length = 0;
-    page.onOpenMember({ currentTarget: { dataset: { userId: rows[0].teamAList[0].userId } } });
-    page.onGoEntry();
-    assert.deepStrictEqual(calls.navigations, []);
-    assert.deepStrictEqual(calls.toasts, []);
-  } finally {
-    schoolMock.setDemoActor('demo_applicant');
-    schoolSession.reset();
-  }
+    assert.deepEqual(page.data.view.records, []);
+    assert.equal(page.data.auth.canRecord, false);
+    assert.match(page.data.entryHint, /有效身份/);
+  } finally { fx.restore(); }
 });
 
 test('赛事页 —— 切到无权访问的外校清除旧赛事与积分榜', async () => {
@@ -697,16 +666,14 @@ test('外校演示 —— 按协会分开：切协会后榜单 / 比赛 / 赛事
     assert.strictEqual(rankPage.data.demoSchool, true);
     assert.notStrictEqual(rankPage.data.view.rows[0].nickName, pkbRankFirst, '切协会换了一套榜单');
 
-    // 比赛页：同样按协会换内容
-    scope.setAssociation('pkb');
+    // 比赛面板已接 S2，无外校有效身份时不返回内部台账。
     const matchPage = instantiate(matchConfig);
     await matchPage.onLoad();
-    const pkbMatchId = matchPage.data.view.records[0].matchId;
-
+    assert.deepEqual(matchPage.data.view.records, []);
     scope.setAssociation('bd');
     await matchPage.refresh();
-    assert.strictEqual(matchPage.data.demoSchool, true);
-    assert.notStrictEqual(matchPage.data.view.records[0].matchId, pkbMatchId, '切协会换了一套比赛');
+    assert.deepEqual(matchPage.data.view.records, []);
+    assert.equal(matchPage.data.auth.canRecord, false);
 
     // 已迁移的赛事面板读取真实 S2 权限，外校访问被拒，不再展示静态赛事。
     const eventsPage = instantiate(eventsConfig);
@@ -2833,12 +2800,80 @@ function pendingParams() {
   };
 }
 
+function schoolMatchTest(name, run) {
+  test(name, async () => {
+    const session = require('../miniprogram/services/school-session');
+    const association = require('../miniprogram/services/association-scope');
+    const oldScope = { schoolId: session.getSchoolId(), association: association.getAssociation() };
+    session.setSchoolId('muc'); association.setAssociation('pkb');
+    const fixture = require('./helpers/school-match-fixture').createMatchFixture(() => app.globalData.userInfo);
+    try { await run(fixture); }
+    finally { fixture.restore(); session.setSchoolId(oldScope.schoolId); association.setAssociation(oldScope.association); }
+  });
+}
+
+test('普通比赛 S2：录入重试幂等、本人列表、对手确认、管理员撤销、跨校隔离', async () => {
+  const fx = schoolEventFixture();
+  try {
+    fx.to('demo_muc_member');
+    const entry = instantiate(matchEntryConfig);
+    await entry.onLoad();
+    assert.equal(entry.data.form.teamA[0], 'demo_muc_member');
+    entry.onPickMember({ currentTarget: { dataset: { side: 'B', slot: 0, id: 'demo_muc_admin' } } });
+    for (const [side, value] of [['A', '11'], ['B', '7']]) for (const slot of [0, 1]) entry.onInputScore({ currentTarget: { dataset: { side, slot } }, detail: { value } });
+    await entry.onSubmit();
+    await entry.onSubmit();
+    assert.equal(entry.data.errorText, '');
+    let list = await fx.api().listSchoolMatches({});
+    assert.equal(list.matches.length, 1, '网络重试不会新建第二场');
+    const matchId = list.matches[0].matchId;
+    const panel = instantiate(matchConfig);
+    await panel.onLoad();
+    assert.equal(panel.data.view.records[0].matchId, matchId);
+    fx.to('demo_muc_admin');
+    await panel.refresh();
+    await panel.onConfirm({ currentTarget: { dataset: { matchId } } });
+    assert.equal((await fx.api().getSchoolMatch({ matchId })).match.status, MATCH_STATUS.ACTIVE);
+    panel.onOpenAction({ currentTarget: { dataset: { matchId, kind: 'revoke' } } });
+    panel.onInputReason({ detail: { value: '比分有误' } });
+    await panel.onSubmitAction();
+    assert.equal((await fx.api().getSchoolMatch({ matchId })).match.status, MATCH_STATUS.REVOKED);
+    fx.to('demo_buaa_member');
+    require('../miniprogram/services/school-session').setSchoolId('buaa');
+    await panel.refresh();
+    assert.deepEqual(panel.data.view.records, []);
+    assert.equal(panel.data.auth.canRecord, true);
+  } finally { fx.restore(); }
+});
+
+test('比赛面板 S2：读取失败清掉旧台账，写入异常解除提交状态', async () => {
+  const fx = schoolEventFixture();
+  const space = require('../miniprogram/services/association-space');
+  const original = space.forScope;
+  try {
+    fx.to('demo_muc_admin');
+    const panel = instantiate(matchConfig);
+    await panel.onLoad();
+    // 客户端不可变，用替代客户端模拟网络失败。
+    panel.api = { revokeSchoolMatch: async () => { throw new Error('网络故障'); } };
+    panel.onOpenAction({ currentTarget: { dataset: { matchId: 'missing', kind: 'revoke' } } });
+    panel.onInputReason({ detail: { value: '测试异常恢复' } });
+    await panel.onSubmitAction();
+    assert.equal(panel.data.acting, false);
+    assert.match(panel.data.actionError, /网络故障/);
+    space.forScope = () => ({ getSchoolMatchEntryContext: async () => { throw new Error('读取失败'); } });
+    await panel.refresh();
+    assert.deepEqual(panel.data.view, {});
+    assert.equal(panel.data.auth.canRecord, false);
+  } finally { space.forScope = original; fx.restore(); }
+});
+
 const ME = 'u06';
 const RIVAL = 'u02';
 /** 种子里的管理员（u01 巴特尔） */
 const ADMIN_ID = 'u01';
 
-test('比赛页 —— 访客看不到台账，录入入口与空态都给登录引导', async () => {
+schoolMatchTest('比赛页 —— 访客看不到台账，录入入口与空态都给登录引导', async (facade) => {
   resetSession();
   const page = instantiate(matchConfig);
   await page.onLoad();
@@ -2855,7 +2890,7 @@ test('比赛页 —— 访客看不到台账，录入入口与空态都给登录
   assert.match(page.data.view.emptyText, /登录/);
 });
 
-test('比赛页 —— 访客点登录按钮跳到登录页', async () => {
+schoolMatchTest('比赛页 —— 访客点登录按钮跳到登录页', async (facade) => {
   resetSession();
   const page = instantiate(matchConfig);
   await page.onLoad();
@@ -2865,7 +2900,7 @@ test('比赛页 —— 访客点登录按钮跳到登录页', async () => {
   assert.deepStrictEqual(calls.navigations, ['/pages/login/login']);
 });
 
-test('比赛页 —— 登录后看到台账与自己的录入权限', async () => {
+schoolMatchTest('比赛页 —— 登录后看到台账与自己的录入权限', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -2879,7 +2914,7 @@ test('比赛页 —— 登录后看到台账与自己的录入权限', async () 
   assert.strictEqual(page.data.view.tabs.filter((item) => item.active).length, 1);
 });
 
-test('比赛页 —— 默认落在「我的比赛」，页面上只列自己参加过的', async () => {
+schoolMatchTest('比赛页 —— 默认落在「我的比赛」，页面上只列自己参加过的', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -2896,7 +2931,7 @@ test('比赛页 —— 默认落在「我的比赛」，页面上只列自己参
   assert.ok(page.data.view.records.every((row) => row.isMine));
 });
 
-test('比赛页 —— 重复点当前标签不做无谓的重新加载', async () => {
+schoolMatchTest('比赛页 —— 重复点当前标签不做无谓的重新加载', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -2910,7 +2945,7 @@ test('比赛页 —— 重复点当前标签不做无谓的重新加载', async 
   assert.strictEqual(page.data.view, before);
 });
 
-test('比赛页 —— 台账每场都带赛制文案，11 分制三局两胜渲染得出来', async () => {
+schoolMatchTest('比赛页 —— 台账每场都带赛制文案，11 分制三局两胜渲染得出来', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -2925,7 +2960,7 @@ test('比赛页 —— 台账每场都带赛制文案，11 分制三局两胜渲
   }
 });
 
-test('比赛页 —— 未登录时点录入只给提示，不进录入页', async () => {
+schoolMatchTest('比赛页 —— 未登录时点录入只给提示，不进录入页', async (facade) => {
   resetSession();
   const page = instantiate(matchConfig);
   await page.onLoad();
@@ -2938,7 +2973,7 @@ test('比赛页 —— 未登录时点录入只给提示，不进录入页', asy
   assert.ok(calls.toasts.some((text) => /登录/.test(text)));
 });
 
-test('比赛页 —— 待审核账号不能录入，提示写明原因', async () => {
+schoolMatchTest('比赛页 —— 待审核账号不能录入，提示写明原因', async (facade) => {
   resetSession();
   // 本地注册的账号状态是待审核，能登录但还没通过实名核对
   app.globalData.userInfo = fakeMember({ _id: 'local_1', nickName: '新会员', status: 0 });
@@ -2946,17 +2981,17 @@ test('比赛页 —— 待审核账号不能录入，提示写明原因', async 
   const page = instantiate(matchConfig);
   await page.onLoad();
 
-  assert.match(page.data.entryHint, /审核/);
+  assert.match(page.data.entryHint, /有效身份/);
 
   calls.toasts.length = 0;
   calls.navigations.length = 0;
   page.onGoEntry();
 
   assert.deepStrictEqual(calls.navigations, []);
-  assert.ok(calls.toasts.some((text) => /审核/.test(text)));
+  assert.ok(calls.toasts.some((text) => /有效身份/.test(text)));
 });
 
-test('比赛页 —— 正常账号点录入跳到录入页', async () => {
+schoolMatchTest('比赛页 —— 正常账号点录入跳到录入页', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -2968,7 +3003,7 @@ test('比赛页 —— 正常账号点录入跳到录入页', async () => {
   assert.deepStrictEqual(calls.navigations, ['/pages/match-entry/match-entry']);
 });
 
-test('比赛页 —— 点队名跳到该会员主页', async () => {
+schoolMatchTest('比赛页 —— 点队名跳到该会员主页', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -2980,7 +3015,7 @@ test('比赛页 —— 点队名跳到该会员主页', async () => {
   assert.deepStrictEqual(calls.navigations, ['/pages/member/member?userId=u01']);
 });
 
-test('比赛页 —— 确认后成绩计入等级分，待确认标签随即空掉', async () => {
+schoolMatchTest('比赛页 —— 确认后成绩计入等级分，待确认标签随即空掉', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -3010,7 +3045,7 @@ test('比赛页 —— 确认后成绩计入等级分，待确认标签随即空
   assert.ok(calls.toasts.some((text) => /已计入等级分/.test(text)));
 });
 
-test('比赛页 —— 管理员撤销后分数回滚，理由留在台账里', async () => {
+schoolMatchTest('比赛页 —— 管理员撤销后分数回滚，理由留在台账里', async (facade) => {
   resetSession();
   app.globalData.userInfo = adminMember();
 
@@ -3050,7 +3085,7 @@ test('比赛页 —— 管理员撤销后分数回滚，理由留在台账里', 
   assert.ok(calls.toasts.some((text) => /已撤销/.test(text)));
 });
 
-test('比赛页 —— 撤销权只在管理员手上，录入者本人也撤不动', async () => {
+schoolMatchTest('比赛页 —— 撤销权只在管理员手上，录入者本人也撤不动', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -3076,7 +3111,7 @@ test('比赛页 —— 撤销权只在管理员手上，录入者本人也撤不
   assert.strictEqual(ledgerRow.status, MATCH_STATUS.ACTIVE, '被挡下就不该动到状态');
 });
 
-test('比赛页 —— 撤销不填理由被拦下，比赛原样不动', async () => {
+schoolMatchTest('比赛页 —— 撤销不填理由被拦下，比赛原样不动', async (facade) => {
   resetSession();
   app.globalData.userInfo = adminMember();
 
@@ -3099,7 +3134,7 @@ test('比赛页 —— 撤销不填理由被拦下，比赛原样不动', async 
   assert.strictEqual(ledgerRow.status, MATCH_STATUS.ACTIVE, '没有理由就不能作废成绩');
 });
 
-test('比赛页 —— 驳回与撤销共用终态，但文案要分得清', async () => {
+schoolMatchTest('比赛页 —— 驳回与撤销共用终态，但文案要分得清', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -3123,7 +3158,7 @@ test('比赛页 —— 驳回与撤销共用终态，但文案要分得清', asy
   assert.strictEqual(row.statusLabel, '已驳回');
 });
 
-test('比赛页 —— 普通会员看不到指派裁判的入口', async () => {
+schoolMatchTest('比赛页 —— 普通会员看不到指派裁判的入口', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -3139,7 +3174,7 @@ test('比赛页 —— 普通会员看不到指派裁判的入口', async () => 
   assert.strictEqual(row.hasReferee, false);
 });
 
-test('比赛页 —— 管理员在面板里指派裁判，落库并显示在那一行上', async () => {
+schoolMatchTest('比赛页 —— 管理员在面板里指派裁判，落库并显示在那一行上', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember(ADMIN);
 
@@ -3166,7 +3201,7 @@ test('比赛页 —— 管理员在面板里指派裁判，落库并显示在那
 
   const ledgerRow = (await facade.getMatchRecords()).find((item) => item._id === match._id);
   assert.strictEqual(ledgerRow.referee, RIVAL, '指派已经落库');
-  assert.strictEqual(ledgerRow.refereeBy, ADMIN._id, '谁派的要留痕');
+  assert.strictEqual((await facade.repo.matches.getById(match._id)).refereeBy, ADMIN._id, '谁派的要留痕');
 
   assert.strictEqual(page.data.referee.open, false, '选完即关面板');
   const after = page.data.view.records.find((item) => item.matchId === match._id);
@@ -3177,7 +3212,7 @@ test('比赛页 —— 管理员在面板里指派裁判，落库并显示在那
   assert.ok(calls.toasts.some((text) => /已指派裁判/.test(text)));
 });
 
-test('比赛页 —— 管理员可以撤下裁判，比赛回到「人人照旧」', async () => {
+schoolMatchTest('比赛页 —— 管理员可以撤下裁判，比赛回到「人人照旧」', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember(ADMIN);
 
@@ -3201,7 +3236,7 @@ test('比赛页 —— 管理员可以撤下裁判，比赛回到「人人照旧
   assert.ok(calls.toasts.some((text) => /已撤下裁判/.test(text)));
 });
 
-test('比赛页 —— 裁判接管后，参赛者看到收口提示且确认按钮消失', async () => {
+schoolMatchTest('比赛页 —— 裁判接管后，参赛者看到收口提示且确认按钮消失', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -3219,7 +3254,7 @@ test('比赛页 —— 裁判接管后，参赛者看到收口提示且确认按
   assert.strictEqual(row.canConfirm, false);
 });
 
-test('比赛页 —— 下拉刷新会收起刷新动画', async () => {
+schoolMatchTest('比赛页 —— 下拉刷新会收起刷新动画', async (facade) => {
   resetSession();
   const page = instantiate(matchConfig);
   await page.onLoad();
@@ -3247,7 +3282,7 @@ function fillSinglesForm(page) {
   }
 }
 
-test('录入页 —— 首屏把 A 队第一格锁成自己，赛制默认 11 分制三局两胜', async () => {
+schoolMatchTest('录入页 —— 首屏把 A 队第一格锁成自己，赛制默认 11 分制三局两胜', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -3257,7 +3292,7 @@ test('录入页 —— 首屏把 A 队第一格锁成自己，赛制默认 11 �
   assert.strictEqual(page.data.loading, false);
   assert.strictEqual(page.data.error, '');
   assert.strictEqual(page.data.blockReason, '');
-  assert.strictEqual(page.data.members.length, 24, '选手名单必须来自会员表');
+  assert.equal(page.data.members.length, (await facade.getMembers()).length, '选手名单来自 S2 在册会员');
 
   assert.strictEqual(page.data.form.matchType, MATCH_TYPE.SINGLES);
   assert.strictEqual(page.data.teamARows.length, 1);
@@ -3270,7 +3305,7 @@ test('录入页 —— 首屏把 A 队第一格锁成自己，赛制默认 11 �
   assert.match(page.data.form.time, /^\d{2}:\d{2}$/);
 });
 
-test('录入页 —— 未登录直接进来会被整页挡住，提交也无从谈起', async () => {
+schoolMatchTest('录入页 —— 未登录直接进来会被整页挡住，提交也无从谈起', async (facade) => {
   resetSession();
   const page = instantiate(matchEntryConfig);
   await page.onLoad();
@@ -3282,7 +3317,7 @@ test('录入页 —— 未登录直接进来会被整页挡住，提交也无从
   assert.strictEqual((await facade.getMatchRecords()).length, before);
 });
 
-test('录入页 —— 切双打后两队各两格，自己仍锁在第一格', async () => {
+schoolMatchTest('录入页 —— 切双打后两队各两格，自己仍锁在第一格', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -3298,7 +3333,7 @@ test('录入页 —— 切双打后两队各两格，自己仍锁在第一格', 
   assert.strictEqual(page.data.teamARows[1].locked, false);
 });
 
-test('录入页 —— 双打换回单打时多出来的队友被丢掉，自己留下', async () => {
+schoolMatchTest('录入页 —— 双打换回单打时多出来的队友被丢掉，自己留下', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -3315,7 +3350,7 @@ test('录入页 —— 双打换回单打时多出来的队友被丢掉，自己
   assert.strictEqual(page.data.teamARows[0].id, 'u06');
 });
 
-test('录入页 —— 点格子打开找人面板，默认列出全部会员', async () => {
+schoolMatchTest('录入页 —— 点格子打开找人面板，默认列出全部会员', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -3330,7 +3365,7 @@ test('录入页 —— 点格子打开找人面板，默认列出全部会员', 
   assert.strictEqual(page.data.pickerRows.length, page.data.members.length);
 });
 
-test('录入页 —— 选对手时每个人后面带上本赛季已交手的场次', async () => {
+schoolMatchTest('录入页 —— 选对手时每个人后面带上本赛季已交手的场次', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -3352,7 +3387,7 @@ test('录入页 —— 选对手时每个人后面带上本赛季已交手的场
   );
 });
 
-test('录入页 —— 选搭档时不带交手场次（名额只数隔网相对的人）', async () => {
+schoolMatchTest('录入页 —— 选搭档时不带交手场次（名额只数隔网相对的人）', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -3368,7 +3403,7 @@ test('录入页 —— 选搭档时不带交手场次（名额只数隔网相对
   );
 });
 
-test('录入页 —— 未登录时取不到交手场次，面板照常能开', async () => {
+schoolMatchTest('录入页 —— 未登录时取不到交手场次，面板照常能开', async (facade) => {
   resetSession();
   const page = instantiate(matchEntryConfig);
   await page.onLoad();
@@ -3379,7 +3414,7 @@ test('录入页 —— 未登录时取不到交手场次，面板照常能开', 
   assert.ok(page.data.pickerRows.every((row) => row.pairCount === 0));
 });
 
-test('录入页 —— 面板里输入名字后只剩命中的人', async () => {
+schoolMatchTest('录入页 —— 面板里输入名字后只剩命中的人', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -3395,7 +3430,7 @@ test('录入页 —— 面板里输入名字后只剩命中的人', async () => 
   assert.strictEqual(page.data.pickerKeyword, target.name);
 });
 
-test('录入页 —— 面板里搜不到时，提示带上搜索词', async () => {
+schoolMatchTest('录入页 —— 面板里搜不到时，提示带上搜索词', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -3414,7 +3449,7 @@ test('录入页 —— 面板里搜不到时，提示带上搜索词', async () 
   assert.strictEqual(page.data.pickerRows.length, page.data.members.length);
 });
 
-test('录入页 —— 点中一个人填进那一格，并收起面板清掉搜索词', async () => {
+schoolMatchTest('录入页 —— 点中一个人填进那一格，并收起面板清掉搜索词', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -3432,7 +3467,7 @@ test('录入页 —— 点中一个人填进那一格，并收起面板清掉搜
   assert.deepStrictEqual(page.data.pickerRows, []);
 });
 
-test('录入页 —— 收起面板不改动任何一格', async () => {
+schoolMatchTest('录入页 —— 收起面板不改动任何一格', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -3446,7 +3481,7 @@ test('录入页 —— 收起面板不改动任何一格', async () => {
   assert.strictEqual(page.data.teamBRows[0].id, '', '只是关掉面板，不能顺手把格子清空');
 });
 
-test('录入页 —— 面板里会勾出这一格当前选中的人', async () => {
+schoolMatchTest('录入页 —— 面板里会勾出这一格当前选中的人', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -3461,7 +3496,7 @@ test('录入页 —— 面板里会勾出这一格当前选中的人', async () 
   assert.strictEqual(page.data.pickerRows.filter((row) => row.selected).length, 1);
 });
 
-test('录入页 —— 换局制时比分输入行跟着变，已填的比分之一保留', async () => {
+schoolMatchTest('录入页 —— 换局制时比分输入行跟着变，已填的比分之一保留', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -3477,7 +3512,7 @@ test('录入页 —— 换局制时比分输入行跟着变，已填的比分之
   assert.strictEqual(page.data.scoreRows[0].a, '11', '改局制不该把已填的比分清掉');
 });
 
-test('录入页 —— 换分制后赛制文案跟着变', async () => {
+schoolMatchTest('录入页 —— 换分制后赛制文案跟着变', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -3491,7 +3526,7 @@ test('录入页 —— 换分制后赛制文案跟着变', async () => {
   assert.strictEqual(page.data.formatText, '15 分制 · 三局两胜');
 });
 
-test('录入页 —— 比分填完就实时预告谁赢，不用用户心算', async () => {
+schoolMatchTest('录入页 —— 比分填完就实时预告谁赢，不用用户心算', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -3504,7 +3539,7 @@ test('录入页 —— 比分填完就实时预告谁赢，不用用户心算', 
   assert.strictEqual(page.data.winnerText, '明宇 胜');
 });
 
-test('录入页 —— 没选对手就提交，逐字段标红且不写台账', async () => {
+schoolMatchTest('录入页 —— 没选对手就提交，逐字段标红且不写台账', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -3520,7 +3555,7 @@ test('录入页 —— 没选对手就提交，逐字段标红且不写台账', 
   assert.strictEqual((await facade.getMatchRecords()).length, before);
 });
 
-test('录入页 —— 比分没打完被拦下，提示具体是哪一局', async () => {
+schoolMatchTest('录入页 —— 比分没打完被拦下，提示具体是哪一局', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -3539,7 +3574,7 @@ test('录入页 —— 比分没打完被拦下，提示具体是哪一局', asy
   assert.strictEqual((await facade.getMatchRecords()).length, before);
 });
 
-test('录入页 —— 提交成功后返回上一页，台账里多出一场待确认', async () => {
+schoolMatchTest('录入页 —— 提交成功后返回上一页，台账里多出一场待确认', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -3576,7 +3611,7 @@ test('录入页 —— 提交成功后返回上一页，台账里多出一场待
   assert.strictEqual(record.winner, 'A');
 });
 
-test('录入页 —— 取消直接返回，同样不写台账', async () => {
+schoolMatchTest('录入页 —— 取消直接返回，同样不写台账', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -3591,7 +3626,7 @@ test('录入页 —— 取消直接返回，同样不写台账', async () => {
   assert.strictEqual((await facade.getMatchRecords()).length, before);
 });
 
-test('录入页 —— 裁判接管后，参赛者整页被挡住且写明是谁执法', async () => {
+schoolMatchTest('录入页 —— 裁判接管后，参赛者整页被挡住且写明是谁执法', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -3612,7 +3647,7 @@ test('录入页 —— 裁判接管后，参赛者整页被挡住且写明是谁
   assert.strictEqual(calls.backCount, 0, '被挡住时不该有提交动作');
 });
 
-test('录入页 —— 裁判本人与管理员仍可照常录入', async () => {
+schoolMatchTest('录入页 —— 裁判本人与管理员仍可照常录入', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -5580,48 +5615,26 @@ async function scheduledSinglesMatch() {
   return { eventId, players, match: matches.filter((item) => item.round === 1)[0] };
 }
 
-test('比赛页 —— 赛事里待打的比赛给本人「弃权」入口，确认后对手晋级且不计分', async () => {
-  const { eventId, match } = await scheduledSinglesMatch();
-  const me = match.teamA[0];
-  const expectedWinner = 'B';
-
-  const before = await facade.getMembers();
-  loginAs({ _id: me, role: 0, status: 1 });
-
-  const page = instantiate(matchConfig);
-  await page.onLoad();
-  await page.onSwitchTab({ currentTarget: { dataset: { tab: 'mine' } } });
-
-  const row = page.data.view.records.find((item) => item.matchId === match._id);
-  assert.ok(row, '自己那场应在「我的比赛」里');
-  assert.strictEqual(row.canForfeit, true, '待打的赛事比赛给本人弃权入口');
-
-  calls.modals.length = 0;
-  await page.onForfeit({ currentTarget: { dataset: { matchId: match._id } } });
-
-  assert.strictEqual(calls.modals.length, 1, '破坏性操作先弹确认框');
-  assert.match(calls.modals[0], /不计个人等级分/, '要说清弃权的后果');
-
-  const after = (await facade.getMatchRecords({ eventId })).find((item) => item._id === match._id);
-  assert.strictEqual(after.outcome, MATCH_OUTCOME.FORFEIT);
-  assert.strictEqual(after.winner, expectedWinner);
-  assert.deepStrictEqual(await facade.getMembers(), before, '弃权不计任何个人等级分或积分');
-});
-
-test('比赛页 —— 取消确认框时不落库', async () => {
-  const { eventId, match } = await scheduledSinglesMatch();
-  loginAs({ _id: match.teamA[0], role: 0, status: 1 });
-
-  const page = instantiate(matchConfig);
-  await page.onLoad();
-
-  calls.modalConfirmed = false;
-  await page.onForfeit({ currentTarget: { dataset: { matchId: match._id } } });
-
-  const after = (await facade.getMatchRecords({ eventId })).find((item) => item._id === match._id);
-  assert.strictEqual(after.outcome, undefined, '点了取消就不该写库');
-  assert.strictEqual(after.status, MATCH_STATUS.PENDING);
-});
+for (const confirmed of [true, false]) {
+  test('比赛页 S2 —— 弃权确认=' + confirmed + '，按选择更新原签表记录', async () => {
+    const fx = schoolEventFixture();
+    try {
+      const eventId = await fx.publish({ seedCount: 2 });
+      await fx.play(eventId, ['demo_muc_admin', 'demo_muc_member']);
+      const match = (await fx.api().listSchoolMatches({ eventId })).matches[0];
+      fx.to(match.teamA[0]);
+      const page = instantiate(matchConfig);
+      await page.onLoad();
+      assert.equal(page.data.view.records.find(row => row.matchId === match.matchId).canForfeit, true);
+      calls.modalConfirmed = confirmed;
+      await page.onForfeit({ currentTarget: { dataset: { matchId: match.matchId } } });
+      const after = (await fx.api().getSchoolMatch({ matchId: match.matchId })).match;
+      assert.equal(after.status, confirmed ? MATCH_STATUS.ACTIVE : MATCH_STATUS.PENDING);
+      if (confirmed) { assert.equal(after.outcome, MATCH_OUTCOME.FORFEIT); assert.equal(after.winner, 'B'); }
+      else assert.equal(after.revision, match.revision);
+    } finally { calls.modalConfirmed = true; fx.restore(); }
+  });
+}
 
 /* ============================================================
  * 学院名次录入页（M5-1）

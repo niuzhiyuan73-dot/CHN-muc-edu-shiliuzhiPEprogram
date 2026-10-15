@@ -26,7 +26,7 @@
 
 const { buildSchoolContext } = require('./school-context.js');
 const {
-  canReadAssociationSpace, canManageAssociationSpace,
+  canReadAssociationSpace, canManageAssociationSpace, canParticipateInAssociation,
 } = require('./association-space-permission.js');
 // 角色 / 名单的推导收在 school-actor，两套栈只有一份口径。
 const { legacyRoleOf, buildDirectory, recordOptions } = require('./school-actor.js');
@@ -42,7 +42,9 @@ const {
   canRecordScore, canConfirm, canRevoke, canAssignReferee, canForfeit, needsScore,
   isParticipant, buildMatchRecord, fillScheduledMatch, buildRefereePatch, buildForfeitPatch,
 } = require('./match-record.js');
-const { checkSubmitAllowed } = require('./rating-cap.js');
+const { checkSubmitAllowed, seasonPairCounts } = require('./rating-cap.js');
+const { loadSeason } = require('./school-rank-service.js');
+const { RATED_PAIR_LIMIT } = require('../utils/constants.js');
 const { liveScoreOf } = require('./live-score.js');
 const { advanceSchoolEvent } = require('./school-event-service.js');
 // 学院赛小场生效 / 撤销后的收尾：把结果写回大场、必要时排出下一轮（M2-c2）。
@@ -115,6 +117,9 @@ function matchSummary(doc, ctx, dir) {
     isMine: Boolean(self && isParticipant(doc, self)),
     needsScore: needsScore(doc),
     canRecord: pending && needsScore(doc) && canRecordScore(doc, self, options),
+    canSubmitScore: pending && canRecordScore(doc, self, options),
+    confirmRelaxed: ctx.isMock === true && canConfirm(doc, self, { isMock: true, role: options.role }) &&
+      !canConfirm(doc, self, { isMock: false, role: options.role }),
     canConfirm: canConfirm(doc, self, { isMock: ctx.isMock === true, role: options.role }),
     canRevoke: canRevoke(doc, self, { role: options.role }),
     canForfeit: canForfeit(doc, self, self, { role: options.role }),
@@ -146,13 +151,14 @@ async function listSchoolMatches(payload = {}, ctx) {
   const dir = await buildDirectory(ctx);
   let rows = (await ctx.repo.forScope(ctx).matches.list()).filter(isMatchDoc);
   if (typeof payload.pool === 'number') rows = rows.filter(row => row.pool === payload.pool);
-  if (typeof payload.status === 'number') rows = rows.filter(row => row.status === payload.status);
   if (typeof payload.eventId === 'string' && payload.eventId) {
     rows = rows.filter(row => row.eventId === payload.eventId);
   }
   if (typeof payload.userId === 'string' && payload.userId) {
     rows = rows.filter(row => isParticipant(row, payload.userId));
   }
+  const pendingCount = rows.filter(row => row.status === MATCH_STATUS.PENDING).length;
+  if (typeof payload.status === 'number') rows = rows.filter(row => row.status === payload.status);
   rows.sort((a, b) => (Date.parse(b.matchTime) || 0) - (Date.parse(a.matchTime) || 0));
   const limit = Number.isInteger(payload.limit) && payload.limit >= 0
     ? payload.limit : MATCH_LIST_LIMIT;
@@ -160,7 +166,22 @@ async function listSchoolMatches(payload = {}, ctx) {
   for (const doc of rows.slice(0, limit)) {
     matches.push(await withLive(matchSummary(doc, ctx, dir), ctx));
   }
-  return ok({ ok: true, canManage: canManageAssociationSpace(ctx), matches, message: '' });
+  return ok({ ok: true, canManage: canManageAssociationSpace(ctx), matches,
+    total: rows.length, hasMore: rows.length > matches.length, pendingCount, message: '' });
+}
+
+/** 录入页所需的本人、有效成员及本赛季交手次数；不暴露数字角色。 */
+async function getSchoolMatchEntryContext(_payload, ctx) {
+  const viewer = ctx.actor && ctx.actor.platformStatus === PLATFORM_STATUS.ACTIVE
+    ? { userId: ctx.actorId, nickName: ctx.actor.nickName || '' } : null;
+  if (!canReadAssociationSpace(ctx)) return ok({ ok: true, viewer, canRecord: false,
+    members: [], pairInfo: null, seasonStart: null, message: viewer ? '当前账号没有本协会有效身份，暂时不能录入成绩' : '请先登录后再录入比赛成绩' });
+  const [dir, season, ledger] = await Promise.all([buildDirectory(ctx), loadSeason(ctx), ctx.repo.forScope(ctx).matches.list()]);
+  return ok({ ok: true, viewer, canRecord: canParticipateInAssociation(ctx),
+    members: dir.members.filter(user => user.platformStatus === PLATFORM_STATUS.ACTIVE).map(user => ({
+      userId: user._id, nickName: user.nickName || '', realName: user.realName || '',
+    })), seasonStart: season.resetTime || season.anchorTime || null,
+    pairInfo: { counts: seasonPairCounts(ctx.actorId, ledger, { seasonStart: season.resetTime }), limit: RATED_PAIR_LIMIT }, message: '' });
 }
 
 async function getSchoolMatch(payload = {}, ctx) {
@@ -210,7 +231,7 @@ async function submitSchoolMatch(payload = {}, ctx) {
     }
     // 一对会员本赛季打满上限后不再让录（判据取本范围完整台账）。
     const gate = checkSubmitAllowed(built.record, ledger, {
-      seasonStart: null, nameOf: null,
+      seasonStart: (await loadSeason(fresh)).resetTime, nameOf: null,
     });
     if (!gate.ok) return refused(gate.message);
 
@@ -483,7 +504,7 @@ const fingerprintOf = record => JSON.stringify([
 module.exports = {
   MATCH_LIST_LIMIT, legacyRoleOf, isMatchDoc, matchSummary,
   buildDirectory, recordOptions,
-  listSchoolMatches, getSchoolMatch, submitSchoolMatch,
+  listSchoolMatches, getSchoolMatch, getSchoolMatchEntryContext, submitSchoolMatch,
   confirmSchoolMatch, rejectSchoolMatch, revokeSchoolMatch,
   forfeitSchoolMatch, assignSchoolMatchReferee,
 };

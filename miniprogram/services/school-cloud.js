@@ -72,6 +72,7 @@ function forAssociationSpace(input) {
     checkInSchoolEvent: payload => request('checkInSchoolEvent', payload),
     finishSchoolEvent: payload => request('finishSchoolEvent', payload),
     listSchoolMatches: payload => request('listSchoolMatches', payload),
+    getSchoolMatchEntryContext: payload => request('getSchoolMatchEntryContext', payload),
     getSchoolMatch: payload => request('getSchoolMatch', payload),
     submitSchoolMatch: payload => request('submitSchoolMatch', payload),
     confirmSchoolMatch: payload => request('confirmSchoolMatch', payload),

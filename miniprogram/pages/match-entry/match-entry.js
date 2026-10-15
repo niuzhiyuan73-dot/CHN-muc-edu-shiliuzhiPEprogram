@@ -15,21 +15,15 @@
  * 没有身份就没有 A 队，整张单子无从填起。所以这里也拦一道——
  * 用户可能绕过比赛页直接从小程序码进来。
  *
- * 【选手名单为什么来自 getMembers】
- * 回放引擎遇到不在名单里的会员会直接抛错（replay.js）。本地注册的
- * local_* 账号不在种子里，绝不能出现在选手选择器里。
+ * 选手名单来自 S2 本协会有效成员，录分权来自服务端能力。
  * ============================================================
  */
 
-const {
-  getMembers,
-  getHomeSummary,
-  getMatchRecords,
-  getSeasonPairCounts,
-  submitMatch,
-  isMock,
-} = require('../../services/index.js');
-const { resolveAuthState } = require('../../services/auth.js');
+const { isMock } = require('../../services/index.js');
+const space = require('../../services/association-space');
+const schoolSession = require('../../services/school-session');
+const associationScope = require('../../services/association-scope');
+const { recordOf, authOf } = require('../../services/school-match-view');
 const {
   MATCH_TYPE_OPTIONS,
   GAME_POINTS_LABELS,
@@ -46,8 +40,8 @@ const {
   pickerEmptyText,
 } = require('../../services/match-entry-view.js');
 const { GAME_POINTS_OPTIONS, BEST_OF_OPTIONS } = require('../../utils/match-format.js');
-const { hasReferee, canRecordScore } = require('../../services/match-record.js');
-const { ROLE } = require('../../utils/constants.js');
+
+const { MATCH_STATUS } = require('../../utils/constants');
 const { currentThemeClass } = require('../../services/branding.js');
 
 /** 把 Date 变成 picker 要的 2026-05-01 */
@@ -147,14 +141,6 @@ Page({
     return this.init();
   },
 
-  /** 读取全局登录态。app 可能还没初始化好，逐层兜底 */
-  currentUser() {
-    const app = getApp();
-    if (!app) return null;
-    if (typeof app.getUserInfo === 'function') return app.getUserInfo();
-    return app.globalData ? app.globalData.userInfo : null;
-  },
-
   /**
    * 回到本页时（例如从实时计分台返回）刷新签表补录的比分。
    * 计分台定稿会把比分写回原记录；不刷新，表单还停在计分前的空比分，
@@ -168,161 +154,49 @@ Page({
 
   async refreshScheduled() {
     try {
-      const records = await getMatchRecords({ id: this.matchId });
-      const record = records && records[0];
-      if (!record) return;
-      const user = this.currentUser();
-      const referee = this.describeReferee(record, user);
-      this.setData({
-        referee,
-        blockReason: this.describeBlock(this.data.auth) || this.describeRecordBlock(record, user),
-        themeClass: currentThemeClass(),
-      });
-      this.applyForm(scheduledForm(record));
-    } catch (err) {
-      console.error('[match-entry] 刷新签表比赛失败', err);
+      const result = await this.api.getSchoolMatch({ matchId: this.matchId });
+      if (!result.ok) throw new Error(result.message || '找不到这场比赛');
+      this.applyRecord(result.match);
+    } catch (error) {
+      this.setData({ blockReason: error.message || '比赛加载失败，请返回重试' });
     }
+  },
+
+  applyRecord(dto) {
+    const name = this.nameOf(dto.referee) || dto.referee;
+    const referee = { hasReferee: dto.hasReferee, name, restricted: dto.hasReferee && !dto.canSubmitScore };
+    this.setData({ referee, blockReason: dto.canSubmitScore ? '' :
+      (dto.status !== MATCH_STATUS.PENDING ? '这场比赛已生效或已作废，不能再录入比分' : dto.hasReferee ? '本场由 ' + name + ' 裁判执法，仅裁判与管理员可录入比分' : '这场不是你参加的比赛，无权录入成绩') });
+    this.applyForm(scheduledForm(recordOf(dto)));
   },
 
   async init() {
-    const user = this.currentUser();
-    const auth = resolveAuthState(user);
-
+    this.scope = { schoolId: schoolSession.getSchoolId() || 'muc', association: associationScope.getAssociation() };
+    this.api = space.forScope(this.scope);
+    this.requestId = 'match_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
     try {
-      const [members, summary] = await Promise.all([getMembers(), getHomeSummary()]);
-      // 赛季首日仅用于给日期选择器定下界；首场还没打时它是 null，
-      // new Date(null) 会得到 1970，务必退回空串（空串即不设下界）。
-      const seasonStart =
-        summary.seasonRange && summary.seasonRange.from
-          ? toDateText(new Date(summary.seasonRange.from))
-          : '';
-      // 记录原始会员档案（含学院），供补录时的录分权判定查学院
-      this.rawMembers = members;
-
-      // 编号 → 昵称的查表放在实例上，applyForm 每渲染一行都要用。
-      // 不放 data 是因为它只参与计算，从不直接渲染。
-      this.nameById = {};
-      members.forEach((item) => {
-        this.nameById[item._id] = item.nickName || item._id;
-      });
-
-      // 本赛季与每个人已交手的场次，选对手面板上那个数字取自它。
-      // 放在这里取一次就够：整张单子期间它只用于展示，不参与任何判定
-      // （真正拦人的是提交时服务端的闸门）。取不到也不影响录入。
-      // 补录签表比赛时对阵已经排定、格子全是锁的（面板打不开），不必白跑一趟。
-      this.pairInfo = user && !this.matchId ? await this.loadPairCounts(user._id) : null;
-
-      // 带着 matchId 进来 = 给签表里排定的比赛补录比分。
-      // 对阵与赛制取自那条记录，页面不给改（见 match-entry-view.scheduledForm）。
-      let form;
-      let referee = { hasReferee: false, name: '', restricted: false };
-      let recordBlock = '';
-      if (this.matchId) {
-        const records = await getMatchRecords({ id: this.matchId });
-        const record = records && records[0];
-        if (!record) {
-          this.setData({ loading: false, error: '这场比赛不存在，或已被删除', themeClass: currentThemeClass() });
-          return;
-        }
-        form = scheduledForm(record);
-        referee = this.describeReferee(record, user);
-        // 提前按写入端同一口径判一次录分权：非参赛者别填完整张单子才被拒
-        recordBlock = this.describeRecordBlock(record, user);
-      } else {
-        // 默认填今天与此刻：绝大多数比赛是刚打完就来录的
+      const context = await this.api.getSchoolMatchEntryContext({});
+      if (!context.ok) throw new Error(context.message || '页面加载失败');
+      this.context = context;
+      const auth = authOf(context);
+      this.pairInfo = context.pairInfo;
+      this.nameById = Object.fromEntries(context.members.map(m => [m.userId, m.nickName || m.userId]));
+      const seasonStart = context.seasonStart ? toDateText(new Date(context.seasonStart)) : '';
+      this.setData({ loading: false, error: '', auth, scheduled: Boolean(this.matchId), seasonStart,
+        members: context.members.map(m => ({ id: m.userId, name: m.nickName || m.userId, realName: m.realName })),
+        blockReason: auth.canRecord ? '' : auth.notice || '当前账号暂时不能录入成绩', themeClass: currentThemeClass() });
+      if (this.matchId) await this.refreshScheduled();
+      else {
         const now = new Date();
-        form = createForm(user);
+        const form = createForm(context.viewer ? { _id: context.viewer.userId } : null);
         form.date = toDateText(now) < seasonStart ? seasonStart : toDateText(now);
         form.time = toTimeText(now);
+        this.applyForm(form);
       }
-
-      this.setData(
-        {
-          loading: false,
-          error: '',
-          auth,
-          scheduled: Boolean(this.matchId),
-          // realName 只用于面板搜索（昵称常只是真名的一部分，只按昵称搜，
-          // 输入「赵」就找不到昵称叫「明宇」的人）；名字列显示的仍是昵称
-          members: members.map((item) => ({
-            id: item._id,
-            name: item.nickName || item._id,
-            realName: item.realName || '',
-          })),
-          seasonStart,
-          referee,
-          blockReason: this.describeBlock(auth) || recordBlock || this.refereeBlock(referee),
-          themeClass: currentThemeClass(),
-        },
-        () => this.applyForm(form)
-      );
       this._loaded = true;
-    } catch (err) {
-      console.error('[match-entry] 初始化失败', err);
-      this.setData({ loading: false, error: '页面加载失败，请返回重试', themeClass: currentThemeClass() });
+    } catch (error) {
+      this.setData({ loading: false, error: error.message || '页面加载失败，请返回重试', blockReason: '页面尚未加载，请重试' });
     }
-  },
-
-  /**
-   * 本赛季与每个人已交手的场次。
-   * 失败就返回 null——徽标是提示，不该因为它读不到而让整页打不开。
-   */
-  async loadPairCounts(userId) {
-    try {
-      const result = await getSeasonPairCounts(userId);
-      return { counts: (result && result.counts) || {}, limit: result && result.limit };
-    } catch (err) {
-      console.error('[match-entry] 交手场次读取失败', err);
-      return null;
-    }
-  },
-
-  /** 不能录入的原因。能录入时返回空串 */
-  describeBlock(auth) {
-    if (auth.canRecord) return '';
-    if (auth.loggedIn) return auth.notice || '当前账号暂时不能录入比赛成绩';
-    return '请先登录后再录入比赛成绩';
-  },
-
-  /**
-   * 这一场的裁判情况。
-   * 判定只看「有没有指定裁判」与「我是不是裁判 / 管理员」，与写入端同一口径
-   * （见 match-record.canRecordScore 的裁判闸）：指定裁判后旁人一律录不了。
-   */
-  describeReferee(record, user) {
-    if (!hasReferee(record)) return { hasReferee: false, name: '', restricted: false };
-
-    const name = this.nameOf(record.referee) || String(record.referee);
-    const isAdmin = Boolean(user && Number(user.role) >= ROLE.ADMIN);
-    const isReferee = Boolean(user && user._id === record.referee);
-    return { hasReferee: true, name, restricted: !isReferee && !isAdmin };
-  },
-
-  /** 被裁判接管时的拦截文案。没被挡下就返回空串 */
-  refereeBlock(referee) {
-    if (!referee || !referee.restricted) return '';
-    return `本场由 ${referee.name} 裁判执法，仅裁判与管理员可录入比分`;
-  },
-
-  /**
-   * 给签表里排定的比赛补录时，提前判一次「这场轮不轮得到你录」。
-   * 判定与写入端一字不差（match-record.canRecordScore）：参赛者 / 指定裁判 /
-   * 管理员 / 本院学院负责人才放行。不判的话，非参赛者会被给到整张表单，填完比分
-   * 才在服务端被拒——与「别让人填完才被拒」的设计相反。
-   */
-  describeRecordBlock(record, user) {
-    if (!user) return '';
-    const collegeByMember = new Map((this.rawMembers || []).map((item) => [item._id, item.college || '']));
-    const allowed = canRecordScore(record, user._id, {
-      role: Number(user.role) || 0,
-      college: user.college || '',
-      collegeOf: (id) => collegeByMember.get(id) || '',
-    });
-    if (allowed) return '';
-    if (hasReferee(record)) {
-      return `本场由 ${this.nameOf(record.referee) || record.referee} 裁判执法，仅裁判与管理员可录入比分`;
-    }
-    return '这场不是你参加的比赛，无权录入成绩';
   },
 
   /** 编号 → 昵称 */
@@ -499,22 +373,15 @@ Page({
    */
   async onSubmit() {
     if (this.data.submitting) return undefined;
-    if (this.data.blockReason) return undefined;
+    if (this.data.blockReason || this.data.loading || this.data.error) return undefined;
 
-    const user = this.currentUser();
     const params = toSubmitParams(this.data.form);
 
     this.setData({ submitting: true, errors: {}, scoreErrors: [], errorText: '' });
     try {
-      // 两种录入都要带上登录者：云端按 OpenID 认身份，mock 靠 actor 走
-      // 同一条「谁有资格录这一场」的判定（见 mock.submitMatch）。不带上，
-      // 本地演示就落到「谁都能录」，与线上不是一回事。
-      const actor = user ? user._id : undefined;
-      // 补录签表比赛：带上编号把比分写回原记录，而不是另立一条新比赛。
-      // 对阵、赛制、时间都取自原记录，所以这里只递比分与录入人。
       const result = this.matchId
-        ? await submitMatch({ id: this.matchId, scoreA: params.scoreA, scoreB: params.scoreB, actor })
-        : await submitMatch({ ...params, actor });
+        ? await this.api.submitSchoolMatch({ matchId: this.matchId, scoreA: params.scoreA, scoreB: params.scoreB })
+        : await this.api.submitSchoolMatch({ ...params, requestId: this.requestId });
       if (!result.ok) {
         this.setData({
           submitting: false,
@@ -522,7 +389,7 @@ Page({
           scoreErrors: result.scoreErrors || [],
           // 逐局比分的错误不逐条挂在输入框上，用一条总提示兜底；
           // 否则用户可能只看到「校验失败」，却不知道是哪一局的问题
-          errorText: result.firstError || (result.scoreErrors || [])[0] || '提交失败',
+          errorText: result.firstError || (result.scoreErrors || [])[0] || result.message || '提交失败',
         });
         return undefined;
       }
@@ -557,6 +424,6 @@ Page({
    */
   onGoLiveScore() {
     if (!this.matchId) return;
-    wx.navigateTo({ url: `/pages/live-score/live-score?matchId=${this.matchId}` });
+    wx.navigateTo({ url: `/pages/live-score/live-score?matchId=${encodeURIComponent(this.matchId)}` });
   },
 });

@@ -7,6 +7,7 @@
  */
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { RATED_PAIR_LIMIT } = require('../miniprogram/utils/constants');
 
 const { createSchoolDemoSeed } = require('../miniprogram/services/school-seed');
 const { createSchoolMemoryRepo } = require('../miniprogram/services/school-memory-repo');
@@ -319,6 +320,52 @@ test('跨学校：外校读不到也写不进', async () => {
   });
   assert.equal(buaaGet.ok, false);
   assert.match(buaaGet.message, /找不到/);
+});
+
+test('录入上下文：身份与名单不跨校，访客不获得成员或录入权', async () => {
+  const repo = fixture();
+  const own = await call(repo, 'getSchoolMatchEntryContext');
+  assert.equal(own.canRecord, true);
+  assert.equal(own.viewer.userId, 'demo_muc_member');
+  assert.ok(own.members.some(m => m.userId === 'demo_muc_member_2'));
+  assert.ok(own.members.every(m => !m.userId.startsWith('demo_buaa')));
+  for (const opts of [{ actor: '' }, { schoolId: 'buaa' }]) {
+    const denied = await call(repo, 'getSchoolMatchEntryContext', {}, opts);
+    assert.equal(denied.canRecord, false);
+    assert.deepEqual(denied.members, []);
+    assert.equal(denied.pairInfo, null);
+  }
+});
+
+test('列表：先按本人及状态过滤再截断，数量和更多标记准确', async () => {
+  const repo = fixture();
+  const first = await record(repo, 'list_first');
+  await record(repo, 'list_second');
+  await call(repo, 'confirmSchoolMatch', { matchId: first.matchId }, { actor: 'demo_muc_member_2' });
+  const mine = await call(repo, 'listSchoolMatches', { userId: 'demo_muc_member', limit: 1 });
+  assert.equal(mine.total, 2);
+  assert.equal(mine.hasMore, true);
+  assert.equal(mine.pendingCount, 1);
+  const pending = await call(repo, 'listSchoolMatches', { userId: 'demo_muc_member', status: MATCH_STATUS.PENDING, limit: 1 });
+  assert.equal(pending.total, 1);
+  assert.equal(pending.hasMore, false);
+  assert.equal(pending.matches[0].canSubmitScore, true);
+  assert.equal(pending.matches[0].canRecord, false, '已填比分不显示首次录分按钮');
+});
+
+test('新赛季：交手次数提示与提交上限同时清零', async () => {
+  const repo = fixture();
+  for (let i = 0; i < RATED_PAIR_LIMIT; i += 1) {
+    const match = await record(repo, `old_${i}`);
+    await call(repo, 'confirmSchoolMatch', { matchId: match.matchId }, { actor: 'demo_muc_member_2' });
+  }
+  assert.equal((await call(repo, 'getSchoolMatchEntryContext')).pairInfo.counts.demo_muc_member_2, RATED_PAIR_LIMIT);
+  const { scopeKey } = require('../miniprogram/utils/school');
+  const scope = { schoolId: 'muc', association: 'pkb' };
+  await repo.seasons.set(scopeKey(scope), { ...scope, resetTime: at(-HOUR / 2) });
+  assert.deepEqual((await call(repo, 'getSchoolMatchEntryContext')).pairInfo.counts, {});
+  const result = await call(repo, 'submitSchoolMatch', { requestId: 'new_season', ...casual({ matchTime: at(-1000) }) });
+  assert.equal(result.ok, true, result.message);
 });
 
 test('记录带范围：schoolId + association；非在册裁判被拒', async () => {
