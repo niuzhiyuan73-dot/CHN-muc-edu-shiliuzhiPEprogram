@@ -3,36 +3,40 @@
  * ============================================================
  * 一场赛事的全部动作都收在这一页：
  *   会员：报名 / 取消报名；
- *   管理：开始赛事 / 代签 / 进名次录入页。
- * 取数与权限判定全在 services/events-view.js，页面只做交互与 setData。
+ *   管理：开始赛事 / 代签 / 抽签 / 指派裁判 / 进名次录入页 / 确认比赛。
+ * 取数与权限判定走学校维度（协议 2）：读由 services/school-event-view.js 的
+ * loadSchoolEventDetailView 把服务端 DTO 转成旧栈同形的视图模型，写走协会空间
+ * 的学校维度接口。页面只做交互与 setData。
  *
  * 【为什么按钮由数据决定、不在这里判权限】
- * 视图模型已经把 canSignUp / canStart / canCheckIn / canFinish 算进每一行，
+ * 视图模型已经把 canSignUp / canStart / canCheckIn / canFinish 算进每一行
+ * （能力旗标来自服务端 DTO，经 school-event-view 原样注入既有构建器），
  * 页面照着渲染即可。页面里写 `user.role >= 1` 这种判断，Node 跑不了，
  * 等于没法测——与 announcement / season-manage 同一纪律。
  *
  * 【每次写操作后为什么整页重载】
  * 报名人数、签到状态、按钮可用性都会随之变化。局部改 setData 要维护
  * 一整套本地状态，越改越容易和真值分叉；重载一次数据都在内存里，很快。
+ *
+ * 【登录态从哪来】
+ * 学校维度下没有旧栈那份客户端账号快照：读写都由协会空间按当前身份执行。
+ * 页面只向身份接口问一次会话，用来把「去登录」与「没权限」分开；范围
+ * （学校 + 协会）在进入时固定一次，之后每个请求都用这把范围，避免异步
+ * 期间全局范围被切走。
  * ============================================================
  */
 
-const { loadEventDetailView } = require('../../services/events-view.js');
+const { loadSchoolEventDetailView } = require('../../services/school-event-view.js');
 const { buildPickerRows, pickerEmptyText } = require('../../services/match-entry-view.js');
 const { watchLiveScores } = require('../../services/live-watch.js');
 const { applyLiveRows } = require('../../services/live-view.js');
-const {
-  signUpEvent,
-  cancelSignupEvent,
-  startEvent,
-  checkInEvent,
-  drawEvent,
-  confirmMatch,
-  assignMatchReferee,
-  getMembers,
-  isMock,
-} = require('../../services/index.js');
+const { isMock } = require('../../services/index.js');
 const { currentThemeClass } = require('../../services/branding.js');
+const schoolSession = require('../../services/school-session.js');
+const associationScope = require('../../services/association-scope.js');
+const space = require('../../services/association-space.js');
+const identity = require('../../services/school-identity.js');
+const { LEGACY_SCHOOL_ID } = require('../../utils/school.js');
 
 Page({
   data: {
@@ -104,12 +108,27 @@ Page({
     return this.refresh().then(() => this.stopPullDown());
   },
 
-  /** 读取全局登录态。app 可能还没初始化好，逐层兜底 */
-  currentUser() {
-    const app = getApp();
-    if (!app) return null;
-    if (typeof app.getUserInfo === 'function') return app.getUserInfo();
-    return app.globalData ? app.globalData.userInfo : null;
+  /** 当前「学校 + 协会」范围。读写复用它，避免异步期间全局范围被切走 */
+  currentScope() {
+    return {
+      schoolId: schoolSession.getSchoolId() || LEGACY_SCHOOL_ID,
+      association: associationScope.getAssociation(),
+    };
+  },
+
+  /**
+   * 本次身份会话里的操作者编号，只用来把「去登录」与「没权限」分开。
+   * 拿不到（没有账号，或身份接口报错）就按访客处理，绝不猜一个身份出来。
+   */
+  async currentActorId() {
+    try {
+      const session = await identity.forSchoolIdentity(this.scope || this.currentScope())
+        .getSchoolIdentitySession();
+      return (session && session.user && session.user.userId) || null;
+    } catch (err) {
+      console.error('[event-detail] 读取学校身份失败', err);
+      return null;
+    }
   },
 
   /** stopPullDownRefresh 在测试环境里可能没有，做个保护 */
@@ -150,10 +169,15 @@ Page({
    * @returns {Promise<void>}
    */
   async refresh() {
-    const user = this.currentUser();
+    const scope = this.currentScope();
+    this.scope = scope;
+    const actorId = await this.currentActorId();
+    this.actorId = actorId;
 
     try {
-      const view = await loadEventDetailView(this.eventId, { user, isMock });
+      const view = await loadSchoolEventDetailView(this.eventId, {
+        schoolId: scope.schoolId, association: scope.association, actorId,
+      });
       this.loaded = true;
       this.setData({ loading: false, error: '', view, themeClass: currentThemeClass() });
       // 首屏若已有正在计分的场次（读接口已带上 live），才挂轮询取增量
@@ -181,33 +205,39 @@ Page({
   /**
    * 重新订阅实时比分。签表随刷新而变，每次刷新都重订一次即可
    * ——适配器会先停旧表，天然完成重订阅。
+   *
+   * 【取数为什么要换成学校维度】
+   * 旧栈门面按旧台账取数，与学校维度的比赛不是同一份数据。这里传一个走
+   * 协会空间的取数器：`getSchoolLiveScores` 的返回是 `{ok, scores}`，摊平后
+   * 仍是「给一组编号、回一组比分视图」，适配器一视同仁。
    */
   syncLiveWatch() {
     if (this.liveHandle) this.liveHandle();
+    const scope = this.scope || this.currentScope();
     this.liveHandle = watchLiveScores(this.liveIds(), (views) => {
       this.setData({ 'view.bracketRows': applyLiveRows(this.data.view.bracketRows || [], views) });
+    }, {
+      fetch: async (ids) => {
+        const res = await space.forScope(scope).getSchoolLiveScores({ matchIds: ids });
+        return (res && res.scores) || [];
+      },
     });
   },
 
   /**
-   * 写操作的统一收口：判登录 → 调接口 → 提示 → 整页刷新。
-   * 接口只认登录会员的编号，页面递不出别人的身份。
+   * 写操作的统一收口：调接口 → 提示 → 整页刷新。
+   * 身份由协会空间按当前会话提供，页面递不出别人的身份；未登录时服务端
+   * 会拒（「请先登录」），页面照原样提示。
    *
-   * @param {(actorId:string) => Promise<Object>} write 写接口
+   * @param {() => Promise<Object>} write 写接口
    * @param {string} successText 成功后的提示
    * @returns {Promise<void>}
    */
   async runWrite(write, successText) {
     if (this.data.acting) return undefined;
 
-    const user = this.currentUser();
-    if (!user) {
-      this.showToast('请先登录后再操作');
-      return undefined;
-    }
-
     this.setData({ acting: true });
-    const result = await write(user._id);
+    const result = await write();
     this.setData({ acting: false });
 
     if (!result || !result.ok) {
@@ -221,26 +251,38 @@ Page({
 
   /** 报名这一场 */
   onSignUp() {
-    return this.runWrite((actorId) => signUpEvent(this.eventId, actorId), '报名成功');
+    return this.runWrite(
+      () => space.forScope(this.scope || this.currentScope()).signUpSchoolEvent({ eventId: this.eventId }),
+      '报名成功'
+    );
   },
 
   /** 取消报名 */
   onCancelSignup() {
-    return this.runWrite((actorId) => cancelSignupEvent(this.eventId, actorId), '已取消报名');
+    return this.runWrite(
+      () => space.forScope(this.scope || this.currentScope()).cancelSchoolEventSignup({ eventId: this.eventId }),
+      '已取消报名'
+    );
   },
 
   /** 开始赛事。报名会在这一刻截止，先确认一道 */
   async onStart() {
     const confirmed = await this.confirm('开始后报名就截止了，确定现在开始这场赛事吗？', '开始赛事');
     if (!confirmed) return undefined;
-    return this.runWrite((actorId) => startEvent(this.eventId, actorId), '赛事已开始');
+    return this.runWrite(
+      () => space.forScope(this.scope || this.currentScope()).startSchoolEvent({ eventId: this.eventId }),
+      '赛事已开始'
+    );
   },
 
   /** 代某位会员签到。只有学院负责人以上能点，按钮与否由视图模型决定 */
   onCheckIn(event) {
     const userId = event.currentTarget.dataset.userId;
     if (!userId) return undefined;
-    return this.runWrite((actorId) => checkInEvent(this.eventId, userId, actorId), '已签到');
+    return this.runWrite(
+      () => space.forScope(this.scope || this.currentScope()).checkInSchoolEvent({ eventId: this.eventId, userId }),
+      '已签到'
+    );
   },
 
   /**
@@ -253,18 +295,12 @@ Page({
   async onDraw() {
     if (this.data.acting) return undefined;
 
-    const user = this.currentUser();
-    if (!user) {
-      this.showToast('请先登录后再操作');
-      return undefined;
-    }
-
     if (this.data.view.event.isManualSeed) {
       this.openSeedDialog();
       return undefined;
     }
 
-    return this.runDraw(user, undefined);
+    return this.runDraw(undefined);
   },
 
   /**
@@ -274,10 +310,9 @@ Page({
    * 决策 4.4：抽签结果必须可复核。把 seedValue 一并存进 draw 字段后，
    * 任何人拿同一个值重跑就能得到同一张签表。这里只负责给一个值。
    *
-   * @param {Object} user 当前登录会员
    * @param {string[]|undefined} manualOrder 手工指定的种子顺序，其余模式传 undefined
    */
-  async runDraw(user, manualOrder) {
+  async runDraw(manualOrder) {
     const times = this.data.view.event.drawCount || 0;
     const confirmed = await this.confirm(
       times
@@ -288,7 +323,8 @@ Page({
     if (!confirmed) return undefined;
 
     this.setData({ acting: true });
-    const result = await drawEvent(this.eventId, user._id, { seedValue: Date.now(), manualOrder });
+    const result = await space.forScope(this.scope || this.currentScope())
+      .drawSchoolEvent({ eventId: this.eventId, seedValue: Date.now(), manualOrder });
     this.setData({ acting: false });
 
     if (!result || !result.ok) {
@@ -372,12 +408,6 @@ Page({
 
   /** 点名完毕，开始抽签 */
   async onConfirmSeeds() {
-    const user = this.currentUser();
-    if (!user) {
-      this.showToast('请先登录后再操作');
-      return undefined;
-    }
-
     const needed = this.data.view.manualSeedNeeded || 0;
     const picked = this.data.seedPicked;
     if (picked.length !== needed) {
@@ -388,7 +418,7 @@ Page({
 
     // 先收起面板，抽签失败时再来一次不必重新点名
     this.setData({ seedDialogOpen: false, seedRows: [], seedError: '' });
-    return this.runDraw(user, picked.slice());
+    return this.runDraw(picked.slice());
   },
 
   /** 给抽签排出的比赛录分：跳到录入页，带上这一场的编号 */
@@ -399,24 +429,28 @@ Page({
   },
 
   /** 确认一场已录分的比赛，成绩随即计入等级分 */
-  async onConfirmMatch(event) {
+  onConfirmMatch(event) {
     const matchId = event.currentTarget.dataset.matchId;
     if (!matchId) return undefined;
-    return this.runWrite((actorId) => confirmMatch(matchId, actorId), '已确认，成绩已计入等级分');
+    return this.runWrite(
+      () => space.forScope(this.scope || this.currentScope()).confirmSchoolMatch({ matchId }),
+      '已确认，成绩已计入等级分'
+    );
   },
 
   /* ---------- 指派裁判 ---------- */
 
   /**
-   * 取会员名单，供面板筛选。
+   * 取本校在册会员名录，供面板筛选。
    * 只取一次并缓存在实例上：面板可能被反复打开，名单在一次会话里不会变。
    */
   async pickerMembers() {
     if (!this.members) {
-      const members = await getMembers();
-      this.members = (members || []).map((member) => ({
-        id: member._id,
-        name: member.nickName || member.realName || member._id,
+      const res = await space.forScope(this.scope || this.currentScope()).listSchoolMembers({});
+      const members = (res && res.members) || [];
+      this.members = members.map((member) => ({
+        id: member.userId,
+        name: member.nickName || member.realName || member.userId,
         realName: member.realName || '',
       }));
     }
@@ -490,15 +524,11 @@ Page({
     if (this.data.refereeActing) return undefined;
 
     const { matchId } = this.data.referee;
-    const user = this.currentUser();
     if (!matchId) return undefined;
-    if (!user) {
-      this.showToast('请先登录后再指派裁判');
-      return undefined;
-    }
 
     this.setData({ refereeActing: true });
-    const result = await assignMatchReferee(matchId, refereeId, user._id);
+    const result = await space.forScope(this.scope || this.currentScope())
+      .assignSchoolMatchReferee({ matchId, refereeId });
     this.setData({ refereeActing: false });
 
     if (!result.ok) {

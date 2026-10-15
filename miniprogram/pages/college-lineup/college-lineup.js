@@ -1,9 +1,10 @@
 /**
  * 学院赛排阵（学院负责人）
  * ============================================================
- * 双方学院各交一份「本大场每个小项谁上」。取数与整形在
- * services/college-view.js 的 loadCollegeLineupView，规则在
- * services/college-lineup.js（纯函数），页面只做交互与 setData。
+ * 双方学院各交一份「本大场每个小项谁上」。取数与整形走学校维度（协议 2）：
+ * services/school-college-view.js 的 loadCollegeLineupView 把服务端 DTO 整成
+ * 旧栈同形，规则在 services/college-lineup.js（纯函数）；写入由协会空间按当前
+ * 身份执行。页面只做交互与 setData。
  *
  * 【为什么默认值直接就是「已交 / 沿用上次」】
  * 学院负责人多半只在上一场的基础上换一两个人。若每次进页面都从空白开始，
@@ -20,9 +21,13 @@
  * ============================================================
  */
 
-const { loadCollegeLineupView } = require('../../services/college-view.js');
-const { submitLineup } = require('../../services/index.js');
+const { loadCollegeLineupView } = require('../../services/school-college-view.js');
 const { currentThemeClass } = require('../../services/branding.js');
+const schoolSession = require('../../services/school-session.js');
+const associationScope = require('../../services/association-scope.js');
+const space = require('../../services/association-space.js');
+const identity = require('../../services/school-identity.js');
+const { LEGACY_SCHOOL_ID } = require('../../utils/school.js');
 
 Page({
   data: {
@@ -50,12 +55,26 @@ Page({
     return this.refresh();
   },
 
-  /** 读取全局登录态。app 可能还没初始化好，逐层兜底 */
-  currentUser() {
-    const app = getApp();
-    if (!app) return null;
-    if (typeof app.getUserInfo === 'function') return app.getUserInfo();
-    return app.globalData ? app.globalData.userInfo : null;
+  /** 当前「学校 + 协会」范围。读写复用它，避免异步期间全局范围被切走 */
+  currentScope() {
+    return {
+      schoolId: schoolSession.getSchoolId() || LEGACY_SCHOOL_ID,
+      association: associationScope.getAssociation(),
+    };
+  },
+
+  /**
+   * 本次身份会话。操作者编号用来把「去登录」与「没权限」分开；本人学院编号
+   * 供未指定侧时默认替本学院排阵。拿不到就按访客处理，绝不猜一个身份出来。
+   */
+  async readSession() {
+    try {
+      return await identity.forSchoolIdentity(this.scope || this.currentScope())
+        .getSchoolIdentitySession();
+    } catch (err) {
+      console.error('[college-lineup] 读取学校身份失败', err);
+      return null;
+    }
   },
 
   /** 轻提示。测试环境里可能没有这个 API */
@@ -70,11 +89,19 @@ Page({
    * @returns {Promise<void>}
    */
   async refresh() {
+    const scope = this.currentScope();
+    this.scope = scope;
+    const session = await this.readSession();
+    const actorId = (session && session.user && session.user.userId) || null;
+    const collegeId = (session && session.account && session.account.collegeId) || '';
+
     try {
       const view = await loadCollegeLineupView(this.tieId, {
-        user: this.currentUser(),
+        schoolId: scope.schoolId, association: scope.association, actorId,
         eventId: this.eventId,
+        // 路由里给了侧就按它，没给则回落到本人学院
         college: this.college,
+        collegeId,
       });
       this.loaded = true;
       this.setData({ loading: false, error: '', view, themeClass: currentThemeClass() });
@@ -126,12 +153,7 @@ Page({
 
   async onSubmit() {
     if (this.data.submitting) return undefined;
-
-    const user = this.currentUser();
-    if (!user) {
-      this.showToast('请先登录后再排阵');
-      return undefined;
-    }
+    if (!this.data.view.canSubmit) return undefined;
 
     const view = this.data.view || {};
     const entries = (view.legs || []).map((leg) => ({
@@ -140,14 +162,12 @@ Page({
     }));
 
     this.setData({ submitting: true });
-    const result = await submitLineup(
-      { tieId: this.tieId, college: view.college, entries },
-      user._id
-    );
+    const result = await space.forScope(this.scope || this.currentScope())
+      .submitCollegeLineup({ tieId: this.tieId, college: view.college, entries });
     this.setData({ submitting: false });
 
-    if (!result.ok) {
-      this.showToast(result.message || '提交失败');
+    if (!result || !result.ok) {
+      this.showToast((result && (result.firstError || result.message)) || '提交失败');
       return undefined;
     }
 

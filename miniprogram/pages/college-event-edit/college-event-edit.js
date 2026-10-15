@@ -2,7 +2,8 @@
  * 发布学院赛
  * ============================================================
  * 只做一件事：把一张填好的单子变成一场「报名中」的学院赛。
- * 校验与组装在 services/college-event.js（纯函数），这里负责交互与 setData。
+ * 校验与组装在 services/college-event.js（纯函数）；写入由协会空间按当前身份
+ * 执行（学校维度按 requestId 派生稳定编号做幂等）。这里负责交互与 setData。
  *
  * 【为什么独立成页而不是赛事页里的一个弹层】
  * 小项序列、人数上下限、胜负算法、净胜口径、时间、场地、说明七项，
@@ -42,10 +43,20 @@ const {
   DESCRIPTION_MAX,
   LOCATION_MAX,
   LEG_PLAN_MAX,
-  canManageCollegeEvent,
 } = require('../../services/college-event.js');
-const { publishCollegeEvent, isMock } = require('../../services/index.js');
+const { canPublishCollegeEvent } = require('../../services/school-college-view.js');
+const { isMock } = require('../../services/index.js');
 const { currentThemeClass } = require('../../services/branding.js');
+const schoolSession = require('../../services/school-session.js');
+const associationScope = require('../../services/association-scope.js');
+const space = require('../../services/association-space.js');
+const identity = require('../../services/school-identity.js');
+const { LEGACY_SCHOOL_ID } = require('../../utils/school.js');
+
+/** 生成一次提交的请求编号：时间戳 + 随机后缀，满足服务端的编号字符集要求 */
+function nextRequestId() {
+  return `pub_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
 
 /** 大场胜负算法下拉。顺序：打满比净胜 → 先到 N 场胜 */
 const TIE_ALGOS = [TIE_ALGO.FULL_POINTS, TIE_ALGO.FIRST_TO_N];
@@ -156,24 +167,45 @@ Page({
     errorText: '',
   },
 
-  onLoad() {
-    const user = this.currentUser();
-    const allowed = canManageCollegeEvent(user, { isMock });
-    this.setData({ blockReason: this.describeBlock(allowed, user), themeClass: currentThemeClass() });
+  async onLoad() {
+    const scope = this.currentScope();
+    this.scope = scope;
+
+    // 有没有在册学校身份（account）决定是「去登录」还是「没权限」——演示账号里
+    // 没有停用的平台账号，拿 user 判不出「没有学校身份」。
+    let session = null;
+    try {
+      session = await identity.forSchoolIdentity(scope).getSchoolIdentitySession();
+    } catch (err) {
+      console.error('[college-event-edit] 读取学校身份失败', err);
+    }
+
+    // 发布权以服务端算好的 canManageCollegeEvent 为准（借列表读端探针），
+    // 不在页面上拼角色——判权与服务端同一把尺子。
+    let allowed = false;
+    try {
+      allowed = await canPublishCollegeEvent({ schoolId: scope.schoolId, association: scope.association });
+    } catch (err) {
+      console.error('[college-event-edit] 发布权探针失败', err);
+    }
+
+    this.setData({ blockReason: this.describeBlock(allowed, session), themeClass: currentThemeClass() });
+  },
+
+  /** 当前「学校 + 协会」范围。写操作复用它，避免异步期间全局范围被切走 */
+  currentScope() {
+    return {
+      schoolId: schoolSession.getSchoolId() || LEGACY_SCHOOL_ID,
+      association: associationScope.getAssociation(),
+    };
   },
 
   /** 不能发布的原因。能发布时返回空串 */
-  describeBlock(allowed, user) {
+  describeBlock(allowed, session) {
     if (allowed) return '';
-    return user ? '当前账号没有发布学院赛的权限，请联系管理员' : '请先登录后再发布学院赛';
-  },
-
-  /** 读取全局登录态。app 可能还没初始化好，逐层兜底 */
-  currentUser() {
-    const app = getApp();
-    if (!app) return null;
-    if (typeof app.getUserInfo === 'function') return app.getUserInfo();
-    return app.globalData ? app.globalData.userInfo : null;
+    return session && session.account
+      ? '当前账号没有发布学院赛的权限，请联系管理员'
+      : '请先登录后再发布学院赛';
   },
 
   /** 轻提示。测试环境里可能没有这个 API */
@@ -317,22 +349,17 @@ Page({
     if (this.data.submitting) return undefined;
     if (this.data.blockReason) return undefined;
 
-    const user = this.currentUser();
-    if (!user) {
-      this.showToast('请先登录后再发布学院赛');
-      return undefined;
-    }
-
     const form = { ...this.data.form, startTime: this.buildStartTime() };
 
     this.setData({ submitting: true, errors: {}, errorText: '' });
-    const result = await publishCollegeEvent(form, user._id);
+    const result = await space.forScope(this.scope || this.currentScope())
+      .publishCollegeEvent({ ...form, requestId: nextRequestId() });
 
-    if (!result.ok) {
+    if (!result || !result.ok) {
       this.setData({
         submitting: false,
-        errors: result.errors || {},
-        errorText: result.firstError || '发布失败',
+        errors: (result && result.errors) || {},
+        errorText: (result && (result.firstError || result.message)) || '发布失败',
       });
       return undefined;
     }

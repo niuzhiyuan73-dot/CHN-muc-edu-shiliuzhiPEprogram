@@ -1,9 +1,10 @@
 /**
  * 学院赛详情（报名中抽签 → 待开赛开赛 → 进行中打大场）
  * ============================================================
- * 取数与整形在 services/college-view.js 的 loadCollegeEventDetailView，
- * 权限与规则在 college-draw.js / college-tie.js / college-lineup.js（纯函数），
- * 页面只做渲染与交互。
+ * 取数与整形走学校维度（协议 2）：services/school-college-view.js 的
+ * loadCollegeEventDetailView 把服务端 DTO 整成旧栈同形，权限与规则在
+ * college-draw.js / college-tie.js / college-lineup.js（纯函数）；写入由协会
+ * 空间按当前身份执行。页面只做渲染与交互。
  *
  * 【为什么抽签、开赛、大场同页】
  * 三件事在时间上首尾相接，状态一推，该出现的入口自然就换了一批（见视图
@@ -18,19 +19,17 @@
  * ============================================================
  */
 
-const { loadCollegeEventDetailView, buildSeedRows } = require('../../services/college-view.js');
+const { loadCollegeEventDetailView, buildSeedRows } = require('../../services/school-college-view.js');
 const { buildPickerRows, pickerEmptyText } = require('../../services/match-entry-view.js');
 const { watchLiveScores } = require('../../services/live-watch.js');
 const { applyLiveTies } = require('../../services/live-view.js');
-const {
-  drawCollegeEvent,
-  startCollegeEvent,
-  startTie,
-  assignTieReferee,
-  getMembers,
-  isMock,
-} = require('../../services/index.js');
+const { isMock } = require('../../services/index.js');
 const { currentThemeClass } = require('../../services/branding.js');
+const schoolSession = require('../../services/school-session.js');
+const associationScope = require('../../services/association-scope.js');
+const space = require('../../services/association-space.js');
+const identity = require('../../services/school-identity.js');
+const { LEGACY_SCHOOL_ID } = require('../../utils/school.js');
 
 Page({
   data: {
@@ -95,12 +94,27 @@ Page({
     }
   },
 
-  /** 读取全局登录态。app 可能还没初始化好，逐层兜底 */
-  currentUser() {
-    const app = getApp();
-    if (!app) return null;
-    if (typeof app.getUserInfo === 'function') return app.getUserInfo();
-    return app.globalData ? app.globalData.userInfo : null;
+  /** 当前「学校 + 协会」范围。读写复用它，避免异步期间全局范围被切走 */
+  currentScope() {
+    return {
+      schoolId: schoolSession.getSchoolId() || LEGACY_SCHOOL_ID,
+      association: associationScope.getAssociation(),
+    };
+  },
+
+  /**
+   * 本次身份会话里的操作者编号，只用来把「去登录」与「没权限」分开。
+   * 拿不到就按访客处理，绝不猜一个身份出来。
+   */
+  async currentActorId() {
+    try {
+      const session = await identity.forSchoolIdentity(this.scope || this.currentScope())
+        .getSchoolIdentitySession();
+      return (session && session.user && session.user.userId) || null;
+    } catch (err) {
+      console.error('[college-event-detail] 读取学校身份失败', err);
+      return null;
+    }
   },
 
   /** 轻提示。测试环境里可能没有这个 API */
@@ -116,8 +130,14 @@ Page({
    * @returns {Promise<void>}
    */
   async refresh() {
+    const scope = this.currentScope();
+    this.scope = scope;
+    const actorId = await this.currentActorId();
+
     try {
-      const view = await loadCollegeEventDetailView(this.eventId, { user: this.currentUser() });
+      const view = await loadCollegeEventDetailView(this.eventId, {
+        schoolId: scope.schoolId, association: scope.association, actorId,
+      });
       const approved = view.approvedColleges || [];
       const seeds = (this.data.seeds || []).filter((name) => approved.includes(name));
       this.loaded = true;
@@ -161,8 +181,15 @@ Page({
    */
   syncLiveWatch() {
     if (this.liveHandle) this.liveHandle();
+    const scope = this.scope || this.currentScope();
     this.liveHandle = watchLiveScores(this.liveIds(), (views) => {
       this.setData({ 'view.ties': applyLiveTies(this.data.view.ties || [], views) });
+    }, {
+      // 取数换成学校维度：旧栈门面按旧台账取数，与学校维度的比赛不是同一份数据
+      fetch: async (ids) => {
+        const res = await space.forScope(scope).getSchoolLiveScores({ matchIds: ids });
+        return (res && res.scores) || [];
+      },
     });
   },
 
@@ -189,18 +216,14 @@ Page({
   async onDraw() {
     if (this.data.acting) return undefined;
 
-    const user = this.currentUser();
-    if (!user) {
-      this.showToast('请先登录后再抽签');
-      return undefined;
-    }
-
     this.setData({ acting: 'draw' });
-    const result = await drawCollegeEvent(this.eventId, user._id, { seedColleges: this.data.seeds });
+    // 抽签结果必须可复核：随机值取此刻时间戳并落库，同一个值重跑得同一张签表
+    const result = await space.forScope(this.scope || this.currentScope())
+      .drawCollegeEvent({ eventId: this.eventId, seedColleges: this.data.seeds, seedValue: Date.now() });
     this.setData({ acting: '' });
 
-    if (!result.ok) {
-      this.showToast(result.message || '抽签失败');
+    if (!result || !result.ok) {
+      this.showToast((result && (result.firstError || result.message)) || '抽签失败');
       return undefined;
     }
 
@@ -213,18 +236,13 @@ Page({
   async onStartEvent() {
     if (this.data.acting) return undefined;
 
-    const user = this.currentUser();
-    if (!user) {
-      this.showToast('请先登录后再开始赛事');
-      return undefined;
-    }
-
     this.setData({ acting: 'startEvent' });
-    const result = await startCollegeEvent(this.eventId, user._id);
+    const result = await space.forScope(this.scope || this.currentScope())
+      .startCollegeEvent({ eventId: this.eventId });
     this.setData({ acting: '' });
 
-    if (!result.ok) {
-      this.showToast(result.message || '开始失败');
+    if (!result || !result.ok) {
+      this.showToast((result && (result.firstError || result.message)) || '开始失败');
       return undefined;
     }
 
@@ -237,18 +255,13 @@ Page({
     const tieId = event.currentTarget.dataset.tieId;
     if (!tieId || this.data.acting) return undefined;
 
-    const user = this.currentUser();
-    if (!user) {
-      this.showToast('请先登录后再开始大场');
-      return undefined;
-    }
-
     this.setData({ acting: tieId });
-    const result = await startTie(tieId, user._id);
+    const result = await space.forScope(this.scope || this.currentScope())
+      .startCollegeTie({ tieId });
     this.setData({ acting: '' });
 
-    if (!result.ok) {
-      this.showToast(result.message || '开始失败');
+    if (!result || !result.ok) {
+      this.showToast((result && (result.firstError || result.message)) || '开始失败');
       return undefined;
     }
 
@@ -264,10 +277,11 @@ Page({
    */
   async pickerMembers() {
     if (!this.members) {
-      const members = await getMembers();
-      this.members = (members || []).map((member) => ({
-        id: member._id,
-        name: member.nickName || member.realName || member._id,
+      const res = await space.forScope(this.scope || this.currentScope()).listSchoolMembers({});
+      const members = (res && res.members) || [];
+      this.members = members.map((member) => ({
+        id: member.userId,
+        name: member.nickName || member.realName || member.userId,
         realName: member.realName || '',
       }));
     }
@@ -342,19 +356,15 @@ Page({
     if (this.data.refereeActing) return undefined;
 
     const { tieId } = this.data.referee;
-    const user = this.currentUser();
     if (!tieId) return undefined;
-    if (!user) {
-      this.showToast('请先登录后再指派裁判');
-      return undefined;
-    }
 
     this.setData({ refereeActing: true });
-    const result = await assignTieReferee(tieId, refereeId, user._id);
+    const result = await space.forScope(this.scope || this.currentScope())
+      .assignCollegeTieReferee({ tieId, refereeId });
     this.setData({ refereeActing: false });
 
-    if (!result.ok) {
-      this.showToast(result.message || '指派失败');
+    if (!result || !result.ok) {
+      this.showToast((result && (result.firstError || result.message)) || '指派失败');
       return undefined;
     }
 
@@ -372,7 +382,7 @@ Page({
 
     const collegeParam = college ? `&college=${encodeURIComponent(college)}` : '';
     wx.navigateTo({
-      url: `/pages/college-lineup/college-lineup?tieId=${tieId}&eventId=${this.eventId}${collegeParam}`,
+      url: `/pages/college-lineup/college-lineup?tieId=${encodeURIComponent(tieId)}&eventId=${encodeURIComponent(this.eventId)}${collegeParam}`,
     });
   },
 
@@ -381,23 +391,23 @@ Page({
     const { matchId } = event.currentTarget.dataset;
     if (!matchId) return;
 
-    wx.navigateTo({ url: `/pages/college-match/college-match?matchId=${matchId}` });
+    wx.navigateTo({ url: `/pages/college-match/college-match?matchId=${encodeURIComponent(matchId)}` });
   },
 
   /** 去名单审核页（管理员） */
   onOpenReview() {
-    wx.navigateTo({ url: `/pages/college-entry-review/college-entry-review?eventId=${this.eventId}` });
+    wx.navigateTo({ url: `/pages/college-entry-review/college-entry-review?eventId=${encodeURIComponent(this.eventId)}` });
   },
 
   /** 去本学院名单提交页（学院负责人） */
   onOpenEntry() {
-    wx.navigateTo({ url: `/pages/college-entry/college-entry?eventId=${this.eventId}` });
+    wx.navigateTo({ url: `/pages/college-entry/college-entry?eventId=${encodeURIComponent(this.eventId)}` });
   },
 
   /** 去学院名次录入页（管理员）。提交后赛事即结束 */
   onOpenPlacement() {
     wx.navigateTo({
-      url: `/pages/college-placement/college-placement?eventId=${this.eventId}`,
+      url: `/pages/college-placement/college-placement?eventId=${encodeURIComponent(this.eventId)}`,
     });
   },
 

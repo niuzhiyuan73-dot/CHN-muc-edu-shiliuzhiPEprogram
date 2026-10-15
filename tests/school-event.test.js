@@ -112,8 +112,62 @@ test('报名：会员可报，人数计数与重复报名幂等', async () => {
     { actor: 'demo_muc_member' });
   assert.equal(detail.ok, true);
   assert.equal(detail.event.mySignup.status, SIGNUP_STATUS.SIGNED);
-  assert.equal(detail.canSignUp, false, '已报名不能再报');
-  assert.equal(detail.canCancelSignup, true);
+  assert.equal(detail.capabilities.canSignUp, false, '已报名不能再报');
+  assert.equal(detail.capabilities.canCancelSignup, true);
+});
+
+test('详情：能力旗标按角色与赛程状态下发，写端仍会再判一次', async () => {
+  const repo = fixture();
+  const event = await publish(repo, 'r1');
+
+  // 报名阶段：会员可报不能开赛/抽签/录名次；管理员可开赛但还不能开（未抽签由写端挡）。
+  const asMember = await call(repo, 'getSchoolEvent', { eventId: event.eventId },
+    { actor: 'demo_muc_member' });
+  assert.equal(asMember.capabilities.canSignUp, true);
+  assert.equal(asMember.capabilities.canStart, false);
+  assert.equal(asMember.capabilities.canDraw, false);
+  assert.equal(asMember.capabilities.canFinish, false);
+
+  const asAdmin = await call(repo, 'getSchoolEvent', { eventId: event.eventId });
+  assert.equal(asAdmin.capabilities.canDraw, true, '负责人可抽签');
+  assert.equal(asAdmin.capabilities.canStart, true, '负责人可开赛');
+  assert.equal(asAdmin.capabilities.canFinish, false, '还没开赛，不能录名次');
+
+  // 详情不下发未抽签时的签表 / 名次（真值为空）。
+  assert.equal(asAdmin.event.draw, null);
+  assert.deepEqual(asAdmin.event.results, []);
+});
+
+test('报名名单：带姓名与学院；取消者剔除；跨校读不到', async () => {
+  const repo = fixture();
+  const event = await publish(repo, 'r1');
+  await call(repo, 'signUpSchoolEvent', { eventId: event.eventId }, { actor: 'demo_muc_member' });
+  await call(repo, 'signUpSchoolEvent', { eventId: event.eventId }, { actor: 'demo_muc_member_2' });
+  // 第三个人报了又退，名单里不应出现。
+  await call(repo, 'signUpSchoolEvent', { eventId: event.eventId }, { actor: 'demo_muc_admin' });
+  await call(repo, 'cancelSchoolEventSignup', { eventId: event.eventId }, { actor: 'demo_muc_admin' });
+
+  const roster = await call(repo, 'listSchoolEventSignups', { eventId: event.eventId },
+    { actor: 'demo_muc_member' });
+  assert.equal(roster.ok, true, roster.message);
+  assert.deepEqual(roster.signups.map(row => row.userId).sort(),
+    ['demo_muc_member', 'demo_muc_member_2'], '取消报名的人不占名单');
+
+  const first = roster.signups.find(row => row.userId === 'demo_muc_member');
+  assert.ok(first, '报名者在名单里');
+  assert.ok(first.nickName, '带昵称');
+  assert.equal(typeof first.college, 'string');
+  assert.equal(first.status, SIGNUP_STATUS.SIGNED);
+  assert.equal(first.canCheckIn, false, '报名阶段还不能签到');
+
+  // 名单只下发展示字段：不得出现学号 / 手机号。
+  assert.equal(Object.prototype.hasOwnProperty.call(first, 'studentId'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(first, 'phone'), false);
+
+  // 外校读不到这份名单。
+  const buaa = await call(repo, 'listSchoolEventSignups', { eventId: event.eventId },
+    { schoolId: 'buaa', actor: 'demo_buaa_admin' });
+  assert.equal(buaa.ok, false);
 });
 
 test('报名：名额满了就拒，取消报名释放名额', async () => {

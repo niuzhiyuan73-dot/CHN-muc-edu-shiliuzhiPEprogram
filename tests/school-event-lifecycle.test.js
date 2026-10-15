@@ -265,6 +265,45 @@ test('跨学校：外校开赛 / 抽签写不进', async () => {
   assert.equal(buaaDraw.ok, false);
 });
 
+test('详情与名单读端：抽签后带签表、开赛后名单可代签、结束后下发名次', async () => {
+  const repo = fixture();
+  const event = await publish(repo, 'r1');
+  await drawWith(repo, event.eventId, ['demo_muc_member', 'demo_muc_member_2'], 42);
+
+  // 抽签后（仍在报名阶段）：详情带签表（投影字段），可重抽、可开赛。
+  const afterDraw = await call(repo, 'getSchoolEvent', { eventId: event.eventId });
+  assert.equal(afterDraw.event.draw.drawCount, 1);
+  assert.equal(afterDraw.event.draw.size, 2);
+  assert.ok(Array.isArray(afterDraw.event.draw.slots));
+  assert.equal(afterDraw.capabilities.canDraw, true, '报名阶段内仍可重抽');
+  assert.equal(afterDraw.capabilities.canStart, true);
+  assert.deepEqual(afterDraw.event.results, [], '未结束无名次');
+
+  // 开赛后：报名名单逐行给出代签到能力；开赛 / 抽签入口关闭，录名次入口打开。
+  await call(repo, 'startSchoolEvent', { eventId: event.eventId });
+  const roster = await call(repo, 'listSchoolEventSignups', { eventId: event.eventId });
+  assert.equal(roster.ok, true, roster.message);
+  assert.equal(roster.signups.length, 2);
+  assert.ok(roster.signups.every(row => row.canCheckIn === true), '进行中管理员可代签');
+
+  const afterStart = await call(repo, 'getSchoolEvent', { eventId: event.eventId });
+  assert.equal(afterStart.capabilities.canDraw, false, '已开赛不能再抽');
+  assert.equal(afterStart.capabilities.canStart, false, '已开赛不能再开');
+  assert.equal(afterStart.capabilities.canFinish, true);
+
+  // 结束：详情下发名次，只投影 { userId, placement } 两个字段。
+  await call(repo, 'finishSchoolEvent', {
+    eventId: event.eventId,
+    results: [{ userId: 'demo_muc_member', placement: 1 }, { userId: 'demo_muc_member_2', placement: 2 }],
+  });
+  const finished = await call(repo, 'getSchoolEvent', { eventId: event.eventId });
+  finished.event.results.forEach(row =>
+    assert.deepEqual(Object.keys(row).sort(), ['placement', 'userId'], '名次不透传库记录'));
+  const placements = Object.fromEntries(finished.event.results.map(row => [row.userId, row.placement]));
+  assert.deepEqual(placements, { demo_muc_member: 1, demo_muc_member_2: 2 });
+  assert.equal(finished.capabilities.canFinish, false, '已结束不能再录名次');
+});
+
 test('advanceSchoolEvent 被误当客户端 action 调用时不写入', async () => {
   const repo = fixture();
   const event = await publish(repo, 'r1');

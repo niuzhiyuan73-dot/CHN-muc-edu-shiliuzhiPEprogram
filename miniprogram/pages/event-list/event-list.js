@@ -16,12 +16,15 @@
  */
 
 const { loadEventsView } = require('../../services/events-view.js');
-const {
-  setEventPinned,
-  setCollegeEventPinned,
-  isMock,
-} = require('../../services/index.js');
+const { setEventPinned, isMock } = require('../../services/index.js');
 const { currentThemeClass } = require('../../services/branding.js');
+// 学院赛已迁到学校维度：列表行取自 S2（见 events-view.loadEventsView），置顶就必须
+// 写回同一份 S2 台账，否则「列表按 S2 读、置顶按旧栈写」，点了也没反应。
+// 个人赛事分支仍走旧栈，保持现状。
+const schoolSession = require('../../services/school-session.js');
+const associationScope = require('../../services/association-scope.js');
+const space = require('../../services/association-space.js');
+const { LEGACY_SCHOOL_ID } = require('../../utils/school.js');
 
 Page({
   data: {
@@ -146,13 +149,23 @@ Page({
     );
   },
 
-  /** 管理员置顶 / 取消置顶一场学院赛 */
+  /**
+   * 管理员置顶 / 取消置顶一场学院赛。
+   *
+   * 与个人赛不同，这一步走学校维度：列表已按 S2 读，置顶也得写回 S2 的学院赛
+   * 主记录（见 school-college-service.setCollegeEventPinned）。权限与登录都由
+   * 服务端判，未登录 / 无管理权时读端返回 ok:false，页面只负责把话说清楚。
+   */
   onToggleCollegePin(event) {
     const { eventId, pinned } = event.currentTarget.dataset;
     if (!eventId) return undefined;
     const next = !pinned;
+    const scope = {
+      schoolId: schoolSession.getSchoolId() || LEGACY_SCHOOL_ID,
+      association: associationScope.getAssociation(),
+    };
     return this.runPin(
-      (actorId) => setCollegeEventPinned(eventId, next, actorId),
+      () => space.forScope(scope).setCollegeEventPinned({ eventId, pinned: next }),
       next ? '已置顶' : '已取消置顶'
     );
   },
@@ -179,9 +192,9 @@ Page({
     const { eventId, canSubmit } = event.currentTarget.dataset;
     if (!eventId) return;
     if (canSubmit) {
-      wx.navigateTo({ url: `/pages/college-entry/college-entry?eventId=${eventId}` });
+      wx.navigateTo({ url: `/pages/college-entry/college-entry?eventId=${encodeURIComponent(eventId)}` });
       return;
     }
-    wx.navigateTo({ url: `/pages/college-event-detail/college-event-detail?eventId=${eventId}` });
+    wx.navigateTo({ url: `/pages/college-event-detail/college-event-detail?eventId=${encodeURIComponent(eventId)}` });
   },
 });

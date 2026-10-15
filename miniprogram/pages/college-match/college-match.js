@@ -3,8 +3,9 @@
  * ============================================================
  * 一场小场就是「某个大场里的第 N 项」。对阵、赛制、上场人都已由排阵锁定，
  * 本页只收一组局分，再按对手确认（M4-2）生效；管理员还可在这里记弃权（M4-7）。
- * 取数与整形在 services/college-view.js 的 loadCollegeMatchView，页面只做
- * 交互与 setData。
+ * 取数与整形走学校维度（协议 2）：services/school-college-view.js 的
+ * loadCollegeMatchView 把服务端 DTO 整成旧栈同形；写入由协会空间按当前身份执行
+ * （弃权走学院赛自成一档的 forfeitCollegeTieLeg，按学院记）。页面只做交互与 setData。
  *
  * 【为什么赛制写死 11 分制一局一胜】
  * COLLEGE_LEG_FORMAT 定的就是学院赛小场的赛制，不允许现场改——若这里能改，
@@ -20,15 +21,14 @@
  * ============================================================
  */
 
-const { loadCollegeMatchView } = require('../../services/college-view.js');
-const {
-  submitMatch,
-  confirmMatch,
-  recordForfeit,
-  revokeMatch,
-} = require('../../services/index.js');
+const { loadCollegeMatchView } = require('../../services/school-college-view.js');
 const { winnerOf, toScoreRows } = require('../../services/match-entry-view.js');
 const { currentThemeClass } = require('../../services/branding.js');
+const schoolSession = require('../../services/school-session.js');
+const associationScope = require('../../services/association-scope.js');
+const space = require('../../services/association-space.js');
+const identity = require('../../services/school-identity.js');
+const { LEGACY_SCHOOL_ID } = require('../../utils/school.js');
 
 Page({
   data: {
@@ -67,12 +67,27 @@ Page({
     return this.refresh();
   },
 
-  /** 读取全局登录态。app 可能还没初始化好，逐层兜底 */
-  currentUser() {
-    const app = getApp();
-    if (!app) return null;
-    if (typeof app.getUserInfo === 'function') return app.getUserInfo();
-    return app.globalData ? app.globalData.userInfo : null;
+  /** 当前「学校 + 协会」范围。读写复用它，避免异步期间全局范围被切走 */
+  currentScope() {
+    return {
+      schoolId: schoolSession.getSchoolId() || LEGACY_SCHOOL_ID,
+      association: associationScope.getAssociation(),
+    };
+  },
+
+  /**
+   * 本次身份会话里的操作者编号，只用来把「去登录」与「没权限」分开。
+   * 拿不到就按访客处理，绝不猜一个身份出来。
+   */
+  async currentActorId() {
+    try {
+      const session = await identity.forSchoolIdentity(this.scope || this.currentScope())
+        .getSchoolIdentitySession();
+      return (session && session.user && session.user.userId) || null;
+    } catch (err) {
+      console.error('[college-match] 读取学校身份失败', err);
+      return null;
+    }
   },
 
   /** 轻提示。测试环境里可能没有这个 API */
@@ -87,8 +102,14 @@ Page({
    * @returns {Promise<void>}
    */
   async refresh() {
+    const scope = this.currentScope();
+    this.scope = scope;
+    const actorId = await this.currentActorId();
+
     try {
-      const view = await loadCollegeMatchView(this.matchId, { user: this.currentUser() });
+      const view = await loadCollegeMatchView(this.matchId, {
+        schoolId: scope.schoolId, association: scope.association, actorId,
+      });
       // 赛制行数由视图模型定（bestOf），旧的比分按行对齐，缺的补空串
       const bestOf = view.bestOf || 1;
       const scoreA = [];
@@ -132,24 +153,14 @@ Page({
   async onSubmit() {
     if (this.data.submitting || !this.data.view.canRecord) return undefined;
 
-    const user = this.currentUser();
-    if (!user) {
-      this.showToast('请先登录后再录入成绩');
-      return undefined;
-    }
-
     const { scoreA, scoreB } = this.data.form;
     this.setData({ submitting: true });
-    const result = await submitMatch({
-      id: this.matchId,
-      scoreA,
-      scoreB,
-      actor: user._id,
-    });
+    const result = await space.forScope(this.scope || this.currentScope())
+      .submitSchoolMatch({ matchId: this.matchId, scoreA, scoreB });
     this.setData({ submitting: false });
 
-    if (!result.ok) {
-      this.showToast(result.firstError || (result.scoreErrors || [])[0] || '提交失败');
+    if (!result || !result.ok) {
+      this.showToast((result && (result.firstError || (result.scoreErrors || [])[0] || result.message)) || '提交失败');
       return undefined;
     }
 
@@ -162,18 +173,13 @@ Page({
   async onConfirm() {
     if (this.data.acting || !this.data.view.canConfirm) return undefined;
 
-    const user = this.currentUser();
-    if (!user) {
-      this.showToast('请先登录后再确认');
-      return undefined;
-    }
-
     this.setData({ acting: 'confirm' });
-    const result = await confirmMatch(this.matchId, user._id);
+    const result = await space.forScope(this.scope || this.currentScope())
+      .confirmSchoolMatch({ matchId: this.matchId });
     this.setData({ acting: '' });
 
-    if (!result.ok) {
-      this.showToast(result.message || '确认失败');
+    if (!result || !result.ok) {
+      this.showToast((result && (result.firstError || result.message)) || '确认失败');
       return undefined;
     }
 
@@ -183,12 +189,6 @@ Page({
 
   async onRevoke() {
     if (this.data.acting || !this.data.view.canRevoke) return undefined;
-
-    const user = this.currentUser();
-    if (!user) {
-      this.showToast('请先登录后再撤销');
-      return undefined;
-    }
     if (typeof wx === 'undefined' || typeof wx.showModal !== 'function') return undefined;
 
     const confirmed = await new Promise((resolve) => {
@@ -202,11 +202,12 @@ Page({
     if (!confirmed) return undefined;
 
     this.setData({ acting: 'revoke' });
-    const result = await revokeMatch(this.matchId, user._id, '学院赛小场撤销');
+    const result = await space.forScope(this.scope || this.currentScope())
+      .revokeSchoolMatch({ matchId: this.matchId, reason: '学院赛小场撤销' });
     this.setData({ acting: '' });
 
-    if (!result.ok) {
-      this.showToast(result.message || '撤销失败');
+    if (!result || !result.ok) {
+      this.showToast((result && (result.firstError || result.message)) || '撤销失败');
       return undefined;
     }
 
@@ -219,12 +220,6 @@ Page({
   async onForfeit(event) {
     const college = event.currentTarget.dataset.college;
     if (!college || this.data.acting || !this.data.view.canForfeit) return undefined;
-
-    const user = this.currentUser();
-    if (!user) {
-      this.showToast('请先登录后再记录弃权');
-      return undefined;
-    }
     if (typeof wx === 'undefined' || typeof wx.showModal !== 'function') return undefined;
 
     const confirmed = await new Promise((resolve) => {
@@ -238,11 +233,13 @@ Page({
     if (!confirmed) return undefined;
 
     this.setData({ acting: 'forfeit' });
-    const result = await recordForfeit(this.data.view.tieId, this.data.view.legNo, college, user._id);
+    // 学院赛弃权按学院记：走自成一档的 forfeitCollegeTieLeg（个人赛那条路明确挡学院赛）
+    const result = await space.forScope(this.scope || this.currentScope())
+      .forfeitCollegeTieLeg({ tieId: this.data.view.tieId, legNo: this.data.view.legNo, college });
     this.setData({ acting: '' });
 
-    if (!result.ok) {
-      this.showToast(result.message || '记录弃权失败');
+    if (!result || !result.ok) {
+      this.showToast((result && (result.firstError || result.message)) || '记录弃权失败');
       return undefined;
     }
 
@@ -257,6 +254,6 @@ Page({
   /** 改用横屏计分台逐球计分。小项已有比赛编号，直接带过去 */
   onGoLiveScore() {
     if (!this.matchId) return;
-    wx.navigateTo({ url: `/pages/live-score/live-score?matchId=${this.matchId}` });
+    wx.navigateTo({ url: `/pages/live-score/live-score?matchId=${encodeURIComponent(this.matchId)}` });
   },
 });

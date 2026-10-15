@@ -884,17 +884,18 @@ function signupStateOf(signup) {
  * @param {Object} [ctx]
  * @param {Object|null} [ctx.actor] 当前看页面的会员
  * @param {Array<Object>} [ctx.signups] 这场赛事的报名记录
+ * @param {Object} [ctx.caps] 服务端算好的操作能力；给了就覆盖按旧 actor 现算的值
  * @returns {Object}
  */
 function buildEventRow(event, ctx = {}) {
-  const { actor = null, signups = [] } = ctx;
+  const { actor = null, signups = [], caps = null } = ctx;
 
   const mySignup = signupOf(signups, actor ? actor._id : null);
   const state = signupStateOf(mySignup);
   const count = signupCountOf(event, signups);
   const quota = Number(event && event.quota) || 0;
 
-  return {
+  const row = {
     id: event._id,
     // 逐层兜底，绝不渲染出 undefined
     title: event.title || '（未命名赛事）',
@@ -957,6 +958,28 @@ function buildEventRow(event, ctx = {}) {
     // 好让管理员在开赛前重抽；已开赛 / 已有比赛生效由服务端最终把关
     canDraw: canDrawEvent(event, actor),
   };
+
+  // 协议 2：判权在服务端，页面上没有旧角色的 actor 可算。调用方把服务端算好的
+  // 能力传进来就覆盖对应字段——构建器本身不判权，只负责展示形状与文案。
+  return applyEventCaps(row, caps);
+}
+
+/**
+ * 可由服务端显式下发的能力键。只覆盖调用方真的给了的键，其余保持按 actor 算出的值。
+ * @param {Object} row buildEventRow 的结果
+ * @param {Object|null} caps
+ * @returns {Object}
+ */
+function applyEventCaps(row, caps) {
+  if (!caps) return row;
+  const keys = [
+    'canSignUp', 'canCancelSignup', 'canStart', 'canDraw', 'canFinish', 'canCheckIn', 'canPin',
+  ];
+  const out = { ...row };
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(caps, key)) out[key] = Boolean(caps[key]);
+  }
+  return out;
 }
 
 /**

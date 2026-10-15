@@ -29,6 +29,19 @@ const facade = require('./index.js');
 const POLL_INTERVAL = 2000;
 
 /**
+ * 默认取数器：旧栈门面。
+ * 学校维度页面（协议 2）改传自己的取数器——`getSchoolLiveScores` 的返回是
+ * `{ok, scores}`，摊平后仍是「比分视图数组」。适配器只认「给一组编号、回一组
+ * 比分视图」这一件事，不关心数据从哪来。
+ *
+ * @param {string[]} ids
+ * @returns {Promise<Array<Object>>}
+ */
+function defaultFetch(ids) {
+  return facade.getLiveScores(ids);
+}
+
+/**
  * 当前订阅。同一时刻只允许一个页面在轮询——小程序同一时刻只有一个页面
  * 可见，用单例既省定时器，也天然做到「重新订阅即停旧表」。
  */
@@ -95,7 +108,7 @@ async function poll(target) {
 
   let views;
   try {
-    views = await facade.getLiveScores(target.ids);
+    views = await target.fetch(target.ids);
   } catch (err) {
     return undefined; // 这一拍失败：不回调、不重试，下一拍照常
   }
@@ -177,15 +190,18 @@ function handleFor(target) {
  *
  * @param {string[]} matchIds 关心的比赛编号；空数组 ⇒ 完全不启表
  * @param {Function} onUpdate 比分真的变了才被调用，参数是实时视图数组
+ * @param {{fetch?:Function}} [options] 取数器。缺省走旧栈门面；学校维度页面
+ *   传自己的 `getSchoolLiveScores`（摊平后仍是「给一组编号、回一组比分视图」）
  * @returns {Function & {pause:Function, resume:Function}} 取消订阅
  */
-function watchLiveScores(matchIds, onUpdate) {
+function watchLiveScores(matchIds, onUpdate, options = {}) {
   stopSession();
 
   const ids = [...new Set((Array.isArray(matchIds) ? matchIds : []).filter(Boolean))];
   const target = {
     ids,
     onUpdate: typeof onUpdate === 'function' ? onUpdate : () => {},
+    fetch: typeof options.fetch === 'function' ? options.fetch : defaultFetch,
     last: null,
     timer: null,
     paused: false,

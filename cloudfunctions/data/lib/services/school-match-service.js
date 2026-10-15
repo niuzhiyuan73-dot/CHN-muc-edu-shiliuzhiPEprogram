@@ -31,7 +31,7 @@ const {
 // 角色 / 名单的推导收在 school-actor，两套栈只有一份口径。
 const { legacyRoleOf, buildDirectory, recordOptions } = require('./school-actor.js');
 const {
-  schoolKey, schoolMemberKey, belongsToSchoolScope, schoolMatchKey,
+  schoolKey, schoolMemberKey, belongsToSchoolScope, schoolMatchKey, schoolLiveKey,
   PLATFORM_STATUS, SCHOOL_MEMBER_STATUS,
 } = require('../utils/school.js');
 const {
@@ -43,6 +43,7 @@ const {
   isParticipant, buildMatchRecord, fillScheduledMatch, buildRefereePatch, buildForfeitPatch,
 } = require('./match-record.js');
 const { checkSubmitAllowed } = require('./rating-cap.js');
+const { liveScoreOf } = require('./live-score.js');
 const { advanceSchoolEvent } = require('./school-event-service.js');
 // 学院赛小场生效 / 撤销后的收尾：把结果写回大场、必要时排出下一轮（M2-c2）。
 const {
@@ -88,6 +89,21 @@ function matchSummary(doc, ctx, dir) {
     location: doc.location || '',
     eventId: doc.eventId || null,
     competition: doc.competition || MATCH_COMPETITION.PERSONAL,
+    // 学院赛小场专属：小项、所属大场与轮次、所属学院赛、对阵双方学院。个人赛这几项
+    // 为空，展示端据 competition 分流（学院赛录分页用它们回查大场与赛事）。
+    discipline: doc.discipline || '',
+    tieId: doc.tieId || '',
+    legNo: doc.legNo === undefined ? null : Number(doc.legNo),
+    collegeEventId: doc.collegeEventId || '',
+    collegeA: doc.collegeA || '',
+    collegeB: doc.collegeB || '',
+    // 比赛编排字段：签表、分组与场地展示共享同一契约，页面不必从别处反查。
+    // 非签表生成（自由录入）的比赛这几项为空，展示端退化为「无轮次 / 无场号」。
+    round: doc.round === undefined ? null : Number(doc.round),
+    stage: doc.stage || '',
+    group: doc.group === undefined ? null : Number(doc.group),
+    slot: doc.slot === undefined ? null : Number(doc.slot),
+    courtNo: doc.courtNo === undefined ? null : Number(doc.courtNo),
     status: doc.status,
     statusLabel: MATCH_STATUS_LABEL[doc.status] || '',
     action: doc.action || '',
@@ -109,6 +125,20 @@ function matchSummary(doc, ctx, dir) {
 
 /* ------------------------------------------------------------------ 读 */
 
+/**
+ * 给比赛 DTO 补上实时比分（只有开过计分台的才有）。
+ *
+ * 【为什么读端要带 live】
+ * 查看端首屏就得是实时值，不能「先 0:0 再跳」；页面据 `live` 判断哪几场要挂
+ * 轮询取增量（见 live-watch）。轮询本身只回比分字段，这条是首帧的来源。
+ * 实时态按 `matchId` 索引、随归属隔离——别校 / 别协会的读不到。
+ */
+async function withLive(summary, ctx) {
+  const state = await ctx.repo.liveScores.getById(schoolLiveKey(summary.matchId, ctx));
+  if (!state || !belongsToSchoolScope(state, ctx)) return summary;
+  return { ...summary, live: liveScoreOf(state) };
+}
+
 async function listSchoolMatches(payload = {}, ctx) {
   if (!canReadAssociationSpace(ctx)) {
     return ok({ ok: false, matches: [], canManage: false, message: '没有读取协会空间的权限' });
@@ -126,11 +156,11 @@ async function listSchoolMatches(payload = {}, ctx) {
   rows.sort((a, b) => (Date.parse(b.matchTime) || 0) - (Date.parse(a.matchTime) || 0));
   const limit = Number.isInteger(payload.limit) && payload.limit >= 0
     ? payload.limit : MATCH_LIST_LIMIT;
-  return ok({
-    ok: true, canManage: canManageAssociationSpace(ctx),
-    matches: rows.slice(0, limit).map(doc => matchSummary(doc, ctx, dir)),
-    message: '',
-  });
+  const matches = [];
+  for (const doc of rows.slice(0, limit)) {
+    matches.push(await withLive(matchSummary(doc, ctx, dir), ctx));
+  }
+  return ok({ ok: true, canManage: canManageAssociationSpace(ctx), matches, message: '' });
 }
 
 async function getSchoolMatch(payload = {}, ctx) {
@@ -139,7 +169,7 @@ async function getSchoolMatch(payload = {}, ctx) {
   const doc = await ctx.repo.matches.getById(payload.matchId);
   if (!isMatchDoc(doc) || !belongsToSchoolScope(doc, ctx)) return ok(refused('找不到这场比赛'));
   const dir = await buildDirectory(ctx);
-  return ok({ ok: true, match: matchSummary(doc, ctx, dir), message: '' });
+  return ok({ ok: true, match: await withLive(matchSummary(doc, ctx, dir), ctx), message: '' });
 }
 
 /* ------------------------------------------------------------------ 写 */
@@ -273,7 +303,7 @@ async function advanceAfterResolved(ctx, result) {
 /**
  * 学院赛小场生效后的收尾：把结果写回大场、定出大场胜负，并在本轮打完时排出下一轮。
  * 走的是与个人赛不同的一条链路（小场 `eventId` 留空，`advanceAfterResolved` 会跳过）。
- * 只读一次原始文档再交给 `advanceCollegeAfterLeg`——matchSummary 不带 tieId / legNo。
+ * 按编号重读一次原始文档再交给 `advanceCollegeAfterLeg`——推进读的是台账最终态。
  */
 async function advanceCollegeAfterResolved(ctx, result) {
   if (!result || !result.ok || !result.match) return result;

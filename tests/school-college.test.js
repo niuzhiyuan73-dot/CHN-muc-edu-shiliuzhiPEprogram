@@ -90,6 +90,33 @@ async function publish(repo, token, extra = {}, opts = {}) {
 
 /* ------------------------------------------------------------ 发布 */
 
+test('置顶：审计失败整体回滚，不能留下半次写入', async () => {
+  const repo = fixture();
+  const event = await publish(repo, 'pin-rollback');
+  const before = await repo.collegeEvents.getById(event.eventId);
+  const transaction = repo.transaction;
+  repo.transaction = fn => transaction(async tx => {
+    tx.audit.append = async () => { throw new Error('audit unavailable'); };
+    return fn(tx);
+  });
+  await assert.rejects(call(repo, 'setCollegeEventPinned', { eventId: event.eventId, pinned: true }), /audit unavailable/);
+  assert.deepEqual(await repo.collegeEvents.getById(event.eventId), before);
+});
+
+test('置顶：事务执行前管理权被撤销，重新判权后拒绝', async () => {
+  const repo = fixture();
+  const event = await publish(repo, 'pin-permission');
+  const transaction = repo.transaction;
+  repo.transaction = async fn => {
+    const user = await repo.users.getById('demo_muc_admin');
+    await repo.users.set(user._id, { ...user, platformStatus: 'disabled' });
+    return transaction(fn);
+  };
+  const result = await call(repo, 'setCollegeEventPinned', { eventId: event.eventId, pinned: true });
+  assert.equal(result.ok, false);
+  assert.equal(Boolean((await repo.collegeEvents.getById(event.eventId)).pinned), false);
+});
+
 test('发布：仅管理员可发，会员被拒；发布落在报名中', async () => {
   const repo = fixture();
   const byMember = await call(repo, 'publishCollegeEvent', { requestId: 'r1', ...valid() },

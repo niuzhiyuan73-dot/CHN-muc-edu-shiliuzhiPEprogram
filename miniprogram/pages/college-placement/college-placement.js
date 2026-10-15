@@ -2,9 +2,10 @@
  * 录入学院名次（M5-1）
  * ============================================================
  * 一场学院赛的最后一步：给参赛学院填名次，提交即结束赛事。
- * 取数与权限在 services/college-view.js 的 loadCollegePlacementView，
- * 名次校验在 services/college-event.js 的 validateCollegePlacements，
- * 页面只做交互与 setData。
+ * 取数与权限走学校维度（协议 2）：services/school-college-view.js 的
+ * loadCollegePlacementView 把服务端 DTO 整成旧栈同形，名次校验在
+ * services/college-event.js 的 validateCollegePlacements；写入由协会空间按
+ * 当前身份执行。页面只做交互与 setData。
  *
  * 【为什么行是学院不是人】
  * 学院赛的名次只记给学院（D26）：学院进签表、大场套小场，个人打得再好
@@ -19,9 +20,14 @@
  * ============================================================
  */
 
-const { loadCollegePlacementView } = require('../../services/college-view.js');
-const { finishCollegeEvent, isMock } = require('../../services/index.js');
+const { loadCollegePlacementView } = require('../../services/school-college-view.js');
+const { isMock } = require('../../services/index.js');
 const { currentThemeClass } = require('../../services/branding.js');
+const schoolSession = require('../../services/school-session.js');
+const associationScope = require('../../services/association-scope.js');
+const space = require('../../services/association-space.js');
+const identity = require('../../services/school-identity.js');
+const { LEGACY_SCHOOL_ID } = require('../../utils/school.js');
 
 Page({
   data: {
@@ -52,12 +58,27 @@ Page({
     return this.refresh().then(() => this.stopPullDown());
   },
 
-  /** 读取全局登录态。app 可能还没初始化好，逐层兜底 */
-  currentUser() {
-    const app = getApp();
-    if (!app) return null;
-    if (typeof app.getUserInfo === 'function') return app.getUserInfo();
-    return app.globalData ? app.globalData.userInfo : null;
+  /** 当前「学校 + 协会」范围。读写复用它，避免异步期间全局范围被切走 */
+  currentScope() {
+    return {
+      schoolId: schoolSession.getSchoolId() || LEGACY_SCHOOL_ID,
+      association: associationScope.getAssociation(),
+    };
+  },
+
+  /**
+   * 本次身份会话里的操作者编号，只用来把「去登录」与「没权限」分开。
+   * 拿不到就按访客处理，绝不猜一个身份出来。
+   */
+  async currentActorId() {
+    try {
+      const session = await identity.forSchoolIdentity(this.scope || this.currentScope())
+        .getSchoolIdentitySession();
+      return (session && session.user && session.user.userId) || null;
+    } catch (err) {
+      console.error('[college-placement] 读取学校身份失败', err);
+      return null;
+    }
   },
 
   /** stopPullDownRefresh 在测试环境里可能没有，做个保护 */
@@ -79,10 +100,14 @@ Page({
    * @returns {Promise<void>}
    */
   async refresh() {
-    const user = this.currentUser();
+    const scope = this.currentScope();
+    this.scope = scope;
+    const actorId = await this.currentActorId();
 
     try {
-      const view = await loadCollegePlacementView(this.eventId, { user, isMock });
+      const view = await loadCollegePlacementView(this.eventId, {
+        schoolId: scope.schoolId, association: scope.association, actorId,
+      });
       this.setData({ loading: false, error: '', view, errorText: '', themeClass: currentThemeClass() });
     } catch (err) {
       console.error('[college-placement] 名次页加载失败', err);
@@ -136,20 +161,16 @@ Page({
     if (this.data.submitting) return undefined;
     if (!this.data.view.canSubmit) return undefined;
 
-    const user = this.currentUser();
-    if (!user) {
-      this.showToast('请先登录后再录入名次');
-      return undefined;
-    }
-
     const collected = this.collectResults();
     if (collected.error) {
       this.setData({ errorText: collected.error });
       return undefined;
     }
 
+    const scope = this.scope || this.currentScope();
     this.setData({ submitting: true, errorText: '' });
-    const result = await finishCollegeEvent(this.eventId, collected.results, user._id);
+    const result = await space.forScope(scope)
+      .finishCollegeEvent({ eventId: this.eventId, results: collected.results });
 
     if (!result || !result.ok) {
       this.setData({

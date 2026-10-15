@@ -38,7 +38,6 @@ const {
   RATING_POOL,
   ROLE,
   SIGNUP_STATUS,
-  COLLEGE_EVENT_STATUS,
   isRankable,
   stageOrder,
   courtNoTextOf,
@@ -65,9 +64,6 @@ const {
   isParticipant,
   needsScore,
 } = require('./match-record.js');
-// 学院赛的发布入口与名单入口也摆在赛事页：两套体系虽互不干扰，入口却该在一处
-const { canManageCollegeEvent, buildCollegeEventRow } = require('./college-event.js');
-const { canSubmitCollegeEntry, canReviewCollegeEntry } = require('./college-entry.js');
 const { statusTagOf } = require('./match-view.js');
 const { describeLive } = require('./live-view.js');
 // 手工指定种子要凑几位，与真正抽签时同一把尺子（种子数与参赛人数的较小者）；
@@ -80,8 +76,14 @@ const {
   getEventSignups,
   getMatchRecords,
   getSeasonState,
-  getCollegeEvents,
 } = require('./index.js');
+// 学院赛已迁到学校维度（协议 2）：个人赛仍走旧门面，学院赛列表改由 S2 协会空间
+// 取数——否则「发布走 S2、列表读旧栈」，两处各说各话，新发的学院赛根本不显示。
+// 范围（学校 + 协会）在这里现取一次，与页面进入时固定的是同一份全局选择。
+const schoolSession = require('./school-session.js');
+const associationScope = require('./association-scope.js');
+const { LEGACY_SCHOOL_ID } = require('../utils/school.js');
+const { loadCollegeEventListRows } = require('./school-college-view.js');
 
 /** 前三名的奖牌样式，其余为空字符串（不额外装饰） */
 const MEDALS = ['gold', 'silver', 'bronze'];
@@ -348,74 +350,6 @@ function buildEventListRows(events, ctx = {}) {
 }
 
 /**
- * 学院赛列表排序：置顶在前，再按 报名中 → 待开赛 → 进行中 → 已结束。
- *
- * 【为什么不复用 sortEvents】
- * 学院赛在「报名中」与「进行中」之间多一个「待开赛」，状态号与个人赛
- * 并不对齐。硬套个人赛的状态号会把「待开赛」当成「进行中」，又把真正的
- * 「进行中」沉到已结束那一档，两场都排错。这里按学院赛自己的状态排。
- *
- * @param {Array<Object>} events
- * @returns {Array<Object>} 新数组，不改动入参
- */
-function sortCollegeEvents(events) {
-  const priorityOf = (event) => {
-    const status = event && event.status;
-    if (status === COLLEGE_EVENT_STATUS.SIGNUP) return 0;
-    if (status === COLLEGE_EVENT_STATUS.READY) return 1;
-    if (status === COLLEGE_EVENT_STATUS.ONGOING) return 2;
-    return 3;
-  };
-
-  return asArray(events)
-    .slice()
-    .sort((a, b) => {
-      const pinDiff = Number(Boolean(b && b.pinned)) - Number(Boolean(a && a.pinned));
-      if (pinDiff !== 0) return pinDiff;
-      const diff = priorityOf(a) - priorityOf(b);
-      if (diff !== 0) return diff;
-      return timeValue(a && a.startTime) - timeValue(b && b.startTime);
-    });
-}
-
-/**
- * 把学院赛列表整形成页面上的行。
- *
- * 【一行的入口为什么按人分】
- * 学院赛的报名不是个人点「报名」，而是学院负责人交名单。所以同一行对
- * 不同的人指向不同页面：管理员进详情页（抽签、开赛、大场都在那里，审核
- * 名单在详情页里有入口），学院负责人在报名中直接进本学院的名单页（少走一步），
- * 其余人进详情页看签表与对阵。入口布尔量与文案在这里算好，模板不写
- * 业务判断。
- *
- * @param {Array<Object>} events
- * @param {Object} [ctx]
- * @param {Object|null} [ctx.actor] 当前看页面的人
- * @returns {Array<Object>}
- */
-function buildCollegeEventListRows(events, ctx = {}) {
-  const { actor = null } = ctx;
-  // 审核权与具体哪一场无关，算一次即可
-  const canReview = canReviewCollegeEntry(actor);
-
-  return sortCollegeEvents(events).map((event) => {
-    const row = buildCollegeEventRow(event, { actor });
-    // 学院负责人在报名中直接去名单页；管理员与其余人都进详情页，这里只影响文案
-    const canSubmit = !canReview && canSubmitCollegeEntry(event, actor);
-    return {
-      ...row,
-      canReview,
-      canSubmit,
-      // 置顶与发布/审核同一门槛（仅管理员），直接复用行里算好的 canManage
-      canPin: row.canManage,
-      actionText: canReview ? '管理' : canSubmit ? '提交名单' : '查看',
-      // 报名中用成功色、进行中用警示色，待开赛与已结束用灰色
-      statusClass: row.isSignup ? 'tag-success' : row.isOngoing ? 'tag-warning' : 'tag-gray',
-    };
-  });
-}
-
-/**
  * 一次取齐所有赛事的报名记录，按赛事编号建索引。
  * 列表要显示「已报几人」「我报没报」，每场各取一次，并发发出。
  *
@@ -439,11 +373,14 @@ async function loadSignupMap(events) {
  * @param {Object} [ctx]
  * @param {Object|null} [ctx.actor]
  * @param {Object|null} [ctx.event] 所属赛事，用于判代签权
+ * @param {Map<string, {canCheckIn:boolean}>} [ctx.caps] 服务端按报名记录下发的代签能力；
+ *        给了就照它渲染，不再用旧 actor 现算（协议 2 路径）
  * @returns {Array<Object>}
  */
 function buildSignupRows(signups, memberMap, ctx = {}) {
-  const { actor = null, event = null } = ctx;
-  const mayCheckIn = canCheckIn(event, actor);
+  const { actor = null, event = null, caps = null } = ctx;
+  // 没给显式能力时，按旧 actor 算一个总开关（旧栈路径）
+  const mayCheckIn = !caps && canCheckIn(event, actor);
   // 名单上带的是「这场比赛所属池」的等级分：单打赛事看单打分，双打赛事
   // 看双打分。用错池会给出一个和本场毫不相干的数字。
   const pool = (event && event.pool) || RATING_POOL.SINGLES;
@@ -460,9 +397,13 @@ function buildSignupRows(signups, memberMap, ctx = {}) {
       const stats = member
         ? `等级分 ${getPoolRating(member, pool).elo} · 积分 ${Number(member.points) || 0}`
         : '';
-      // 学院负责人只能代签本学院的人；档案查不到时传个空对象，让学院负责人被挡下、
-      // 管理员仍可通过（见 event.canCheckIn 的三种取值）
-      const mayCheckInThis = mayCheckIn && canCheckIn(event, actor, { target: member || {} });
+      // 代签能力：协议 2 由服务端逐条给出（见 listSchoolEventSignups）；旧栈按
+      // actor + 目标学院现算——学院负责人只能代签本学院的人，档案查不到时传个
+      // 空对象，让学院负责人被挡下、管理员仍可通过（见 event.canCheckIn 的三种取值）
+      const override = caps ? caps.get(signup.userId) : null;
+      const mayCheckInThis = override
+        ? Boolean(override.canCheckIn)
+        : mayCheckIn && canCheckIn(event, actor, { target: member || {} });
       return {
         ...row,
         avatarText: avatarOf(row.nickName),
@@ -643,10 +584,13 @@ function byeTextOf(draw, memberMap) {
  * @param {Object} [ctx]
  * @param {Object|null} [ctx.actor] 当前登录会员
  * @param {boolean} [ctx.isMock=false] 是否放宽「确认」权（与 match-record 同一口径）
+ * @param {Map<string, {canRecord,canConfirm,canAssignReferee}>} [ctx.caps] 服务端按
+ *        比赛记录下发的能力；给了就照它渲染，不再用旧 actor 现算（协议 2 路径）
+ * @param {boolean} [ctx.isAdmin] 是否管理员（仅用于裁判接管提示）；给了就覆盖按角色推的值
  * @returns {Array<Object>}
  */
 function buildBracketRows(records, event, memberMap, ctx = {}) {
-  const { actor = null, isMock: mock = false } = ctx;
+  const { actor = null, isMock: mock = false, caps = null, isAdmin: adminFlag } = ctx;
   const eventId = event && event._id;
   const eventRecords = asArray(records).filter((record) => record && record.eventId === eventId);
   const grouped = isGroupedFormat(event);
@@ -674,8 +618,11 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
   };
   // 确认要带上角色：管理员可确认任意一场（见 match-record.canConfirm）
   const confirmOptions = { isMock: mock, role: actor ? actor.role : undefined };
-  // 指派裁判只有管理员能做，且只能改还没生效的场次（与 match-view 同一把尺子）
-  const isAdmin = Boolean(actor && Number(actor.role) >= ROLE.ADMIN);
+  // 指派裁判只有管理员能做，且只能改还没生效的场次（与 match-view 同一把尺子）。
+  // 协议 2 下页面上没有旧角色 actor，管理员身份由调用方显式传入
+  const isAdmin = adminFlag !== undefined
+    ? Boolean(adminFlag)
+    : Boolean(actor && Number(actor.role) >= ROLE.ADMIN);
 
   return eventRecords
     .slice()
@@ -712,6 +659,10 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
       // Q5：裁判也可以是本场参赛者，界面给个提示，不禁止
       const refereeIsParticipant = officiated && isParticipant(record, refereeId);
 
+      // 录分 / 确认 / 指派裁判：协议 2 由服务端逐场给出（见 matchSummary）；
+      // 旧栈按 actor 现算。给了显式能力就照它渲染，不再用旧 actor 重算。
+      const override = caps ? caps.get(record._id) : null;
+
       return {
         matchId: record._id,
         roundText: roundLabelOf(record.round, totalRounds, record.stage),
@@ -733,8 +684,12 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
         statusClass: tag.className,
         isMine: Boolean(actorId && (isParticipant(record, actorId))),
         // 还没比分的场次先录分，录完才谈得上确认
-        canRecord: Boolean(waiting && actorId && canRecordScore(record, actorId, recordOptions)),
-        canConfirm: Boolean(!waiting && canConfirm(record, actorId, confirmOptions)),
+        canRecord: override
+          ? Boolean(override.canRecord)
+          : Boolean(waiting && actorId && canRecordScore(record, actorId, recordOptions)),
+        canConfirm: override
+          ? Boolean(override.canConfirm)
+          : Boolean(!waiting && canConfirm(record, actorId, confirmOptions)),
         // 裁判：有就显示是谁执法；被接管且自己不是裁判时说明为何录不了
         hasReferee: officiated,
         refereeName,
@@ -742,7 +697,9 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
         refereeNotice: refereeTakesOver
           ? `本场由 ${refereeName} 裁判执法，仅裁判与管理员可录分`
           : '',
-        canAssignReferee: Boolean(isAdmin && canAssignReferee(record)),
+        canAssignReferee: override
+          ? Boolean(override.canAssignReferee)
+          : Boolean(isAdmin && canAssignReferee(record)),
       };
     });
 }
@@ -871,12 +828,20 @@ function buildStandings(event, records, memberMap, actor = null) {
 async function loadEventsView(options = {}) {
   const usesExplicitUser = Object.prototype.hasOwnProperty.call(options, 'user');
 
-  const [current, members, events, season, collegeEvents] = await Promise.all([
+  // 学院赛列表走学校维度：范围取当前全局学校 + 协会，与工作台页面进入时固定的
+  // 是同一份选择；「谁能提交名单 / 谁能审核」由 S2 读端随行下发（见
+  // school-college-service.listCollegeEvents），视图不再拿旧 actor 现算。
+  const collegeScope = {
+    schoolId: schoolSession.getSchoolId() || LEGACY_SCHOOL_ID,
+    association: associationScope.getAssociation(),
+  };
+
+  const [current, members, events, season, college] = await Promise.all([
     getCurrentUser(),
     getMembers(),
     getEvents(),
     getSeasonState(),
-    getCollegeEvents(),
+    loadCollegeEventListRows(collegeScope),
   ]);
 
   const actor = usesExplicitUser ? options.user : current;
@@ -891,7 +856,7 @@ async function loadEventsView(options = {}) {
 
   const signupMap = await loadSignupMap(events);
   const allEventRows = buildEventListRows(events, { actor, signupMap });
-  const allCollegeRows = buildCollegeEventListRows(collegeEvents, { actor });
+  const allCollegeRows = college.rows;
   const canPublish = canManageEvent(actor);
 
   // 页面只摆最近几条，全量留给「查看全部」那一页。`listLimit` 传 Infinity
@@ -938,7 +903,8 @@ async function loadEventsView(options = {}) {
     collegeEventsEmptyNote: '还没有学院赛，等管理员发布一场吧',
     collegeEventTotal: allCollegeRows.length,
     hasMoreCollegeEvents: allCollegeRows.length > collegeRows.length,
-    canManageCollege: canManageCollegeEvent(actor),
+    // 发布学院赛的权限门槛与其余管理动作一致，取 S2 读端算好的 canManage
+    canManageCollege: college.canManage,
   };
 }
 
@@ -1241,8 +1207,6 @@ module.exports = {
   placementLabelOf,
   bronzeHintOf,
   buildEventListRows,
-  sortCollegeEvents,
-  buildCollegeEventListRows,
   loadSignupMap,
   buildSignupRows,
   buildResultRows,
@@ -1262,4 +1226,5 @@ module.exports = {
   loadEventsView,
   loadEventDetailView,
   loadEventPlacementView,
+  groupedPlacementHint,
 };

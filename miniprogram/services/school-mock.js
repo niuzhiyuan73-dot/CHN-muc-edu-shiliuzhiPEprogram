@@ -36,6 +36,8 @@ const DEMO_ACTORS = Object.freeze([
   { id: 'demo_buaa_member', label: '北航会员' },
   // 平台管理员排在最后，以免挪动既有演示身份的下标（页面与用例都按下标选择）。
   { id: 'demo_platform_admin', label: '平台管理员' },
+  // 学院负责人（民大 c02）：演示「只替本学院交名单 / 排阵」的边界，同样追加在末尾。
+  { id: 'demo_muc_college_leader', label: '民大学院负责人' },
 ]);
 
 /**
@@ -127,6 +129,25 @@ function reset(options = {}) {
   // 平台管理员：账号级身份，可跨校读、跨校指定权限；不带 primarySchoolId，不占某校身份。
   seed.users.push({ _id: 'demo_platform_admin', openId: 'mock_openid_platform_admin', nickName: '平台管理员',
     platformStatus: 'active', platformRole: 'admin', simulated: true });
+  // 学院负责人演示身份：民大 c02（民族学与社会学学院）在册会员 + pkb 的 staff 角色。
+  // 旧种子里的 staff 身份（ASSOC_ROLE_SEED / u02）都不带 collegeId，推导后只算普通会员；
+  // 这一个显式落 collegeId，才能演示「只替本学院交名单 / 排阵」的边界。
+  //
+  // 【为什么落在 c02 而不是演示账号扎堆的 c01】
+  // c01（中华民族共同体学院）只有三个演示账号，且都没写性别；学院赛排阵要按小项
+  // 性别筛人（男单只列男队员），落在 c01 会一所学院也排不出阵。c02 有 u10（男）与
+  // u24（女）各一名，正好能把「本学院交名单 → 排阵（男单 + 女单）→ 提交」整条链
+  // 演示通。学院负责人是「某校某学院某协会」的身份，学校身份、会员记录与协会
+  // membership 三处的 collegeId 必须一致（下列三行同落 'c02'）。
+  seed.users.push({ _id: 'demo_muc_college_leader', openId: 'mock_openid_college_leader',
+    nickName: '学院负责人', platformStatus: 'active', platformRole: 'member',
+    primarySchoolId: LEGACY_SCHOOL_ID, simulated: true });
+  seed.schoolMembers.push({ _id: schoolMemberKey('demo_muc_college_leader', LEGACY_SCHOOL_ID),
+    userId: 'demo_muc_college_leader', schoolId: LEGACY_SCHOOL_ID, collegeId: 'c02',
+    studentId: 'demo-college-leader', status: 'active', simulated: true });
+  seed.memberships.push({ _id: schoolMembershipKey('demo_muc_college_leader', { schoolId: LEGACY_SCHOOL_ID, association: 'pkb' }),
+    userId: 'demo_muc_college_leader', schoolId: LEGACY_SCHOOL_ID, association: 'pkb',
+    role: 'staff', collegeId: 'c02', status: 'active', simulated: true });
   attachLegacyMembers(seed);
   if (options.withDemoContent !== false) {
     const content = createSchoolDemoContent();

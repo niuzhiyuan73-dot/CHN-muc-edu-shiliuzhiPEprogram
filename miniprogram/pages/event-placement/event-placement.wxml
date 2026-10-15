@@ -1,6 +1,7 @@
 <!--
   录入名次
-  数据形状见 services/events-view.js 的 loadEventPlacementView。
+  数据形状见 services/school-event-view.js 的 loadSchoolEventPlacementView
+  （与旧栈 loadEventPlacementView 同形）。
   这里不做任何权限推导：allowed 是视图模型算好的，不够就整页挡住。
 -->
 <view class="page-container {{themeClass}}">

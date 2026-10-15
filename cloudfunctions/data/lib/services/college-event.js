@@ -480,7 +480,20 @@ function buildCollegeEventRow(event, ctx = {}) {
   };
 }
 
+/** 置顶优先，同状态按开赛时间升序；排序不修改输入台账。 */
+function sortCollegeEvents(events) {
+  const order = [COLLEGE_EVENT_STATUS.SIGNUP, COLLEGE_EVENT_STATUS.READY,
+    COLLEGE_EVENT_STATUS.ONGOING, COLLEGE_EVENT_STATUS.FINISHED];
+  const priority = row => { const index = order.indexOf(row.status); return index < 0 ? 99 : index; };
+  return (Array.isArray(events) ? events : []).slice().sort((a, b) =>
+    Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) ||
+    priority(a) - priority(b) ||
+    (Date.parse(a.startTime) || 0) - (Date.parse(b.startTime) || 0) ||
+    String(a._id || '').localeCompare(String(b._id || '')));
+}
+
 module.exports = {
+  sortCollegeEvents,
   TITLE_MIN,
   TITLE_MAX,
   DESCRIPTION_MAX,

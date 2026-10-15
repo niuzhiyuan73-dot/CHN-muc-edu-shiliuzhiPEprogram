@@ -43,13 +43,16 @@ const {
 } = require('../utils/school.js');
 const {
   COLLEGE_EVENT_STATUS, COLLEGE_ENTRY_STATUS, TIE_STATUS,
+  MATCH_STATUS, MATCH_OUTCOME, TEAM,
 } = require('../utils/constants.js');
 // 发布表单 / 状态文案 / 名次与名单的校验一律复用旧栈纯规则。
 const {
-  buildCollegeEventRecord, buildCollegeEventRow, canManageCollegeEvent,
+  buildCollegeEventRecord, buildCollegeEventRow, canManageCollegeEvent, sortCollegeEvents,
   validateCollegePlacements, canFinishCollegeEvent,
 } = require('./college-event.js');
-const { buildCollegeEntryRecord, buildCollegeEntryRow, validateEntryReview } = require('./college-entry.js');
+const {
+  buildCollegeEntryRecord, buildCollegeEntryRow, validateEntryReview, canSubmitCollegeEntry,
+} = require('./college-entry.js');
 // 抽签 / 大场 / 排阵：同样是旧栈纯模块，落位算法与个人赛同宗（utils/bracket.js）。
 const { canDrawCollegeEvent, planCollegeDraw, buildCollegeDrawRecord } = require('./college-draw.js');
 const {
@@ -59,6 +62,8 @@ const {
 const { buildLineupRecord, buildLineupRow, canSubmitLineup } = require('./college-lineup.js');
 const { canAssignReferee, buildRefereePatch } = require('./match-record.js');
 const { REVIEW_ACTION } = require('./member-review.js');
+// 弃权生效后把这一小项写回大场、必要时推进下一轮（与个人赛场次确认后同一条链路）。
+const { advanceCollegeAfterLeg } = require('./school-college-advance.js');
 
 const ok = data => ({ ok: true, data });
 const refused = (message, extra = {}) => ({ ok: false, message, ...extra });
@@ -90,13 +95,9 @@ const isCollegeEventDoc = doc => Boolean(doc && doc.title && typeof doc.status =
 const isCollegeTieDoc = doc => Boolean(doc && doc.eventId && doc.collegeA && doc.collegeB
   && typeof doc.round === 'number');
 
-/** 列表排序权重：报名中在前，已结束在后。 */
-const STATUS_PRIORITY = {
-  [COLLEGE_EVENT_STATUS.SIGNUP]: 0,
-  [COLLEGE_EVENT_STATUS.READY]: 1,
-  [COLLEGE_EVENT_STATUS.ONGOING]: 2,
-  [COLLEGE_EVENT_STATUS.FINISHED]: 3,
-};
+/** 一条学院赛小场（matches 里 competition='college' 的一条）：有大场与小项序号即认。 */
+const isCollegeLegDoc = doc => Boolean(doc && doc.tieId && Array.isArray(doc.teamA)
+  && Array.isArray(doc.teamB) && typeof doc.status === 'number');
 
 /** 由规范化记录组装可落库的学院赛主记录：补范围、稳定主键、ISO 时间与版本。 */
 function collegeEventDoc(record, eventId, ctx, fingerprint) {
@@ -132,6 +133,47 @@ function resolveCollege(payload = {}, dir) {
 /** 会员编号 → 档案的映射，供名单行显示姓名。 */
 const memberMapOf = dir => new Map(dir.members.map(item => [item._id, item]));
 
+/**
+ * 本赛事「当前身份可替哪些学院提交名单」。
+ * ============================================================
+ * 把旧栈 `canSubmitCollegeEntry` 对本校每所学院各解一次：学院负责人只解得出
+ * 本学院，管理员（与协会负责人）解得出全部——与旧栈详情页「两侧各解一次」
+ * 同路数，不另写一份判权。赛事不在报名阶段时谁都不给出（抽签即锁名单，D13）。
+ *
+ * 结果用**稳定学院编号**（对外主键），页面据此默认选中 / 决定「提交名单」入口。
+ *
+ * @param {Object|null} event 学院赛记录
+ * @param {Object} actor legacyActorOf 的结果（带旧栈可判的角色与学院）
+ * @param {Object} dir buildCollegeDirectory 的结果
+ * @returns {string[]} collegeId 列表
+ */
+function submittableCollegeIdsOf(event, actor, dir) {
+  if (!event || event.status !== COLLEGE_EVENT_STATUS.SIGNUP) return [];
+  return dir.colleges
+    .filter(item => canSubmitCollegeEntry(event, actor, { college: item.name }))
+    .map(item => item.collegeId);
+}
+
+/**
+ * 本大场「当前身份可为哪几侧排阵」。
+ * ============================================================
+ * 把旧栈 `canSubmitLineup` 对两侧各解一次，结果换成稳定学院编号（页面按编号
+ * 跳转）。`canSubmitLineup` 只看大场状态、赛事是否进行中与学院归属，**不依赖
+ * 排阵是否已交**；「已交 / 未交」由展示层另取名单读端补上，这里不必先读排阵。
+ *
+ * @param {Object} tie 大场记录
+ * @param {Object} actor legacyActorOf 的结果
+ * @param {Object|null} event 所属学院赛（判是否已开赛）
+ * @param {Object} dir buildCollegeDirectory 的结果
+ * @returns {string[]} collegeId 列表
+ */
+function lineupCollegeIdsOf(tie, actor, event, dir) {
+  return [tie.collegeA, tie.collegeB]
+    .filter(college => Boolean(college) && canSubmitLineup(tie, actor, { college, event }))
+    .map(college => dir.collegeIdByName(college))
+    .filter(Boolean);
+}
+
 /* ------------------------------------------------------------------ 读 */
 
 async function listCollegeEvents(payload = {}, ctx) {
@@ -145,24 +187,25 @@ async function listCollegeEvents(payload = {}, ctx) {
   let rows = (await ctx.repo.forScope(ctx).collegeEvents.list()).filter(isCollegeEventDoc);
   if (typeof payload.status === 'number') rows = rows.filter(row => row.status === payload.status);
 
-  const sorted = rows.slice().sort((a, b) => {
-    const pin = Number(Boolean(b.pinned)) - Number(Boolean(a.pinned));
-    if (pin !== 0) return pin;
-    const byStatus = (STATUS_PRIORITY[a.status] ?? 99) - (STATUS_PRIORITY[b.status] ?? 99);
-    if (byStatus !== 0) return byStatus;
-    const ta = Date.parse(a.startTime) || 0;
-    const tb = Date.parse(b.startTime) || 0;
-    if (tb !== ta) return tb - ta;
-    return a._id < b._id ? -1 : 1;
-  });
+  const sorted = sortCollegeEvents(rows);
   const limit = Number.isInteger(payload.limit) && payload.limit > 0
     ? Math.min(payload.limit, EVENT_LIST_MAX) : EVENT_LIST_LIMIT;
-  const page = sorted.slice(0, limit);
+  const offset = Number.isInteger(payload.offset) && payload.offset >= 0 ? payload.offset : 0;
+  const page = sorted.slice(offset, offset + limit);
 
+  // 审核权与发布权同一门槛（仅管理员），与具体哪一场无关，算一次即可。提交名单权
+  // 按场判：学院负责人在报名中为真——列表据此把「提交名单」入口指到名单页
+  // （与旧栈列表行同一口径，见 events-view.buildCollegeEventListRows）。
+  const canReview = canManageCollegeEvent(actor);
   return ok({
     ok: true, canManage,
-    hasMore: sorted.length > page.length,
-    events: page.map(doc => buildCollegeEventRow(doc, { actor })),
+    hasMore: sorted.length > offset + page.length,
+    nextOffset: offset + page.length,
+    events: page.map(doc => ({
+      ...buildCollegeEventRow(doc, { actor }),
+      canReview,
+      canSubmit: !canReview && canSubmitCollegeEntry(doc, actor),
+    })),
     message: '',
   });
 }
@@ -176,10 +219,30 @@ async function getCollegeEvent(payload = {}, ctx) {
 
   const dir = await buildCollegeDirectory(ctx);
   const actor = legacyActorOf(ctx, dir);
+  // 名单操作能力随赛事一起下发：详情页据此决定「提交名单」入口，名单页据此
+  // 决定「能不能替本学院提交」与默认选中学院——判权仍在服务端（同一把尺子）。
+  const submittableCollegeIds = submittableCollegeIdsOf(doc, actor, dir);
   return ok({
     ok: true,
     canManage: canManageCollegeEvent(actor),
-    event: buildCollegeEventRow(doc, { actor }),
+    canSubmitEntry: submittableCollegeIds.length > 0,
+    submittableCollegeIds,
+    // 本校学院目录（编号 ↔ 全名）：名单页 / 排阵页拿到的是编号，展示要全名，视图层
+    // 用它换算，免得再去别处取一次。只下发编号与名称，不含任何隐私字段。
+    colleges: dir.colleges.map(item => ({ collegeId: item.collegeId, name: item.name })),
+    // 详情才带 draw / currentRound / results（列表保持精简）：签表预览、轮次与名次
+    // 行都靠它们整形；与个人赛详情「列表精简、详情带 draw / results」同一口径。
+    event: {
+      ...buildCollegeEventRow(doc, { actor }),
+      draw: doc.draw || null,
+      legPlan: Array.isArray(doc.legPlan) ? doc.legPlan.slice() : [],
+      rosterMin: doc.rosterMin,
+      rosterMax: doc.rosterMax,
+      tieAlgo: doc.tieAlgo,
+      tieNetMode: doc.tieNetMode,
+      currentRound: Number(doc.currentRound) || 0,
+      results: Array.isArray(doc.results) ? doc.results.slice() : [],
+    },
     message: '',
   });
 }
@@ -226,9 +289,23 @@ async function listCollegeTies(payload = {}, ctx) {
   const sorted = rows.slice().sort(
     (a, b) => (Number(a.round) - Number(b.round)) || (Number(a.slot) - Number(b.slot)));
 
+  // 排阵权按所属赛事判「是否进行中」，故先把本批大场牵涉到的赛事各取一次（去重，
+  // 通常只有一场）。取不到的赛事按空处理：不给任何一侧开排阵口子。
+  const eventIds = Array.from(new Set(sorted.map(tie => tie.eventId).filter(Boolean)));
+  const events = new Map();
+  for (const eventId of eventIds) {
+    const doc = await ctx.repo.collegeEvents.getById(eventId);
+    if (isCollegeEventDoc(doc) && belongsToSchoolScope(doc, ctx)) events.set(eventId, doc);
+  }
+
   return ok({
     ok: true, canManage: canManageCollegeEvent(actor),
-    ties: sorted.map(tie => buildTieRow(tie, { actor })),
+    // 逐场下发「可替哪几侧排阵」：学院负责人只解得出自己那一侧，管理员两侧都
+    // 解得出。页面据 lineupCollegeIds 组装按钮文字与跳转，不自己判角色。
+    ties: sorted.map(tie => ({
+      ...buildTieRow(tie, { actor }),
+      lineupCollegeIds: lineupCollegeIdsOf(tie, actor, events.get(tie.eventId) || null, dir),
+    })),
     message: '',
   });
 }
@@ -678,12 +755,133 @@ async function finishCollegeEvent(payload = {}, ctx) {
   return ok(result);
 }
 
+/* ------------------------------------------------------------ 弃权 */
+
+/**
+ * 管理员记一次学院赛小场弃权（M4-7）。
+ * ============================================================
+ * 与旧栈 `recordForfeit`（mock.js / 云端 college-handlers）同一把尺子：**仅管理员**，
+ * 且大场已开始；弃权方丢掉这一小项、对手拿下，且不计 ELO（outcome=forfeit，回放据
+ * 此排除）。与个人赛弃权不同的一点：**弃权的是学院、不是个人编号**，所以这里收的是
+ * `collegeId`（或全名），而不是 userId——`school-match-service.forfeitSchoolMatch` 明确
+ * 把学院赛挡在门外（见其 canForfeit），学院赛弃权自成一档，故在此单列。
+ *
+ * 【为什么写回大场要单独一步】
+ * 小场生效只是「这一项有结果了」；大场胜者与下一轮晋级要靠 `advanceCollegeAfterLeg`
+ * 把结果写回大场、必要时铺出下一轮（与个人赛场次确认后同一条链路），不能只改小场。
+ *
+ * @param {Object} payload { tieId, legNo, collegeId?/college? }
+ * @param {Object} ctx
+ * @returns {Promise<Object>} {ok, tie, message}
+ */
+async function forfeitCollegeTieLeg(payload = {}, ctx) {
+  if (!ctx.actorId) return ok(refused('请先登录'));
+  if (typeof payload.tieId !== 'string' || !payload.tieId) return ok(refused('缺少大场编号'));
+  if (!canReadAssociationSpace(ctx)) return ok(refused('没有读取协会空间的权限'));
+
+  const dir = await buildCollegeDirectory(ctx);
+  const actor = legacyActorOf(ctx, dir);
+  if (!canManageCollegeEvent(actor)) return ok(refused('只有管理员可以记录弃权'));
+
+  const tie = await ctx.repo.ties.getById(payload.tieId);
+  if (!isCollegeTieDoc(tie) || !belongsToSchoolScope(tie, ctx)) return ok(refused('找不到这个大场'));
+  if (tie.status === TIE_STATUS.FINISHED) return ok(refused('这个大场已经结束'));
+  if (tie.status !== TIE_STATUS.ONGOING) return ok(refused('大场还没开始，不能记弃权'));
+
+  const legNo = Number(payload.legNo);
+  const leg = (Array.isArray(tie.legs) ? tie.legs : []).find(item => Number(item.legNo) === legNo);
+  if (!leg) return ok(refused('找不到这个小项'));
+  if (!leg.matchId) return ok(refused('这个小项还没有生成比赛'));
+  if (leg.winner) return ok(refused('这个小项已经有结果了'));
+
+  const { college } = resolveCollege(payload, dir);
+  if (college !== tie.collegeA && college !== tie.collegeB) {
+    return ok(refused('弃权的必须是本大场的参赛学院'));
+  }
+
+  const nowIso = iso(ctx.now);
+  const result = await ctx.repo.transaction(async tx => {
+    const match = await tx.matches.getById(leg.matchId);
+    if (!isCollegeLegDoc(match) || !belongsToSchoolScope(match, ctx)) return refused('找不到这个小项的比赛');
+    if (match.status === MATCH_STATUS.ACTIVE) return refused('这个小项已经生效，不能再记弃权');
+
+    // 站在 A 边的人弃权，就是 B 边获胜（与个人赛 buildForfeitPatch 同一换算）。
+    const winner = college === tie.collegeA ? TEAM.B : TEAM.A;
+    const next = {
+      ...match,
+      outcome: MATCH_OUTCOME.FORFEIT,
+      forfeitBy: college,
+      winner,
+      scoreA: [],
+      scoreB: [],
+      recorder: ctx.actorId,
+      status: MATCH_STATUS.ACTIVE,
+      action: 'forfeit',
+      actor: ctx.actorId,
+      actedAt: nowIso,
+      revision: Number(match.revision || 1) + 1,
+      updatedAt: nowIso,
+    };
+    await tx.matches.set(match._id, next);
+    await tx.audit.append({ _id: collegeTieAuditKey(tie.eventId, 'forfeitCollegeTieLeg', next.revision),
+      action: 'forfeitCollegeTieLeg', schoolId: ctx.schoolId, association: ctx.association,
+      actorId: ctx.actorId, eventId: tie.eventId, tieId: payload.tieId, legNo, at: nowIso });
+    return { ok: true, legMatch: next, message: '' };
+  });
+  if (!result.ok) return ok(result);
+
+  // 小场生效后写回大场（可能顺带排出下一轮）。
+  await advanceCollegeAfterLeg(ctx, result.legMatch);
+  const updated = await ctx.repo.ties.getById(payload.tieId);
+  return ok({ ok: true, tie: buildTieRow(updated || tie, { actor }), message: '' });
+}
+
+/* ------------------------------------------------------------ 置顶 */
+
+/**
+ * 置顶 / 取消置顶一场学院赛（仅管理员，与发布同一门槛）。
+ * ============================================================
+ * 列表页把置顶的学院赛排在最前，与个人赛、公告同一口径。旧栈里置顶落在
+ * `collegeStore`，学校维度把学院赛主记录搬进 S2，置顶也必须写回同一条主记录，
+ * 否则列表按 S2 读、置顶按旧栈写，两处各说各话（置顶点了没反应）。
+ *
+ * 置顶与赛事进行到哪一步无关，也不进任何回放缓存——改完直接读台账即可。
+ *
+ * @param {Object} payload { eventId, pinned }
+ * @param {Object} ctx
+ * @returns {Promise<Object>} {ok, event, message}
+ */
+async function setCollegeEventPinned(payload = {}, ctx) {
+  if (!ctx.actorId) return ok(refused('请先登录'));
+  if (typeof payload.eventId !== 'string' || !payload.eventId) return ok(refused('缺少学院赛编号'));
+  if (!canReadAssociationSpace(ctx)) return ok(refused('没有读取协会空间的权限'));
+
+  const dir = await buildCollegeDirectory(ctx);
+  return ok(await ctx.repo.transaction(async tx => {
+    const fresh = await buildSchoolContext({ repo: tx, actorId: ctx.actorId, scope: ctx, now: ctx.now });
+    const actor = legacyActorOf(fresh, dir);
+    if (!canReadAssociationSpace(fresh) || !canManageCollegeEvent(actor)) {
+      return refused('当前账号没有管理学院赛的权限');
+    }
+    const event = await tx.collegeEvents.getById(payload.eventId);
+    if (!isCollegeEventDoc(event) || !belongsToSchoolScope(event, fresh)) return refused('找不到这场学院赛');
+    const nowIso = iso(fresh.now);
+    const next = { ...event, pinned: Boolean(payload.pinned),
+      revision: Number(event.revision || 1) + 1, updatedAt: nowIso };
+    await tx.collegeEvents.set(payload.eventId, next);
+    await tx.audit.append({ _id: collegeEventAuditKey(payload.eventId, 'setCollegeEventPinned', next.revision),
+      action: 'setCollegeEventPinned', schoolId: fresh.schoolId, association: fresh.association,
+      actorId: fresh.actorId, eventId: payload.eventId, pinned: next.pinned, at: nowIso });
+    return { ok: true, event: buildCollegeEventRow(next, { actor }), message: '' };
+  }));
+}
+
 module.exports = {
   EVENT_LIST_LIMIT, EVENT_LIST_MAX,
   isCollegeEventDoc, isCollegeTieDoc,
-  listCollegeEvents, getCollegeEvent, publishCollegeEvent,
+  listCollegeEvents, getCollegeEvent, publishCollegeEvent, setCollegeEventPinned,
   listCollegeEntries, submitCollegeEntry, reviewCollegeEntry,
   listCollegeTies, drawCollegeEvent, startCollegeEvent,
   listCollegeLineups, submitCollegeLineup, startCollegeTie,
-  assignCollegeTieReferee, finishCollegeEvent,
+  assignCollegeTieReferee, finishCollegeEvent, forfeitCollegeTieLeg,
 };

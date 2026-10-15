@@ -100,6 +100,37 @@ const signupDTO = row => (row ? {
 } : null);
 
 /**
+ * 签表 DTO：只投影展示与重抽要用的字段，不透传整条库记录。
+ * 名单列表（eventSummary）不带它——只有详情响应才下发。
+ */
+function drawDTO(draw) {
+  if (!draw) return null;
+  const groups = (draw.groups || []).map(group => ({
+    group: group.group,
+    entries: (group.entries || []).slice(),
+  }));
+  return {
+    format: draw.format || null,
+    seedMode: draw.seedMode || null,
+    seedCount: Number(draw.seedCount || 0),
+    seedValue: Number(draw.seedValue),
+    drawCount: Number(draw.drawCount || 1),
+    drawnAt: draw.drawnAt || null,
+    drawnBy: draw.drawnBy || null,
+    size: Number(draw.size || 0),
+    slots: (draw.slots || []).slice(),
+    seeds: (draw.seeds || []).slice(),
+    byes: (draw.byes || []).slice(),
+    groupCount: groups.length > 0 ? groups.length : null,
+    groups,
+  };
+}
+
+/** 名次 DTO：只保留「谁、第几名」两个字段，其余留库。 */
+const resultsDTO = results => (Array.isArray(results) ? results : [])
+  .map(row => ({ userId: row.userId, placement: Number(row.placement) }));
+
+/**
  * 赛事摘要 DTO（列表与详情共用）。时间一律给原始 ISO，本地时区渲染交给页面。
  * @param {Object} doc 赛事主记录
  * @param {Object|null} [mySignup] 当前登录人在本场的报名记录
@@ -123,6 +154,11 @@ function eventSummary(doc, mySignup = null) {
     formatLabel: EVENT_FORMAT_LABEL[formatOf(doc)] || '',
     bronzeMode: doc.bronzeMode || null,
     placementMode: doc.placementMode || null,
+    // 小组参数与总决赛重赛只在对应赛制下有意义，其余赛制建记录时即落 null；
+    // 原样透出（含 false），页面与用例才能核对「选了什么、落库成了什么」。
+    groupCount: doc.groupCount === undefined ? null : doc.groupCount,
+    advancePerGroup: doc.advancePerGroup === undefined ? null : doc.advancePerGroup,
+    gfReset: doc.gfReset === undefined ? null : doc.gfReset,
     seedMode: doc.seedMode || '',
     seedCount: Number(doc.seedCount) || 0,
     location: doc.location || '',
@@ -235,13 +271,84 @@ async function getSchoolEvent(payload = {}, ctx) {
   const canCancelSignup = doc.status === EVENT_STATUS.SIGNUP && !doc.draw &&
     Boolean(mySignup && mySignup.status === SIGNUP_STATUS.SIGNED);
 
+  // 管理动作的按钮可见性由服务端算好，页面照着渲染。
+  // 判据复用写入端同一把尺子（canStartEvent / canDrawEvent / canFinishEvent）；
+  // 写入时仍会再校验一遍——能力只说明「这一刻理论上可不可以」，不是写入许可。
+  const dir = await buildDirectory(ctx);
+  const actor = legacyActorOf(ctx, dir);
+
   return ok({
     ok: true, canManage, canParticipate,
-    event: eventSummary(doc, mySignup),
+    // 详情才带 draw / results（列表保持精简）；字段经投影，不透传整条库记录。
+    event: {
+      ...eventSummary(doc, mySignup),
+      draw: drawDTO(doc.draw),
+      results: resultsDTO(doc.results),
+    },
     mySignup: signupDTO(mySignup),
     signupCount: activeSignupCount(signups),
-    canSignUp, canCancelSignup, signupNote, message: '',
+    capabilities: {
+      canSignUp,
+      canCancelSignup,
+      canStart: canStartEvent(doc, actor),
+      canDraw: canDrawEvent(doc, actor),
+      canFinish: canFinishEvent(doc, actor),
+    },
+    signupNote, message: '',
   });
+}
+
+/**
+ * 某场赛事的报名名单（含展示所需的会员字段）。
+ * ============================================================
+ * 【为什么是独立读端，而不是让客户端拉全校名录自己拼】
+ * 名单要的昵称 / 学院只有服务端一次读齐最省，也最不容易把别处的隐私字段
+ * 顺带漏出去；且「谁能看这份名单」与赛事读取同一条锁（本协会有效会员）。
+ *
+ * 【不下发的字段】
+ * 学号、手机号一律不带（与名录同一隐私口径）；等级分与赛季积分也不在这里——
+ * 那是计分服务的读端（school-rank-service.getSchoolMemberStats），
+ * 避免任何一个读端被撑成全量快照。
+ *
+ * 【代签到能力为什么挂在记录上】
+ * 「能不能替这位会员签到」取决于赛事状态、操作者角色与目标学院（见 event.canCheckIn），
+ * 是逐条报名的判断，因此放在每一行 signups 上，而不是赛事级的 capabilities。
+ *
+ * @param {Object} payload { eventId }
+ * @param {Object} ctx
+ */
+async function listSchoolEventSignups(payload = {}, ctx) {
+  if (!canReadAssociationSpace(ctx)) return ok({ ok: false, signups: [], message: '没有读取协会空间的权限' });
+  if (typeof payload.eventId !== 'string' || !payload.eventId) return ok(refused('缺少赛事编号'));
+  const doc = await ctx.repo.events.getById(payload.eventId);
+  if (!isEventDoc(doc) || !belongsToSchoolScope(doc, ctx)) return ok(refused('赛事不存在'));
+
+  const dir = await buildDirectory(ctx);
+  const actor = legacyActorOf(ctx, dir);
+  const memberById = new Map(dir.members.map(member => [member._id, member]));
+
+  const rows = (await ctx.repo.forScope(ctx).eventSignups.list())
+    .filter(row => row.eventId === doc._id && row.status !== SIGNUP_STATUS.CANCELED)
+    .sort((a, b) => (String(a.signTime || '') < String(b.signTime || '') ? -1 : 1));
+
+  const signups = rows.map(row => {
+    const member = memberById.get(row.userId) || {};
+    const college = dir.collegeOf(row.userId);
+    return {
+      userId: row.userId,
+      nickName: member.nickName || row.userId,
+      realName: member.realName || '',
+      avatarUrl: member.avatarUrl || '',
+      gender: member.gender || '',
+      college,
+      status: row.status,
+      statusLabel: SIGNUP_STATUS_LABEL[row.status] || '',
+      signTime: row.signTime || null,
+      checkInTime: row.checkInTime || null,
+      canCheckIn: canCheckIn(doc, actor, { target: { college } }),
+    };
+  });
+  return ok({ ok: true, signups, message: '' });
 }
 
 /* ------------------------------------------------------------------ 写 */
@@ -592,7 +699,7 @@ async function advanceSchoolEvent(ctx, eventId) {
 module.exports = {
   EVENT_LIST_LIMIT, EVENT_LIST_MAX,
   isEventDoc, eventSummary, activeSignupCount,
-  listSchoolEvents, getSchoolEvent, publishSchoolEvent,
+  listSchoolEvents, getSchoolEvent, listSchoolEventSignups, publishSchoolEvent,
   signUpSchoolEvent, cancelSchoolEventSignup,
   startSchoolEvent, drawSchoolEvent, checkInSchoolEvent, finishSchoolEvent,
   // 内部动作：供 school-match-service 在 confirm / forfeit 后补排下一轮。

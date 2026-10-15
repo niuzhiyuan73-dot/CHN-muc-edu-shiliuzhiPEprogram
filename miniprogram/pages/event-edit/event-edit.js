@@ -2,7 +2,8 @@
  * 发布赛事
  * ============================================================
  * 只做一件事：把一张填好的单子变成一场「报名中」的赛事。
- * 校验与组装在 services/event.js（纯函数），这里负责交互与 setData。
+ * 表单校验与组装在 services/event.js（纯函数），发布本身走学校维度服务
+ * （school-event-service 的 publishSchoolEvent），这里负责交互与 setData。
  *
  * 【为什么独立成页而不是详情页里的一个弹层】
  * 名称、等级、三四名赛方式、时间、场地、名额、说明七项，说明还要一大块
@@ -15,7 +16,12 @@
  *
  * 【没有发布权为什么不让进】
  * 用户可能绕过赛事页直接从小程序码进来。填完再被拒，比一开始就说清楚
- * 糟得多，所以进来先判一道，不给表单。
+ * 糟得多，所以进来先判一道，不给表单。发布权取自学校维度身份会话
+ * （canManageAssociation）——协会负责人及以上才能在本协会办个人赛。
+ *
+ * 【requestId 是什么】
+ * 学校维度发布接口按 requestId 派生稳定编号：同一次提交重试（网络重发、
+ * 连点）落到同一条；改了内容却复用同号则被拒。所以每次提交现生成一个。
  * ============================================================
  */
 
@@ -45,10 +51,19 @@ const {
   TITLE_MAX,
   DESCRIPTION_MAX,
   LOCATION_MAX,
-  canManageEvent,
 } = require('../../services/event.js');
-const { publishEvent, isMock } = require('../../services/index.js');
+const { isMock } = require('../../services/index.js');
 const { currentThemeClass } = require('../../services/branding.js');
+const schoolSession = require('../../services/school-session.js');
+const associationScope = require('../../services/association-scope.js');
+const space = require('../../services/association-space.js');
+const identity = require('../../services/school-identity.js');
+const { LEGACY_SCHOOL_ID } = require('../../utils/school.js');
+
+/** 生成一次提交的请求编号：时间戳 + 随机后缀，满足服务端的编号字符集要求 */
+function nextRequestId() {
+  return `pub_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
 
 /** 赛事等级下拉的取值与文案。顺序固定为 一级 → 二级 → 三级 */
 const LEVELS = [1, 2, 3];
@@ -200,24 +215,39 @@ Page({
     errorText: '',
   },
 
-  onLoad() {
-    const user = this.currentUser();
-    const allowed = canManageEvent(user, { isMock });
-    this.setData({ blockReason: this.describeBlock(allowed, user), themeClass: currentThemeClass() });
+  async onLoad() {
+    const scope = this.currentScope();
+    this.scope = scope;
+
+    let session = null;
+    try {
+      session = await identity.forSchoolIdentity(scope).getSchoolIdentitySession();
+    } catch (err) {
+      console.error('[event-edit] 读取学校身份失败', err);
+    }
+
+    const allowed = Boolean(session && session.canManageAssociation);
+    this.setData({ blockReason: this.describeBlock(allowed, session), themeClass: currentThemeClass() });
   },
 
-  /** 不能发布的原因。能发布时返回空串 */
-  describeBlock(allowed, user) {
+  /** 当前「学校 + 协会」范围。写操作复用它，避免异步期间全局范围被切走 */
+  currentScope() {
+    return {
+      schoolId: schoolSession.getSchoolId() || LEGACY_SCHOOL_ID,
+      association: associationScope.getAssociation(),
+    };
+  },
+
+  /**
+   * 不能发布的原因。能发布时返回空串。
+   * 有没有在册学校身份（account）决定是「去登录」还是「没权限」——演示账号里
+   * 没有停用的平台账号，拿 user 判不出「没有学校身份」。
+   */
+  describeBlock(allowed, session) {
     if (allowed) return '';
-    return user ? '当前账号没有发布赛事的权限，请联系管理员' : '请先登录后再发布赛事';
-  },
-
-  /** 读取全局登录态。app 可能还没初始化好，逐层兜底 */
-  currentUser() {
-    const app = getApp();
-    if (!app) return null;
-    if (typeof app.getUserInfo === 'function') return app.getUserInfo();
-    return app.globalData ? app.globalData.userInfo : null;
+    return session && session.account
+      ? '当前账号没有发布赛事的权限，请联系管理员'
+      : '请先登录后再发布赛事';
   },
 
   /** 轻提示。测试环境里可能没有这个 API */
@@ -393,22 +423,17 @@ Page({
     if (this.data.submitting) return undefined;
     if (this.data.blockReason) return undefined;
 
-    const user = this.currentUser();
-    if (!user) {
-      this.showToast('请先登录后再发布赛事');
-      return undefined;
-    }
-
     const form = { ...this.data.form, startTime: this.buildStartTime() };
 
     this.setData({ submitting: true, errors: {}, errorText: '' });
-    const result = await publishEvent(form, user._id);
+    const result = await space.forScope(this.scope || this.currentScope())
+      .publishSchoolEvent({ ...form, requestId: nextRequestId() });
 
     if (!result.ok) {
       this.setData({
         submitting: false,
         errors: result.errors || {},
-        errorText: result.firstError || '发布失败',
+        errorText: result.firstError || result.message || '发布失败',
       });
       return undefined;
     }

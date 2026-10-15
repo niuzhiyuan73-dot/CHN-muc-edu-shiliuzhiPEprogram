@@ -33,10 +33,13 @@ const { replaySeason } = require('./replay.js');
 const { isEloEligibleMatch } = require('./college-tie.js');
 const { findCappedMatchIds } = require('./rating-cap.js');
 const { buildProjectLeaderboard } = require('../utils/leaderboard.js');
+const { getPoolRating } = require('../utils/rating.js');
 const { buildTrainingPointFacts } = require('./training-points.js');
 const { canResetSeason } = require('./season.js');
 const { formatElo, formatPercent } = require('../utils/format.js');
-const { ALL_RANK_PROJECTS, RANK_PROJECT_LABEL, USER_STATUS } = require('../utils/constants.js');
+const {
+  ALL_RATING_POOLS, ALL_RANK_PROJECTS, RANK_PROJECT_LABEL, USER_STATUS,
+} = require('../utils/constants.js');
 const {
   scopeKey, belongsToSchoolScope, SCHOOL_MEMBER_STATUS, PLATFORM_STATUS,
 } = require('../utils/school.js');
@@ -320,6 +323,53 @@ async function getSchoolRanking(payload = {}, ctx) {
   });
 }
 
+/**
+ * 指定会员的评级与赛季积分（供赛事名单 / 详情等展示端按人取数）。
+ * ============================================================
+ * 【为什么不从榜单反查】
+ * 等级分榜会截断（只留前十）且过滤掉「没出过场」的人（见 buildRows），拿它当
+ * 数据源会让榜外的报名者显示空白，甚至名次对不上。这里直接回放本范围流水，
+ * 按编号取人——榜内榜外一个口径。
+ *
+ * 【与榜单同源】
+ * 回放走 replayScope（同一把尺子），因此这里给出的等级分与积分必然与榜单
+ * 一致；等级分不落库、每次重放这条纪律也照旧。
+ *
+ * 【跨范围只读得到本范围的人】
+ * replayScope 只回放 primarySchoolId 匹配本范围、且正常在册的会员，请求里
+ * 夹带外校编号也取不到——隔离在取数层完成，不靠调用方自觉。
+ *
+ * @param {Object} [payload] { userIds?: string[] } 省略则返回本范围全部在册会员
+ * @param {Object} ctx
+ */
+async function getSchoolMemberStats(payload = {}, ctx) {
+  if (!canReadAssociationSpace(ctx)) return ok({ ok: false, members: [], message: '没有读取本协会成绩的权限' });
+  const wanted = new Set((Array.isArray(payload.userIds) ? payload.userIds : [])
+    .filter(id => typeof id === 'string' && id));
+
+  const { members } = await replayScope(ctx);
+  const rows = members
+    .filter(member => wanted.size === 0 || wanted.has(member._id))
+    .map(member => ({
+      userId: member._id,
+      nickName: member.nickName || '',
+      realName: member.realName || '',
+      avatarUrl: member.avatarUrl || '',
+      points: Number(member.points || 0),
+      ratings: ALL_RATING_POOLS.reduce((acc, pool) => {
+        const rating = getPoolRating(member, pool);
+        acc[pool] = {
+          elo: Number(rating.elo),
+          matchCount: Number(rating.matchCount || 0),
+          wins: Number(rating.wins || 0),
+          losses: Number(rating.losses || 0),
+        };
+        return acc;
+      }, {}),
+    }));
+  return ok({ ok: true, members: rows, message: '' });
+}
+
 /* ------------------------------------------------------------------ 赛季 */
 
 /**
@@ -400,6 +450,7 @@ module.exports = {
   seasonKeyOf,
   buildRows,
   getSchoolRanking,
+  getSchoolMemberStats,
   getSchoolSeason,
   resetSchoolSeason,
 };

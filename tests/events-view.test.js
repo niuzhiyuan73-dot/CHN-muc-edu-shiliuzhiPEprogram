@@ -16,7 +16,6 @@ const {
   describeSeason,
   buildPointsRows,
   sortEvents,
-  sortCollegeEvents,
   loadEventsView,
   loadEventDetailView,
   roundLabelOf,
@@ -38,6 +37,8 @@ const {
   buildTeamRows,
   loadEventPlacementView,
 } = require('../miniprogram/services/events-view.js');
+const { sortCollegeEvents } = require('../miniprogram/services/college-event.js');
+const { createCollegeFixture, ADMIN: SCHOOL_ADMIN, MEMBER: SCHOOL_MEMBER } = require('./helpers/school-college-fixture');
 // 积分榜的搜索与排行榜页是同一套逻辑，页面复用它的纯函数
 const { describeSearch } = require('../miniprogram/services/rank-view.js');
 const {
@@ -1181,14 +1182,9 @@ test('赛事页 —— 管理员置顶后该赛事排到最前并带标记，普
 });
 
 test('赛事页 —— 管理员置顶学院赛排在列表最前，普通会员无权置顶', async () => {
-  const facade = require('../miniprogram/services/index.js');
-  facade.resetCache();
+  const fixture = createCollegeFixture();
   try {
-    const members = await facade.getMembers();
-    const admin = members.find((m) => m.role === ROLE.ADMIN);
-    const plain = members.find((m) => m.role === ROLE.MEMBER);
-
-    const published = await facade.publishCollegeEvent(
+    const published = await fixture.publishCollegeEvent(
       {
         title: '置顶测试学院赛',
         legPlan: ['MS', 'WS'],
@@ -1197,26 +1193,28 @@ test('赛事页 —— 管理员置顶学院赛排在列表最前，普通会员
         rosterMax: 20,
         courtCount: 4,
       },
-      admin._id
+      SCHOOL_ADMIN
     );
     assert.strictEqual(published.ok, true, published.firstError);
     const id = published.record._id;
 
-    const denied = await facade.setCollegeEventPinned(id, true, plain._id);
+    const denied = await fixture.api(SCHOOL_MEMBER).setCollegeEventPinned({ eventId: id, pinned: true });
     assert.strictEqual(denied.ok, false, '普通会员不能置顶');
     assert.match(denied.message, /没有管理学院赛的权限/);
 
-    const done = await facade.setCollegeEventPinned(id, true, admin._id);
+    const done = await fixture.api(SCHOOL_ADMIN).setCollegeEventPinned({ eventId: id, pinned: true });
     assert.strictEqual(done.ok, true, done.message);
 
-    const view = await loadEventsView({ user: admin });
+    fixture.to(SCHOOL_ADMIN);
+    const view = await loadEventsView();
     assert.strictEqual(view.collegeEvents[0].eventId, id);
     assert.strictEqual(view.collegeEvents[0].pinned, true);
     assert.strictEqual(view.collegeEvents[0].canPin, true);
 
-    const plainView = await loadEventsView({ user: plain });
+    fixture.to(SCHOOL_MEMBER);
+    const plainView = await loadEventsView();
     assert.strictEqual(plainView.collegeEvents[0].canPin, false);
   } finally {
-    facade.resetCache();
+    fixture.close();
   }
 });

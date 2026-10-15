@@ -231,6 +231,46 @@ test('赛季：管理员开新赛季，编号 +1、记下分界点，且按范�
   assert.equal(stored.association, 'pkb');
 });
 
+test('选手成绩读端：按编号取本范围会员的评级与积分，榜外之人也取得到', async () => {
+  const repo = fixture();
+  // 只让 demo_muc_member 与 rank_m2 出场；rank_m3 一场没打（榜单里根本看不到他）。
+  await seedMatch(repo, 'm1', { a: ['demo_muc_member'], b: ['rank_m2'], winner: 'A' });
+
+  // 省略 userIds：本范围在册会员全部下发，含没出过场的人——不像榜单会截断 / 过滤。
+  const all = await call(repo, 'getSchoolMemberStats');
+  assert.equal(all.ok, true, all.message);
+  assert.ok(all.members.some(row => row.userId === 'rank_m3'), '没出场的人也取得到');
+
+  // 指定编号：只回这几个人，逐人给出两个池子的评级与赛季积分。
+  const picked = await call(repo, 'getSchoolMemberStats',
+    { userIds: ['demo_muc_member', 'rank_m2', 'rank_m3'] });
+  assert.deepEqual(picked.members.map(row => row.userId).sort(),
+    ['demo_muc_member', 'rank_m2', 'rank_m3']);
+
+  const winner = picked.members.find(row => row.userId === 'demo_muc_member');
+  const loser = picked.members.find(row => row.userId === 'rank_m2');
+  assert.equal(winner.nickName, '民大会员');
+  assert.equal(winner.ratings.singles.matchCount, 1);
+  assert.equal(winner.ratings.singles.wins, 1);
+  assert.equal(winner.ratings.singles.losses, 0);
+  assert.ok(winner.ratings.singles.elo > loser.ratings.singles.elo, '与榜单同口径：胜者等级分更高');
+  assert.equal(typeof winner.points, 'number');
+
+  // 没出场：两个池子出场数都是 0。
+  const idle = picked.members.find(row => row.userId === 'rank_m3');
+  assert.equal(idle.ratings.singles.matchCount, 0);
+  assert.equal(idle.ratings.doubles.matchCount, 0);
+
+  // 夹带外校编号取不到：隔离在取数层完成，不靠调用方自觉。
+  const foreign = await call(repo, 'getSchoolMemberStats', { userIds: ['demo_buaa_member'] });
+  assert.equal(foreign.members.length, 0, '外校的人取不到');
+
+  // 外校人来读本协会成绩：整份读端被权限挡下。
+  const outsider = await call(repo, 'getSchoolMemberStats', {}, { actor: 'demo_buaa_member' });
+  assert.equal(outsider.ok, false);
+  assert.deepEqual(outsider.members, []);
+});
+
 test('赛季：开新赛季改的是积分归属，等级分照旧连续累计', async () => {
   const repo = fixture();
   await seedMatch(repo, 'm1', { a: ['demo_muc_member'], b: ['rank_m2'], winner: 'A', time: at(-HOUR) });

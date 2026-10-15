@@ -2,23 +2,33 @@
  * 提交学院名单（学院负责人）
  * ============================================================
  * 学院负责人从本学院在册会员里勾选队员，凑够管理员设定的人数后提交。
- * 取数与整形在 services/college-view.js，校验与组装在
- * services/college-entry.js（纯函数），这里只管交互与 setData。
+ * 取数与整形走学校维度（协议 2）：services/school-college-view.js 把服务端
+ * DTO 整成旧栈同形的视图模型；校验与组装在 services/college-entry.js（纯函数）；
+ * 写入由协会空间按当前身份执行。页面只管交互与 setData。
  *
  * 【为什么名单页面只给学院负责人与管理员】
  * 名单是学院的报名凭据，普通会员既不提交也不审核。没有权限时整页顶掉，
- * 不给「填完再被拒」的机会——与发布赛事页同一处理。
+ * 不给「填完再被拒」的机会——与发布赛事页同一处理。判权在服务端：赛事读端
+ * 下发 submittableCollegeIds，视图层据它决定入口。
  *
  * 【重交为什么不做二次确认】
  * 同一赛事同一学院只有一份名单，重交覆盖旧的（D10）。管理员尚未审核时，
  * 学院负责人本来就需要改完再交；已通过 / 已退回时页面会显示状态与退回理由，
  * 让学院负责人知道为什么还要再交一次。
+ *
+ * 【学院从哪来】
+ * 学校维度下没有旧栈那份账号快照。本人学院编号取自学校身份会话
+ * （account.collegeId）；范围（学校 + 协会）在进入时固定一次，读与写都用它。
  * ============================================================
  */
 
-const { loadCollegeEntryView } = require('../../services/college-view.js');
-const { submitCollegeEntry } = require('../../services/index.js');
+const { loadCollegeEntryView } = require('../../services/school-college-view.js');
 const { currentThemeClass } = require('../../services/branding.js');
+const schoolSession = require('../../services/school-session.js');
+const associationScope = require('../../services/association-scope.js');
+const space = require('../../services/association-space.js');
+const identity = require('../../services/school-identity.js');
+const { LEGACY_SCHOOL_ID } = require('../../utils/school.js');
 
 Page({
   data: {
@@ -53,12 +63,27 @@ Page({
     return this.refresh();
   },
 
-  /** 读取全局登录态。app 可能还没初始化好，逐层兜底 */
-  currentUser() {
-    const app = getApp();
-    if (!app) return null;
-    if (typeof app.getUserInfo === 'function') return app.getUserInfo();
-    return app.globalData ? app.globalData.userInfo : null;
+  /** 当前「学校 + 协会」范围。读写复用它，避免异步期间全局范围被切走 */
+  currentScope() {
+    return {
+      schoolId: schoolSession.getSchoolId() || LEGACY_SCHOOL_ID,
+      association: associationScope.getAssociation(),
+    };
+  },
+
+  /**
+   * 本次身份会话。读一次拿到操作者与本人学院编号：操作者用来把「去登录」与
+   * 「没权限」分开，本人学院编号用来默认选中本学院。拿不到就按访客处理，
+   * 绝不猜一个身份出来。
+   */
+  async readSession() {
+    try {
+      return await identity.forSchoolIdentity(this.scope || this.currentScope())
+        .getSchoolIdentitySession();
+    } catch (err) {
+      console.error('[college-entry] 读取学校身份失败', err);
+      return null;
+    }
   },
 
   /** 轻提示。测试环境里可能没有这个 API */
@@ -73,8 +98,17 @@ Page({
    * @returns {Promise<void>}
    */
   async refresh() {
+    const scope = this.currentScope();
+    this.scope = scope;
+    const session = await this.readSession();
+    this.actorId = (session && session.user && session.user.userId) || null;
+    const collegeId = (session && session.account && session.account.collegeId) || '';
+
     try {
-      const view = await loadCollegeEntryView(this.eventId, { user: this.currentUser() });
+      const view = await loadCollegeEntryView(this.eventId, {
+        schoolId: scope.schoolId, association: scope.association,
+        actorId: this.actorId, collegeId,
+      });
       this.loaded = true;
       this.setData({
         loading: false,
@@ -115,27 +149,20 @@ Page({
 
   async onSubmit() {
     if (this.data.submitting) return undefined;
+    if (!this.data.view.canSubmit) return undefined;
 
-    const user = this.currentUser();
-    if (!user) {
-      this.showToast('请先登录后再提交名单');
-      return undefined;
-    }
-
+    const scope = this.scope || this.currentScope();
     this.setData({ submitting: true });
-    const result = await submitCollegeEntry(
-      {
-        eventId: this.eventId,
-        college: this.data.view.college,
-        memberIds: this.data.memberIds,
-        remark: this.data.remark,
-      },
-      user._id
-    );
+    const result = await space.forScope(scope).submitCollegeEntry({
+      eventId: this.eventId,
+      college: this.data.view.college,
+      memberIds: this.data.memberIds,
+      remark: this.data.remark,
+    });
 
-    if (!result.ok) {
+    if (!result || !result.ok) {
       this.setData({ submitting: false });
-      this.showToast(result.message || '提交失败');
+      this.showToast((result && (result.firstError || result.message)) || '提交失败');
       return undefined;
     }
 

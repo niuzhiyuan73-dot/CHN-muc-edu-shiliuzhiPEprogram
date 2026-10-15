@@ -13,6 +13,7 @@ const { createSchoolDemoSeed } = require('../miniprogram/services/school-seed');
 const { createSchoolMemoryRepo } = require('../miniprogram/services/school-memory-repo');
 const { buildSchoolContext } = require('../miniprogram/services/school-context');
 const handlers = require('../miniprogram/services/school-live-service');
+const matchHandlers = require('../miniprogram/services/school-match-service');
 const { schoolMemberKey, schoolMatchKey, schoolKey, schoolLiveKey } = require('../miniprogram/utils/school');
 const { MATCH_TYPE, MATCH_STATUS } = require('../miniprogram/utils/constants');
 
@@ -38,6 +39,13 @@ async function call(repo, action, payload = {}, opts = {}) {
   const { actor = 'demo_muc_member', schoolId = 'muc', association = 'pkb', now = NOW } = opts;
   const ctx = await buildSchoolContext({ repo, actorId: actor, scope: { schoolId, association }, now });
   return (await handlers[action](payload, ctx)).data;
+}
+
+/** 与 call 同路数，换成比赛读端的处理器（验证读端是否带 live）。 */
+async function callMatch(repo, action, payload = {}, opts = {}) {
+  const { actor = 'demo_muc_member', schoolId = 'muc', association = 'pkb', now = NOW } = opts;
+  const ctx = await buildSchoolContext({ repo, actorId: actor, scope: { schoolId, association }, now });
+  return (await matchHandlers[action](payload, ctx)).data;
 }
 
 async function seedMatch(repo, { id = 'm1', bestOf = 3, status = MATCH_STATUS.PENDING,
@@ -185,6 +193,27 @@ test('跨校：外校开台被判找不到', async () => {
     { schoolId: 'buaa', actor: 'demo_buaa_member' });
   assert.equal(buaa.ok, false);
   assert.match(buaa.message, /找不到/);
+});
+
+test('比赛读端带实时比分：开台后首屏即实时值，跨校读不到', async () => {
+  const repo = fixture();
+  const matchId = await seedMatch(repo);
+
+  const idle = await callMatch(repo, 'listSchoolMatches', {});
+  assert.equal(idle.matches[0].live, undefined, '没开台就不带 live');
+
+  await call(repo, 'startSchoolLiveScore', { matchId });
+  await call(repo, 'recordSchoolRally', { matchId, side: 'A', rallyId: 'r1' });
+
+  const list = await callMatch(repo, 'listSchoolMatches', {});
+  assert.equal(list.matches[0].live.pointsA, 1, '开台后读端即实时值，不会先 0:0 再跳');
+
+  const one = await callMatch(repo, 'getSchoolMatch', { matchId });
+  assert.equal(one.match.live.pointsA, 1);
+
+  const buaa = await callMatch(repo, 'listSchoolMatches', {},
+    { schoolId: 'buaa', actor: 'demo_buaa_member' });
+  assert.equal(buaa.matches.length, 0, '跨校读不到');
 });
 
 test('实时态带范围：schoolId + association，主键含范围', async () => {

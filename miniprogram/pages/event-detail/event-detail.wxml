@@ -1,6 +1,7 @@
 <!--
   赛事详情
-  数据形状见 services/events-view.js 的 loadEventDetailView。
+  数据形状见 services/school-event-view.js 的 loadSchoolEventDetailView
+  （与旧栈 loadEventDetailView 同形）。
   名单行与名次行复用 templates/rank-board.wxss 的样式，与榜单同一副面孔。
 -->
 <view class="page-container {{themeClass}}">

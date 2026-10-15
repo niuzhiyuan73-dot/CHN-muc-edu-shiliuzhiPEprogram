@@ -172,6 +172,32 @@ describe('实时比分轮询适配器', () => {
     assert.equal(calls, 1);
   });
 
+  test('传取数器时改走取数器，不碰旧栈门面', async (t) => {
+    t.mock.timers.enable({ apis: ['setInterval'] });
+    // 门面故意留桩：一旦被调到就说明取数器没生效
+    let facadeCalls = 0;
+    facade.getLiveScores = async () => {
+      facadeCalls += 1;
+      return [];
+    };
+
+    let fetcherCalls = 0;
+    const seen = [];
+    const off = watchLiveScores(['m1'], (views) => seen.push(views), {
+      fetch: async () => {
+        fetcherCalls += 1;
+        return [view('m1', 3, 0)];
+      },
+    });
+    handles.push(off);
+
+    await flush();
+    assert.equal(fetcherCalls, 1, '订阅时立即补一次走的是取数器');
+    assert.equal(facadeCalls, 0, '传了取数器就不该再碰旧栈门面');
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0][0].pointsA, 3);
+  });
+
   test('换名单重订阅 —— 同一时刻只有一张表在跑', async (t) => {
     t.mock.timers.enable({ apis: ['setInterval'] });
     install(() => [view('m1', 1, 0)]);

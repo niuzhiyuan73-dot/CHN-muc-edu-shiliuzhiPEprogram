@@ -232,6 +232,26 @@ test('补录：非参赛的普通会员被拒；确认生效后不能再补录',
   assert.match(again.message, /待确认/);
 });
 
+test('比赛读端：签表编排字段（轮次 / 阶段 / 签位 / 场号 / 分组）随记录下发', async () => {
+  const repo = fixture();
+  const matchId = await seedScheduled(repo, 'sch1', { group: 0, courtNo: 2 });
+
+  const got = await call(repo, 'getSchoolMatch', { matchId });
+  assert.equal(got.ok, true, got.message);
+  assert.equal(got.match.round, 1);
+  assert.equal(got.match.stage, 'main');
+  assert.equal(got.match.slot, 1);
+  assert.equal(got.match.group, 0);
+  assert.equal(got.match.courtNo, 2);
+
+  // 列表与详情同一契约：签表 / 分组 / 场地展示共享这些字段。
+  const listed = await call(repo, 'listSchoolMatches', { eventId: 'evt1' });
+  const row = listed.matches.find(item => item.matchId === matchId);
+  assert.ok(row, '补录比赛出现在列表里');
+  assert.equal(row.round, 1);
+  assert.equal(row.courtNo, 2);
+});
+
 test('补录：跨校补不进', async () => {
   const repo = fixture();
   const matchId = await seedScheduled(repo, 'sch1');

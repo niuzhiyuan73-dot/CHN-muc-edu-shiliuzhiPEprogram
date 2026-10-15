@@ -4,7 +4,14 @@
  * 一场比赛从 0:0 打到分出胜负，每一球判给一边。这里只做三件事：
  * 取这一场与会员名单、把每次点击变成一次判球、把实时态画出来。
  * 判一球的规则全在 services/live-score.js（纯逻辑，三端共用），
- * 权限与落库全在数据源那侧——页面既不算分，也不判权。
+ * 权限与落库全在学校维度那侧——页面既不算分，也不判权。
+ *
+ * 【取数与判权都走学校维度（协议 2）】
+ * 比赛与名单取自协会空间：`getSchoolMatch` 一条比赛、`listSchoolMembers` 一份
+ * 在册名录；开台 / 判球 / 撤销 / 定稿是 `startSchoolLiveScore` /
+ * `recordSchoolRally` / `undoSchoolRally` / `finishSchoolLiveScore`。
+ * 能不能录分不在这里算——服务端 DTO 自带的 `canRecord` 就是写入端的同一把尺子，
+ * 页面照着它拦一道即可，避免「看得见计分台、点下去却被拒」。
  *
  * 【为什么横屏】
  * 计分台是放在球网边、隔着一两米点的，横屏才有足够大的两块按钮。
@@ -20,29 +27,25 @@
  *   - 中途失败就提示并以服务端为准重新拉一次，不把错的分留在屏幕上。
  *
  * 【为什么首屏不会「先 0:0 再跳」】
- * 进页面就调 startLiveScore：已存在就取回现有实时态（重开不重置比分），
+ * 进页面就调 startSchoolLiveScore：已存在就取回现有实时态（重开不重置比分），
  * 不存在才新建 0:0。屏幕上的第一帧就是真实比分。
  *
  * 【定稿不等于生效】
- * finishLiveScore 只是把打完的局转成正式比分，得到的仍是一条**待确认**
+ * finishSchoolLiveScore 只是把打完的局转成正式比分，得到的仍是一条**待确认**
  * 的比赛——确认权照旧在裁判 / 管理员手上。所以这里定稿后要能退回原页，
  * 让别人去确认。
  * ============================================================
  */
 
-const {
-  getMatchRecords,
-  getMembers,
-  startLiveScore,
-  recordRally,
-  undoRally,
-  finishLiveScore,
-} = require('../../services/index.js');
 const { applyRally, liveScoreOf, LIVE_STATUS } = require('../../services/live-score.js');
-const { canRecordScore, hasReferee } = require('../../services/match-record.js');
 const { formatMatchFormat } = require('../../utils/match-format.js');
-const { MATCH_COMPETITION, MATCH_STATUS, ROLE } = require('../../utils/constants.js');
+const { MATCH_COMPETITION, MATCH_STATUS } = require('../../utils/constants.js');
 const { currentThemeClass } = require('../../services/branding.js');
+const schoolSession = require('../../services/school-session.js');
+const associationScope = require('../../services/association-scope.js');
+const space = require('../../services/association-space.js');
+const identity = require('../../services/school-identity.js');
+const { LEGACY_SCHOOL_ID } = require('../../utils/school.js');
 
 Page({
   data: {
@@ -117,12 +120,32 @@ Page({
     this.setData(patch);
   },
 
-  /** 读取全局登录态。app 可能还没初始化好，逐层兜底 */
-  currentUser() {
-    const app = getApp();
-    if (!app) return null;
-    if (typeof app.getUserInfo === 'function') return app.getUserInfo();
-    return app.globalData ? app.globalData.userInfo : null;
+  /** 当前「学校 + 协会」范围。读写复用它，避免异步期间全局范围被切走 */
+  currentScope() {
+    return {
+      schoolId: schoolSession.getSchoolId() || LEGACY_SCHOOL_ID,
+      association: associationScope.getAssociation(),
+    };
+  },
+
+  /** 协会空间句柄，按进页时固定的范围取一次 */
+  api() {
+    return space.forScope(this.scope || this.currentScope());
+  },
+
+  /**
+   * 本次身份会话里的操作者编号，只用来把「去登录」与「没权限」分开。
+   * 拿不到（没有账号，或身份接口报错）就按访客处理，绝不猜一个身份出来。
+   */
+  async currentActorId() {
+    try {
+      const session = await identity.forSchoolIdentity(this.scope || this.currentScope())
+        .getSchoolIdentitySession();
+      return (session && session.user && session.user.userId) || null;
+    } catch (err) {
+      console.error('[live-score] 读取学校身份失败', err);
+      return null;
+    }
   },
 
   /** 轻提示。测试环境里可能没有这个 API */
@@ -137,51 +160,46 @@ Page({
    * @returns {Promise<void>}
    */
   async init() {
-    const user = this.currentUser();
-    if (!user) {
+    this.scope = this.currentScope();
+    const actorId = await this.currentActorId();
+    if (!actorId) {
       this.setData({ loading: false, blockReason: '请先登录后再计分' });
       return;
     }
+    this.actor = actorId;
 
     try {
-      const [members, records] = await Promise.all([
-        getMembers(),
-        getMatchRecords({ id: this.matchId }),
+      const api = this.api();
+      const [roster, found] = await Promise.all([
+        api.listSchoolMembers({}),
+        api.getSchoolMatch({ matchId: this.matchId }),
       ]);
-      const record = records && records[0];
-      if (!record) {
+
+      // 读不到名录＝本协会的读权限没有：把话说明白，别让人以为是比赛没了
+      if (!roster || !roster.ok) {
+        this.setData({ loading: false, blockReason: (roster && roster.message) || '没有读取本协会成员名录的权限' });
+        return;
+      }
+      if (!found || !found.ok) {
         this.setData({ loading: false, error: '这场比赛不存在，或已被删除' });
         return;
       }
+      const record = found.match;
 
       // 编号 → 昵称，供个人赛显示队员姓名
       this.nameById = {};
-      (members || []).forEach((item) => {
-        this.nameById[item._id] = item.nickName || item._id;
+      (roster.members || []).forEach((item) => {
+        this.nameById[item.userId] = item.nickName || item.userId;
       });
 
-      // 与写入端同一口径：已生效 / 已作废的场次开不了台；能不能录看录分权
-      // （指定裁判后只有裁判与管理员能录，见 match-record.canRecordScore）
-      const collegeByMember = new Map((members || []).map((m) => [m._id, m.college || '']));
-      const allowed =
-        record.status === MATCH_STATUS.PENDING &&
-        canRecordScore(record, user._id, {
-          role: Number(user.role),
-          college: user.college || '',
-          collegeOf: (id) => collegeByMember.get(id) || '',
-        });
-      if (!allowed) {
-        this.setData({
-          loading: false,
-          blockReason: hasReferee(record)
-            ? `本场由 ${this.nameOf(record.referee) || record.referee} 裁判执法，仅裁判与管理员可计分`
-            : '你无权为这场比赛计分',
-        });
+      // 与写入端同一把尺子：服务端 DTO 的 canRecord 为假就不给开台，
+      // 别让人看见计分台、点下去却被拒（见 match-record.canRecordScore）。
+      if (!record.canRecord) {
+        this.setData({ loading: false, blockReason: this.recordBlock(record) });
         return;
       }
 
-      this.actor = user._id;
-      const opened = await startLiveScore(this.matchId, this.actor);
+      const opened = await api.startSchoolLiveScore({ matchId: this.matchId });
       if (!opened.ok || !opened.live) {
         this.setData({ loading: false, blockReason: opened.message || '无法开启实时计分台' });
         return;
@@ -194,7 +212,7 @@ Page({
         labelA: this.labelFor(record, 'A'),
         labelB: this.labelFor(record, 'B'),
         formatText: formatMatchFormat({ gamePoints: record.gamePoints, bestOf: record.bestOf }),
-        refereeNotice: this.describeReferee(record, user),
+        refereeNotice: this.describeReferee(record, actorId),
       });
       this.applyLive(opened.live);
     } catch (err) {
@@ -209,26 +227,39 @@ Page({
     return (this.nameById && this.nameById[userId]) || '';
   },
 
+  /**
+   * 不能计分的原因。canRecord 为假时给一句人话：先看比赛还在不在「待确认」，
+   * 再看是不是被裁判接管了，最后才落到「你没这个权」。
+   * @param {Object} record getSchoolMatch 的 match DTO
+   * @returns {string}
+   */
+  recordBlock(record) {
+    if (record.status !== MATCH_STATUS.PENDING) return '这场比赛已生效或已作废，不能再计分';
+    if (record.hasReferee) {
+      const name = this.nameOf(record.referee) || String(record.referee);
+      return `本场由 ${name} 裁判执法，仅裁判与管理员可计分`;
+    }
+    return '你无权为这场比赛计分';
+  },
+
   /** 这一场有没有裁判，有就拼一句提示；没指定返回空串 */
-  describeReferee(record, user) {
-    if (!hasReferee(record)) return '';
+  describeReferee(record, actorId) {
+    if (!record.hasReferee) return '';
     const name = this.nameOf(record.referee) || String(record.referee);
-    const isMine = user && user._id === record.referee;
+    const isMine = actorId && actorId === record.referee;
     return isMine ? `本场由你执法（${name}）` : `本场由 ${name} 裁判执法`;
   },
 
   /**
-   * 一方的显示名。学院赛用学院名，个人赛用队员昵称；都没有才退回 A / B 队。
+   * 一方的显示名。学院赛若带学院名就用学院名，否则退回队员昵称；都没有才退回 A / B 队。
    * @param {Object} record
    * @param {'A'|'B'} side
    * @returns {string}
    */
   labelFor(record, side) {
     const fallback = side === 'A' ? 'A 队' : 'B 队';
-    if (record.competition === MATCH_COMPETITION.COLLEGE) {
-      const college = side === 'A' ? record.collegeA : record.collegeB;
-      return college || fallback;
-    }
+    const college = side === 'A' ? record.collegeA : record.collegeB;
+    if (record.competition === MATCH_COMPETITION.COLLEGE && college) return college;
     const ids = side === 'A' ? record.teamA : record.teamB;
     const names = (Array.isArray(ids) ? ids : []).map((id) => this.nameOf(id)).filter(Boolean);
     return names.length ? names.join('、') : fallback;
@@ -272,7 +303,7 @@ Page({
     this.setData({ notice: '' });
 
     this.pending += 1;
-    this.queue = this.queue.then(() => this.sendRally(side, rallyId, this.actor));
+    this.queue = this.queue.then(() => this.sendRally(side, rallyId));
     return undefined;
   },
 
@@ -280,10 +311,10 @@ Page({
    * 把一球发给服务端。成功后若队列已排空，就用服务端返回对账；
    * 失败则提示并以服务端为准重拉，避免本地多算 / 少算。
    */
-  async sendRally(side, rallyId, actor) {
+  async sendRally(side, rallyId) {
     let res;
     try {
-      res = await recordRally(this.matchId, side, actor, { rallyId });
+      res = await this.api().recordSchoolRally({ matchId: this.matchId, side, rallyId });
     } catch (err) {
       console.error('[live-score] 判球失败', err);
       res = { ok: false, message: '判球失败，请重试' };
@@ -300,10 +331,10 @@ Page({
     if (this.pending === 0 && res.live) this.applyLive(res.live);
   },
 
-  /** 以服务端为准重拉实时态（startLiveScore 已存在就原样返回） */
+  /** 以服务端为准重拉实时态（startSchoolLiveScore 已存在就原样返回） */
   async resync() {
     try {
-      const res = await startLiveScore(this.matchId, this.actor);
+      const res = await this.api().startSchoolLiveScore({ matchId: this.matchId });
       if (res.ok && res.live) this.applyLive(res.live);
     } catch (err) {
       console.error('[live-score] 对账失败', err);
@@ -320,14 +351,14 @@ Page({
     }
     this.setData({ notice: '' });
     this.pending += 1;
-    this.queue = this.queue.then(() => this.sendUndo(this.actor));
+    this.queue = this.queue.then(() => this.sendUndo());
     return undefined;
   },
 
-  async sendUndo(actor) {
+  async sendUndo() {
     let res;
     try {
-      res = await undoRally(this.matchId, actor);
+      res = await this.api().undoSchoolRally({ matchId: this.matchId });
     } catch (err) {
       console.error('[live-score] 撤销失败', err);
       res = { ok: false, message: '撤销失败，请重试' };
@@ -354,7 +385,7 @@ Page({
       if (!confirmed) return;
       this.setData({ finishing: true, notice: '' });
       // 排到队尾：先让手上没发完的球落库，再定稿，否则会漏掉最后几球
-      this.queue = this.queue.then(() => this.sendFinish(this.actor));
+      this.queue = this.queue.then(() => this.sendFinish());
     };
 
     if (typeof wx === 'undefined' || typeof wx.showModal !== 'function') {
@@ -370,10 +401,10 @@ Page({
     return undefined;
   },
 
-  async sendFinish(actor) {
+  async sendFinish() {
     let res;
     try {
-      res = await finishLiveScore(this.matchId, actor);
+      res = await this.api().finishSchoolLiveScore({ matchId: this.matchId });
     } catch (err) {
       console.error('[live-score] 定稿失败', err);
       res = { ok: false, message: '定稿失败，请重试' };

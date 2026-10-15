@@ -1,9 +1,10 @@
 /**
  * 学院名单审核（管理员）
  * ============================================================
- * 把各学院提交的名单逐份过一遍：通过或退回。取数与整形在
- * services/college-view.js，权限与校验在 services/college-entry.js（纯函数），
- * 页面只做渲染与交互。
+ * 把各学院提交的名单逐份过一遍：通过或退回。取数与整形走学校维度（协议 2）：
+ * services/school-college-view.js 把服务端 DTO 整成旧栈同形；权限与校验在
+ * services/college-entry.js（纯函数）；写入由协会空间按当前身份执行，页面只做
+ * 渲染与交互。
  *
  * 【为什么退回要弹面板、通过不用】
  * 退回必须带理由（与入会审核同一条硬规则）：没有理由，学院只知道「没过」，
@@ -17,11 +18,16 @@
  * ============================================================
  */
 
-const { loadCollegeEntryReviewView } = require('../../services/college-view.js');
-const { reviewCollegeEntry, isMock } = require('../../services/index.js');
+const { loadCollegeEntryReviewView } = require('../../services/school-college-view.js');
+const { isMock } = require('../../services/index.js');
 // 审核动作与入会审核共用同一套取值，直接复用，免得两处各写一份字符串
 const { REVIEW_ACTION } = require('../../services/member-review.js');
 const { currentThemeClass } = require('../../services/branding.js');
+const schoolSession = require('../../services/school-session.js');
+const associationScope = require('../../services/association-scope.js');
+const space = require('../../services/association-space.js');
+const identity = require('../../services/school-identity.js');
+const { LEGACY_SCHOOL_ID } = require('../../utils/school.js');
 
 Page({
   data: {
@@ -60,12 +66,27 @@ Page({
     return this.refresh();
   },
 
-  /** 读取全局登录态。app 可能还没初始化好，逐层兜底 */
-  currentUser() {
-    const app = getApp();
-    if (!app) return null;
-    if (typeof app.getUserInfo === 'function') return app.getUserInfo();
-    return app.globalData ? app.globalData.userInfo : null;
+  /** 当前「学校 + 协会」范围。读写复用它，避免异步期间全局范围被切走 */
+  currentScope() {
+    return {
+      schoolId: schoolSession.getSchoolId() || LEGACY_SCHOOL_ID,
+      association: associationScope.getAssociation(),
+    };
+  },
+
+  /**
+   * 本次身份会话里的操作者编号，只用来把「去登录」与「没权限」分开。
+   * 拿不到就按访客处理，绝不猜一个身份出来。
+   */
+  async currentActorId() {
+    try {
+      const session = await identity.forSchoolIdentity(this.scope || this.currentScope())
+        .getSchoolIdentitySession();
+      return (session && session.user && session.user.userId) || null;
+    } catch (err) {
+      console.error('[college-entry-review] 读取学校身份失败', err);
+      return null;
+    }
   },
 
   /** 轻提示。测试环境里可能没有这个 API */
@@ -80,8 +101,15 @@ Page({
    * @returns {Promise<void>}
    */
   async refresh() {
+    const scope = this.currentScope();
+    this.scope = scope;
+    const actorId = await this.currentActorId();
+    this.actorId = actorId;
+
     try {
-      const view = await loadCollegeEntryReviewView(this.eventId, { user: this.currentUser() });
+      const view = await loadCollegeEntryReviewView(this.eventId, {
+        schoolId: scope.schoolId, association: scope.association, actorId,
+      });
       this.loaded = true;
       this.setData({ loading: false, error: '', view, themeClass: currentThemeClass() });
     } catch (err) {
@@ -100,19 +128,18 @@ Page({
   async onApprove(event) {
     const entryId = event.currentTarget.dataset.entryId;
     if (!entryId || this.data.acting) return undefined;
-
-    const user = this.currentUser();
-    if (!user) {
-      this.showToast('请先登录后再审核');
-      return undefined;
-    }
+    // 学校维度的审核按「赛事 + 学院」定位，学院名从行上取（行按键稳定，不会串）
+    const row = (this.data.view.rows || []).find((item) => item.entryId === entryId);
+    if (!row) return undefined;
 
     this.setData({ acting: entryId });
-    const result = await reviewCollegeEntry(entryId, REVIEW_ACTION.APPROVE, '', user._id);
+    const result = await space.forScope(this.scope || this.currentScope()).reviewCollegeEntry({
+      eventId: this.eventId, college: row.college, action: REVIEW_ACTION.APPROVE, reason: '',
+    });
     this.setData({ acting: '' });
 
-    if (!result.ok) {
-      this.showToast(result.message || '操作失败');
+    if (!result || !result.ok) {
+      this.showToast((result && (result.firstError || result.message)) || '操作失败');
       return undefined;
     }
 
@@ -148,19 +175,15 @@ Page({
       return undefined;
     }
 
-    const user = this.currentUser();
-    if (!user) {
-      this.setData({ actionError: '请先登录后再审核' });
-      return undefined;
-    }
-
-    const { entryId } = this.data.reject;
+    const { entryId, college } = this.data.reject;
     this.setData({ acting: entryId, actionError: '' });
-    const result = await reviewCollegeEntry(entryId, REVIEW_ACTION.REJECT, reason, user._id);
+    const result = await space.forScope(this.scope || this.currentScope()).reviewCollegeEntry({
+      eventId: this.eventId, college, action: REVIEW_ACTION.REJECT, reason,
+    });
     this.setData({ acting: '' });
 
-    if (!result.ok) {
-      this.setData({ actionError: result.message || '操作失败' });
+    if (!result || !result.ok) {
+      this.setData({ actionError: (result && (result.firstError || result.message)) || '操作失败' });
       return undefined;
     }
 
