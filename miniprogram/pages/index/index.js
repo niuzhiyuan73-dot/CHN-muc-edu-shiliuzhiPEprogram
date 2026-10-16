@@ -188,17 +188,19 @@ Page({
   /**
    * 装载学校切换器：学校清单来自学校目录，当前浏览的学校来自会话作用域。
    * 只读与否由「当前浏览的学校 ≠ 我的学校」决定。整体包在 try/catch 里，
-   * 云端尚未开放学校维度或接口报错时，只是收起控件、回落到默认校聚合。
+   * 接口报错时只是收起控件、回落到默认校聚合。
+   *
+   * 【为什么不再按 isMock 提前返回（2026-10-16）】
+   * 这里曾经写死「云端尚未开放学校维度」，云数据源下直接把 schoolList 清空——
+   * 于是真实环境没有「浏览外校」这条路径，而它正是转校与跨校读的入口。
+   * 现在云端也走同一段代码：目录与会话本来就由 school-cloud 与协议 2 提供，
+   * 真取不到（未登录 / 接口报错）时下面的 catch 照样把控件收起。
    *
    * @returns {Promise<void>}
    */
   async loadSchoolScope() {
     try {
       const service = require('../../services/school-identity.js');
-      if (typeof service.isMockNow === 'function' && !service.isMockNow()) {
-        this.setData({ schoolList: [], readOnlySchool: false });
-        return;
-      }
       const schoolSession = require('../../services/school-session.js');
       const start = schoolSession.getSchoolId() || 'muc';
       const api = service.forSchoolIdentity({ schoolId: start, association: 'pkb' });

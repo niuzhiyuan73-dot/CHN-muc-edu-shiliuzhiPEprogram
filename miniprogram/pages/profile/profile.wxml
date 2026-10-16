@@ -8,10 +8,16 @@
 <import src="../../templates/member-view.wxml" />
 
 <view class="page-container">
-  <view wx:if="{{isMock}}" class="card entry-card" bindtap="onGoSchoolExchange">
+  <!--
+    跨校邀请赛。**不再是模拟环境专属**（2026-10-16）：协议 2 已注册邀请赛的
+    全部动作，云端与本地模拟都能走，因此这张卡在两种数据源下都常显——
+    能不能发起 / 报名由页面自身的权限与状态决定，不靠入口先拦一道。
+    勾掉是否模拟只影响副标题文案，不影响能不能进。
+  -->
+  <view class="card entry-card" bindtap="onGoSchoolExchange">
     <view class="entry-card-main">
       <view class="entry-card-title">跨校邀请赛</view>
-      <view class="entry-card-hint">民大与北航 · 模拟邀请与报名</view>
+      <view class="entry-card-hint">{{isMock ? '民大与北航 · 本地模拟邀请与报名' : '与受邀学校交流 · 不计入校内等级分'}}</view>
     </view>
     <view class="entry-card-arrow">›</view>
   </view>

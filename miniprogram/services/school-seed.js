@@ -2,18 +2,23 @@
 const {
   COLLEGES, MATCH_TYPE, MATCH_STATUS, MATCH_COMPETITION, MATCH_OUTCOME,
   EVENT_STATUS, EVENT_LEVEL, ANNOUNCEMENT_STATUS, SIGNUP_STATUS,
+  EVENT_FORMAT, EVENT_BRONZE_MODE, EVENT_PLACEMENT_MODE, DEFAULT_GF_RESET,
 } = require('../utils/constants.js');
 const { allAssociations } = require('../utils/associations.js');
 const {
   schoolAssociationKey, collegeKey, schoolMemberKey, schoolRoleKey, ratingKey,
   schoolMembershipKey, schoolEventKey, schoolEventSignupKey, schoolMatchKey,
-  schoolAnnouncementKey,
+  schoolAnnouncementKey, schoolKey,
 } = require('../utils/school.js');
 // 记录组装复用旧栈纯规则模块（同一把尺子）——演示内容里的事件 / 比赛 / 公告
 // 因此与页面点出来的形状一字不差，不会各写一份、慢慢分叉。
 const { buildAnnouncementRecord } = require('./announcement.js');
 const { buildEventRecord } = require('./event.js');
 const { buildMatchRecord } = require('./match-record.js');
+const { buildSchoolApplication } = require('./school-member.js');
+// 演示邀请赛的签表由**赛制引擎现算**（两个都是纯函数），与 drawExchangeEvent
+// 走同一段代码；手写签表迟早与引擎分叉，演示数据一旦分叉就会误导人。
+const { planExchangeDraw, planExchangeMatches } = require('./exchange-plan.js');
 
 const iso = value => new Date(value).toISOString();
 
@@ -65,6 +70,14 @@ const DEMO_ACCOUNTS = [
     membership: { role: 'staff', collegeId: 'c01' } },
   { id: 'demo_buaa_leader', schoolId: 'buaa', nickName: '北航协会负责人', gender: 'M', collegeId: 'c01', studentId: 'TEST006',
     membership: { role: 'leader' } },
+  // 民大扩充（2026-10-16）：北航有会员二 / 三，民大只有一位会员，两校人数不对称；
+  // 跨校邀请赛演示因此凑不出「两校各两人」的四人签表。补一位民大会员二。
+  //
+  // 【为什么这一位还带着转校演示】
+  // 另一位「民大模拟会员」要保持**干净**——演示时必须能当场走一遍「提交转校申请」；
+  // 这一位则预置一条**已提交、待北航审批**的转校申请（见 demoTransferApplication），
+  // 于是「北航管理员审批转校」也是一步直达，两条路径各有一个专属账号。
+  { id: 'demo_muc_member_2', schoolId: 'muc', nickName: '民大模拟会员二', gender: 'F', collegeId: 'c01', studentId: 'TEST007' },
 ];
 
 function createSchoolDemoSeed() {
@@ -410,17 +423,161 @@ function demoMatchDocs(spec, now) {
   });
 }
 
+/* ============================================================
+ * 跨校邀请赛演示（2026-10-16）：一进页面就有赛事可看、可操作
+ * ============================================================
+ * 【为什么要预置】
+ * 邀请赛原先只能靠演示者自己「创建 → 邀请 → 报名 → 锁定 → 抽签」把整条链
+ * 摆一遍，页面初始永远是空的。这里直接落两场，覆盖两个最有代表性的状态：
+ *   · 报名中（单败淘汰）：两校各一人已报名，可演报名 / 取消 / 移出 /
+ *     撤回邀请 / 锁定名单；
+ *   · 已抽签（小组赛+淘汰）：四人小组赛已排期，可演录分 → 淘汰赛出来 →
+ *     录分 → 确认名次，顺带把新加的赛制也演示到。
+ *
+ * 【开赛时间为什么钉在 2030】
+ * 报名与锁定都拿**真实当前时间**与 startTime 比大小（见 changeSignup 与
+ * lockExchangeRoster 的入口条件）。种子统一的时间锚点 DEMO_CONTENT_NOW 是
+ * 2026-03-01，照它加偏移得到的开赛时间早就过期，报名一定被拒。所以这两场
+ * 用固定但远在未来（2030）的开赛时间：既让报名走得通，又仍是常量而不是
+ * Date.now()——同一份种子每次 reset 结果完全一致。
+ *
+ * 【对阵为什么现算而不是手写】
+ * draw 与 matches 调 exchange-plan 的 planExchangeDraw / planExchangeMatches
+ * 现算（两个都是纯函数），与云端 drawExchangeEvent 走同一段代码。手写签表
+ * 迟早与引擎分叉，而演示数据一旦分叉最误导人。
+ * ============================================================ */
+
+/** 演示邀请赛的开赛时间：固定常量，且远在任何可预见的「当前时间」之后 */
+const EXCHANGE_DEMO_START = '2030-03-01T10:00:00Z';
+const EXCHANGE_DEMO_START_LATER = '2030-03-08T10:00:00Z';
+/** 演示签表的随机种子：固定值，签位每次 reset 完全一样 */
+const DEMO_EXCHANGE_SEED = 20261016;
+
+/** 参赛者一律取已在册的演示账号，读端才按昵称显示得出人 */
+const EXCHANGE_DEMO_ENTRANTS = Object.freeze({
+  open: Object.freeze([
+    Object.freeze({ userId: 'demo_muc_member', schoolId: 'muc' }),
+    Object.freeze({ userId: 'demo_buaa_member', schoolId: 'buaa' }),
+  ]),
+  drawn: Object.freeze([
+    Object.freeze({ userId: 'demo_muc_admin', schoolId: 'muc' }),
+    Object.freeze({ userId: 'demo_muc_member_2', schoolId: 'muc' }),
+    Object.freeze({ userId: 'demo_buaa_member', schoolId: 'buaa' }),
+    Object.freeze({ userId: 'demo_buaa_member_2', schoolId: 'buaa' }),
+  ]),
+});
+
+const DEMO_ACCOUNT_BY_ID = new Map(DEMO_ACCOUNTS.map(account => [account.id, account]));
+
+/** 两场演示邀请赛的赛事 / 邀请索引 / 报名 / 对阵四张表 */
+function demoExchangeDocs(now, schoolNames) {
+  const at = iso(now);
+  const participantSchoolIds = ['buaa', 'muc'];
+  const base = {
+    schoolId: 'muc', association: 'pkb', participantSchoolIds, schoolNames,
+    quota: 4, schoolQuotas: { buaa: 2, muc: 2 },
+    eventScope: 'inter_school', ratingPolicy: 'unrated', matchType: 'singles',
+    createdBy: 'demo_muc_admin', createdAt: at,
+  };
+  const events = [];
+  const invitations = [];
+  const signups = [];
+  const matches = [];
+  // 邀请索引与报名记录的键、字段都照 exchange-service 的写入原样复刻，
+  // 少一个字段读端就会当它不存在（例如报名少了 nickName，对阵里只剩编号）。
+  const invitationOf = (eventId, schoolId) => ({ _id: schoolKey('xi', eventId, schoolId),
+    eventId, schoolId, association: 'pkb' });
+  const signupOf = (event, entrant) => {
+    const account = DEMO_ACCOUNT_BY_ID.get(entrant.userId) || {};
+    return { _id: schoolKey('xs', event._id, entrant.userId),
+      eventId: event._id, schoolId: event.schoolId, association: 'pkb',
+      userId: entrant.userId, representedSchoolId: entrant.schoolId,
+      schoolMemberId: schoolMemberKey(entrant.userId, entrant.schoolId),
+      nickName: account.nickName || entrant.userId,
+      schoolName: schoolNames[entrant.schoolId] || entrant.schoolId,
+      status: 'signed', updatedAt: at, revision: 1 };
+  };
+
+  // 1) 报名中：两校各一人，等齐了就能锁定名单
+  const openId = schoolKey('xe', 'muc', 'pkb', 'demo-seed', 'invite-open');
+  const openEvent = { ...base, _id: openId, title: '民大北航匹克球交流赛（报名中）',
+    location: '民大体育馆', startTime: EXCHANGE_DEMO_START, status: 'signup',
+    invitations: { buaa: 'accepted', muc: 'accepted' },
+    schoolCounts: { buaa: 1, muc: 1 }, signupCount: 2,
+    format: EVENT_FORMAT.SINGLE_ELIM, bronzeMode: EVENT_BRONZE_MODE.TIED,
+    placementMode: EVENT_PLACEMENT_MODE.NONE, gfReset: DEFAULT_GF_RESET,
+    fingerprint: JSON.stringify([openId]), revision: 1 };
+  events.push(openEvent);
+  for (const schoolId of participantSchoolIds) invitations.push(invitationOf(openId, schoolId));
+  for (const entrant of EXCHANGE_DEMO_ENTRANTS.open) signups.push(signupOf(openEvent, entrant));
+
+  // 2) 已抽签：小组赛 + 淘汰。签表与对阵由赛制引擎现算，与云端抽签同一段代码
+  const drawnId = schoolKey('xe', 'muc', 'pkb', 'demo-seed', 'invite-drawn');
+  const entrants = EXCHANGE_DEMO_ENTRANTS.drawn;
+  const drawnEvent = { ...base, _id: drawnId, title: '民大北航匹克球邀请赛（已抽签）',
+    location: '民大体育馆', startTime: EXCHANGE_DEMO_START_LATER, status: 'drawn',
+    invitations: { buaa: 'accepted', muc: 'accepted' },
+    schoolCounts: { buaa: 2, muc: 2 }, signupCount: entrants.length,
+    format: EVENT_FORMAT.GROUP_KNOCKOUT, groupCount: 2, advancePerGroup: 1,
+    bronzeMode: EVENT_BRONZE_MODE.TIED, placementMode: EVENT_PLACEMENT_MODE.NONE,
+    gfReset: DEFAULT_GF_RESET, fingerprint: JSON.stringify([drawnId]), revision: 2 };
+  const planned = planExchangeDraw({ entries: entrants.map(row => ({ userId: row.userId })),
+    seedValue: DEMO_EXCHANGE_SEED, format: drawnEvent.format,
+    groupCount: drawnEvent.groupCount, advancePerGroup: drawnEvent.advancePerGroup });
+  if (!planned.ok) throw new Error(`演示邀请赛签表构造失败：${planned.message}`);
+  drawnEvent.draw = { ...planned.draw, createdAt: at, createdBy: 'demo_muc_admin' };
+  const entrantsById = new Map(entrants.map(row => [row.userId,
+    { userId: row.userId, schoolId: row.schoolId }]));
+  const built = planExchangeMatches({ event: drawnEvent, draw: drawnEvent.draw, entrantsById, matches: [] });
+  for (const match of built.matches) {
+    matches.push({ ...match, schoolId: drawnEvent.schoolId, association: drawnEvent.association });
+  }
+  events.push(drawnEvent);
+  for (const schoolId of participantSchoolIds) invitations.push(invitationOf(drawnId, schoolId));
+  for (const entrant of entrants) signups.push(signupOf(drawnEvent, entrant));
+
+  return { events, invitations, signups, matches };
+}
+
 /**
- * 全部范围的演示内容：公告 / 赛事 / 比赛 / 报名四批，按 DEMO_CONTENT_SPECS 逐个范围造。
- * 由 school-mock.reset() 默认挂进内存仓储，供协会空间与排行榜演示。
+ * 转校演示：预置一条「已提交、待转入学校审批」的转校申请。
+ *
+ * 【为什么需要一个专属账号】
+ * 「提交转校申请」与「审批转校申请」是两条不同的演示路径，共用一个账号就只能
+ * 二选一：申请一旦提交，那个账号再点进去看到的是「已提交，等待审核」，演示
+ * 「当场提交一份申请」就无从下手。于是分成两位民大会员：
+ *   · demo_muc_member    —— 干净的会员，用来当场演示提交转校申请；
+ *   · demo_muc_member_2  —— 本函数预置了一条待北航审批的申请。
+ * 申请只落在北航那一侧（schoolId: 'buaa'），账号归属仍在民大，与
+ * applySchoolTransfer 的落库形状一致，因此北航管理员一进「学校身份」就能审。
+ */
+function demoTransferApplication(now) {
+  return {
+    ...buildSchoolApplication({
+      userId: 'demo_muc_member_2',
+      school: { schoolId: 'buaa', status: 'active', name: '北京航空航天大学' },
+      college: { collegeId: 'c01', schoolId: 'buaa', status: 'active', name: '航空学院（模拟）' },
+      studentId: 'TEST007', now,
+    }),
+    transferFrom: 'muc', revision: 1,
+  };
+}
+
+/**
+ * 全部演示内容：旧栈的公告 / 赛事 / 比赛 / 报名四批之外，再挂跨校邀请赛
+ * （赛事 / 邀请索引 / 报名 / 对阵四表）与一条待审转校申请。
+ * 由 school-mock.reset() 默认挂进内存仓储，供协会空间、排行榜、学校身份与
+ * 跨校邀请赛四处演示。
  *
  * 【为什么报名记录由本函数一起产出】
  * 报名要与赛事同一次 reset 落库：分成两处造，早晚出现「赛事在、名单不在」的
  * 半截演示（名次里全是编号）。school-mock.reset() 按 content 的键名整批挂表，
- * 新增 `eventSignups` 不需要它改一行代码。
+ * 新增 exchangeEvents / schoolMembers 等键不需要它改一行代码。
  *
  * @returns {{announcements: Array<Object>, events: Array<Object>, matches: Array<Object>,
- *   eventSignups: Array<Object>}}
+ *   eventSignups: Array<Object>, exchangeEvents: Array<Object>,
+ *   exchangeInvitations: Array<Object>, exchangeSignups: Array<Object>,
+ *   exchangeMatches: Array<Object>, schoolMembers: Array<Object>}}
  */
 function createSchoolDemoContent() {
   const now = DEMO_CONTENT_NOW;
@@ -431,6 +588,14 @@ function createSchoolDemoContent() {
     content.matches.push(...demoMatchDocs(spec, now));
     content.eventSignups.push(...demoSignupDocs(spec, now));
   }
+  const schoolNames = Object.fromEntries(createSchoolSeed().schools.map(row => [row._id, row.name]));
+  const exchange = demoExchangeDocs(now, schoolNames);
+  content.exchangeEvents = exchange.events;
+  content.exchangeInvitations = exchange.invitations;
+  content.exchangeSignups = exchange.signups;
+  content.exchangeMatches = exchange.matches;
+  // 待审转校申请挂在 schoolMembers 上（与真实落库同一张表），reset() 会追加到已有会员之后
+  content.schoolMembers = [demoTransferApplication(now)];
   return content;
 }
 

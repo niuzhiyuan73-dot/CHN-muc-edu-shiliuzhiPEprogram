@@ -1,9 +1,9 @@
 <view class="page-container exchange-page">
   <view class="card">
     <view class="card-title">跨校邀请赛</view>
-    <view class="hint">本地模拟体验 · 交流赛不计入校内等级分和积分 · 项目固定单打</view>
+    <view class="hint">{{isMock ? '本地模拟体验 · ' : ''}}交流赛不计入校内等级分和积分 · 项目固定单打</view>
     <picker range="{{schools}}" range-key="name" value="{{schoolIndex}}" disabled="{{busy}}" bindchange="onSchoolChange"><view class="selection">{{schoolName}} · 切换学校 ›</view></picker>
-    <picker range="{{actors}}" range-key="label" value="{{actorIndex}}" disabled="{{busy}}" bindchange="onActorChange"><view class="selection">{{actorName}} · 切换体验身份 ›</view></picker>
+    <picker wx:if="{{isMock}}" range="{{actors}}" range-key="label" value="{{actorIndex}}" disabled="{{busy}}" bindchange="onActorChange"><view class="selection">{{actorName}} · 切换体验身份 ›</view></picker>
   </view>
   <view wx:if="{{error}}" class="card error">{{error}}<button size="mini" bindtap="onRefresh" disabled="{{busy}}">刷新</button></view>
   <view wx:if="{{notice}}" class="card hint">{{notice}}</view>

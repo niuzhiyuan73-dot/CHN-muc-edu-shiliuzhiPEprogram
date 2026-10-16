@@ -86,8 +86,8 @@ test('聚合 —— 民大首页：公告置顶在前、近期赛事、概况数
   assert.strictEqual(upcoming.signedUp, false);
   assert.ok(upcoming.timeText, '赛事带开赛时间文案');
 
-  // 会员数学校级一份（24 + 校管理员 + 会员 + 学院负责人）；比赛 / 赛事按协会汇总
-  assert.strictEqual(view.summary.memberCount, 27);
+  // 会员数学校级一份（24 + 校管理员 + 会员 + 会员二 + 学院负责人）；比赛 / 赛事按协会汇总
+  assert.strictEqual(view.summary.memberCount, 28);
   assert.strictEqual(view.summary.matchCount, 28);
   assert.strictEqual(view.summary.eventCount, 6);
   assert.strictEqual(view.summary.seasonText, '第 1 赛季');

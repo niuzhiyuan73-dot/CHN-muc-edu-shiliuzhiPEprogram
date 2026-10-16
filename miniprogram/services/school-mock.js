@@ -44,6 +44,11 @@ const DEMO_ACTORS = Object.freeze([
   { id: 'demo_buaa_member_3', label: '北航会员三' },
   { id: 'demo_buaa_college_leader', label: '北航学院负责人' },
   { id: 'demo_buaa_leader', label: '北航协会负责人' },
+  // 民大会员二（2026-10-16）：北航有会员二 / 三，民大只有一位会员，跨校邀请赛
+  // 演示凑不出「两校各两人」的四人签表。这一位同时携带一条**待北航审批的转校
+  // 申请**（见 school-seed.demoTransferApplication），另一位「民大会员」保持干净，
+  // 专门用来当场演示「提交转校申请」。同样追加在末尾，不动既有下标。
+  { id: 'demo_muc_member_2', label: '民大会员二' },
 ]);
 
 /**
