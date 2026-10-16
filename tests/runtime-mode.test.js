@@ -41,14 +41,12 @@ const FACADE_REQUIRE = "require('./index.js')";
  * 每消掉一个，切片 B 就离「可以删门面」更近一步。
  */
 const SERVICE_FILES_PENDING = [
-  'announcement-view.js',
   'association-scope.js',
   'auth.js',
   'college-view.js',
   'events-view.js',
   'home-view.js',
   'match-view.js',
-  'member-review-view.js',
   'profile-view.js',
   'rank-view.js',
 ].sort();
