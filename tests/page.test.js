@@ -6734,6 +6734,101 @@ test('协会空间 —— 管理者可建组并批量选人，建好后出现在
   }
 });
 
+/**
+ * 建组选人的搜索（2026-10-16 用户要求：成员多了以后只能从列表里翻，要能按名字找）。
+ * 守三件事：关键词交给服务端（昵称或真实姓名都能搜到）、换词/翻页不丢已选的人、
+ * 已选的人即使不在当前结果里也能取消。
+ */
+test('协会空间 —— 建组选人可搜索：按昵称或姓名找人、换词不丢已选、已选可取消', async () => {
+  const fx = spaceFixture();
+  fx.to('demo_muc_admin');
+  try {
+    const page = instantiate(spacePanelConfig);
+    await page.onLoad();
+    await page.onSwitchSub({ currentTarget: { dataset: { sub: 'group' } } });
+    await page.onToggleCreate();
+    assert.ok(page.data.roster.length > 0, '打开表单就有候选（无关键词的第一页）');
+    assert.strictEqual(page.data.groupKeyword, '');
+
+    // 按真实姓名里的一个字搜：命中的是张宇轩，且他的昵称「宇轩」也在结果里
+    await page.onInputGroupKeyword({ detail: { value: '张' } });
+    assert.ok(page.data.roster.length > 0, '「张」要搜得到人');
+    assert.ok(page.data.roster.every((row) => `${row.nickName}${row.realName}`.includes('张')), '结果都命中关键词');
+    const zhang = page.data.roster.find((row) => row.userId === 'u02');
+    assert.ok(zhang, '张宇轩（u02）在结果里');
+    assert.strictEqual(page.data.groupEmptyNote, '');
+
+    // 选一个人，再换关键词：他不在新结果里了，但已选清单不能跟着丢
+    await page.onTogglePick({ currentTarget: { dataset: { userid: zhang.userId } } });
+    assert.deepStrictEqual(page.data.selectedMemberIds, [zhang.userId]);
+    assert.deepStrictEqual(page.data.selectedMembers, [{ userId: zhang.userId, nickName: zhang.nickName }]);
+
+    await page.onInputGroupKeyword({ detail: { value: '思远' } });
+    const siyuan = page.data.roster[0];
+    assert.ok(siyuan && siyuan.userId === 'u03', '「思远」命中李思远（u03）');
+    assert.ok(!page.data.roster.some((row) => row.userId === zhang.userId), '换词后旧候选不在列表里');
+    assert.deepStrictEqual(page.data.selectedMemberIds, [zhang.userId], '换关键词不能把已选的人丢掉');
+    assert.strictEqual(page.data.selectedMembers[0].nickName, zhang.nickName, '已选那一行仍显示得出名字');
+
+    // 再选一个（跨关键词选人），建组时两个人都在
+    await page.onTogglePick({ currentTarget: { dataset: { userid: siyuan.userId } } });
+    assert.deepStrictEqual(page.data.selectedMemberIds, [zhang.userId, siyuan.userId]);
+    page.onField({ currentTarget: { dataset: { field: 'name' } }, detail: { value: '搜索建组' } });
+    await page.onCreateGroup();
+    assert.strictEqual(page.data.error, '');
+    assert.strictEqual(page.data.groups.length, 1);
+    assert.strictEqual(page.data.groups[0].memberCount, 2, '跨关键词选的两个人一起入组');
+
+    // 点「已选」小卡片＝取消，不必把人再搜回来
+    await page.onTogglePick({ currentTarget: { dataset: { userid: zhang.userId } } });
+    assert.deepStrictEqual(page.data.selectedMemberIds, [siyuan.userId]);
+
+    // 搜不到人时给一句说明，而不是空白列表
+    await page.onInputGroupKeyword({ detail: { value: '一定不存在的人' } });
+    assert.deepStrictEqual(page.data.roster, []);
+    assert.strictEqual(page.data.groupEmptyNote, '没有找到匹配的成员');
+
+    // 清空搜索回到完整第一页
+    await page.onClearGroupKeyword();
+    assert.strictEqual(page.data.groupKeyword, '');
+    assert.ok(page.data.roster.length > 0, '清空关键词后回到候选名单');
+
+    // 「加载更多」接在当前列表后面，并把游标带上去；没有下一页时一次请求都不发
+    const payloads = [];
+    page.api = {
+      listAssociationMembers: async (payload) => {
+        payloads.push(payload);
+        return { ok: true, members: [{ userId: 'u99', nickName: '分页会员', realName: '' }],
+          nextCursor: '', hasMore: false, keyword: payload.keyword };
+      },
+    };
+    page.setData({ groupHasMore: true, groupCursor: 'cursor-1' });
+    const before = page.data.roster.length;
+    await page.onLoadMoreGroupRoster();
+    assert.strictEqual(page.data.roster.length, before + 1, '「加载更多」是接在后面，不是替换');
+    assert.strictEqual(page.data.roster[before].userId, 'u99');
+    assert.strictEqual(payloads.length, 1);
+    assert.strictEqual(payloads[0].keyword, '', '翻页沿用当前关键词');
+    assert.strictEqual(payloads[0].cursor, 'cursor-1', '翻页带上上一页的游标');
+    assert.ok(payloads[0].limit > 0);
+    assert.strictEqual(page.data.groupHasMore, false);
+    payloads.length = 0;
+    await page.onLoadMoreGroupRoster();
+    assert.deepStrictEqual(payloads, [], '没有下一页就不再请求');
+
+    // Node 里没有模板渲染器：搜索框与「加载更多」只能落到模板上验
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const wxml = fs.readFileSync(path.join(__dirname, '..', 'miniprogram', 'components',
+      'association-space-panel', 'association-space-panel.wxml'), 'utf8');
+    assert.match(wxml, /bindinput="onInputGroupKeyword"/, '建组表单里要有搜索框');
+    assert.match(wxml, /bindtap="onLoadMoreGroupRoster"/, '还有下一页时要有「加载更多」');
+    assert.match(wxml, /placeholder="输入昵称或姓名找人"/, '搜索框要说清搜什么');
+  } finally {
+    fx.restore();
+  }
+});
+
 test('协会空间 —— 组员本人退出；管理者随后可归档', async () => {
   const fx = spaceFixture();
   try {

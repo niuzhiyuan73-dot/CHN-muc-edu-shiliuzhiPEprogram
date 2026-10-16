@@ -71,7 +71,37 @@
         </view>
         <view class="space-field">
           <text class="space-label">选入成员（已选 {{selectedMemberIds.length}} 人）</text>
-          <view wx:if="{{roster.length === 0}}" class="space-picker-note">本协会暂无可选会员</view>
+
+          <!-- 协会成员一多，从长名单里翻人不如直接搜。关键词交给服务端（昵称或真实姓名） -->
+          <view class="search-bar space-search">
+            <input
+              class="search-input"
+              type="text"
+              value="{{groupKeyword}}"
+              confirm-type="search"
+              placeholder="输入昵称或姓名找人"
+              bindinput="onInputGroupKeyword"
+            />
+            <view wx:if="{{groupKeyword}}" class="search-clear" catchtap="onClearGroupKeyword">✕</view>
+          </view>
+
+          <!-- 已选的人可能被搜索筛到结果之外：单列一行，点一下就取消，不必再搜回来 -->
+          <view wx:if="{{selectedMembers.length > 0}}" class="space-picked">
+            <view
+              wx:for="{{selectedMembers}}"
+              wx:key="userId"
+              wx:for-item="picked"
+              class="space-picked-chip"
+              data-userid="{{picked.userId}}"
+              bindtap="onTogglePick"
+            >
+              <text class="space-picked-name">{{picked.nickName}}</text>
+              <text class="space-picked-x">✕</text>
+            </view>
+          </view>
+
+          <view wx:if="{{groupLoading && roster.length === 0}}" class="space-picker-note">加载中…</view>
+          <view wx:elif="{{roster.length === 0}}" class="space-picker-note">{{groupEmptyNote}}</view>
           <view wx:else class="space-picker">
             <view
               wx:for="{{roster}}"
@@ -83,6 +113,11 @@
               <text class="space-pick-name">{{item.nickName}}</text>
               <text class="space-pick-check">{{item.picked ? '✓' : ''}}</text>
             </view>
+          </view>
+
+          <!-- 只在还有下一页时出现；加载中不给再点（处理器也会挡一道） -->
+          <view wx:if="{{groupHasMore}}" class="space-picker-more" bindtap="onLoadMoreGroupRoster">
+            {{groupLoading ? '加载中…' : '加载更多…'}}
           </view>
         </view>
         <button class="btn btn-primary btn-block" bindtap="onCreateGroup" disabled="{{groupBusy}}">

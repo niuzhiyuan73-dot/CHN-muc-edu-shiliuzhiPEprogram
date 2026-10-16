@@ -92,9 +92,25 @@ Component({
     editingId: '',
     /** 编辑时自带的版本号，提交时回传以防覆盖他人改动 */
     editRevision: 0,
-    /** 建组候选：本协会在册会员（脱敏 DTO） */
+    /** 建组候选：本协会在册会员（脱敏 DTO），筛选后的一页 */
     roster: [],
     selectedMemberIds: [],
+    /**
+     * 已选成员的展示行（[{ userId, nickName }]）。
+     * 搜索会把已选的人筛到结果之外，只靠候选列表看不出来；这一行始终列出已选的人，
+     * 点一下就取消，省得为了取消一个人再把他搜出来。
+     */
+    selectedMembers: [],
+    /** 建组选人的搜索词（与成员页签的 keyword 各管一摊，互不串） */
+    groupKeyword: '',
+    /** 建组选人正在取数（搜索 / 加载更多） */
+    groupLoading: false,
+    /** 建组选人还有下一页 */
+    groupHasMore: false,
+    /** 建组选人的游标；关键词变化时必须重置（排序档位依赖关键词） */
+    groupCursor: '',
+    /** 建组选人一行都没有时给的原因 */
+    groupEmptyNote: '',
     /** 展开的名册：groupId -> { loading, members } */
     openGroupId: '',
     detailMembers: [],
@@ -243,6 +259,9 @@ Component({
         // listAssociationGroups 的 ok:false 只出现在权限判定处（其余失败都抛异常，
         // 走下面的 catch）。因此这里能确定是「没有读取权」，而非加载故障。
         const denied = !groupResult.ok;
+        const rosterRows = denied ? [] : (memberResult.members || []).map((row) => this.describeMember(row));
+        const selected = denied ? [] : this.data.selectedMemberIds.slice();
+        this.rememberMemberNames(rosterRows);
         this.setData({
           loading: false,
           loadError: '',
@@ -256,7 +275,15 @@ Component({
           themeClass: currentThemeClass(),
           groups: denied ? [] : (groupResult.groups || []).map((row) => this.describeGroup(row)),
           canManage: denied ? false : Boolean(groupResult.canManage),
-          roster: denied ? [] : (memberResult.members || []).map((row) => this.describeMember(row)),
+          roster: this.markPicked(rosterRows, selected),
+          selectedMembers: this.selectedRowsOf(selected),
+          // 重新装载后选人区回到「无关键词的第一页」：搜索词不跨次保留，
+          // 免得下次点开表单时列表是筛过的、却看不出筛了什么
+          groupKeyword: '',
+          groupLoading: false,
+          groupCursor: denied ? '' : (memberResult.nextCursor || ''),
+          groupHasMore: denied ? false : Boolean(memberResult.hasMore),
+          groupEmptyNote: '',
         });
         // 无权限时不再往下拉数据——训练 / 通知同样是同一道准入线，拉了也是空。
         if (denied) return undefined;
@@ -344,15 +371,21 @@ Component({
 
     onToggleCreate() {
       if (!this.data.canManage || this.data.groupBusy) return undefined;
+      const open = !this.data.showCreate;
       this.requestId = '';
       this.setData({
-        showCreate: !this.data.showCreate,
+        showCreate: open,
         editingId: '',
         groupForm: { name: '', description: '' },
         selectedMemberIds: [],
+        selectedMembers: [],
+        groupKeyword: '',
         roster: this.data.roster.map((row) => ({ ...row, picked: false })),
         notice: '',
       });
+      // 打开表单时按「无关键词的第一页」重取一次：上一次可能搜过、也可能翻过页，
+      // 直接沿用会让管理员对着一个自己都不记得筛过的名单选人
+      return open ? this.loadGroupRoster() : undefined;
     },
 
     /** 展开/收起某个小组的编辑表单（点第二次收起，不再请求） */
@@ -403,10 +436,119 @@ Component({
     onTogglePick(event) {
       const userId = event.currentTarget.dataset.userid;
       if (!userId) return undefined;
-      // 在 roster 行上翻转 picked（WXML 不支持 indexOf，选中的判断必须预先算好），
-      // 再把选中的 userId 收成一份清单交给建组接口。
-      const roster = this.data.roster.map((row) => (row.userId === userId ? { ...row, picked: !row.picked } : row));
-      return this.setData({ roster, selectedMemberIds: roster.filter((row) => row.picked).map((row) => row.userId) });
+      // 选中清单是唯一真值：候选列表可能只是搜索结果里的一页，
+      // 拿它反推「谁被选了」会把当前没显示出来的人丢掉
+      const selected = this.data.selectedMemberIds.includes(userId)
+        ? this.data.selectedMemberIds.filter((id) => id !== userId)
+        : this.data.selectedMemberIds.concat(userId);
+      return this.applySelected(selected);
+    },
+
+    /* ---------- 建组选人的搜索与分页 ---------- */
+
+    /**
+     * 记下见过的会员昵称。搜索换词后已选的人可能不在当前结果里，
+     * 「已选」那一行仍要显示得出名字，不能退化成编号。
+     * @param {Array<Object>} rows
+     * @returns {Object} userId → nickName
+     */
+    rememberMemberNames(rows) {
+      const names = this.memberNames || {};
+      for (const row of rows || []) {
+        if (row && row.userId && !names[row.userId]) names[row.userId] = row.nickName || '';
+      }
+      this.memberNames = names;
+      return names;
+    },
+
+    /** 已选编号 → 展示行（名字用见过的那份；实在没有才退回编号） */
+    selectedRowsOf(ids) {
+      const names = this.memberNames || {};
+      return (ids || []).map((userId) => ({ userId, nickName: names[userId] || userId }));
+    },
+
+    /** 给候选行标上勾选态：WXML 不能 indexOf，选中与否必须预先算好 */
+    markPicked(rows, selected) {
+      const chosen = new Set(selected || []);
+      return (rows || []).map((row) => ({ ...row, picked: chosen.has(row.userId) }));
+    },
+
+    /**
+     * 落一次选人结果：`selectedMemberIds` 是唯一真值，列表勾选态与「已选」小卡片都由它推出来。
+     * @param {string[]} selected
+     * @returns {Promise<void>}
+     */
+    applySelected(selected) {
+      const names = this.rememberMemberNames(this.data.roster);
+      const ids = Array.from(new Set(selected || []));
+      return this.setData({
+        selectedMemberIds: ids,
+        selectedMembers: ids.map((userId) => ({ userId, nickName: names[userId] || userId })),
+        roster: this.markPicked(this.data.roster, ids),
+      });
+    },
+
+    /**
+     * 取建组候选人的一页。
+     *
+     * 【为什么把关键词交给服务端，而不是在客户端把 50 条过滤一遍】
+     * 候选池是按页取的，会里人一多，要的人根本不在已经取回来的那一页里，
+     * 客户端过滤只会给出「搜不到」的假象。服务端（见 association-member.js）
+     * 按昵称或真实姓名匹配、前缀命中优先排序、游标分页，与成员页签同一把尺子，
+     * 协会再大也搜得全、翻得完。
+     *
+     * @param {Object} [options]
+     * @param {boolean} [options.append] 为真时接在当前列表后面（「加载更多」）
+     * @returns {Promise<void>}
+     */
+    loadGroupRoster(options = {}) {
+      if (!this.api) return Promise.resolve();
+      const { append = false } = options;
+      const keyword = String(this.data.groupKeyword || '').trim();
+      this.setData({ groupLoading: true, groupEmptyNote: '', error: '' });
+      return this.api.listAssociationMembers({
+        keyword,
+        limit: PICK_POOL,
+        cursor: append ? this.data.groupCursor : '',
+      })
+        .then((result) => {
+          if (!result || result.ok === false) throw new Error((result && result.message) || '成员加载失败');
+          const rows = (result.members || []).map((row) => this.describeMember(row));
+          this.rememberMemberNames(rows);
+          const merged = append ? this.data.roster.concat(rows) : rows;
+          this.setData({
+            groupLoading: false,
+            roster: this.markPicked(merged, this.data.selectedMemberIds),
+            selectedMembers: this.selectedRowsOf(this.data.selectedMemberIds),
+            groupCursor: result.nextCursor || '',
+            groupHasMore: Boolean(result.hasMore),
+            groupEmptyNote: merged.length === 0
+              ? (keyword ? '没有找到匹配的成员' : '本协会暂无可选会员')
+              : '',
+          });
+        })
+        .catch((err) => this.setData({
+          groupLoading: false,
+          error: err.message || '成员加载失败',
+          groupEmptyNote: '成员加载失败，请重试',
+        }));
+    },
+
+    /** 搜索框输入：关键词变了就得重新取第一页（游标里的排序档位依赖关键词） */
+    onInputGroupKeyword(event) {
+      const raw = event.detail.value == null ? '' : String(event.detail.value);
+      this.setData({ groupKeyword: raw });
+      return this.loadGroupRoster();
+    },
+
+    onClearGroupKeyword() {
+      this.setData({ groupKeyword: '' });
+      return this.loadGroupRoster();
+    },
+
+    onLoadMoreGroupRoster() {
+      if (this.data.groupLoading || !this.data.groupHasMore) return undefined;
+      return this.loadGroupRoster({ append: true });
     },
 
     onCreateGroup() {

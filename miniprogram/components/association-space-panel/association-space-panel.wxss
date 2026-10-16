@@ -238,9 +238,55 @@
   border-radius: var(--radius-md);
 }
 
+/* 建组表单里的搜索框：贴在选人区上方，底色随表单，别在卡片上再叠一层白 */
+.space-search {
+  height: 68rpx;
+  margin: var(--space-xs) 0 var(--space-sm);
+  background: var(--color-bg, #f5f6f8);
+  border: 1rpx solid var(--color-border, #e5e7eb);
+}
+
+/* 已选成员：搜索换词后仍要看得见、点得掉，所以单独列一行小卡片 */
+.space-picked {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-sm);
+}
+
+.space-picked-chip {
+  display: flex;
+  align-items: center;
+  padding: 4rpx var(--space-sm);
+  border-radius: var(--radius-md);
+  background: var(--color-primary-light, #eef3ff);
+  color: var(--color-primary, #3a6ea5);
+  font-size: var(--font-sm);
+}
+
+.space-picked-name {
+  max-width: 240rpx;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.space-picked-x {
+  margin-left: 8rpx;
+  opacity: 0.65;
+}
+
+/* 「加载更多」：还有下一页时才出现 */
+.space-picker-more {
+  padding: var(--space-sm) 0 0;
+  text-align: center;
+  font-size: var(--font-sm);
+  color: var(--color-primary, #3a6ea5);
+}
+
 .space-picker-note {
   font-size: var(--font-sm);
-  color: var(--text-secondary);
+  color: var(--color-text-secondary, #6b7280);
 }
 
 .space-pick-row {
