@@ -54,7 +54,11 @@ Page({
     errorText: '',
   },
 
-  /** 返回 Promise 让测试能等待首屏加载完 */
+  /** 返回 Promise 让测试能等待首屏加载完。
+   *
+   * `this.eventId` 初值是路由 query 原样（开发者工具里仍是未解码的 %3A 形式）；
+   * 装载成功后换成探测出的真实编号，提交（结束赛事）才落在同一场赛事上。
+   */
   onLoad(query) {
     this.eventId = (query && query.eventId) || '';
     return this.refresh();
@@ -105,6 +109,9 @@ Page({
   /**
    * 重新装载整页数据。
    * 会覆盖已填的名次——所以只在下拉刷新与首次进入时调用。
+   *
+   * 装载器回传的 `eventId` 是探测命中的真实编号（路由 query 在开发者工具 /
+   * 真机上原样透传，仍是未解码值），采纳它，提交时才不会「赛事不存在」。
    * @returns {Promise<void>}
    */
   async refresh() {
@@ -116,6 +123,7 @@ Page({
       const view = await loadSchoolEventPlacementView(this.eventId, {
         schoolId: scope.schoolId, association: scope.association, actorId,
       });
+      if (view.eventId) this.eventId = view.eventId;
       this.setData({ loading: false, error: '', view, errorText: '', themeClass: currentThemeClass() });
     } catch (err) {
       console.error('[event-placement] 名次页加载失败', err);

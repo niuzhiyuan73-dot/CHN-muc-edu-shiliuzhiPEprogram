@@ -1,26 +1,50 @@
 /**
- * 学校维度演示内容（公告 / 赛事 / 比赛）自检（迁移清单 C）
+ * 学校维度演示内容（公告 / 赛事 / 比赛 / 报名）自检（迁移清单 C）
  * ============================================================
  * schoolMock.reset() 默认给多个「学校 + 协会」范围摆上演示内容，协会空间与排行榜
- * 一进去就有东西可看，不必先手工发几条。这里守三件事：
+ * 一进去就有东西可看，不必先手工发几条。这里守四件事：
  *   1. 每个范围的内容都绑定自己的范围，且是被服务读得出来的完整记录（不是半截）；
  *   2. 三层差异性（2026-10-16 扩充）：协会之间的公告条数 / 标题不同、跨校各有各的
  *      内容、不同演示账号战绩不同——切了范围或身份，看到的东西确实不一样；
  *   3. reset({ withDemoContent: false }) 能把内容关干净——公告页那类
- *      「自己摆几条再数条数」的用例全靠它，否则条数会随演示内容的多寡漂移。
+ *      「自己摆几条再数条数」的用例全靠它，否则条数会随演示内容的多寡漂移；
+ *   4. 报名与赛事自洽（2026-10-16 修复「已结束的赛事显示 0 人 / 名次显示编号」）：
+ *      每场赛事的 signupCount 等于有效报名条数；已结束赛事的报名记录与名次同源，
+ *      名次里的每个人都能在名单里查到姓名。
  */
 const { test, describe, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createSchoolDemoContent, DEMO_CONTENT_SPECS } = require('../miniprogram/services/school-seed.js');
+const {
+  createSchoolDemoContent, DEMO_CONTENT_SPECS, DEMO_ACCOUNTS,
+} = require('../miniprogram/services/school-seed.js');
+const { MEMBER_SEED } = require('../miniprogram/services/seed.js');
 const { isAnnouncementDoc } = require('../miniprogram/services/school-announcement-service.js');
 const { isEventDoc } = require('../miniprogram/services/school-event-service.js');
+const {
+  loadSchoolEventDetailView, loadSchoolEventPlacementView,
+} = require('../miniprogram/services/school-event-view.js');
 const schoolMock = require('../miniprogram/services/school-mock.js');
+const { schoolEventSignupKey } = require('../miniprogram/utils/school.js');
 const {
   MATCH_STATUS, MATCH_OUTCOME, MATCH_COMPETITION, RANK_PROJECT,
+  EVENT_STATUS, SIGNUP_STATUS,
 } = require('../miniprogram/utils/constants.js');
 
 const SCOPE = { schoolId: 'muc', association: 'pkb' };
+
+/** 旧种子账号的编号（u01 … u24），与 school-mock 的 attachLegacyMembers 同口径。 */
+const legacyIds = () => MEMBER_SEED.map((_, index) => `u${String(index + 1).padStart(2, '0')}`);
+
+/** 演示内容里允许出现的会员：两校演示账号 + 旧种子会员 + 学院负责人演示身份。 */
+function knownMemberIds() {
+  return new Set([
+    ...DEMO_ACCOUNTS.map(account => account.id),
+    ...legacyIds(),
+    // 由 school-mock 补进种子（不在 DEMO_ACCOUNTS 里），演示数据不许写到这之外的人头上
+    'demo_muc_college_leader',
+  ]);
+}
 
 /** 某范围的内容片（与 createSchoolDemoContent 的切法一致）。 */
 function contentOf(schoolId, association) {
@@ -30,6 +54,7 @@ function contentOf(schoolId, association) {
     announcements: content.announcements.filter(inScope),
     events: content.events.filter(inScope),
     matches: content.matches.filter(inScope),
+    eventSignups: content.eventSignups.filter(inScope),
   };
 }
 
@@ -43,6 +68,8 @@ test('演示内容 —— 每个范围的记录都绑定自己的「学校 + 协
   assert.equal(content.announcements.length, 18);
   assert.equal(content.events.length, 9);
   assert.equal(content.matches.length, 39);
+  // 报名记录条数也是契约：改了要同步 docs/mock演示账号.md §7.1 与本节断言
+  assert.equal(content.eventSignups.length, 38);
 
   assert.ok(content.announcements.every(doc => isAnnouncementDoc(doc)), '公告形状不完整');
   assert.ok(content.events.every(doc => isEventDoc(doc)), '赛事形状不完整');
@@ -56,11 +83,67 @@ test('演示内容 —— 每个范围的记录都绑定自己的「学校 + 协
   assert.ok(content.announcements.every(scoped), '公告必须绑定规格表里的范围');
   assert.ok(content.events.every(scoped), '赛事必须绑定规格表里的范围');
   assert.ok(content.matches.every(scoped), '比赛必须绑定规格表里的范围');
+  assert.ok(content.eventSignups.every(scoped), '报名记录必须绑定规格表里的范围');
   assert.ok(scoped(content.announcements[0]) && content.announcements.some(doc =>
     doc.schoolId === 'buaa'), '跨校内容也要有（切到北航不是空态）');
 
-  const ids = [...content.announcements, ...content.events, ...content.matches].map(doc => doc._id);
+  const ids = [...content.announcements, ...content.events, ...content.matches, ...content.eventSignups]
+    .map(doc => doc._id);
   assert.equal(new Set(ids).size, ids.length, '演示记录编号必须唯一');
+});
+
+test('演示报名 —— 主键由「范围 + 赛事 + 会员」组成，只能写给存在的会员', () => {
+  const content = createSchoolDemoContent();
+  const eventIds = new Set(content.events.map(doc => doc._id));
+  const known = knownMemberIds();
+
+  for (const doc of content.eventSignups) {
+    assert.ok(eventIds.has(doc.eventId), `报名记录必须挂在演示赛事上：${doc._id}`);
+    assert.ok(known.has(doc.userId), `报名记录只能写给存在的会员：${doc.userId}`);
+    // 主键由 schoolEventSignupKey 组成：同一人同一赛事恒一条，跨范围伪造不出编号
+    assert.equal(doc._id, schoolEventSignupKey(doc.eventId, doc.userId, doc));
+    assert.equal(doc.status, SIGNUP_STATUS.SIGNED, '演示报名一律落「已报名」');
+    assert.equal(doc.actorId, doc.userId, '演示报名都是本人报的');
+    assert.equal(doc.checkInTime, null);
+    assert.equal(doc.cancelTime, null);
+    assert.equal(doc.revision, 1);
+    assert.ok(Number.isFinite(Date.parse(doc.signTime)), `报名时间必须可复现：${doc.signTime}`);
+  }
+});
+
+test('演示报名 —— signupCount 就是有效报名条数，已结束赛事的名单覆盖名次', () => {
+  const content = createSchoolDemoContent();
+  const rosterOf = eventId => content.eventSignups
+    .filter(doc => doc.eventId === eventId && doc.status !== SIGNUP_STATUS.CANCELED)
+    .map(doc => doc.userId);
+
+  for (const doc of content.events) {
+    assert.equal(doc.signupCount, rosterOf(doc._id).length,
+      `${doc.title} 的 signupCount 与报名记录条数不一致`);
+  }
+
+  // 已结束的赛事：名次里出现的每个人都必须报过名，人数就是名次人数
+  // ——少了这条链，详情页与名次页取不到会员档案，只能回退显示编号
+  const finished = content.events.filter(doc => doc.status === EVENT_STATUS.FINISHED);
+  assert.ok(finished.length > 0, '演示内容里应有已结束的赛事');
+  for (const doc of finished) {
+    const roster = rosterOf(doc._id);
+    assert.ok(doc.signupCount > 0, `${doc.title} 已结束却一个报名记录都没有`);
+    assert.equal(doc.signupCount, doc.results.length, `${doc.title} 的报名人数应等于名次人数`);
+    for (const result of doc.results) {
+      assert.ok(roster.includes(result.userId), `${doc.title} 的名次里 ${result.userId} 没有报名记录`);
+    }
+  }
+
+  // 报名中的赛事：给 2～6 人，且不给 u01 / u02 写报名
+  // （它们在旧种子里是管理员 / 学院负责人，报了名会改掉别的演示身份看到的「我报没报」）
+  const signupEvents = content.events.filter(doc => doc.status === EVENT_STATUS.SIGNUP);
+  assert.ok(signupEvents.length > 0, '演示内容里应有报名中的赛事');
+  for (const doc of signupEvents) {
+    const roster = rosterOf(doc._id);
+    assert.ok(roster.length >= 2 && roster.length <= 6, `${doc.title} 的报名人数应在 2～6 之间`);
+    assert.ok(!roster.includes('u01') && !roster.includes('u02'), `${doc.title} 不该给 u01 / u02 写报名`);
+  }
 });
 
 test('差异性 —— 各协会的公告条数与标题不同，跨校内容也不同', () => {
@@ -85,6 +168,12 @@ test('差异性 —— 各协会的公告条数与标题不同，跨校内容也
   assert.equal(buaa.matches.length, 8);
   const crossTitles = [...pkb.announcements, ...buaa.announcements].map(doc => doc.title);
   assert.equal(new Set(crossTitles).size, crossTitles.length, '跨校公告标题不能重复');
+
+  // 报名记录同样是「各范围各一份」：条数与 docs/mock演示账号.md §7.1 的规模表同源
+  assert.deepEqual([
+    pkb.eventSignups.length, tt.eventSignups.length, bd.eventSignups.length,
+    buaa.eventSignups.length, contentOf('buaa', 'tt').eventSignups.length,
+  ], [13, 9, 4, 8, 4]);
 });
 
 /* ============================================================
@@ -169,6 +258,42 @@ describe('schoolMock.reset() —— 默认挂上演示内容', () => {
     const heavy = await repoRead('demo_buaa_member');
     const light = await repoRead('demo_buaa_college_leader');
     assert.ok(heavy > light, `同一协会里不同账号的场次应有差别（${heavy} vs ${light}）`);
+  });
+
+  test('报名人数与名次姓名都来自报名台账（不再是 0 人 / 编号）', async () => {
+    const api = schoolMock.forAssociationSpace(SCOPE);
+    const list = await api.listSchoolEvents({});
+
+    // 已结束的赛事：列表人数是真实人数，quotaText 不再是 0/N 人
+    const finished = list.events.find(row => row.isFinished);
+    assert.ok(finished, '演示内容里有已结束的赛事');
+    assert.equal(finished.signupCount, 4);
+    assert.equal(finished.quotaText, '4/16 人');
+
+    // 报名中的赛事同样是真实人数（条数由报名规格定，这里只守「与 DTO 一致、不为 0」）
+    const open = list.events.find(row => row.isSignup);
+    assert.ok(open && open.signupCount > 0, '报名中的赛事也应有人');
+    assert.equal(open.quotaText, `${open.signupCount}/${open.quota} 人`);
+
+    // 详情页的最终名次与报名名单：姓名来自会员档案，不再回退显示编号
+    const names = new Map(MEMBER_SEED.map((item, index) =>
+      [`u${String(index + 1).padStart(2, '0')}`, item.nickName]));
+    const resultIds = ['u03', 'u05', 'u06', 'u07'];
+    const detail = await loadSchoolEventDetailView(finished.eventId, { ...SCOPE, actorId: 'u06' });
+    assert.equal(detail.found, true);
+    assert.equal(detail.hasSignups, true, '已结束赛事的详情页应有报名名单');
+    assert.deepEqual(detail.signupRows.map(row => row.userId).sort(), resultIds);
+    assert.deepEqual(detail.signupRows.map(row => row.nickName), resultIds.map(id => names.get(id)));
+    assert.deepEqual(detail.resultRows.map(row => row.nickName), resultIds.map(id => names.get(id)));
+
+    // 名次录入页的名单同样有姓名（修复前是一条名单都没有的空名单）
+    schoolMock.setDemoActor('demo_muc_admin');
+    const placement = await loadSchoolEventPlacementView(finished.eventId,
+      { ...SCOPE, actorId: 'demo_muc_admin' });
+    assert.equal(placement.allowed, true);
+    assert.equal(placement.found, true);
+    assert.deepEqual(placement.rows.map(row => row.userId).sort(), resultIds);
+    assert.deepEqual(placement.rows.map(row => row.nickName), resultIds.map(id => names.get(id)));
   });
 });
 

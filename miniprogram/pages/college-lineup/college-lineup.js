@@ -103,6 +103,11 @@ Page({
         college: this.college,
         collegeId,
       });
+      // 采纳装载器探测出的真实编号再用于写：query 在微信开发者工具 / 真机里是
+      // 原样透传的（未解码），继续拿路由原值提交排阵会被服务端答「找不到这个大场」
+      // （见 utils/route-query.js）。大场编号与它所属的赛事编号都要落回实例。
+      if (view.tieId) this.tieId = view.tieId;
+      if (view.eventId) this.eventId = view.eventId;
       this.loaded = true;
       this.setData({ loading: false, error: '', view, themeClass: currentThemeClass() });
     } catch (err) {

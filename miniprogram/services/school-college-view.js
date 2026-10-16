@@ -182,6 +182,12 @@ function firstRoundPairsTextOf(draw) {
 /**
  * 路由编号兼容：先原值、再解码值地探测学院赛，返回命中的编号与 DTO。
  * 未命中时回退到第一个候选与最后一次的失败 DTO（保留原有的「找不到」话术）。
+ *
+ * 【为什么命中的编号要一路带回页面】
+ * 探测出真实编号却不回传，页面实例上留着的仍是路由原值；读靠本层兜住了，
+ * 写却直连服务端——同一个编号两种命运，页面就成了「看得见、写不进」。
+ * 所以这里返回的 `id` 是**写操作与跳转唯一该用的编号**，由装载器放进视图模型
+ * （各 loadCollegeXxxView 的 eventId / tieId / matchId），页面照单采纳。
  */
 async function resolveCollegeEventId(api, eventId) {
   const candidates = routeIdCandidates(eventId);
@@ -260,7 +266,9 @@ async function loadCollegeEntryView(eventId, options = {}) {
     found,
     canSubmit,
     blockReason,
-    eventId: found ? event.eventId : eventId || '',
+    // 真实编号（探测命中的那个）回传页面：提交名单必须用它，路由原值在未解码
+    // 环境里查不到这场赛事（见 resolveCollegeEventId 的注释）
+    eventId: found ? (event.eventId || resolvedId) : eventId || '',
     title: found ? event.title || '' : '',
     status,
     statusLabel: found ? event.statusLabel || '未知状态' : '',
@@ -321,7 +329,8 @@ async function loadCollegeEntryReviewView(eventId, options = {}) {
     found,
     canReview,
     blockReason,
-    eventId: found ? event.eventId : eventId || '',
+    // 真实编号回传页面：审核（通过 / 退回）必须用它（见 loadCollegeEntryView）
+    eventId: found ? (event.eventId || resolved.id) : eventId || '',
     title: found ? event.title || '' : '',
     statusLabel: found ? event.statusLabel || '未知状态' : '',
     legPlanText: found ? event.legPlanText : '',
@@ -458,7 +467,8 @@ async function loadCollegeEventDetailView(eventId, options = {}) {
   return {
     found: true,
     blockReason: '',
-    eventId: event.eventId,
+    // 真实编号回传页面：抽签 / 开赛 / 跳转名单与排阵页都必须用它（见 resolveCollegeEventId）
+    eventId: event.eventId || resolved.id,
     title: event.title || '',
     status: event.status,
     statusLabel: event.statusLabel || '未知状态',
@@ -512,10 +522,22 @@ async function loadCollegeLineupView(tieId, options = {}) {
   const { schoolId, association, actorId = null, eventId = '' } = options;
   const api = space.forScope({ schoolId, association });
 
-  const tiesDto = await api.listCollegeTies(eventId ? { eventId } : {});
-  // 路由编号兼容：未解码的 query 也要能对上大场
+  // 路由编号兼容：未解码的 query 也要能对上大场。
+  // 【为什么按候选序列取列表】大场列表要按 eventId 过滤，而未解码的 eventId 会被
+  // 服务端原样比对，一条都过滤不出来——排阵页于是「找不到这个大场」。候选最多两个
+  // （原值 → 解码值），取到就停；没带 eventId 时退化成一次不带过滤的读取，与从前一样。
+  const eventCandidates = eventId ? routeIdCandidates(eventId) : [''];
+  let tiesDto = null;
+  let tieRows = [];
+  for (const candidate of eventCandidates) {
+    // eslint-disable-next-line no-await-in-loop —— 候选最多两个
+    const dto = await api.listCollegeTies(candidate ? { eventId: candidate } : {});
+    if (!tiesDto) tiesDto = dto;
+    tieRows = asArray(dto && dto.ties);
+    if (tieRows.length > 0) { tiesDto = dto; break; }
+  }
   const tieCandidates = routeIdCandidates(tieId);
-  const row = asArray(tiesDto && tiesDto.ties).find(item => tieCandidates.includes(item.tieId)) || null;
+  const row = tieRows.find(item => tieCandidates.includes(item.tieId)) || null;
   const resolvedTieId = row ? row.tieId : (tieCandidates[0] || '');
   const resolvedEventId = row ? row.eventId : eventId;
 
@@ -547,7 +569,8 @@ async function loadCollegeLineupView(tieId, options = {}) {
     asArray(defaults.entries).map(item => [Number(item.legNo), asArray(item.players).map(String)])
   );
   const roster = entry ? asArray(entry.memberIds) : [];
-  const existing = lineups.find(item => item.tieId === tieId && item.college === college) || null;
+  // 「我交没交过」按**解析后的**大场编号比对：路由原值在未解码环境里对不上
+  const existing = lineups.find(item => item.tieId === resolvedTieId && item.college === college) || null;
 
   // 拦截顺序即提示顺序：登录 → 大场存在 → 参赛学院 → 赛事态 → 排阵权 → 名单状态
   let blockReason = '';
@@ -604,6 +627,8 @@ async function loadCollegeLineupView(tieId, options = {}) {
     found: Boolean(row),
     blockReason,
     canSubmit: !blockReason,
+    // 真实编号（探测命中的大场 / 它所属的赛事）回传页面：提交排阵必须用它，
+    // 路由原值在未解码环境里对不上大场（见 resolveCollegeEventId 的注释）
     tieId: row ? row.tieId : resolvedTieId,
     eventId: resolvedEventId,
     title: event ? event.title || '' : '',
@@ -712,7 +737,8 @@ async function loadCollegeMatchView(matchId, options = {}) {
   return {
     found: true,
     blockReason: '',
-    matchId: record.matchId,
+    // 真实编号回传页面：录分 / 确认 / 撤销都要用它（见 resolveCollegeEventId 的注释）
+    matchId: record.matchId || resolvedMatchId,
     tieId: record.tieId || '',
     legNo: Number(record.legNo) || 0,
     eventId,
@@ -805,7 +831,8 @@ async function loadCollegePlacementView(eventId, options = {}) {
 
   const eventFields = {
     found,
-    eventId: found ? event.eventId : eventId || '',
+    // 真实编号回传页面：提交名次（结束赛事）必须用它（见 resolveCollegeEventId 的注释）
+    eventId: found ? (event.eventId || resolved.id) : eventId || '',
     title: found ? event.title || '' : '',
     statusLabel: found ? event.statusLabel || '未知状态' : '',
     isFinished: found && event.status === COLLEGE_EVENT_STATUS.FINISHED,
@@ -826,7 +853,9 @@ async function loadCollegePlacementView(eventId, options = {}) {
     };
   }
 
-  const entriesDto = await api.listCollegeEntries({ eventId });
+  // 取名单也要用**解析后的**编号：路由原值在未解码环境里查不到名单，
+  // 页面上就会一所候选学院也没有（看着像「没人交名单」）
+  const entriesDto = await api.listCollegeEntries({ eventId: resolved.id });
   const entries = asArray(entriesDto && entriesDto.entries);
 
   // 已录过的名次回填，免得管理员重开页面时从零再填一遍

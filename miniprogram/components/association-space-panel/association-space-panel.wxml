@@ -121,6 +121,10 @@
           <button wx:if="{{canManage && !group.archived}}" class="btn btn-outline space-mini"
             data-groupid="{{group.groupId}}" data-revision="{{group.revision}}" bindtap="onArchiveGroup"
             disabled="{{groupBusy}}">归档</button>
+          <!-- 删除不按 archived 过滤：归档的组也要能删掉，否则它永远占着组名与列表 -->
+          <button wx:if="{{canManage}}" class="btn btn-danger space-mini"
+            data-groupid="{{group.groupId}}" data-revision="{{group.revision}}" bindtap="onDeleteGroup"
+            disabled="{{groupBusy}}">删除</button>
         </view>
 
         <!-- 编辑表单：管理者改组名 / 说明，提交带版本号 -->

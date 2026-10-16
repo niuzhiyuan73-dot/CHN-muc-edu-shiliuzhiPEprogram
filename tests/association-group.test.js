@@ -4,7 +4,7 @@ const { createSchoolDemoSeed } = require('../miniprogram/services/school-seed');
 const { createSchoolMemoryRepo } = require('../miniprogram/services/school-memory-repo');
 const { buildSchoolContext } = require('../miniprogram/services/school-context');
 const handlers = require('../miniprogram/services/association-group-service');
-const { schoolMembershipKey, schoolMemberKey } = require('../miniprogram/utils/school');
+const { schoolMembershipKey, schoolMemberKey, associationGroupMemberKey } = require('../miniprogram/utils/school');
 
 const NOW = new Date('2026-10-13T10:00:00Z');
 
@@ -210,4 +210,157 @@ test('建组校验：组名长度、请求编号与不存在的成员都会拒�
   assert.equal((await call(repo, 'createAssociationGroup', { name: '新手组', requestId: 'r1', memberIds: ['ghost'] })).ok,
     false, '含不合格成员');
   assert.equal((await repo.associationGroups.list()).length, 0, '全部拒绝时无写入');
+});
+
+/* ------------------------------------------------------------------ 删除整个小组 */
+
+test('复现用户现象：成员被移空的小组仍在列表里，但现在可以被删除', async () => {
+  const repo = fixture();
+  const group = await createGroup(repo, { name: '复现小组', requestId: 'repro', memberIds: ['demo_muc_member', 'demo_muc_other'] });
+  for (const userId of ['demo_muc_member', 'demo_muc_other']) {
+    assert.equal((await call(repo, 'removeAssociationGroupMember', { groupId: group.groupId, userId })).ok, true);
+  }
+  const emptied = await call(repo, 'getAssociationGroup', { groupId: group.groupId });
+  assert.equal(emptied.group.memberCount, 0);
+  assert.equal(emptied.group.status, 'active', '移空成员不等于删组——用户看到的正是这一条');
+  assert.equal((await call(repo, 'listAssociationGroups', {})).groups.length, 1);
+
+  const deleted = await call(repo, 'deleteAssociationGroup',
+    { groupId: group.groupId, expectedRevision: await revisionOf(repo, group.groupId) });
+  assert.equal(deleted.ok, true, deleted.message);
+  assert.equal((await call(repo, 'listAssociationGroups', {})).groups.length, 0, '删得掉：列表里不再有这个空组');
+});
+
+test('删除小组：从列表消失、成员关系不再 ACTIVE、组名可重建、审计留痕', async () => {
+  const repo = fixture();
+  const group = await createGroup(repo, { name: '新手组', requestId: 'r1', memberIds: ['demo_muc_member', 'demo_muc_other'] });
+  const before = await revisionOf(repo, group.groupId);
+
+  const deleted = await call(repo, 'deleteAssociationGroup', { groupId: group.groupId, expectedRevision: before });
+  assert.equal(deleted.ok, true, deleted.message);
+  assert.equal(deleted.deleted, true, '标记本次真的改了数据');
+
+  // 软删除：文档还在，状态与留痕落地（仓储没有 remove，也不做物理删除）
+  const doc = await repo.associationGroups.getById(group.groupId);
+  assert.equal(doc.status, 'deleted');
+  assert.equal(doc.revision, before + 1);
+  assert.equal(doc.memberCount, 0);
+  assert.equal(doc.deletedBy, 'demo_muc_admin');
+  assert.ok(doc.deletedAt, '删除时间落库');
+
+  // 读接口：列表不再列出，详情视为不存在
+  assert.deepEqual((await call(repo, 'listAssociationGroups', {}, 'demo_muc_member')).groups, [], '列表里不再出现');
+  const detail = await call(repo, 'getAssociationGroup', { groupId: group.groupId }, 'demo_muc_member');
+  assert.equal(detail.ok, false);
+  assert.equal(detail.message, '小组不存在');
+
+  // 成员关系全部结束，训练 / 赛事的限组资格随之失效
+  const relations = (await repo.associationGroupMembers.list()).filter(row => row.groupId === group.groupId);
+  assert.equal(relations.length, 2);
+  assert.equal(relations.every(row => row.status === 'removed'), true, '不再有 ACTIVE 关系');
+  assert.equal(relations.every(row => row.removedAt && row.removedBy === 'demo_muc_admin'), true, '移除留痕');
+
+  // 组名占位释放：同名可以重建，且拿到新的组编号
+  const rebuilt = await createGroup(repo, { name: '新手组', requestId: 'r2' });
+  assert.notEqual(rebuilt.groupId, group.groupId);
+  assert.deepEqual((await call(repo, 'listAssociationGroups', {})).groups.map(row => row.name), ['新手组']);
+
+  const audits = (await repo.auditLogs.list()).filter(row => row.action === 'deleteAssociationGroup');
+  assert.equal(audits.length, 1);
+  assert.equal(audits[0].groupId, group.groupId);
+  assert.equal(audits[0].actorId, 'demo_muc_admin');
+  assert.deepEqual(audits[0].removedMemberIds.slice().sort(), ['demo_muc_member', 'demo_muc_other']);
+});
+
+test('删除小组：普通会员、外校管理员与版本不符都被拒，且不落库', async () => {
+  const repo = fixture();
+  const group = await createGroup(repo, { name: '新手组', requestId: 'r1', memberIds: ['demo_muc_member'] });
+  const rev = await revisionOf(repo, group.groupId);
+
+  const asMember = await call(repo, 'deleteAssociationGroup', { groupId: group.groupId, expectedRevision: rev }, 'demo_muc_member');
+  assert.equal(asMember.ok, false, '普通会员不能删除小组');
+  assert.equal(asMember.message, '只有协会负责人及以上可以删除小组');
+  assert.equal((await call(repo, 'deleteAssociationGroup', { groupId: group.groupId, expectedRevision: rev }, 'demo_buaa_admin')).ok,
+    false, '外校管理员不能删本协会的组');
+  assert.equal((await call(repo, 'deleteAssociationGroup', { groupId: group.groupId })).ok, false, '缺版本号被拒');
+  assert.equal((await call(repo, 'deleteAssociationGroup', { groupId: group.groupId, expectedRevision: 0 })).ok, false, '版本号必须 ≥1');
+  assert.equal((await call(repo, 'deleteAssociationGroup', { groupId: group.groupId, expectedRevision: rev + 3 })).ok,
+    false, '版本不符被拒');
+  assert.equal((await call(repo, 'deleteAssociationGroup', {})).ok, false, '缺少小组编号');
+  assert.equal((await call(repo, 'deleteAssociationGroup', { expectedRevision: rev })).ok, false, '缺少小组编号');
+
+  assert.equal((await repo.associationGroups.getById(group.groupId)).status, 'active', '全部被拒时无写入');
+  assert.equal((await call(repo, 'listAssociationGroups', {})).groups.length, 1);
+  assert.equal((await repo.auditLogs.list()).filter(row => row.action === 'deleteAssociationGroup').length, 0);
+});
+
+test('删除小组：重复删除与查无此组都幂等，不重复写审计', async () => {
+  const repo = fixture();
+  const group = await createGroup(repo, { name: '新手组', requestId: 'r1', memberIds: ['demo_muc_member'] });
+  const rev = await revisionOf(repo, group.groupId);
+  const first = await call(repo, 'deleteAssociationGroup', { groupId: group.groupId, expectedRevision: rev });
+  assert.equal(first.ok, true);
+  assert.equal(first.deleted, true);
+
+  const again = await call(repo, 'deleteAssociationGroup', { groupId: group.groupId, expectedRevision: rev });
+  assert.equal(again.ok, true, '重复删除返回成功');
+  assert.equal(again.deleted, false, '第二次没有可删的东西');
+  assert.equal((await repo.associationGroups.getById(group.groupId)).revision, rev + 1, '重复删除不再改版本');
+
+  const ghost = await call(repo, 'deleteAssociationGroup', { groupId: 'ag_ghost', expectedRevision: 1 });
+  assert.equal(ghost.ok, true, '查无此组也返回成功（超时重试 / 并发第二次点击）');
+  assert.equal(ghost.deleted, false);
+  assert.equal((await repo.auditLogs.list()).filter(row => row.action === 'deleteAssociationGroup').length, 1, '幂等重复不重复写审计');
+});
+
+test('已删除组不能再编辑 / 归档 / 加人 / 移人 / 退组', async () => {
+  const repo = fixture();
+  const group = await createGroup(repo, { name: '新手组', requestId: 'r1', memberIds: ['demo_muc_member'] });
+  await call(repo, 'deleteAssociationGroup', { groupId: group.groupId, expectedRevision: await revisionOf(repo, group.groupId) });
+
+  assert.equal((await call(repo, 'updateAssociationGroup',
+    { groupId: group.groupId, name: '改个名', description: '', expectedRevision: 9 })).ok, false, '不能再编辑');
+  assert.equal((await call(repo, 'archiveAssociationGroup', { groupId: group.groupId, expectedRevision: 9 })).ok, false, '不能再归档');
+  assert.equal((await call(repo, 'addAssociationGroupMembers', { groupId: group.groupId, memberIds: ['demo_muc_other'] })).ok,
+    false, '不能再加人');
+  const removed = await call(repo, 'removeAssociationGroupMember', { groupId: group.groupId, userId: 'demo_muc_member' });
+  assert.equal(removed.ok, false, '不能再移人');
+  assert.equal(removed.message, '小组不存在');
+  assert.equal((await call(repo, 'leaveAssociationGroup', { groupId: group.groupId }, 'demo_muc_member')).ok, false, '组员也退不了一个已删掉的组');
+
+  const key = associationGroupMemberKey(group.groupId, 'demo_muc_member', { schoolId: 'muc', association: 'pkb' });
+  const relation = await repo.associationGroupMembers.getById(key);
+  assert.equal(relation.status, 'removed', '上面的调用没有把关系改回去');
+  const doc = await repo.associationGroups.getById(group.groupId);
+  assert.equal(doc.status, 'deleted');
+  assert.equal(doc.memberCount, 0);
+});
+
+test('归档的小组同样可以删除', async () => {
+  const repo = fixture();
+  const group = await createGroup(repo, { name: '新手组', requestId: 'r1', memberIds: ['demo_muc_member'] });
+  await call(repo, 'archiveAssociationGroup', { groupId: group.groupId, expectedRevision: await revisionOf(repo, group.groupId) });
+  const archived = await repo.associationGroups.getById(group.groupId);
+  assert.equal(archived.status, 'archived');
+
+  const deleted = await call(repo, 'deleteAssociationGroup', { groupId: group.groupId, expectedRevision: archived.revision });
+  assert.equal(deleted.ok, true, deleted.message);
+  assert.equal(deleted.deleted, true);
+  assert.equal((await repo.associationGroups.getById(group.groupId)).status, 'deleted');
+  assert.deepEqual((await call(repo, 'listAssociationGroups', {})).groups, []);
+});
+
+test('建组 → 删除 → 同一请求编号再建：真的重建，而不是返回已删除的组', async () => {
+  const repo = fixture();
+  const first = await createGroup(repo, { name: '新手组', requestId: 'r1' });
+  await call(repo, 'deleteAssociationGroup', { groupId: first.groupId, expectedRevision: await revisionOf(repo, first.groupId) });
+
+  const rebuilt = await createGroup(repo, { name: '新手组', requestId: 'r1' });
+  assert.equal(rebuilt.groupId, first.groupId, '同编号沿用同一主键');
+  assert.equal(rebuilt.status, 'active');
+  assert.equal(rebuilt.revision, 3, '版本号接着已删除文档往上走：审计键含版本号，不能回退到 1');
+  assert.equal((await call(repo, 'listAssociationGroups', {})).groups.length, 1, '列表里是一个可用的组');
+
+  const creates = (await repo.auditLogs.list()).filter(row => row.action === 'createAssociationGroup');
+  assert.equal(creates.length, 2, '两次建组各留一条审计，后一条没有覆盖前一条');
 });

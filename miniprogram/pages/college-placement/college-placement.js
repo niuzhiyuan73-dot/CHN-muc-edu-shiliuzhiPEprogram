@@ -108,6 +108,10 @@ Page({
       const view = await loadCollegePlacementView(this.eventId, {
         schoolId: scope.schoolId, association: scope.association, actorId,
       });
+      // 采纳装载器探测出的真实编号再用于写：query 在微信开发者工具 / 真机里是
+      // 原样透传的（未解码），继续拿路由原值提交名次会被服务端答「学院赛不存在」
+      // （见 utils/route-query.js）。解析只做一次，之后读写都用它。
+      if (view.eventId) this.eventId = view.eventId;
       this.setData({ loading: false, error: '', view, errorText: '', themeClass: currentThemeClass() });
     } catch (err) {
       console.error('[college-placement] 名次页加载失败', err);

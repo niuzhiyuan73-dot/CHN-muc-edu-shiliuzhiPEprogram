@@ -406,3 +406,143 @@ test('名次录入页同样兼容未解码的编号', async () => {
       { schoolId: 'muc', association: 'pkb', actorId: 'demo_muc_admin' }));
   assert.equal(placement.found, true, '名次页也要认编码过的编号');
 });
+
+/* ============================================================
+ * 写路径的路由编号（2026-10-16 用户实测：点「报名」显示「赛事不存在」）
+ * ============================================================
+ * 读路径早就做了候选探测，写路径没有：页面拿着路由原值（开发者工具里是
+ * `%3A` 形式）去报名 / 开赛 / 抽签，服务端按主键查不到 → 「赛事不存在」。
+ * 修法是装载器把命中的真实编号回传给页面，页面采纳后再读写。
+ */
+
+test('装载器回传真实编号：页面拿它去报名成功，拿路由原值去写会被服务端判「赛事不存在」', async () => {
+  const repo = fixture();
+  const admin = spaceClient(repo);
+  const eventId = await publish(admin, 'r_route');
+  const encoded = encodeURIComponent(eventId);
+  assert.notStrictEqual(encoded, eventId, '前提：编号里有需要编码的字符');
+
+  const detail = await asSpace(repo, { actor: 'demo_muc_admin' }, () =>
+    view.loadSchoolEventDetailView(encoded, { schoolId: 'muc', association: 'pkb', actorId: 'demo_muc_admin' }));
+  assert.equal(detail.eventId, eventId, '详情装载器必须回传解析后的真实编号');
+
+  const placement = await asSpace(repo, { actor: 'demo_muc_admin' }, () =>
+    view.loadSchoolEventPlacementView(encoded, { schoolId: 'muc', association: 'pkb', actorId: 'demo_muc_admin' }));
+  assert.equal(placement.eventId, eventId, '名次页装载器同样回传真实编号');
+
+  // 页面采纳回传的编号之后，报名这一步真的能落库
+  const member = spaceClient(repo, { actor: 'demo_muc_member' });
+  const signed = await member.signUpSchoolEvent({ eventId: detail.eventId });
+  assert.equal(signed.ok, true, signed.message);
+  assert.equal(signed.event.signupCount, 1, '人数随报名加一');
+
+  // 对照：未解码的编号直接写，就是用户看到的那句话（回归的靶子）
+  const naive = await spaceClient(repo, { actor: 'demo_muc_member_2' })
+    .signUpSchoolEvent({ eventId: encoded });
+  assert.equal(naive.ok, false);
+  assert.match(naive.message, /赛事不存在/);
+});
+
+test('装载器回传真实编号：名次页提交（结束赛事）也落在同一场赛事上', async () => {
+  const repo = fixture();
+  const admin = spaceClient(repo);
+  const eventId = await publish(admin, 'r_route2', { seedCount: 2 });
+  await signUpAll(repo, eventId, ['demo_muc_member', 'demo_muc_member_2']);
+  await admin.drawSchoolEvent({ eventId, seedValue: 42 });
+  await admin.startSchoolEvent({ eventId });
+
+  const placement = await asSpace(repo, { actor: 'demo_muc_admin' }, () =>
+    view.loadSchoolEventPlacementView(encodeURIComponent(eventId),
+      { schoolId: 'muc', association: 'pkb', actorId: 'demo_muc_admin' }));
+  assert.equal(placement.eventId, eventId);
+  assert.equal(placement.canEdit, true);
+
+  const finished = await admin.finishSchoolEvent({
+    eventId: placement.eventId,
+    results: placement.rows.map((row, index) => ({ userId: row.userId, placement: index + 1 })),
+  });
+  assert.equal(finished.ok, true, finished.message);
+  assert.equal((await admin.getSchoolEvent({ eventId })).event.isFinished, true);
+});
+
+/* ============================================================
+ * 人数与姓名以台账/档案为准（用户实测：已结束赛事显示 0 人、名次显示编号）
+ * ============================================================ */
+
+/** 一份「只有名次、没有报名记录」的历史赛事台账（早期导入 / 演示数据的形态）。 */
+function legacyFinishedRepo() {
+  const seed = createSchoolDemoSeed();
+  seed.users.push({ _id: 'demo_platform_admin', openId: 'mock_openid_platform_admin',
+    nickName: '平台管理员', platformStatus: 'active', platformRole: 'admin', simulated: true });
+  // 名次上的第二位会员：夹具里另外补一位在册会员，昵称一眼能认出不是编号
+  seed.users.push({ _id: 'demo_muc_member_2', openId: 'mock_openid_muc_member_2',
+    nickName: '民大模拟会员二', gender: 'M', platformStatus: 'active', platformRole: 'member',
+    primarySchoolId: 'muc', simulated: true });
+  seed.schoolMembers.push({ _id: schoolMemberKey('demo_muc_member_2', 'muc'),
+    userId: 'demo_muc_member_2', schoolId: 'muc', collegeId: 'c01',
+    studentId: 'TEST003', status: 'active', simulated: true });
+  seed.events = [{
+    _id: 'sev:muc:pkb:legacy-cup', schoolId: 'muc', association: 'pkb',
+    title: '历史杯男单赛', description: '', matchType: MATCH_TYPE.SINGLES, level: 3,
+    format: EVENT_FORMAT.SINGLE_ELIM, bronzeMode: 'tied', seedMode: 'elo', seedCount: 2,
+    location: '体育馆', startTime: '2026-05-01T09:00:00.000Z', publishTime: '2026-04-20T09:00:00.000Z',
+    courtCount: 2, quota: 16, status: 2, pinned: false, draw: null, signupCount: 0,
+    results: [
+      { userId: 'demo_muc_member', placement: 1 },
+      { userId: 'demo_muc_member_2', placement: 2 },
+    ],
+    revision: 1, updatedAt: '2026-05-01T18:00:00.000Z',
+  }];
+  return createSchoolMemoryRepo(seed);
+}
+
+test('人数真值：台账与名次都在、主记录计数是 0 时，展示真实人数而不是 0 人', async () => {
+  const repo = legacyFinishedRepo();
+  const admin = spaceClient(repo);
+
+  const detail = await asSpace(repo, { actor: 'demo_muc_admin' }, () =>
+    view.loadSchoolEventDetailView('sev:muc:pkb:legacy-cup',
+      { schoolId: 'muc', association: 'pkb', actorId: 'demo_muc_admin' }));
+  assert.equal(detail.found, true);
+  assert.equal(detail.event.isFinished, true);
+  assert.equal(detail.event.signupCount, 2, '名次上的两个人是实打实参加过的');
+  assert.equal(detail.event.quotaText, '2/16 人', '列表行上的「几人」不能再是 0');
+
+  const list = await asSpace(repo, { actor: 'demo_muc_admin' }, () =>
+    view.loadSchoolEventListView({ schoolId: 'muc', association: 'pkb', actorId: 'demo_muc_admin' }));
+  const row = list.events.find(item => item.id === 'sev:muc:pkb:legacy-cup');
+  assert.ok(row, '这场赛事在列表里');
+  assert.equal(row.quotaText, '2/16 人');
+});
+
+test('名次姓名：没有报名名单也能按会员档案解析出姓名，不退化成编号', async () => {
+  const repo = legacyFinishedRepo();
+  const detail = await asSpace(repo, { actor: 'demo_muc_admin' }, () =>
+    view.loadSchoolEventDetailView(encodeURIComponent('sev:muc:pkb:legacy-cup'),
+      { schoolId: 'muc', association: 'pkb', actorId: 'demo_muc_admin' }));
+
+  assert.deepEqual(detail.resultRows.map(row => row.userId), ['demo_muc_member', 'demo_muc_member_2']);
+  assert.deepEqual(detail.resultRows.map(row => row.nickName), ['民大模拟会员', '民大模拟会员二']);
+  assert.ok(detail.resultRows.every(row => row.nickName !== row.userId), '名次行不能显示成编号');
+  assert.equal(detail.resultRows[0].placementText, '冠军');
+  assert.equal(detail.resultRows[0].medal, 'gold');
+});
+
+test('人数真值：台账有记录时以台账为准，主记录计数偏大也不虚报', async () => {
+  const repo = fixture();
+  const admin = spaceClient(repo);
+  const eventId = await publish(admin, 'r_count', { quota: 8 });
+  await signUpAll(repo, eventId, ['demo_muc_member']);
+
+  // 手工把主记录计数改大，模拟「计数与台账分叉」的历史数据
+  await repo.transaction(async (tx) => {
+    const doc = await tx.events.getById(eventId);
+    await tx.events.set(eventId, { ...doc, signupCount: 7 });
+  });
+
+  const detail = await asSpace(repo, { actor: 'demo_muc_admin' }, () =>
+    view.loadSchoolEventDetailView(eventId, { schoolId: 'muc', association: 'pkb', actorId: 'demo_muc_admin' }));
+  assert.equal(detail.event.signupCount, 1, '台账里只有一个有效报名');
+  assert.equal(detail.event.quotaText, '1/8 人');
+  assert.equal(detail.signupRows.length, 1);
+});

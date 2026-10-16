@@ -41,6 +41,7 @@ function forAssociationSpace(input) {
     removeAssociationGroupMember: payload => request('removeAssociationGroupMember', payload),
     leaveAssociationGroup: payload => request('leaveAssociationGroup', payload),
     archiveAssociationGroup: payload => request('archiveAssociationGroup', payload),
+    deleteAssociationGroup: payload => request('deleteAssociationGroup', payload),
     listAssociationMembers: payload => request('listAssociationMembers', payload),
     listAssociationNotices: payload => request('listAssociationNotices', payload),
     getAssociationNotice: payload => request('getAssociationNotice', payload),

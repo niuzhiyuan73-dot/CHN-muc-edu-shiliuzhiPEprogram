@@ -469,6 +469,48 @@ Component({
       return this.write(() => this.api.archiveAssociationGroup({ groupId, expectedRevision: revision }), '小组已归档');
     },
 
+    /**
+     * 破坏性操作的二次确认。与项目其他页面同一写法：测试环境没有 wx.showModal
+     * 时直接放行——用例要验证的是「确认之后做了什么」，不是弹窗本身。
+     * @param {string} content
+     * @returns {Promise<boolean>}
+     */
+    confirmAction(content) {
+      return new Promise((resolve) => {
+        if (typeof wx === 'undefined' || typeof wx.showModal !== 'function') {
+          resolve(true);
+          return;
+        }
+        wx.showModal({
+          title: '删除小组',
+          content,
+          success: (res) => resolve(Boolean(res.confirm)),
+          fail: () => resolve(false),
+        });
+      });
+    },
+
+    /**
+     * 删除整个小组。服务端是软删除：小组与成员关系不再有效，但历史活动 / 训练 / 审计
+     * 记录都还在——确认文案要说清这一点，不能让用户以为历史也被一并抹掉。
+     * 归档的小组同样能删（模板不按 archived 过滤），用户正是删不掉才来报的。
+     */
+    onDeleteGroup(event) {
+      const groupId = event.currentTarget.dataset.groupid;
+      const revision = event.currentTarget.dataset.revision;
+      if (!groupId || this.data.groupBusy) return undefined;
+      return this.confirmAction('删除后小组与成员关系不再有效，历史活动记录保留。确定删除吗？')
+        .then((confirmed) => {
+          if (!confirmed) return undefined;
+          return this.write(() => this.api.deleteAssociationGroup({ groupId, expectedRevision: revision }),
+            '小组已删除').then(() => {
+            if (this.data.error) return undefined;
+            // 组已经没了：展开的名单与编辑态一起收掉，否则它们还指着一个查无此物的组
+            return this.setData({ openGroupId: '', detailMembers: [], editingId: '' });
+          });
+        });
+    },
+
     /* ============================================================
      * 成员页签
      * ============================================================ */

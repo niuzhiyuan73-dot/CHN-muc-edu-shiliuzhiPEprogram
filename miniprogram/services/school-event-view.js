@@ -189,6 +189,25 @@ function memberIdsOf(rosterRows) {
   return Array.from(new Set(asArray(rosterRows).map(row => row.userId).filter(Boolean)));
 }
 
+/**
+ * 已录名次里出现过的会员编号（去重）。
+ *
+ * 【为什么名次上的人也要取档案】
+ * 名次行的姓名只能从会员档案解析（buildResultRows 查不到档案就退回显示编号）。
+ * 正常路径上名次的人必是报名者，档案随名单一起来；但历史数据 / 演示种子里
+ * 可能只有名次没有报名记录，那时详情页的「最终名次」就会显示成 `u03` 这样的
+ * 编号——用户看到的是「名次里全是编号，不是名字」。多带这几个编号去取一次
+ * 档案，名次行的姓名就不再依赖报名名单是否完整。
+ *
+ * @param {Object} dto getSchoolEvent 的成功响应
+ * @returns {string[]}
+ */
+function resultUserIdsOf(dto = {}) {
+  return Array.from(new Set(
+    asArray(dto.event && dto.event.results).map(row => row.userId).filter(Boolean)
+  ));
+}
+
 /** 本人 actorId 收敛成一个最小 actor（构建器只读它的 _id 来标「我」）。 */
 const actorOf = actorId => (actorId ? { _id: actorId } : null);
 
@@ -201,6 +220,7 @@ function notFoundDetailView() {
   return {
     found: false,
     notFoundText: '这场赛事不存在或已被删除',
+    eventId: '',
     event: null,
     signupRows: [],
     hasSignups: false,
@@ -264,6 +284,9 @@ function buildDetailView(input = {}) {
   return {
     found: true,
     notFoundText: '',
+    // 解析后的真实编号（见 loadSchoolEventDetailView）：页面据此读写，
+    // 不必自己再解一次路由 query
+    eventId: (dto.event && dto.event.eventId) || '',
     event: row,
     signupRows,
     hasSignups: signupRows.length > 0,
@@ -296,6 +319,7 @@ function placementShell(overrides = {}) {
     allowed: true,
     blockedText: '',
     found: true,
+    eventId: '',
     canEdit: false,
     statusNote: '',
     event: null,
@@ -359,6 +383,7 @@ function buildPlacementView(input = {}) {
   return placementShell({
     allowed: true,
     found: true,
+    eventId: (dto.event && dto.event.eventId) || '',
     canEdit,
     statusNote,
     event: row,
@@ -404,11 +429,18 @@ function buildListRow(summary, ctx = {}) {
  * 先取名单，是因为成绩读端要按报名者的编号去问——既省一次全量回放，也避免
  * 把「没报名的人」一并捞回来。名单为空时干脆不问（成绩读端的空 userIds 语义是
  * 「全体会员」，那会白拉一次全量）。
+ *
+ * `extraUserIds` 是名单之外还要取档案的人（目前只有「已录名次的人」，
+ * 见 resultUserIdsOf）：他们可能在历史数据里没有报名记录，但名次行仍要显示姓名。
+ *
+ * @param {Object} api 协会空间客户端
+ * @param {string} eventId
+ * @param {string[]} [extraUserIds]
  */
-async function loadEventParts(api, eventId) {
+async function loadEventParts(api, eventId, extraUserIds = []) {
   const roster = await api.listSchoolEventSignups({ eventId });
   const rosterRows = (roster && roster.ok && roster.signups) || [];
-  const ids = memberIdsOf(rosterRows);
+  const ids = Array.from(new Set([...memberIdsOf(rosterRows), ...asArray(extraUserIds).filter(Boolean)]));
 
   const [matches, stats] = await Promise.all([
     api.listSchoolMatches({ eventId }),
@@ -468,6 +500,14 @@ async function loadSchoolEventListView(options = {}) {
 /**
  * 装载赛事详情视图（协议 2）。
  *
+ * 【为什么把解析后的真实编号一并回传】
+ * 路由 query 的值是否已解码取决于运行环境（见 utils/route-query.js）：开发者
+ * 工具 / 真机原样透传，页面拿到的是 `sev%3Amuc%3Apkb%3Aspring-cup`。读路径靠
+ * `resolveRouteId` 探测两种候选，但**写路径不探测**——页面拿着未解码的编号去
+ * 报名 / 取消 / 开赛 / 抽签 / 代签，服务端按主键查不到，只能回「赛事不存在」
+ * （2026-10-16 用户实测：点报名报「赛事不存在」）。视图模型里的 `eventId`
+ * 就是探测命中的真实编号，页面采纳后所有读写与跳转都用它。
+ *
  * @param {string} eventId
  * @param {Object} options
  * @param {string} options.schoolId
@@ -485,12 +525,15 @@ async function loadSchoolEventDetailView(eventId, options = {}) {
   });
   if (!found.result) return notFoundDetailView();
 
-  const parts = await loadEventParts(api, found.id);
-  return buildDetailView({ dto: found.result, actorId, ...parts });
+  const parts = await loadEventParts(api, found.id, resultUserIdsOf(found.result));
+  return { ...buildDetailView({ dto: found.result, actorId, ...parts }), eventId: found.id };
 }
 
 /**
  * 装载名次录入视图（协议 2）。
+ *
+ * 解析后的真实编号同样回传（理由见 loadSchoolEventDetailView）：名次页提交即
+ * 结束赛事，写的是同一把主键，不能拿未解码的路由值去写。
  *
  * @param {string} eventId
  * @param {Object} options
@@ -516,12 +559,13 @@ async function loadSchoolEventPlacementView(eventId, options = {}) {
     return placementShell({
       allowed: false,
       found: true,
+      eventId: found.id,
       blockedText: actorId ? '当前账号没有录入名次的权限，请联系管理员' : '请先登录后再录入名次',
     });
   }
 
-  const parts = await loadEventParts(api, found.id);
-  return buildPlacementView({ dto, actorId, ...parts });
+  const parts = await loadEventParts(api, found.id, resultUserIdsOf(dto));
+  return { ...buildPlacementView({ dto, actorId, ...parts }), eventId: found.id };
 }
 
 module.exports = {
@@ -533,6 +577,7 @@ module.exports = {
   signupCapsOf,
   bracketCapsOf,
   memberIdsOf,
+  resultUserIdsOf,
   notFoundDetailView,
   buildDetailView,
   buildPlacementView,

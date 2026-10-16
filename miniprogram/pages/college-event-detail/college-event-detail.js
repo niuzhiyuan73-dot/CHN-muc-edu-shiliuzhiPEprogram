@@ -138,6 +138,10 @@ Page({
       const view = await loadCollegeEventDetailView(this.eventId, {
         schoolId: scope.schoolId, association: scope.association, actorId,
       });
+      // 采纳装载器探测出的真实编号再用于写与跳转：query 在微信开发者工具 / 真机里
+      // 是原样透传的（未解码），继续拿路由原值抽签 / 开赛会被服务端答
+      // 「学院赛不存在」（见 utils/route-query.js）。解析只做一次，跳转只编码一次。
+      if (view.eventId) this.eventId = view.eventId;
       const approved = view.approvedColleges || [];
       const seeds = (this.data.seeds || []).filter((name) => approved.includes(name));
       this.loaded = true;

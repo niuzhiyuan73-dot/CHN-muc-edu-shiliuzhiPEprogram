@@ -29,7 +29,7 @@ const {
 } = require('../miniprogram/utils/school');
 const {
   COLLEGES, COLLEGE_EVENT_STATUS, COLLEGE_ENTRY_STATUS, TIE_STATUS,
-  LEG_DISCIPLINE, TIE_ALGO, TIE_NET_MODE, MATCH_COMPETITION,
+  LEG_DISCIPLINE, TIE_ALGO, TIE_NET_MODE, MATCH_COMPETITION, MATCH_STATUS,
 } = require('../miniprogram/utils/constants');
 
 const NOW = new Date('2026-10-13T10:00:00Z');
@@ -744,4 +744,177 @@ test('B6-b G08：名单里仅一人不在限定小组 → 整份提交失败；�
     { eventId: event.eventId, collegeId: C01, memberIds: ['demo_muc_member'] },
     { actor: 'demo_buaa_admin', schoolId: 'buaa' });
   assert.equal(buaa.ok, false);
+});
+
+/* ------------------------------------------------------------------ 路由编号（未解码的 query） */
+
+/**
+ * 上面各条用例走的是仓储夹具；这一段另起一套：装载器只认 `association-space`，
+ * 只有演示栈（school-mock）才能把「query 在开发者工具 / 真机里原样透传」这条
+ * 链路整个跑通——跳转方 encodeURIComponent，接收方拿到的仍是 %3A 形式
+ * （见 utils/route-query.js）。装载器必须把探测出的真实编号回传，页面才有东西可写。
+ */
+const schoolMock = require('../miniprogram/services/school-mock');
+const associationSpace = require('../miniprogram/services/association-space');
+const collegeView = require('../miniprogram/services/school-college-view');
+
+const MOCK_SCOPE = { schoolId: 'muc', association: 'pkb' };
+const MOCK_ADMIN = 'demo_muc_admin';
+
+/** 演示栈里某学院的队员编号：排阵要按性别筛人，只取有性别的会员 */
+async function mockMemberIds(api, collegeId) {
+  const dto = await api.listSchoolMembers({});
+  assert.equal(dto.ok, true, dto.message);
+  return dto.members
+    .filter(row => row.collegeId === collegeId && ['M', 'F'].includes(row.gender))
+    .map(row => row.userId);
+}
+
+/**
+ * 演示栈里造一场「报名中」的学院赛，并把两所学院的名单审过。
+ * @returns {Promise<{api:Object, eventId:string, routeValue:string}>}
+ */
+async function mockEntriesReady() {
+  schoolMock.reset({ withDemoContent: false });
+  schoolMock.setDemoActor(MOCK_ADMIN);
+  const api = associationSpace.forScope(MOCK_SCOPE);
+  const published = await api.publishCollegeEvent({
+    requestId: 'route-college-1', title: '路由编号学院赛', description: '',
+    legPlan: [LEG_DISCIPLINE.MS], allowMultiEntry: true, rosterMin: 1, rosterMax: 20,
+    tieAlgo: TIE_ALGO.FULL_POINTS, tieNetMode: TIE_NET_MODE.WIN_DIFF,
+    startTime: at(DAY), location: '综合体育馆', courtCount: 1,
+  });
+  assert.equal(published.ok, true, published.message);
+  const eventId = published.event.eventId;
+  for (const collegeId of [C01, C02]) {
+    const submitted = await api.submitCollegeEntry(
+      { eventId, collegeId, memberIds: await mockMemberIds(api, collegeId) });
+    assert.equal(submitted.ok, true, submitted.message);
+    const reviewed = await api.reviewCollegeEntry({ eventId, collegeId, action: 'approve', reason: '' });
+    assert.equal(reviewed.ok, true, reviewed.message);
+  }
+  return { api, eventId, routeValue: encodeURIComponent(eventId) };
+}
+
+test('路由编号：未解码 query 下，学院赛装载器一律回传真实编号', async () => {
+  const { eventId, routeValue } = await mockEntriesReady();
+  try {
+    // 演示编号里含 %3A（requestId 段）：只有编码过一遍，未解码环境才会暴露问题。
+    // 这条断言守住用例的前提，免得编号形状一变，下面几条就静默地不再守任何东西。
+    assert.match(eventId, /%/, '编号应含 %3A，未解码环境才暴露「查不到」');
+    assert.notEqual(routeValue, eventId);
+
+    const admin = { ...MOCK_SCOPE, actorId: MOCK_ADMIN };
+
+    const detail = await collegeView.loadCollegeEventDetailView(routeValue, admin);
+    assert.equal(detail.found, true, detail.blockReason);
+    assert.equal(detail.eventId, eventId, '详情装载器要把探测出的真实编号回传');
+
+    const review = await collegeView.loadCollegeEntryReviewView(routeValue, admin);
+    assert.equal(review.found, true, review.blockReason);
+    assert.equal(review.eventId, eventId);
+    assert.ok(review.rows.length > 0, '未解码 query 也要看得到名单行');
+
+    const entry = await collegeView.loadCollegeEntryView(routeValue,
+      { ...MOCK_SCOPE, actorId: MOCK_ADMIN, collegeId: C01 });
+    assert.equal(entry.found, true, entry.blockReason);
+    assert.equal(entry.eventId, eventId);
+    assert.ok(entry.candidates.length > 0, '未解码 query 也要看得到本学院队员');
+  } finally {
+    schoolMock.reset();
+  }
+});
+
+test('路由编号：未解码 query 下的抽签 / 开赛 / 名次，照回传的真实编号才落库', async () => {
+  const { api, eventId, routeValue } = await mockEntriesReady();
+  try {
+    const admin = { ...MOCK_SCOPE, actorId: MOCK_ADMIN };
+    const detail = await collegeView.loadCollegeEventDetailView(routeValue, admin);
+    assert.equal(detail.eventId, eventId);
+
+    // 对照：路由原值（页面修复前写操作拿的就是它）被服务端拒下
+    const refused = await api.drawCollegeEvent({ eventId: routeValue, seedValue: 1 });
+    assert.equal(refused.ok, false);
+    assert.match(refused.message, /找不到|不存在/);
+
+    // 装载器回传的真实编号：抽签落库
+    const drawn = await api.drawCollegeEvent({ eventId: detail.eventId, seedValue: 1 });
+    assert.equal(drawn.ok, true, drawn.message);
+
+    const ready = await collegeView.loadCollegeEventDetailView(routeValue, admin);
+    assert.equal(ready.isReady, true, '抽签后转待开赛');
+    const started = await api.startCollegeEvent({ eventId: ready.eventId });
+    assert.equal(started.ok, true, started.message);
+
+    // 名次装载器同样回传真实编号；候选学院也要真的取到（这一处曾拿路由原值查名单，
+    // 未解码环境里一行都查不出来，看着像「没人交名单」）
+    const placement = await collegeView.loadCollegePlacementView(routeValue, admin);
+    assert.equal(placement.eventId, eventId);
+    assert.deepEqual(
+      placement.rows.map(row => row.college).sort(),
+      [NAME_C01, NAME_C02].sort()
+    );
+
+    const finished = await api.finishCollegeEvent({
+      eventId: placement.eventId,
+      results: [{ college: NAME_C01, placement: 1 }, { college: NAME_C02, placement: 2 }],
+    });
+    assert.equal(finished.ok, true, finished.message);
+    assert.equal(finished.event.status, COLLEGE_EVENT_STATUS.FINISHED);
+  } finally {
+    schoolMock.reset();
+  }
+});
+
+test('路由编号：未解码 query 下的排阵与小场，照回传的真实编号写成功', async () => {
+  const { api, eventId, routeValue } = await mockEntriesReady();
+  try {
+    const admin = { ...MOCK_SCOPE, actorId: MOCK_ADMIN };
+    const detail = await collegeView.loadCollegeEventDetailView(routeValue, admin);
+    const drawn = await api.drawCollegeEvent({ eventId: detail.eventId, seedValue: 7 });
+    assert.equal(drawn.ok, true, drawn.message);
+    const began = await api.startCollegeEvent({ eventId: detail.eventId });
+    assert.equal(began.ok, true, began.message);
+
+    const ties = (await api.listCollegeTies({ eventId })).ties;
+    assert.ok(ties.length > 0, '开赛后铺出首轮大场');
+    const tieId = ties[0].tieId;
+
+    // 大场编号与赛事编号都是未解码的：装载器要认出大场，并把两个真实编号都回传
+    const lineup = await collegeView.loadCollegeLineupView(encodeURIComponent(tieId),
+      { ...MOCK_SCOPE, actorId: MOCK_ADMIN, eventId: routeValue, college: NAME_C02 });
+    assert.equal(lineup.found, true, lineup.blockReason);
+    assert.equal(lineup.tieId, tieId);
+    assert.equal(lineup.eventId, eventId);
+    assert.equal(lineup.canSubmit, true, lineup.blockReason);
+
+    // 照回传的编号替两侧排阵（管理员可代交任一方）
+    for (const collegeId of [C01, C02]) {
+      const players = await mockMemberIds(api, collegeId);
+      const saved = await api.submitCollegeLineup({
+        tieId: lineup.tieId, collegeId, entries: [{ legNo: 1, players: [players[0]] }] });
+      assert.equal(saved.ok, true, saved.message);
+    }
+    const startedTie = await api.startCollegeTie({ tieId: lineup.tieId });
+    assert.equal(startedTie.ok, true, startedTie.message);
+
+    const started = (await api.listCollegeTies({ eventId })).ties.find(row => row.tieId === tieId);
+    const matchId = started.legRows[0].matchId;
+    assert.ok(matchId, '大场开打后小场才生成');
+
+    const match = await collegeView.loadCollegeMatchView(encodeURIComponent(matchId),
+      { ...MOCK_SCOPE, actorId: MOCK_ADMIN });
+    assert.equal(match.found, true, match.blockReason);
+    assert.equal(match.matchId, matchId);
+
+    // 录分 → 确认：两步都是写，都要用回传的真实小场编号
+    const recorded = await api.submitSchoolMatch({ matchId: match.matchId, scoreA: [11], scoreB: [3] });
+    assert.equal(recorded.ok, true, recorded.message);
+    const confirmed = await api.confirmSchoolMatch({ matchId: match.matchId });
+    assert.equal(confirmed.ok, true, confirmed.message);
+    const saved = (await api.listSchoolMatches({})).matches.find(row => row.matchId === matchId);
+    assert.equal(saved.status, MATCH_STATUS.ACTIVE);
+  } finally {
+    schoolMock.reset();
+  }
 });

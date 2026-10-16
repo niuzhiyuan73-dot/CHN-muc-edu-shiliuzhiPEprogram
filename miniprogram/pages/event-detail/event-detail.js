@@ -79,7 +79,12 @@ Page({
     refereeActing: false,
   },
 
-  /** 返回 Promise 让测试能等待首屏加载完 */
+  /**
+   * 返回 Promise 让测试能等待首屏加载完。
+   *
+   * `this.eventId` 初值是路由 query 原样（可能未解码）；装载成功后会被换成
+   * 探测出的真实编号（见 refresh），页面不再自己解码，避免二义性。
+   */
   onLoad(query) {
     this.eventId = (query && query.eventId) || '';
     return this.refresh();
@@ -166,6 +171,15 @@ Page({
 
   /**
    * 重新装载整页数据。
+   *
+   * 【为什么要采纳视图里的 eventId】
+   * 路由 query 的值是否已解码取决于运行环境：开发者工具 / 真机把 query 原样
+   * 透传，`onLoad` 收到的是 `sev%3Amuc%3Apkb%3Aspring-cup`。装载器（见
+   * school-event-view）会探测出真实编号再读；写接口没有这层探测，页面若继续
+   * 用路由原值去报名 / 开赛 / 抽签，服务端按主键查不到，只能回「赛事不存在」
+   * ——这正是用户实测「点报名显示赛事不存在」的原因。所以每次装载后都把真实
+   * 编号落回实例，之后的读写与跳转统一用它。
+   *
    * @returns {Promise<void>}
    */
   async refresh() {
@@ -178,6 +192,7 @@ Page({
       const view = await loadSchoolEventDetailView(this.eventId, {
         schoolId: scope.schoolId, association: scope.association, actorId,
       });
+      if (view.eventId) this.eventId = view.eventId;
       this.loaded = true;
       this.setData({ loading: false, error: '', view, themeClass: currentThemeClass() });
       // 首屏若已有正在计分的场次（读接口已带上 live），才挂轮询取增量
@@ -541,7 +556,7 @@ Page({
     return this.refresh();
   },
 
-  /** 进名次录入页 */
+  /** 进名次录入页。this.eventId 已是解析后的真实编号，这里只编码一次 */
   onOpenPlacement() {
     wx.navigateTo({ url: `/pages/event-placement/event-placement?eventId=${encodeURIComponent(this.eventId)}` });
   },

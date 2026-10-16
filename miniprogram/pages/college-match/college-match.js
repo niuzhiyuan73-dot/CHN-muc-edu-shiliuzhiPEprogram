@@ -110,6 +110,10 @@ Page({
       const view = await loadCollegeMatchView(this.matchId, {
         schoolId: scope.schoolId, association: scope.association, actorId,
       });
+      // 采纳装载器探测出的真实编号再用于写与跳转：query 在微信开发者工具 / 真机里
+      // 是原样透传的（未解码），继续拿路由原值录分 / 确认 / 撤销会被服务端答
+      // 「这场比赛不存在」（见 utils/route-query.js）。跳转只编码一次。
+      if (view.matchId) this.matchId = view.matchId;
       // 赛制行数由视图模型定（bestOf），旧的比分按行对齐，缺的补空串
       const bestOf = view.bestOf || 1;
       const scoreA = [];

@@ -93,6 +93,72 @@ const isEventDoc = doc => Boolean(doc && doc.title && typeof doc.status === 'num
 const activeSignupCount = rows => (Array.isArray(rows) ? rows : [])
   .filter(row => row.status !== SIGNUP_STATUS.CANCELED).length;
 
+/**
+ * 由整份报名台账按赛事汇总：eventId → { seen, active }。
+ * `seen` 记这场赛事在台账里有没有记录——有记录就以台账为准（哪怕全是取消），
+ * 没有任何记录才回退主记录上的计数器（历史数据可能只留下了计数）。
+ *
+ * @param {Array<Object>} rows 本范围内的报名记录
+ * @returns {Map<string, {seen: number, active: number}>}
+ */
+function tallySignups(rows) {
+  const tally = new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!row || !row.eventId) continue;
+    const item = tally.get(row.eventId) || { seen: 0, active: 0 };
+    item.seen += 1;
+    if (row.status !== SIGNUP_STATUS.CANCELED) item.active += 1;
+    tally.set(row.eventId, item);
+  }
+  return tally;
+}
+
+/**
+ * 展示用报名数：台账里有这场赛事就按台账算；一条报名记录都没有才回退主记录
+ * 计数器，并与已录名次人数取大（名次上的人必然报过名）。
+ *
+ * 【为什么最后还要看名次】
+ * 用户实测「赛事都结束了，列表还写 0 人」。台账齐备的情况由上面一条覆盖；
+ * 但历史数据 / 早期导入可能只留下计数与名次、没有报名记录，那时按计数器
+ * 显示会出现「名次表里四个人，列表写 0 人」这种自相矛盾的画面。名次条数
+ * 是同一份记录里的既有事实，拿它兜底比写 0 更接近真值。
+ *
+ * @param {Object} doc 赛事主记录
+ * @param {Map<string, {seen: number, active: number}>} tally tallySignups 的结果
+ * @returns {number}
+ */
+function displaySignupCount(doc, tally) {
+  const item = tally && tally.get(doc._id);
+  if (item && item.seen > 0) return item.active;
+  const results = Array.isArray(doc.results) ? doc.results.length : 0;
+  return Math.max(Number(doc.signupCount || 0), results);
+}
+
+/**
+ * 名额判断用的「已占用数」：主记录计数与报名台账**取大**。
+ *
+ * 【为什么展示与名额用两个不同的数】
+ * 展示要准（`displaySignupCount`，以台账为准，用户看的是「报了几个人」）；
+ * 名额要稳——放人进来之前必须按最坏情况算：
+ *   · 计数偏小（演示种子、早期导入只写了 0）：只看计数会**超员**，所以台账要算进来；
+ *   · 计数偏大（历史数据里人退过、计数没跟上）：只看台账会放人进来，写端再拿
+ *     「计数 + 1」落库，占用继续虚高，所以计数也要算进来。
+ * 两者取大后，「页面能不能点报名」与「写接口收不收」用的是同一把尺子，
+ * 不会出现「按钮能点、点下去被拒」或「页面说满了、接口却放行」的分叉。
+ *
+ * 台账是事务外读的快照，取大恰好补上它的陈旧：计数在事务内维护，是同一场
+ * 赛事并发报名的串行点（写端还会把占用数回写主记录，见 signUpSchoolEvent）。
+ *
+ * @param {Object} doc 赛事主记录
+ * @param {Map<string, {seen: number, active: number}>} tally tallySignups 的结果
+ * @returns {number}
+ */
+function occupiedSignupCount(doc, tally) {
+  const item = tally && tally.get(doc._id);
+  const counted = item && item.seen > 0 ? item.active : 0;
+  return Math.max(Number(doc.signupCount || 0), counted);
+}
+
 /** 报名记录 DTO（本人视角，不下发隐私字段）。 */
 const signupDTO = row => (row ? {
   userId: row.userId,
@@ -136,12 +202,22 @@ const resultsDTO = results => (Array.isArray(results) ? results : [])
 
 /**
  * 赛事摘要 DTO（列表与详情共用）。时间一律给原始 ISO，本地时区渲染交给页面。
+ *
+ * 【人数为什么允许由读端算好传进来】
+ * 主记录上的 `signupCount` 是写入事务里维护的计数器，它的职责是名额判断
+ * （报名 / 取消在同一事务内增减，避免事务内整表查询）。但读端本来就会把
+ * 报名台账拉回来，能算出「真实有效报名数」；两者一旦分叉（演示种子、早期
+ * 导入的历史数据、人工修数），列表就会长期写着一个错的人数——用户实测
+ * 「赛事都结束、名次也录了，列表还显示 0 人」。所以展示用的 count 以台账
+ * 为准（台账为空才回退计数器），名额判断仍走写入端自己的口径。
+ *
  * @param {Object} doc 赛事主记录
  * @param {Object|null} [mySignup] 当前登录人在本场的报名记录
+ * @param {number|null} [signupCount] 读端按台账算出的有效报名数；不给则读主记录计数器
  */
-function eventSummary(doc, mySignup = null) {
+function eventSummary(doc, mySignup = null, signupCount = null) {
   const state = signupStateOf(mySignup);
-  const count = Number(doc.signupCount || 0);
+  const count = Number.isFinite(signupCount) ? Number(signupCount) : Number(doc.signupCount || 0);
   const quota = Number(doc.quota) || 0;
   return {
     eventId: doc._id,
@@ -225,6 +301,7 @@ async function listSchoolEvents(payload = {}, ctx) {
   if (typeof payload.status === 'number') rows = rows.filter(row => row.status === payload.status);
 
   const signups = await ctx.repo.forScope(ctx).eventSignups.list();
+  const tally = tallySignups(signups);
   const myId = ctx.actorId;
   const sorted = rows.slice().sort((a, b) => {
     const pin = Number(Boolean(b.pinned)) - Number(Boolean(a.pinned));
@@ -245,7 +322,11 @@ async function listSchoolEvents(payload = {}, ctx) {
     ok: true, canManage,
     hasMore: sorted.length > offset + page.length,
     nextOffset: offset + page.length,
-    events: page.map(doc => eventSummary(doc, signupOf(signups.filter(s => s.eventId === doc._id), myId))),
+    events: page.map(doc => eventSummary(
+      doc,
+      signupOf(signups.filter(s => s.eventId === doc._id), myId),
+      displaySignupCount(doc, tally)
+    )),
     message: '',
   });
 }
@@ -282,7 +363,12 @@ async function getSchoolEvent(payload = {}, ctx) {
   const signups = (await ctx.repo.forScope(ctx).eventSignups.list()).filter(row => row.eventId === doc._id);
 
   const state = signupStateOf(mySignup);
-  const full = Number(doc.quota) > 0 && Number(doc.signupCount || 0) >= Number(doc.quota);
+  const tally = tallySignups(signups);
+  // 展示人数以台账为准（真值）；「名额满没满、能不能报」按占用数（计数与台账取大）
+  // 算——两者同一把尺子地取最坏情况，页面才不会出现「点了才被拒」或「说满了却放行」
+  const shownCount = displaySignupCount(doc, tally);
+  const occupied = occupiedSignupCount(doc, tally);
+  const full = Number(doc.quota) > 0 && occupied >= Number(doc.quota);
   const genderLimit = singleGenderOf(doc.discipline);
   const genderOk = !genderLimit || (ctx.actor && ctx.actor.gender === genderLimit);
   // 小组限制（B6）：详情页也要算出「能不能报、为什么不能报」，与写入端同一把尺子
@@ -317,12 +403,12 @@ async function getSchoolEvent(payload = {}, ctx) {
     ok: true, canManage, canParticipate,
     // 详情才带 draw / results（列表保持精简）；字段经投影，不透传整条库记录。
     event: {
-      ...eventSummary(doc, mySignup),
+      ...eventSummary(doc, mySignup, shownCount),
       draw: drawDTO(doc.draw),
       results: resultsDTO(doc.results),
     },
     mySignup: signupDTO(mySignup),
-    signupCount: activeSignupCount(signups),
+    signupCount: shownCount,
     capabilities: {
       canSignUp,
       canCancelSignup,
@@ -427,6 +513,12 @@ async function signUpSchoolEvent(payload = {}, ctx) {
   if (typeof payload.eventId !== 'string' || !payload.eventId) return ok(refused('缺少赛事编号'));
   const userId = ctx.actorId;
 
+  // 本场赛事的报名台账快照：事务内不能列集合，而名额判断必须把「计数与台账分叉」
+  // 的情形一并算上（见 occupiedSignupCount）。快照在事务外读，取大时刚好补它的陈旧。
+  const ledgerRows = (await ctx.repo.forScope(ctx).eventSignups.list())
+    .filter(row => row.eventId === payload.eventId);
+  const ledgerTally = tallySignups(ledgerRows);
+
   const result = await ctx.repo.transaction(async tx => {
     const fresh = await freshContext(tx, ctx);
     if (!canParticipateInAssociation(fresh)) return refused('只有本协会有效会员可以报名');
@@ -445,7 +537,10 @@ async function signUpSchoolEvent(payload = {}, ctx) {
     if (existing && existing.status !== SIGNUP_STATUS.CANCELED) {
       return { ok: true, signup: signupDTO(existing), event: eventSummary(doc, existing), message: '' };
     }
-    if (Number(doc.quota) > 0 && Number(doc.signupCount || 0) >= Number(doc.quota)) {
+    // 名额：占用数 = 主记录计数与台账取大（与详情页「能不能报」同一把尺子），
+    // 落库时把占用数回写主记录——分叉的历史数据就此收敛，不会越用越偏
+    const occupied = occupiedSignupCount(doc, ledgerTally);
+    if (Number(doc.quota) > 0 && occupied >= Number(doc.quota)) {
       return refused('名额已满');
     }
 
@@ -468,13 +563,19 @@ async function signUpSchoolEvent(payload = {}, ctx) {
         eventId: doc._id, userId, status: SIGNUP_STATUS.SIGNED, signTime: nowIso,
         checkInTime: null, actorId: userId, cancelTime: null, revision: 1 };
     await tx.eventSignups.set(key, signup);
-    const next = { ...doc, signupCount: Number(doc.signupCount || 0) + 1,
+    // 占用数（而不是旧计数）加一后回写：计数偏小的历史数据会在下一次报名时被
+    // 修正到与台账一致，页面人数与名额判断从此同源
+    const next = { ...doc, signupCount: occupied + 1,
       revision: doc.revision + 1, updatedAt: nowIso };
     await tx.events.set(next._id, next);
     await tx.audit.append({ _id: signupAuditKey(doc._id, userId, 'signUpEvent', next.revision - 1),
       action: 'signUpEvent', schoolId: fresh.schoolId, association: fresh.association,
       actorId: userId, eventId: doc._id, targetUserId: userId, at: nowIso });
-    return { ok: true, signup: signupDTO(signup), event: eventSummary(next, signup), message: '' };
+    // 回给页面的「几人」仍按台账（快照里这场赛事的有效报名 + 这位刚报上的人），
+    // 与详情页展示同一口径；计数只作名额水位，不拿来当展示值
+    const ledgerActive = (ledgerTally.get(doc._id) || { active: 0 }).active;
+    return { ok: true, signup: signupDTO(signup),
+      event: eventSummary(next, signup, ledgerActive + 1), message: '' };
   });
   return ok(result);
 }
@@ -498,6 +599,9 @@ async function cancelSchoolEventSignup(payload = {}, ctx) {
     const canceled = { ...reg, status: SIGNUP_STATUS.CANCELED, cancelTime: nowIso,
       revision: reg.revision + 1 };
     await tx.eventSignups.set(key, canceled);
+    // 取消是「计数 − 1」而不是「按台账重算」：事务内读不到台账，而按事务外的快照
+    // 重算会把并发报名的水位抹掉（宁可少放一个人进来，也不能超员）。计数因此只当
+    // 名额水位，展示一律以台账为准（见 displaySignupCount）。
     const next = { ...doc, signupCount: Math.max(0, Number(doc.signupCount || 0) - 1),
       revision: doc.revision + 1, updatedAt: nowIso };
     await tx.events.set(next._id, next);
@@ -750,7 +854,7 @@ async function advanceSchoolEvent(ctx, eventId) {
 
 module.exports = {
   EVENT_LIST_LIMIT, EVENT_LIST_MAX,
-  isEventDoc, eventSummary, activeSignupCount,
+  isEventDoc, eventSummary, activeSignupCount, displaySignupCount, occupiedSignupCount, tallySignups,
   listSchoolEvents, getSchoolEvent, listSchoolEventSignups, publishSchoolEvent, setSchoolEventPinned,
   signUpSchoolEvent, cancelSchoolEventSignup,
   startSchoolEvent, drawSchoolEvent, checkInSchoolEvent, finishSchoolEvent,

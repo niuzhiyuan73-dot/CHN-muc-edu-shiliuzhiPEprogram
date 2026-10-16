@@ -237,6 +237,98 @@ test('报名：名额满了就拒，取消报名释放名额', async () => {
   assert.equal(resub.event.signupCount, 1);
 });
 
+test('展示人数以报名台账为准：主记录计数与台账分叉时，列表与详情都报真值', async () => {
+  const repo = fixture();
+  const event = await publish(repo, 'r_count', { quota: 8 });
+  await call(repo, 'signUpSchoolEvent', { eventId: event.eventId }, { actor: 'demo_muc_member' });
+  await call(repo, 'signUpSchoolEvent', { eventId: event.eventId }, { actor: 'demo_muc_member_2' });
+
+  // 手工把主记录计数改小（模拟演示种子 / 早期导入留下的分叉数据）
+  await repo.transaction(async (tx) => {
+    const doc = await tx.events.getById(event.eventId);
+    await tx.events.set(event.eventId, { ...doc, signupCount: 0 });
+  });
+
+  const detail = await call(repo, 'getSchoolEvent', { eventId: event.eventId });
+  assert.equal(detail.event.signupCount, 2, '详情不能因为计数器是 0 就说没人报名');
+  assert.equal(detail.event.quotaText, '2/8 人');
+  assert.equal(detail.signupCount, 2);
+
+  const list = await call(repo, 'listSchoolEvents', {});
+  const row = list.events.find(item => item.eventId === event.eventId);
+  assert.equal(row.signupCount, 2);
+  assert.equal(row.quotaText, '2/8 人', '列表行上的「几人」同样以台账为准');
+  assert.equal(row.isSignup, true);
+
+  // 取消后展示回落：台账里只剩一个有效报名
+  await call(repo, 'cancelSchoolEventSignup', { eventId: event.eventId }, { actor: 'demo_muc_member' });
+  const after = await call(repo, 'getSchoolEvent', { eventId: event.eventId }, { actor: 'demo_muc_member_2' });
+  assert.equal(after.event.signupCount, 1);
+  assert.equal(after.event.quotaText, '1/8 人');
+});
+
+test('名额与展示同一把尺子：计数偏小时不许超员，计数偏大时不放行', async () => {
+  const repo = fixture();
+
+  // F1：计数偏小（0），台账里已经坐满 2 个 —— 只看计数会超员，必须按占用数拦下
+  const full = await publish(repo, 'r_quota_low', { quota: 2 });
+  await call(repo, 'signUpSchoolEvent', { eventId: full.eventId }, { actor: 'demo_muc_member' });
+  await call(repo, 'signUpSchoolEvent', { eventId: full.eventId }, { actor: 'demo_muc_member_2' });
+  await repo.transaction(async (tx) => {
+    const doc = await tx.events.getById(full.eventId);
+    await tx.events.set(full.eventId, { ...doc, signupCount: 0 });
+  });
+
+  const detail = await call(repo, 'getSchoolEvent', { eventId: full.eventId }, { actor: 'demo_muc_admin' });
+  assert.equal(detail.event.quotaText, '2/2 人');
+  assert.equal(detail.capabilities.canSignUp, false, '页面不该给一个点下去必被拒的报名按钮');
+  assert.match(detail.signupNote, /满/);
+
+  // 第三个会员（管理员自己）直接调写接口也必须被拦：展示与写入口径一致，且不超员
+  const blocked = await call(repo, 'signUpSchoolEvent', { eventId: full.eventId }, { actor: 'demo_muc_admin' });
+  assert.equal(blocked.ok, false);
+  assert.match(blocked.message, /满/);
+  const roster = await call(repo, 'listSchoolEventSignups', { eventId: full.eventId });
+  assert.equal(roster.signups.length, 2, '名额 2 就是 2 个人，不能因为计数是 0 就多收一个');
+
+  // F2：计数偏大（3）而台账只有 2 个有效 —— 展示按台账，名额按占用数（取大）：
+  // 页面不显示「还能报」，写接口也不放行，两边一致
+  const high = await publish(repo, 'r_quota_high', { quota: 3 });
+  await call(repo, 'signUpSchoolEvent', { eventId: high.eventId }, { actor: 'demo_muc_member' });
+  await call(repo, 'signUpSchoolEvent', { eventId: high.eventId }, { actor: 'demo_muc_member_2' });
+  await repo.transaction(async (tx) => {
+    const doc = await tx.events.getById(high.eventId);
+    await tx.events.set(high.eventId, { ...doc, signupCount: 3 });
+  });
+
+  const highDetail = await call(repo, 'getSchoolEvent', { eventId: high.eventId }, { actor: 'demo_muc_admin' });
+  assert.equal(highDetail.event.quotaText, '2/3 人', '展示按台账，两个人就是两个人');
+  assert.equal(highDetail.capabilities.canSignUp, false, '计数说占了 3 位，就不该再放人进来');
+  assert.match(highDetail.signupNote, /满/);
+  const alsoBlocked = await call(repo, 'signUpSchoolEvent', { eventId: high.eventId }, { actor: 'demo_muc_admin' });
+  assert.equal(alsoBlocked.ok, false);
+  assert.match(alsoBlocked.message, /满/);
+
+  // 取消一位：占用数跟着降，可以补位；落库后计数不再低于台账
+  await call(repo, 'cancelSchoolEventSignup', { eventId: high.eventId }, { actor: 'demo_muc_member' });
+  const afterCancel = await call(repo, 'signUpSchoolEvent', { eventId: high.eventId }, { actor: 'demo_muc_admin' });
+  assert.equal(afterCancel.ok, true, afterCancel.message);
+  const stored = await repo.events.getById(high.eventId);
+  const rosterAfter = await call(repo, 'listSchoolEventSignups', { eventId: high.eventId });
+  assert.ok(stored.signupCount >= rosterAfter.signups.length,
+    '计数不会低于台账：低计数会让下一次报名按偏小的数放行');
+  assert.equal(afterCancel.event.quotaText, '2/3 人');
+
+  // 虚高的计数仍在（历史数据留下的水位）：占用数取大，所以写端与详情页一致地拒绝，
+  // 不会再出现「页面说还能报、点下去被拒」或反过来超员的情形
+  const resub = await call(repo, 'signUpSchoolEvent', { eventId: high.eventId }, { actor: 'demo_muc_member' });
+  assert.equal(resub.ok, false);
+  assert.match(resub.message, /满/);
+  const finalDetail = await call(repo, 'getSchoolEvent', { eventId: high.eventId }, { actor: 'demo_muc_member' });
+  assert.equal(finalDetail.capabilities.canSignUp, false);
+  assert.match(finalDetail.signupNote, /满/);
+});
+
 test('报名：性别项目只收相符性别', async () => {
   const repo = fixture({ memberGender: 'F' });
   const event = await publish(repo, 'r1', { discipline: 'MS' }); // 男单

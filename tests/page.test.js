@@ -1930,6 +1930,68 @@ test('赛事详情 —— 找不到的赛事给出提示而不是白屏', async 
   }
 });
 
+/**
+ * 开发者工具 / 真机把 query 原样透传：`onLoad` 收到的仍是 `%3A` 形式的编码串。
+ * 读路径早就做了候选探测，写路径没有——页面拿着编码串去报名，服务端按主键
+ * 查不到，只能回「赛事不存在」（2026-10-16 用户实测）。这里锁住修复：
+ * 装载器把命中的真实编号回传给页面，页面采纳后所有写操作都落在同一场赛事上。
+ */
+test('赛事详情 —— 未解码的 query（开发者工具透传）也能报名，页面持有真实编号', async () => {
+  const fx = schoolEventFixture();
+  try {
+    const eventId = await fx.publish({ quota: 8 });
+    const encoded = encodeURIComponent(eventId);
+    assert.notStrictEqual(encoded, eventId, '前提：S2 编号含需要编码的字符（冒号）');
+
+    fx.to('demo_muc_member');
+    const page = instantiate(eventDetailConfig);
+    await page.onLoad({ eventId: encoded });
+
+    assert.strictEqual(page.data.view.found, true, '未解码的 query 也要打得开这场赛事');
+    assert.strictEqual(page.eventId, eventId, '页面必须采纳装载器解析出的真实编号');
+
+    await page.onSignUp();
+    assert.strictEqual(page.data.view.event.mySignupLabel, '已报名', '报名要落在真实的赛事主键上');
+    assert.strictEqual(page.data.view.event.quotaText, '1/8 人');
+
+    // 进名次页：已解码的编号只编码一次，不能二次编码（二次编码会让名次页也找不到赛事）
+    calls.navigations.length = 0;
+    page.onOpenPlacement();
+    assert.deepStrictEqual(calls.navigations, [
+      `/pages/event-placement/event-placement?eventId=${encodeURIComponent(eventId)}`,
+    ]);
+  } finally {
+    fx.restore();
+  }
+});
+
+test('录入名次 —— 未解码的 query 也能提交并结束赛事', async () => {
+  const fx = schoolEventFixture();
+  try {
+    const eventId = await fx.publish({ seedCount: 2 });
+    await fx.play(eventId, ['demo_muc_member', 'demo_muc_admin']);
+
+    fx.to('demo_muc_admin');
+    const page = instantiate(eventPlacementConfig);
+    // 开发者工具 / 真机：query 原样透传
+    await page.onLoad({ eventId: encodeURIComponent(eventId) });
+
+    assert.strictEqual(page.eventId, eventId, '名次页也要采纳真实编号');
+    assert.strictEqual(page.data.view.canEdit, true);
+    assert.strictEqual(page.data.view.rows.length, 2);
+
+    page.data.view.rows.forEach((row, index) => page.onInputPlacement({
+      currentTarget: { dataset: { index } }, detail: { value: String(index + 1) },
+    }));
+    await page.onSubmit();
+
+    const finished = await fx.api().getSchoolEvent({ eventId });
+    assert.strictEqual(finished.event.status, EVENT_STATUS.FINISHED, '名次录进的是同一场赛事');
+  } finally {
+    fx.restore();
+  }
+});
+
 test('赛事详情 —— 开始赛事之后可以给报名者代签', async () => {
   const fx = schoolEventFixture();
   try {
@@ -5704,6 +5766,152 @@ collegeTest('学院赛 S2 闭环 —— 页面发布、列表、名单审核、�
   assert.equal(list.data.view.collegeEvents[0].isFinished, true);
 });
 
+/* ============================================================
+ * 学院赛 —— 路由编号（未解码 query）
+ * ============================================================
+ * 跳转方一律 encodeURIComponent 拼 URL，而微信开发者工具 / 真机把 query **原样
+ * 透传**（仍是 %3A 形式），Node 测试替身（URLSearchParams）才会解码一次——所以
+ * 传 `event._id` 的既有用例一直是绿的，真机上却「赛事不存在」（2026-10-16 实测）。
+ * 这里一律传 encodeURIComponent 之后的值，模拟未解码的那一端：页面必须采纳装载器
+ * 探测出的真实编号，否则写在页面实例上的还是路由原值（见 utils/route-query.js）。
+ */
+
+/**
+ * 交齐两侧排阵并开打，返回这场大场生成的小场编号。
+ * 与真人路线一致：排阵 → 大场开始；小场是开打那一刻才铺出来的。
+ *
+ * @param {Object} event
+ * @param {Object} tie
+ * @returns {Promise<Array<string>>}
+ */
+async function startTieMatches(event, tie) {
+  for (const college of [STAFF_COLLEGE, OTHER_COLLEGE]) {
+    const ids = await memberIdsOf(college);
+    await collegeFixture.submitLineup(
+      {
+        tieId: tie._id,
+        college,
+        entries: [{ legNo: 1, players: [ids[0]] }, { legNo: 2, players: [ids[1]] }],
+      },
+      college === STAFF_COLLEGE ? STAFF_ID : COLLEGE_ADMIN._id
+    );
+  }
+  const started = await collegeFixture.startTie(tie._id, COLLEGE_ADMIN._id);
+  assert.strictEqual(started.ok, true, started.message);
+  const saved = (await collegeFixture.getCollegeTies(event._id)).find((item) => item._id === tie._id);
+  return saved.legs.map((leg) => leg.matchId);
+}
+
+collegeTest('学院赛详情 —— 未解码 query 下采纳真实编号，抽签与开赛都成功', async () => {
+  const event = await publishTestCollegeEvent({ legPlan: ['MS', 'WS'] });
+  for (const college of [STAFF_COLLEGE, OTHER_COLLEGE]) {
+    await collegeFixture.submitCollegeEntry(
+      { eventId: event._id, college, memberIds: await memberIdsOf(college) },
+      college === STAFF_COLLEGE ? STAFF_ID : COLLEGE_ADMIN._id
+    );
+  }
+  for (const entry of await collegeFixture.getCollegeEntries(event._id)) {
+    await collegeFixture.reviewCollegeEntry(entry._id, 'approve', '', COLLEGE_ADMIN._id);
+  }
+
+  // 未解码环境：跳转方编码一次，接收方拿到的就是这串 %3A 形式的值
+  const routeEventId = encodeURIComponent(event._id);
+  assert.notStrictEqual(routeEventId, event._id, '演示编号含 %3A，这条用例才守得住未解码环境');
+
+  loginCollegeAs(COLLEGE_ADMIN);
+  const page = instantiate(collegeEventDetailConfig);
+  await page.onLoad({ eventId: routeEventId });
+
+  assert.strictEqual(page.data.view.blockReason, '');
+  assert.strictEqual(page.eventId, event._id, '页面要采纳装载器探测出的真实编号');
+
+  // 写操作一：抽签
+  calls.toasts.length = 0;
+  await page.onDraw();
+  assert.strictEqual(page.data.view.isReady, true, calls.toasts.join('|'));
+  assert.strictEqual((await collegeFixture.getCollegeEvent(event._id)).status, COLLEGE_EVENT_STATUS.READY);
+
+  // 写操作二：开赛
+  calls.toasts.length = 0;
+  await page.onStartEvent();
+  assert.strictEqual(page.data.view.isOngoing, true, calls.toasts.join('|'));
+  assert.ok(page.data.view.ties.length > 0, '开赛后铺出首轮大场');
+
+  // 跳转只编码一次，带的是真实编号
+  calls.navigations.length = 0;
+  page.onOpenReview();
+  assert.deepStrictEqual(calls.navigations, [
+    `/pages/college-entry-review/college-entry-review?eventId=${encodeURIComponent(event._id)}`,
+  ]);
+});
+
+collegeTest('学院赛排阵 —— 未解码 query 下采纳真实大场编号，提交排阵成功', async () => {
+  const { event, ties } = await startTestCollegeEvent();
+  const tie = ties[0];
+  const routeTieId = encodeURIComponent(tie._id);
+  assert.notStrictEqual(routeTieId, tie._id);
+
+  loginCollegeAs({ role: 1, _id: STAFF_ID, college: STAFF_COLLEGE });
+  const page = instantiate(collegeLineupConfig);
+  await page.onLoad({ tieId: routeTieId, eventId: encodeURIComponent(event._id) });
+
+  assert.strictEqual(page.data.view.blockReason, '');
+  assert.strictEqual(page.tieId, tie._id, '页面要采纳装载器探测出的真实大场编号');
+  assert.strictEqual(page.eventId, event._id, '赛事编号也要落回实例');
+
+  const ids = await memberIdsOf(STAFF_COLLEGE);
+  page.onTogglePlayer({ currentTarget: { dataset: { legNo: 1 } }, detail: { value: [ids[0]] } });
+  page.onTogglePlayer({ currentTarget: { dataset: { legNo: 2 } }, detail: { value: [ids[1]] } });
+
+  calls.toasts.length = 0;
+  await page.onSubmit();
+  assert.match(calls.toasts.join('|'), /排阵已提交/);
+
+  const lineups = await collegeFixture.getCollegeLineups(event._id);
+  assert.strictEqual(lineups.length, 1, '排阵照真实大场编号落库');
+  assert.strictEqual(lineups[0].college, STAFF_COLLEGE);
+});
+
+collegeTest('学院赛小场录分 —— 未解码 query 下采纳真实小场编号，录分与确认都成功', async () => {
+  const { event, ties } = await startTestCollegeEvent();
+  const [matchId] = await startTieMatches(event, ties[0]);
+  assert.ok(matchId, '大场开打后小场才生成');
+  const routeMatchId = encodeURIComponent(matchId);
+  assert.notStrictEqual(routeMatchId, matchId);
+
+  loginCollegeAs(COLLEGE_ADMIN);
+  const page = instantiate(collegeMatchConfig);
+  await page.onLoad({ matchId: routeMatchId });
+
+  assert.strictEqual(page.data.view.blockReason, '');
+  assert.strictEqual(page.matchId, matchId, '页面要采纳装载器探测出的真实小场编号');
+  assert.strictEqual(page.data.view.canRecord, true);
+
+  // 写操作一：录分
+  const wins = Math.floor(page.data.view.bestOf / 2) + 1;
+  for (let slot = 0; slot < wins; slot += 1) {
+    page.onInputScore({
+      currentTarget: { dataset: { side: 'A', slot } },
+      detail: { value: String(page.data.view.gamePoints) },
+    });
+    page.onInputScore({ currentTarget: { dataset: { side: 'B', slot } }, detail: { value: '3' } });
+  }
+  calls.toasts.length = 0;
+  await page.onSubmit();
+  assert.strictEqual(page.data.view.canConfirm, true, calls.toasts.join('|'));
+
+  // 写操作二：确认生效
+  await page.onConfirm();
+  assert.strictEqual(page.data.view.status, MATCH_STATUS.ACTIVE, calls.toasts.join('|'));
+
+  // 去计分台：只编码一次，带真实编号
+  calls.navigations.length = 0;
+  page.onGoLiveScore();
+  assert.deepStrictEqual(calls.navigations, [
+    `/pages/live-score/live-score?matchId=${encodeURIComponent(matchId)}`,
+  ]);
+});
+
 collegeTest('学院赛 S2 隔离 —— 跨校跨协会不可读写，本院负责人不能替对方排阵', async () => {
   const { event, ties } = await startTestCollegeEvent();
   for (const scope of [{ schoolId: 'buaa', association: 'pkb' }, { schoolId: 'muc', association: 'tt' }]) {
@@ -6565,6 +6773,76 @@ test('协会空间 —— 组员本人退出；管理者随后可归档', async 
     const archived = adminPage.data.groups.find((row) => row.groupId === groupId);
     assert.strictEqual(archived.archived, true);
   } finally {
+    fx.restore();
+  }
+});
+
+test('协会空间 —— 管理者可删除整个小组，删除后列表里不再有它', async () => {
+  const fx = spaceFixture();
+  fx.to('demo_muc_admin');
+  try {
+    const created = await fx.spaceApi().createAssociationGroup({
+      requestId: 'ag_page_delete_1', name: '待删除组', description: '', memberIds: ['demo_muc_member'],
+    });
+    assert.strictEqual(created.ok, true);
+    const groupId = created.group.groupId;
+
+    const page = instantiate(spacePanelConfig);
+    await page.onLoad();
+    await page.onSwitchSub({ currentTarget: { dataset: { sub: 'group' } } });
+    await page.onToggleGroupDetail({ currentTarget: { dataset: { groupid: groupId } } });
+    assert.strictEqual(page.data.openGroupId, groupId, '先展开名单，用来验证删除会把展开态一起收掉');
+    const before = page.data.groups.find((row) => row.groupId === groupId);
+
+    calls.modals.length = 0;
+    await page.onDeleteGroup({ currentTarget: { dataset: { groupid: groupId, revision: before.revision } } });
+
+    assert.strictEqual(page.data.error, '');
+    assert.strictEqual(page.data.notice, '小组已删除');
+    assert.strictEqual(calls.modals.length, 1, '删除是不可逆动作，先弹一次确认');
+    assert.ok(calls.modals[0].includes('历史活动记录保留'), '确认文案讲清历史记录保留');
+    assert.strictEqual(page.data.groups.some((row) => row.groupId === groupId), false, '列表刷新后该组消失');
+    assert.strictEqual(page.data.openGroupId, '', '不残留展开的名单');
+    assert.strictEqual(page.data.detailMembers.length, 0);
+    assert.strictEqual(page.data.editingId, '');
+
+    // 重复点击 / 超时重试：服务端幂等，页面照旧提示成功，不再多弹一次决定
+    calls.modals.length = 0;
+    await page.onDeleteGroup({ currentTarget: { dataset: { groupid: groupId, revision: before.revision } } });
+    assert.strictEqual(page.data.notice, '小组已删除');
+    assert.strictEqual(page.data.error, '');
+
+    // 取消确认时不调用接口
+    const second = await fx.spaceApi().createAssociationGroup({
+      requestId: 'ag_page_delete_2', name: '再建一个组', description: '', memberIds: [],
+    });
+    await page.onLoad();
+    const keep = page.data.groups.find((row) => row.groupId === second.group.groupId);
+    calls.modalConfirmed = false;
+    await page.onDeleteGroup({ currentTarget: { dataset: { groupid: keep.groupId, revision: keep.revision } } });
+    assert.strictEqual(page.data.groups.some((row) => row.groupId === keep.groupId), true, '取消确认后组还在');
+    calls.modalConfirmed = true;
+
+    // 普通会员：canManage 为假，模板里由 canManage 门控的删除按钮不会渲染
+    fx.to('demo_muc_member');
+    const memberPage = instantiate(spacePanelConfig);
+    await memberPage.onLoad();
+    await memberPage.onSwitchSub({ currentTarget: { dataset: { sub: 'group' } } });
+    assert.strictEqual(memberPage.data.canManage, false, '会员没有管理权，删除按钮不出现');
+    assert.deepStrictEqual(memberPage.data.groups.map((row) => row.groupId), [second.group.groupId],
+      '删掉的组对会员也不再可见');
+
+    // Node 里没有模板渲染器，「按钮是否出现」只能落到模板门控上验：
+    // 删除按钮必须由 canManage 管着，而且不能把归档的组排除在外（用户就是删不掉才来报的）。
+    const wxml = require('node:fs').readFileSync(require('node:path').join(__dirname, '..',
+      'miniprogram', 'components', 'association-space-panel', 'association-space-panel.wxml'), 'utf8');
+    const at = wxml.indexOf('onDeleteGroup');
+    assert.ok(at > 0, '模板里要有删除入口');
+    const tag = wxml.slice(wxml.lastIndexOf('<button', at), wxml.indexOf('>', at) + 1);
+    assert.match(tag, /wx:if="\{\{canManage\}\}"/, '删除按钮由管理权门控');
+    assert.doesNotMatch(tag, /archived/, '归档的小组也要能删');
+  } finally {
+    calls.modalConfirmed = true;
     fx.restore();
   }
 });
