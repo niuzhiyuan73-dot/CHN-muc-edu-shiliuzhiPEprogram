@@ -5,7 +5,7 @@
  * 只有出场过的人上榜，跨校 / 跨协会彼此隔离；赛季权限与旧栈同门槛，
  * 赛季文档按范围各持一份。
  */
-const { test } = require('node:test');
+const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { createSchoolDemoSeed } = require('../miniprogram/services/school-seed');
@@ -13,7 +13,8 @@ const { createSchoolMemoryRepo } = require('../miniprogram/services/school-memor
 const { buildSchoolContext } = require('../miniprogram/services/school-context');
 const handlers = require('../miniprogram/services/school-rank-service');
 const { schoolMemberKey, scopeKey } = require('../miniprogram/utils/school');
-const { MATCH_TYPE, MATCH_STATUS, MATCH_OUTCOME } = require('../miniprogram/utils/constants');
+const { ALL_RANK_PROJECTS, MATCH_TYPE, MATCH_STATUS, MATCH_OUTCOME,
+  RANK_PROJECT } = require('../miniprogram/utils/constants');
 
 const NOW = new Date('2026-10-13T10:00:00Z');
 const HOUR = 60 * 60 * 1000;
@@ -400,4 +401,192 @@ test('个人资料：不出场的会员也有档案，找不到与跨校读被�
   const outsider = await call(repo, 'getSchoolMemberProfile', {}, { actor: 'demo_buaa_member' });
   assert.equal(outsider.ok, false);
   assert.match(outsider.message, /没有读取/);
+});
+
+/* ---------------------------------------- 榜单展示形状（旧栈 loadRankView 的 S2 对应） */
+
+/**
+ * 下面一组由旧栈 tests/rank-view.test.js 的「排行榜 ——」那一段迁移而来。
+ *
+ * 【为什么是迁移而不是删除】它们守的全是**展示口径**：只列前 10、但 total 报
+ * 完整人数；「我的名次」必须来自完整榜单；三个项目标签永远都在且只有一个选中；
+ * 非法项目回退第一个；名次连续且与下标一致；每行都要能点进主页。这些规则在
+ * S2 全部搬到了服务端 `getSchoolRanking`（与旧栈 loadRankView 同形），但此前
+ * 只有「形状与旧栈一致」「me 卡」「没出场不上榜」这几条粗覆盖——上面那些
+ * 展示口径在 S2 **没人守**。删掉旧栈装载器前必须先把它们建起来。
+ */
+describe('榜单展示形状 —— 旧栈 loadRankView 的 S2 对应', () => {
+  const { TOP_LIMIT, describeSearch } = require('../miniprogram/services/rank-view');
+
+  /** 往已有仓储里补一位男会员：只需要 users + schoolMembers 两条 */
+  async function addMale(repo, id) {
+    await repo.users.set(id, { _id: id, openId: `mock_openid_${id}`, nickName: id, gender: 'M',
+      platformStatus: 'active', platformRole: 'member', primarySchoolId: 'muc', simulated: true });
+    await repo.schoolMembers.set(schoolMemberKey(id, 'muc'),
+      { _id: schoolMemberKey(id, 'muc'), userId: id, schoolId: 'muc',
+        collegeId: 'c01', studentId: id, status: 'active', simulated: true });
+  }
+
+  /** 造一份超过 TOP_LIMIT 的男单榜：demo_muc_member + 12 位男会员，人人都出场过 */
+  async function bigFixture() {
+    const repo = fixture();
+    for (let i = 1; i <= 12; i += 1) {
+      const id = `rank_big_${i}`;
+      await addMale(repo, id);
+      // 每人都与 demo_muc_member 打一场并落败：人人有场次，名次排在其后
+      await seedMatch(repo, `big_${i}`, { a: ['demo_muc_member'], b: [id], winner: 'A' });
+    }
+    return repo;
+  }
+
+  test('榜单最多只列前 10 名，但 total 报完整人数', async () => {
+    const repo = await bigFixture();
+    const board = await call(repo, 'getSchoolRanking', { project: RANK_PROJECT.MEN_SINGLES });
+
+    assert.ok(board.total > TOP_LIMIT, `这份榜单要超过 ${TOP_LIMIT} 人才验证得了截断`);
+    assert.equal(board.rows.length, TOP_LIMIT);
+    assert.equal(board.hasMore, true);
+    assert.equal(board.allRows.length, board.total, 'allRows 必须是完整榜单');
+  });
+
+  test('前十之外还有人时，计数文案如实交代总数', async () => {
+    const repo = await bigFixture();
+    const board = await call(repo, 'getSchoolRanking', { project: RANK_PROJECT.MEN_SINGLES });
+    assert.equal(board.playerCountText, `前 ${TOP_LIMIT} 名 · 共 ${board.total} 人`);
+
+    // 不足十人时换一种说法
+    const small = fixture();
+    await seedMatch(small, 'm1', { a: ['demo_muc_member'], b: ['rank_m2'], winner: 'A' });
+    const little = await call(small, 'getSchoolRanking', { project: RANK_PROJECT.MEN_SINGLES });
+    assert.equal(little.playerCountText, `${little.total} 人上榜`);
+  });
+
+  test('我的名次来自完整榜单，不因只显示前 10 而丢失', async () => {
+    const repo = await bigFixture();
+    // 再加一位只输不赢的会员：他必然落在前十之外，正是这条用例要验证的位置
+    await addMale(repo, 'rank_weak');
+    await seedMatch(repo, 'weak_1', { a: ['demo_muc_member'], b: ['rank_weak'], winner: 'A' });
+    await seedMatch(repo, 'weak_2', { a: ['rank_m2'], b: ['rank_weak'], winner: 'A' });
+
+    const board = await call(repo, 'getSchoolRanking',
+      { project: RANK_PROJECT.MEN_SINGLES }, { actor: 'rank_weak' });
+
+    assert.ok(board.me, '我在榜上');
+    assert.equal(board.me.total, board.total, '分母是完整榜单人数，不是这一页的条数');
+    assert.ok(board.me.rank > TOP_LIMIT, '这条用例要验证的正是「我排在显示行之外」');
+    assert.equal(board.rows.some(row => row.isMe), false, '前十之外的我不该出现在列表里');
+    // 名次取自 allRows，哪怕我排在显示行之外也照样给得出来
+    assert.equal(board.me.rank, board.allRows.find(row => row.isMe).rank);
+    assert.match(board.me.beatText, /超过/);
+  });
+
+  test('三个项目的标签始终都在，且只有一个选中', async () => {
+    const repo = fixture();
+    for (const project of ALL_RANK_PROJECTS) {
+      const board = await call(repo, 'getSchoolRanking', { project });
+      assert.equal(board.projectTabs.length, ALL_RANK_PROJECTS.length);
+      assert.equal(board.projectTabs.filter(tab => tab.active).length, 1);
+      assert.equal(board.projectTabs.find(tab => tab.active).project, project);
+      assert.equal(board.projectTabs.find(tab => tab.active).project, board.activeProject);
+    }
+  });
+
+  test('项目名非法或未传时回退到第一个项目，不白屏', async () => {
+    const repo = fixture();
+    for (const bad of ['不存在的项目', '', null, undefined]) {
+      const board = await call(repo, 'getSchoolRanking', { project: bad });
+      assert.equal(board.activeProject, ALL_RANK_PROJECTS[0]);
+      assert.equal(board.activeProjectLabel, board.projectTabs[0].label);
+    }
+  });
+
+  test('名次连续，且与 allRows 的下标严格一致', async () => {
+    const repo = await bigFixture();
+    const board = await call(repo, 'getSchoolRanking', { project: RANK_PROJECT.MEN_SINGLES });
+
+    board.allRows.forEach((row, index) => {
+      assert.equal(row.rank, index + 1, '名次不能断档');
+    });
+    // 显示行就是完整榜单的前 TOP_LIMIT 条，名次原样带过来
+    assert.deepEqual(board.rows.map(row => row.rank),
+      board.allRows.slice(0, TOP_LIMIT).map(row => row.rank));
+  });
+
+  test('榜单按等级分从高到低', async () => {
+    const repo = await bigFixture();
+    const board = await call(repo, 'getSchoolRanking', { project: RANK_PROJECT.MEN_SINGLES });
+    for (let i = 1; i < board.allRows.length; i += 1) {
+      assert.ok(
+        Number(board.allRows[i - 1].valueText) >= Number(board.allRows[i].valueText),
+        `第 ${i} 名的等级分不该低于第 ${i + 1} 名`
+      );
+    }
+  });
+
+  test('每一行都带得动「点进主页」所需的字段', async () => {
+    const repo = await bigFixture();
+    const board = await call(repo, 'getSchoolRanking', { project: RANK_PROJECT.MEN_SINGLES });
+    for (const row of [...board.rows, ...board.allRows]) {
+      assert.ok(row.userId, '缺 userId 就点不进对方主页');
+      assert.equal(typeof row.avatarText, 'string');
+      assert.equal(typeof row.avatarUrl, 'string');
+      assert.equal(typeof row.nickName, 'string');
+    }
+  });
+
+  test('前三名给奖牌，第四名开始不装饰', async () => {
+    const repo = await bigFixture();
+    const board = await call(repo, 'getSchoolRanking', { project: RANK_PROJECT.MEN_SINGLES });
+
+    assert.equal(board.allRows[0].medal, 'gold');
+    assert.equal(board.allRows[1].medal, 'silver');
+    assert.equal(board.allRows[2].medal, 'bronze');
+    assert.equal(board.allRows[3].medal, '', '第四名不该再给奖牌');
+    assert.ok(board.allRows.slice(3).every(row => row.medal === ''));
+  });
+
+  test('状态徽章只翻译页面认识的两种，其余不装饰', async () => {
+    const repo = await bigFixture();
+    const board = await call(repo, 'getSchoolRanking', { project: RANK_PROJECT.MEN_SINGLES });
+
+    // 只打过一场的人仍在定级期
+    const provisional = board.allRows.find(row => row.badge === '定级中');
+    assert.ok(provisional, '一场定胜负的人应当标「定级中」');
+    for (const row of board.allRows) {
+      assert.ok(['', '定级中', '不活跃'].includes(row.badge), `未知徽章：${row.badge}`);
+    }
+  });
+
+  test('主数字是等级分，副行是战绩；「我」只有一行会被高亮', async () => {
+    const repo = await bigFixture();
+    const board = await call(repo, 'getSchoolRanking', { project: RANK_PROJECT.MEN_SINGLES });
+
+    for (const row of board.allRows) {
+      assert.match(row.valueText, /^\d+$/, '主数字是等级分');
+      assert.match(row.detailText, /^\d+ 胜 \d+ 负$/, '副行是战绩');
+    }
+    // 高亮只认一个人：看别人的榜不该把别人标成「我」
+    const marked = board.allRows.filter(row => row.isMe);
+    assert.equal(marked.length, 1);
+    assert.equal(marked[0].userId, 'demo_muc_member');
+
+    const other = await call(repo, 'getSchoolRanking',
+      { project: RANK_PROJECT.MEN_SINGLES }, { actor: 'rank_big_1' });
+    assert.equal(other.allRows.filter(row => row.isMe).length, 1);
+    assert.equal(other.allRows.find(row => row.isMe).userId, 'rank_big_1');
+  });
+
+  test('搜索能查到前十之外的会员，名次仍是榜单上的绝对名次', async () => {
+    const repo = await bigFixture();
+    const board = await call(repo, 'getSchoolRanking', { project: RANK_PROJECT.MEN_SINGLES });
+    const outside = board.allRows[TOP_LIMIT];
+    assert.ok(outside, '这份榜单要超过前十才验证得了');
+    assert.equal(board.rows.some(row => row.userId === outside.userId), false, '默认列表里没有他');
+
+    const search = describeSearch(board.allRows, outside.nickName);
+    const hit = search.rows.find(row => row.userId === outside.userId);
+    assert.ok(hit, '前十之外的人必须能被搜到');
+    assert.equal(hit.rank, outside.rank, '筛选不能改动名次');
+    assert.ok(hit.rank > TOP_LIMIT);
+  });
 });

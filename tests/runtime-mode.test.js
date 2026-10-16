@@ -44,7 +44,6 @@ const SERVICE_FILES_PENDING = [
   'association-scope.js',
   'events-view.js',
   'profile-view.js',
-  'rank-view.js',
 ].sort();
 
 /** 递归列出目录下的 .js 文件。 */
