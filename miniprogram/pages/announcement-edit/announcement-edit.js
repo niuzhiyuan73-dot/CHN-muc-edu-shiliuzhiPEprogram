@@ -22,7 +22,7 @@
 
 const { ANNOUNCEMENT_CATEGORIES } = require('../../utils/constants.js');
 const { TITLE_MAX, CONTENT_MAX } = require('../../services/announcement.js');
-const { isMock } = require('../../services/index.js');
+const { isMock } = require('../../services/runtime-mode.js');
 const { currentThemeClass } = require('../../services/branding.js');
 const schoolSession = require('../../services/school-session.js');
 const associationScope = require('../../services/association-scope.js');

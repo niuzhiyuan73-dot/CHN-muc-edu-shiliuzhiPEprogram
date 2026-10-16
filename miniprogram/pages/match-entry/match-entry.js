@@ -19,7 +19,7 @@
  * ============================================================
  */
 
-const { isMock } = require('../../services/index.js');
+const { isMock } = require('../../services/runtime-mode.js');
 const space = require('../../services/association-space');
 const schoolSession = require('../../services/school-session');
 const associationScope = require('../../services/association-scope');

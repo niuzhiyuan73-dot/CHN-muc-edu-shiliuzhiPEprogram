@@ -34,7 +34,8 @@ const { PROFILE_RULES, resolveAuthState } = require('../../services/auth.js');
 const { uploadAvatar } = require('../../services/avatar.js');
 const identity = require('../../services/school-identity.js');
 const appSession = require('../../services/app-session.js');
-const facade = require('../../services/index.js');
+const associationScope = require('../../services/association-scope.js');
+const runtime = require('../../services/runtime-mode.js');
 
 /** 学校身份状态 → 界面文案（与 school-identity 页同口径） */
 const STATUS_LABEL = {
@@ -92,7 +93,7 @@ Page({
     this.unloaded = false;
     this.sessionSeq = 0;
     // 数据源是「调用时取值」的开关，别在 data 初值里冻结一次性的快照
-    this.setData({ isMock: facade.isMockNow(), existing: this.describeCompat(this.currentUser()) });
+    this.setData({ isMock: runtime.isMockNow(), existing: this.describeCompat(this.currentUser()) });
     return this.loadSession();
   },
 
@@ -112,7 +113,7 @@ Page({
     const schoolSession = require('../../services/school-session.js');
     const app = getApp();
     const association = (app && typeof app.getAssociation === 'function' && app.getAssociation())
-      || facade.getAssociation() || 'pkb';
+      || associationScope.getAssociation() || 'pkb';
     return { schoolId: schoolSession.getSchoolId() || 'muc', association };
   },
 

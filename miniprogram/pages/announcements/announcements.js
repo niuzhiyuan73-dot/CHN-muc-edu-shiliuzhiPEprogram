@@ -17,7 +17,7 @@
  */
 
 const { loadSchoolAnnouncementListView } = require('../../services/announcement-view.js');
-const { isMock } = require('../../services/index.js');
+const { isMock } = require('../../services/runtime-mode.js');
 const schoolSession = require('../../services/school-session.js');
 const { LEGACY_SCHOOL_ID } = require('../../utils/school.js');
 

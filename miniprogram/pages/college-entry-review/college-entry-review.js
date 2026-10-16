@@ -19,7 +19,7 @@
  */
 
 const { loadCollegeEntryReviewView } = require('../../services/school-college-view.js');
-const { isMock } = require('../../services/index.js');
+const { isMock } = require('../../services/runtime-mode.js');
 // 审核动作与入会审核共用同一套取值，直接复用，免得两处各写一份字符串
 const { REVIEW_ACTION } = require('../../services/member-review.js');
 const { currentThemeClass } = require('../../services/branding.js');

@@ -33,7 +33,7 @@ const { buildPickerRows, pickerEmptyText } = require('../../services/match-entry
 
 const { watchLiveScores } = require('../../services/live-watch.js');
 const { applyLiveRows } = require('../../services/live-view.js');
-const { isMock } = require('../../services/index.js');
+const { isMock } = require('../../services/runtime-mode.js');
 const { currentThemeClass } = require('../../services/branding.js');
 
 /** 撤销与驳回的面板文案。两者的终态相同，但要说清楚各自是干什么的 */

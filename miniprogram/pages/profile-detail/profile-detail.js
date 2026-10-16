@@ -11,7 +11,7 @@
  */
 
 const { createMemberPage } = require('../../templates/member-view.js');
-const { isMock } = require('../../services/index.js');
+const { isMock } = require('../../services/runtime-mode.js');
 
 // 页内切换协会：只切本页，默认「本人比赛最多的协会」，退出即失效（§11.1 / §11.5）
 const memberPage = createMemberPage({ localAssociation: true });

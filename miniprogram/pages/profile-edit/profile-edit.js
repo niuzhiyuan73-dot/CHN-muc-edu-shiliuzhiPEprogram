@@ -16,7 +16,7 @@
 
 const { uploadAvatar } = require('../../services/avatar.js');
 const { loadSchoolProfileEditView, schoolProfilePatch } = require('../../services/school-profile-view.js');
-const { isMock } = require('../../services/index.js');
+const { isMock } = require('../../services/runtime-mode.js');
 const schoolSession = require('../../services/school-session.js');
 const associationScope = require('../../services/association-scope.js');
 const identity = require('../../services/school-identity.js');

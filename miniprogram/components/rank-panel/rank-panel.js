@@ -22,7 +22,7 @@
  */
 
 const { loadSchoolRankView, describeSearch } = require('../../services/rank-view.js');
-const { isMock } = require('../../services/index.js');
+const { isMock } = require('../../services/runtime-mode.js');
 const { currentThemeClass } = require('../../services/branding.js');
 const space = require('../../services/association-space');
 const schoolSession = require('../../services/school-session');

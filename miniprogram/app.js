@@ -12,7 +12,8 @@ const { STORAGE_KEY, DATA_SOURCE } = require('./utils/constants.js');
 const { CLOUD_ENV_ID } = require('./config.js');
 const { defaultAssociationId } = require('./utils/associations.js');
 const { LEGACY_SCHOOL_ID } = require('./utils/school.js');
-const facade = require('./services/index.js');
+const runtime = require('./services/runtime-mode.js');
+const associationScope = require('./services/association-scope.js');
 const appSession = require('./services/app-session.js');
 
 App({
@@ -113,7 +114,7 @@ App({
       }
     }
 
-    facade.setDataSource(target);
+    runtime.setDataSource(target);
     this.globalData.dataSource = target;
 
     if (target === DATA_SOURCE.MOCK) {
@@ -208,17 +209,17 @@ App({
    * @throws {Error} 未知协会（由 association-scope 抛出）
    */
   applyAssociation(id) {
-    const next = facade.setAssociation(id);
+    const next = associationScope.setAssociation(id);
     this.globalData.association = next;
     return next;
   },
 
   /**
-   * 当前协会 id。页面一律通过它读取；globalData 尚未填时回落到门面（+默认）。
+   * 当前协会 id。页面一律通过它读取；globalData 尚未填时回落到会话作用域（+默认）。
    * @returns {string}
    */
   getAssociation() {
-    return this.globalData.association || facade.getAssociation();
+    return this.globalData.association || associationScope.getAssociation();
   },
 
   /**

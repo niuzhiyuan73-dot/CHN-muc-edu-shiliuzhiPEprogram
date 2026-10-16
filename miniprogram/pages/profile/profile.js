@@ -17,9 +17,9 @@
  */
 
 const { loadSchoolProfileSummaryView } = require('../../services/profile-view.js');
-const { isMock } = require('../../services/index.js');
+const { isMock } = require('../../services/runtime-mode.js');
 const { resetBranding } = require('../../services/branding.js');
-const facade = require('../../services/index.js');
+const associationScope = require('../../services/association-scope.js');
 
 Page({
   data: {
@@ -103,14 +103,14 @@ Page({
   currentAssociation() {
     const app = getApp();
     if (app && typeof app.getAssociation === 'function') return app.getAssociation();
-    return facade.getAssociation();
+    return associationScope.getAssociation();
   },
 
   /** 切全局协会：优先走 app（它把结果同步进 globalData），否则直接改门面 */
   setAssociation(id) {
     const app = getApp();
     if (app && typeof app.setAssociation === 'function') return app.setAssociation(id);
-    return facade.setAssociation(id);
+    return associationScope.setAssociation(id);
   },
 
   /**

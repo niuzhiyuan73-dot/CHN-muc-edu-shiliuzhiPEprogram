@@ -19,7 +19,8 @@
 
 const { activeAssociations } = require('../../utils/associations.js');
 const { resetBranding } = require('../../services/branding.js');
-const facade = require('../../services/index.js');
+const associationScope = require('../../services/association-scope.js');
+const runtime = require('../../services/runtime-mode.js');
 
 Page({
   data: {
@@ -63,14 +64,14 @@ Page({
   currentAssociation() {
     const app = getApp();
     if (app && typeof app.getAssociation === 'function') return app.getAssociation();
-    return facade.getAssociation();
+    return associationScope.getAssociation();
   },
 
   /** 切全局协会：优先走 app（它把结果同步进 globalData），否则直接改门面 */
   setAssociation(id) {
     const app = getApp();
     if (app && typeof app.setAssociation === 'function') return app.setAssociation(id);
-    return facade.setAssociation(id);
+    return associationScope.setAssociation(id);
   },
 
   /**
@@ -83,7 +84,7 @@ Page({
       const schoolId = session.getSchoolId();
       const currentId = this.currentAssociation();
 
-      const demo = facade.isMockNow()
+      const demo = runtime.isMockNow()
         ? require('../../services/school-demo.js').schoolAssociations(schoolId)
         : null;
       const base = demo || activeAssociations().map((assoc) => ({

@@ -37,7 +37,8 @@
 const { loadSchoolHomeView } = require('../../services/school-home-view.js');
 const { resolveAuthState } = require('../../services/auth.js');
 const { resetBranding } = require('../../services/branding.js');
-const facade = require('../../services/index.js');
+const associationScope = require('../../services/association-scope.js');
+const runtime = require('../../services/runtime-mode.js');
 
 Page({
   data: {
@@ -103,14 +104,14 @@ Page({
   currentAssociation() {
     const app = getApp();
     if (app && typeof app.getAssociation === 'function') return app.getAssociation();
-    return facade.getAssociation();
+    return associationScope.getAssociation();
   },
 
   /** 切全局协会：优先走 app（它把结果同步进 globalData），否则直接改门面 */
   setAssociation(id) {
     const app = getApp();
     if (app && typeof app.setAssociation === 'function') return app.setAssociation(id);
-    return facade.setAssociation(id);
+    return associationScope.setAssociation(id);
   },
 
   /**
@@ -155,7 +156,7 @@ Page({
    * 两处各存一份迟早会对不上（曾经就出现过开关拨了、界面还显示模拟数据）。
    */
   showDataSource() {
-    const mock = facade.isMockNow();
+    const mock = runtime.isMockNow();
     this.setData({
       dataSourceLabel: mock ? '本地模拟数据' : '云端数据',
       isMock: mock,

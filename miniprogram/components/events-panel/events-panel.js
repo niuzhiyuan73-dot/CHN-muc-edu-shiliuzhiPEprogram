@@ -20,9 +20,7 @@ const { loadSchoolEventsPanelView } = require('../../services/school-events-pane
 // 积分榜的搜索框与排行榜页是同一套逻辑，直接复用它的纯函数，
 // 免得「怎么算命中、怎么拼文案」在两处各写一份、改一处漏一处。
 const { describeSearch } = require('../../services/rank-view.js');
-const {
-  isMock,
-} = require('../../services/index.js');
+const { isMock } = require('../../services/runtime-mode.js');
 const { currentThemeClass } = require('../../services/branding.js');
 // 两类赛事的读取与置顶均走同一 S2 范围。
 const schoolSession = require('../../services/school-session.js');

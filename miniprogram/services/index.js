@@ -35,6 +35,7 @@ const { guardWrite, isWriteAction } = require('../utils/write.js');
 const { LEGACY_SCHOOL_ID } = require('../utils/school.js');
 const scope = require('./association-scope.js');
 const mock = require('./mock.js');
+const runtime = require('./runtime-mode.js');
 
 /**
  * 已注册的数据源实现。
@@ -46,42 +47,22 @@ const implementations = {
   [DATA_SOURCE.CLOUD]: require('./cloud.js'),
 };
 
-const KNOWN_SOURCES = Object.values(DATA_SOURCE);
-
-/** 当前数据源标识。默认本地模拟数据 */
-let current = DATA_SOURCE.MOCK;
-
 /**
  * 解析出当前生效的实现。
+ *
+ * 【运行模式为什么不在本模块里存】见 runtime-mode.js：模式是**两个栈共用**的
+ * 运行状态——学校维度（school-identity）也要按它决定取模拟仓储还是云端仓储。
+ * 协议 1 已定完全下线，本门面本身要删；模式若长在门面里就会跟着陪葬，删门面
+ * 就会连带打断学校维度。所以模式搬去 runtime-mode，本模块改为向它取，
+ * 自己只负责「按模式挑实现」这一件事。
+ *
  * @returns {Object}
  */
 function resolveSource() {
-  const impl = implementations[current];
-  if (!impl) throw new Error(`未知的数据源：${current}`);
+  const name = runtime.getDataSource();
+  const impl = implementations[name];
+  if (!impl) throw new Error(`未知的数据源：${name}`);
   return impl;
-}
-
-/** 当前数据源标识 */
-function getDataSource() {
-  return current;
-}
-
-/**
- * 切换数据源。由 app.js 在启动时按云环境是否可用决定调用。
- * @param {string} name DATA_SOURCE.MOCK | DATA_SOURCE.CLOUD
- * @returns {string} 切换后的标识
- */
-function setDataSource(name) {
-  if (!KNOWN_SOURCES.includes(name)) {
-    throw new Error(`未知的数据源：${name}`);
-  }
-  current = name;
-  return current;
-}
-
-/** 此刻是否为模拟数据。用于界面水印与「演示口径」提示 */
-function isMockNow() {
-  return current === DATA_SOURCE.MOCK;
 }
 
 /**
@@ -97,10 +78,10 @@ function createApi(association) {
       const run = () => {
         const source = resolveSource();
         if (typeof source[name] !== 'function') {
-          throw new Error(`当前数据源（${current}）不支持 ${name}`);
+          throw new Error(`当前数据源（${runtime.getDataSource()}）不支持 ${name}`);
         }
         if (association === undefined) return source[name](...args);
-        if (current === DATA_SOURCE.CLOUD) {
+        if (runtime.getDataSource() === DATA_SOURCE.CLOUD) {
           return source.forAssociation(association)[name](...args);
         }
         return scope.runSynchronous(association, () => source[name](...args));
@@ -166,9 +147,10 @@ module.exports = {
   forAssociation,
   forScope,
   LEGACY_SCHOOL_UNSUPPORTED,
-  setDataSource,
-  getDataSource,
-  isMockNow,
+  // 运行模式由 runtime-mode 持有，这里只做转发，保持既有调用方不必改。
+  setDataSource: runtime.setDataSource,
+  getDataSource: runtime.getDataSource,
+  isMockNow: runtime.isMockNow,
   // 「当前协会」是客户端会话状态，与数据源无关，故不经 ...api 透传（mock 与
   // cloud 都不该导出它），而是由门面直接暴露——页面要切协会只能走这里。
   setAssociation: scope.setAssociation,
@@ -182,10 +164,10 @@ module.exports = {
 Object.defineProperties(module.exports, {
   currentSource: {
     enumerable: true,
-    get: getDataSource,
+    get: runtime.getDataSource,
   },
   isMock: {
     enumerable: true,
-    get: isMockNow,
+    get: runtime.isMockNow,
   },
 });

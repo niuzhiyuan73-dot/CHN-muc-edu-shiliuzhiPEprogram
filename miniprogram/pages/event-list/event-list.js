@@ -14,7 +14,7 @@
  */
 
 const { loadSchoolEventsPanelView } = require('../../services/school-events-panel-view.js');
-const { isMock } = require('../../services/index.js');
+const { isMock } = require('../../services/runtime-mode.js');
 const { currentThemeClass } = require('../../services/branding.js');
 // 两类赛事的读取与置顶均走同一 S2 范围。
 const schoolSession = require('../../services/school-session.js');

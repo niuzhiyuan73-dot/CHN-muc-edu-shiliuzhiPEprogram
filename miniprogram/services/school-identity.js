@@ -1,5 +1,8 @@
 /** 页面入口，每次创建客户端时固定数据源、学校与演示身份。 */
-const { isMockNow } = require('./index.js');
+// 运行模式取自 runtime-mode，而非旧数据源门面（协议 1 已定完全下线）。
+// 从前这里 require 门面的 isMockNow，删门面就会连带打断本模块的 mock / cloud
+// 判定——这正是 P10 第 3 步必须先解开的硬耦合点。
+const { isMockNow } = require('./runtime-mode.js');
 const cloud = require('./school-cloud.js');
 // 演示仓储惰性加载：数据源为 cloud 时完全用不上，别让每次冷启动都付那 400ms
 // （见 school-mock-loader.js 与 2026-10-16 只读审计 H7）。
