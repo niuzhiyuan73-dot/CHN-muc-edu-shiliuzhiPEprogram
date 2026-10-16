@@ -1,8 +1,24 @@
 const identity = require('../../services/school-identity.js');
 const exchange = require('../../services/exchange.js');
+const constants = require('../../utils/constants.js');
 const STATE = { signup: '报名中', ready: '名单已锁定', drawn: '已抽签', finished: '名次已确认', canceled: '已取消' };
 const INVITATION = { pending: '待确认', accepted: '已接受', declined: '已婉拒', withdrawn: '已撤回' };
 const MATCH_STATUS = { pending: '待比赛', active: '已确认' };
+
+/** 可选赛制：与普通赛事同一份枚举，次序从最常用（单败）到复合赛制 */
+const FORMAT_OPTIONS = [
+  constants.EVENT_FORMAT.SINGLE_ELIM,
+  constants.EVENT_FORMAT.ROUND_ROBIN,
+  constants.EVENT_FORMAT.GROUP_KNOCKOUT,
+  constants.EVENT_FORMAT.ROUND_ROBIN_KNOCKOUT,
+  constants.EVENT_FORMAT.DOUBLE_ELIM,
+  constants.EVENT_FORMAT.GROUP_DOUBLE_ELIM,
+].map(value => ({ value, label: constants.EVENT_FORMAT_LABEL[value] }));
+
+const BRONZE_OPTIONS = [
+  { value: constants.EVENT_BRONZE_MODE.TIED, label: constants.EVENT_BRONZE_MODE_LABEL[constants.EVENT_BRONZE_MODE.TIED] },
+  { value: constants.EVENT_BRONZE_MODE.PLAYOFF, label: constants.EVENT_BRONZE_MODE_LABEL[constants.EVENT_BRONZE_MODE.PLAYOFF] },
+];
 
 Page({
   data: {
@@ -10,6 +26,17 @@ Page({
     schoolIndex: 0, schools: [], actors: [], actorIndex: 0, actorName: '',
     canCreate: false, events: [], detail: null, scoreDraft: {},
     title: '民大北航单打交流赛', location: '模拟球场', date: '', time: '18:00', quota: '4', schoolQuota: '2',
+    // 赛制与它的参数：默认单败淘汰（与历史口径一致），其余选项按赛制显隐
+    formats: FORMAT_OPTIONS, formatIndex: 0, format: constants.DEFAULT_EVENT_FORMAT,
+    formatLabel: constants.EVENT_FORMAT_LABEL[constants.DEFAULT_EVENT_FORMAT],
+    groupCountOptions: constants.GROUP_CONFIG.COUNT_OPTIONS, groupCountIndex: 0,
+    groupCount: constants.DEFAULT_GROUP_COUNT,
+    advanceOptions: constants.GROUP_CONFIG.ADVANCE_OPTIONS, advanceIndex: 1,
+    advancePerGroup: constants.DEFAULT_ADVANCE_PER_GROUP,
+    bronzeOptions: BRONZE_OPTIONS, bronzeIndex: 0, bronzeMode: constants.DEFAULT_BRONZE_MODE,
+    bronzeLabel: constants.EVENT_BRONZE_MODE_LABEL[constants.DEFAULT_BRONZE_MODE],
+    gfReset: constants.DEFAULT_GF_RESET,
+    showGroupCount: false, showAdvance: false, showBronze: true, showGfReset: false,
   },
   onLoad() {
     const tomorrow = new Date(Date.now() + 86400000);
@@ -19,6 +46,23 @@ Page({
   },
   onUnload() { this.unloaded = true; this.sequence = (this.sequence || 0) + 1; },
   update(values) { if (!this.unloaded) this.setData(values); },
+
+  /**
+   * 按赛制显隐参数项。
+   * 组数只对小组赛类赛制有意义、每组出线只对带淘汰的赛制有意义、三四名只长在
+   * 单败主签表上、总决赛重赛只对双败有意义——隐藏无关项比让管理员填一堆无用字段好。
+   */
+  applyFormat(format) {
+    const formatIndex = FORMAT_OPTIONS.findIndex(option => option.value === format);
+    this.update({
+      format, formatIndex: formatIndex < 0 ? 0 : formatIndex,
+      formatLabel: constants.EVENT_FORMAT_LABEL[format] || '',
+      showGroupCount: constants.GROUP_COUNT_FORMATS.includes(format),
+      showAdvance: constants.ADVANCE_FORMATS.includes(format),
+      showBronze: constants.KNOCKOUT_FORMATS.includes(format),
+      showGfReset: constants.DOUBLE_ELIM_FORMATS.includes(format),
+    });
+  },
   async reload(eventId = '') {
     const seq = this.sequence = (this.sequence || 0) + 1;
     this.update({ loading: true, error: '', events: [], detail: null, canCreate: false });
@@ -112,6 +156,41 @@ Page({
     this.update({ [field]: event.detail.value });
     this.requestId = '';
   },
+  onFormatChange(event) {
+    if (this.data.busy) return;
+    const option = FORMAT_OPTIONS[Number(event.detail.value)];
+    if (!option) return;
+    this.requestId = '';
+    this.applyFormat(option.value);
+  },
+  onGroupCountChange(event) {
+    if (this.data.busy) return;
+    const index = Number(event.detail.value);
+    const value = this.data.groupCountOptions[index];
+    if (!value) return;
+    this.requestId = '';
+    this.update({ groupCountIndex: index, groupCount: value });
+  },
+  onAdvanceChange(event) {
+    if (this.data.busy) return;
+    const index = Number(event.detail.value);
+    const value = this.data.advanceOptions[index];
+    if (!value) return;
+    this.requestId = '';
+    this.update({ advanceIndex: index, advancePerGroup: value });
+  },
+  onBronzeChange(event) {
+    if (this.data.busy) return;
+    const option = BRONZE_OPTIONS[Number(event.detail.value)];
+    if (!option) return;
+    this.requestId = '';
+    this.update({ bronzeIndex: Number(event.detail.value), bronzeMode: option.value, bronzeLabel: option.label });
+  },
+  onGfResetChange(event) {
+    if (this.data.busy) return;
+    this.requestId = '';
+    this.update({ gfReset: Boolean(event.detail.value) });
+  },
   onOpen(event) {
     if (!this.data.busy) return this.reload(event.currentTarget.dataset.id);
   },
@@ -137,6 +216,10 @@ Page({
     return this.write(api => api.createExchangeEvent({ requestId: this.requestId, title: this.data.title,
       location: this.data.location, startTime: start.toISOString(), participantSchoolIds: schoolIds,
       quota: Number(this.data.quota), schoolQuotas: Object.fromEntries(schoolIds.map(id => [id, Number(this.data.schoolQuota)])),
+      // 赛制与参数：服务端只保留该赛制真正用得到的字段（见 normalizeExchangeFormat）
+      format: this.data.format, groupCount: Number(this.data.groupCount),
+      advancePerGroup: Number(this.data.advancePerGroup), bronzeMode: this.data.bronzeMode,
+      gfReset: Boolean(this.data.gfReset),
     }));
   },
   onRespond(event) {

@@ -5,6 +5,7 @@ const { createSchoolMemoryRepo } = require('../miniprogram/services/school-memor
 const { buildSchoolContext } = require('../miniprogram/services/school-context');
 const handlers = require('../miniprogram/services/exchange-service');
 const { schoolMemberKey } = require('../miniprogram/utils/school');
+const { EVENT_FORMAT_LABEL } = require('../miniprogram/utils/constants');
 const NOW = new Date('2026-10-13T10:00:00Z');
 const form = { title: '民大北航交流赛', location: '模拟球场', startTime: '2026-11-01T10:00:00Z',
   participantSchoolIds: ['muc', 'buaa'], quota: 4, schoolQuotas: { muc: 2, buaa: 2 }, requestId: 'test1' };
@@ -22,8 +23,8 @@ async function accept(repo, eventId) {
   return call(repo, 'respondExchangeInvitation', { eventId, decision: 'accepted' }, 'demo_buaa_admin', 'buaa');
 }
 const signup = (repo, eventId, actor = 'demo_muc_member', schoolId = 'muc') => call(repo, 'signUpExchangeEvent', { eventId }, actor, schoolId);
-async function readyFour(repo) {
-  const id = await create(repo);
+async function readyFour(repo, fields = {}) {
+  const id = await create(repo, fields);
   await accept(repo, id);
   await signup(repo, id, 'demo_muc_member', 'muc');
   await signup(repo, id, 'demo_muc_admin', 'muc');
@@ -496,4 +497,153 @@ test('失效身份在锁定名单时被清理并释放名额，仍够两校则�
   const blocked = await call(repo, 'lockExchangeRoster', { eventId: only });
   assert.equal(blocked.ok, false);
   assert.match(blocked.message, /两校/);
+});
+
+/* ============================================================
+ * 更多赛制（2026-10-16）：与普通赛事同样的六种赛制
+ * ============================================================
+ * 邀请赛原先固定单打单败淘汰。现在抽签与推进都复用普通赛事的赛制引擎
+ * （format-plan / draw / standings），这里逐条验证六种赛制都能从头走到尾、
+ * 名次口径正确，且不影响原有单败淘汰的行为。
+ */
+
+/** 把该赛事此刻所有「待比赛」逐一判胜，直到不再有新对阵冒出来 */
+async function playAll(repo, eventId, guard = 40) {
+  const played = new Set();
+  for (let i = 0; i < guard; i += 1) {
+    const detail = await call(repo, 'getExchangeEvent', { eventId });
+    const pending = detail.matches.filter(row => row.status === 'pending' && !played.has(row._id));
+    if (pending.length === 0) return detail;
+    for (const row of pending) {
+      played.add(row._id);
+      const scored = await call(repo, 'submitExchangeScore', { eventId, matchId: row._id, scoreA: 11, scoreB: 5 });
+      assert.equal(scored.ok, true, `${row._id}: ${scored.message}`);
+    }
+  }
+  throw new Error('赛程没有收敛，可能有对阵被反复生成');
+}
+
+test('赛制与参数随创建落库：非法赛制回落单败，只有用得到的参数才存', async () => {
+  const repo = fixture();
+  const rr = await create(repo, { requestId: 'fmt_rr', format: 'round_robin' });
+  const rrRecord = await repo.exchangeEvents.getById(rr);
+  assert.equal(rrRecord.format, 'round_robin');
+  assert.equal(rrRecord.bronzeMode, 'tied', '循环赛不生成三四名赛');
+  assert.equal(rrRecord.gfReset, true, '缺省重赛开');
+  assert.equal(rrRecord.groupCount, undefined, '循环赛恒为单组，不留组数字段');
+
+  const grouped = await create(repo, { requestId: 'fmt_gk', format: 'group_knockout', groupCount: 4, advancePerGroup: 1 });
+  const groupedRecord = await repo.exchangeEvents.getById(grouped);
+  assert.equal(groupedRecord.groupCount, 4);
+  assert.equal(groupedRecord.advancePerGroup, 1);
+
+  const fallback = await create(repo, { requestId: 'fmt_x', format: 'not_a_format' });
+  assert.equal((await repo.exchangeEvents.getById(fallback)).format, 'single_elim');
+  assert.equal((await call(repo, 'getExchangeEvents')).events.find(row => row._id === fallback).formatLabel, '单败淘汰');
+});
+
+test('双败淘汰：胜者组 / 败者组 / 总决赛走完，名次排到第 4', async () => {
+  const repo = fixture();
+  const id = await readyFour(repo, { format: 'double_elim' });
+  const drawn = await call(repo, 'drawExchangeEvent', { eventId: id, seedValue: 11 });
+  assert.equal(drawn.ok, true, drawn.message);
+  const stages = new Set((await repo.exchangeMatches.listByEvent(id)).map(row => row.stage));
+  assert.deepEqual([...stages], ['wb'], '首轮长在胜者组上');
+
+  const detail = await playAll(repo, id);
+  const all = await repo.exchangeMatches.listByEvent(id);
+  assert.equal(all.filter(row => row.stage === 'wb').length, 3);
+  assert.equal(all.filter(row => row.stage === 'lb').length, 2);
+  assert.equal(all.filter(row => row.stage === 'gf').length, 1);
+  assert.equal(detail.matches.every(row => row.status === 'active'), true);
+  assert.equal(detail.canConfirmRanking, true);
+
+  const done = await call(repo, 'confirmExchangeRanking', { eventId: id });
+  assert.equal(done.ok, true, done.message);
+  assert.deepEqual(done.event.results.map(row => row.placement).sort((a, b) => a - b), [1, 2, 3, 4]);
+});
+
+test('循环赛：人人与所有人交手，打完才按积分表出名次', async () => {
+  const repo = fixture();
+  const id = await readyFour(repo, { format: 'round_robin' });
+  const drawn = await call(repo, 'drawExchangeEvent', { eventId: id, seedValue: 13 });
+  assert.equal(drawn.ok, true, drawn.message);
+  // 一轮打完才放下一轮，所以刚开始只有一部分场次
+  assert.equal((await repo.exchangeMatches.listByEvent(id)).length, 2);
+  assert.equal((await call(repo, 'confirmExchangeRanking', { eventId: id })).ok, false, '没打完不能定名次');
+
+  const detail = await playAll(repo, id);
+  assert.equal(detail.matches.length, 6, '四人循环赛共 6 场');
+  assert.equal(detail.matches.every(row => row.stage === 'group'), true);
+  const done = await call(repo, 'confirmExchangeRanking', { eventId: id });
+  assert.equal(done.ok, true, done.message);
+  assert.deepEqual(done.event.results.map(row => row.placement).sort((a, b) => a - b), [1, 2, 3, 4]);
+});
+
+test('小组赛+淘汰：小组打完后自动接上淘汰签表，名次含小组名次', async () => {
+  const repo = fixture();
+  const id = await readyFour(repo, { format: 'group_knockout', groupCount: 2, advancePerGroup: 2 });
+  assert.equal((await call(repo, 'drawExchangeEvent', { eventId: id, seedValue: 17 })).ok, true);
+  assert.equal((await repo.exchangeMatches.listByEvent(id)).every(row => row.stage === 'group' && row.group !== undefined), true);
+
+  const detail = await playAll(repo, id);
+  const stages = new Set(detail.matches.map(row => row.stage));
+  assert.equal(stages.has('group'), true);
+  assert.equal(stages.has('main'), true, '小组出线后应生成淘汰赛');
+  assert.equal(detail.matches.some(row => row.groupText), true, '小组赛场次带组号');
+
+  const done = await call(repo, 'confirmExchangeRanking', { eventId: id });
+  assert.equal(done.ok, true, done.message);
+  assert.equal(done.event.results[0].placement, 1);
+});
+
+test('双败淘汰不满四人时拒绝抽签', async () => {
+  const repo = fixture();
+  const id = await create(repo, { format: 'double_elim' });
+  await accept(repo, id);
+  await signup(repo, id, 'demo_muc_member');
+  await signup(repo, id, 'demo_buaa_member', 'buaa');
+  assert.equal((await call(repo, 'lockExchangeRoster', { eventId: id })).ok, true);
+  const drawn = await call(repo, 'drawExchangeEvent', { eventId: id, seedValue: 3 });
+  assert.equal(drawn.ok, false);
+  assert.match(drawn.message, /至少需要 4 名/);
+});
+
+test('六种赛制都能从创建走到确认名次：名次连续无空洞、第一名存在', async () => {
+  // 这条是本批的「总闸门」：赛制规则全在通用引擎里，邀请赛只做形状翻译，
+  // 所以六种赛制必须都能端到端走完，名次连续无空洞、无并列冲突。
+  const cases = [
+    ['single_elim', {}],
+    ['round_robin', {}],
+    ['group_knockout', { groupCount: 2, advancePerGroup: 2 }],
+    ['round_robin_knockout', { advancePerGroup: 2 }],
+    ['double_elim', {}],
+    ['group_double_elim', { groupCount: 2, advancePerGroup: 2 }],
+  ];
+  for (const [format, fields] of cases) {
+    const repo = fixture();
+    const id = await readyFour(repo, { format, ...fields });
+    assert.equal((await repo.exchangeEvents.getById(id)).format, format, `${format} 落库`);
+    assert.equal((await call(repo, 'getExchangeEvents')).events.find(row => row._id === id).formatLabel,
+      EVENT_FORMAT_LABEL[format], `${format} 中文名`);
+
+    const drawn = await call(repo, 'drawExchangeEvent', { eventId: id, seedValue: 7 });
+    assert.equal(drawn.ok, true, `${format} 抽签：${drawn.message}`);
+    const detail = await playAll(repo, id);
+    assert.equal(detail.matches.length > 0, true, `${format} 排出了比赛`);
+    assert.equal(detail.matches.every(row => row.status === 'active'), true, `${format} 全部确认比分`);
+    assert.equal(detail.canConfirmRanking, true, `${format} 可确认名次`);
+
+    const done = await call(repo, 'confirmExchangeRanking', { eventId: id });
+    assert.equal(done.ok, true, `${format} 确认名次：${done.message}`);
+    const places = done.event.results.map(row => row.placement);
+    assert.equal(places.length, 4, `${format} 四人都拿到名次`);
+    assert.equal(Math.min(...places), 1, `${format} 有冠军`);
+    const worst = Math.max(...places);
+    assert.equal(worst <= 4, true, `${format} 名次不超出人数`);
+    // 「连续无空洞」：1..worst 每一档都有人（单败的季军并列是既有口径，所以不要求互不重复）
+    for (let value = 1; value <= worst; value += 1) {
+      assert.equal(places.includes(value), true, `${format} 名次 ${value} 有人认领`);
+    }
+  }
 });

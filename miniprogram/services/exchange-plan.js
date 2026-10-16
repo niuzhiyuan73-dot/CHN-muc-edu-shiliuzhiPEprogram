@@ -1,150 +1,329 @@
 /**
- * S4 跨校单打邀请赛：抽签落位、签表推进与名次推导
+ * S4 跨校邀请赛：抽签落位、签表推进与名次推导（支持全部赛制）
  * ============================================================
- * 【为什么单独一个模块】
- * 这三件事都是「只跟签表和比分有关」的纯计算：给定报名者与随机种子，
- * 应当落出什么对阵；给定已确认的比分，下一轮该出现哪一场；全部打完后，
- * 谁第几名。它们不该知道仓储、页面或身份，因此放在这里，供服务编排调用，
- * 也便于直接单测。
+ * 【这一层只做「翻译」】
+ * 邀请赛原先只有单打单败淘汰，于是自己写了一套走签表的代码。现在要支持
+ * 与普通赛事同样的六种赛制（单败 / 循环 / 小组+淘汰 / 循环+淘汰 / 双败 /
+ * 小组+双败），再各写一套就会和 `format-plan.js` 分叉——而那个模块正是
+ * 全项目唯一的「赛制 → 有序阶段序列」派发器（单败 / 循环 / 小组 / 双败 /
+ * 复合都由它推）。
  *
- * 【为什么复用 utils/bracket.js 而不是另写一套】
- * 正式抽签要用与校内赛同一套「标准种子排位」算法（强手分处半区、轮空给
- * 强手）。各抄一份迟早分叉，所以这里只做「无种子纯随机」的薄封装：跨校
- * 交流赛当前不设种子，随机洗牌后按同一张表落位。
+ * 所以这里改成**薄适配层**：
+ *   - 抽签落位交给 `draw.js`（planGroupDraw / drawBracket，与校内同一套）；
+ *   - 对阵推进交给 `format-plan.planStageMatches`（full 模式交出全量投影）；
+ *   - 名次推导交给 `format-plan.derivePlacements`；
+ *   - 撤销前的依赖自查交给 `format-plan.findDependentMatches`。
  *
- * 【轮空与晋级】
- * 签表规模取不小于报名人数的最小 2 的幂，多出的位置即轮空。轮空不生成
- * 比赛，该选手直接进入下一轮。下一轮比赛只在「两侧都已定下来」时才生成，
- * 于是无需占位记录，也不会出现双方待定的空比赛。
+ * 【两套记录形状为什么要翻译】
+ * 通用引擎认的是普通赛事的比赛记录：编号由 `draw.eventMatchKey` 拼出、
+ * 状态是数字 `MATCH_STATUS`、胜负记 'A' / 'B'、一方是 `teamA` 数组。
+ * 而邀请赛的比赛记录是另一套（`exchange_matches` 集合）：编号带 `xm:`
+ * 前缀、状态是 'pending' / 'active' 字符串、`winner` 直接记胜者 userId、
+ * 一方是 `playerA`、还带代表学校与裁判。两者的存储契约都不想改，于是
+ * 在中间加一层 `engineMatchOf`（跨校记录 → 引擎视角）与 `exchangeDraftOf`
+ * （引擎对阵 → 跨校记录），只在这两个函数里做映射。
+ *
+ * 【为什么编号里要塞下阶段与小组】
+ * 双败有胜者组 / 败者组 / 总决赛，小组赛有 A 组第 2 轮与 B 组第 2 轮——
+ * 光靠「第几轮第几场」根本分不开。于是编号把 stage 与 group 一并编码；
+ * 单败淘汰的编号因此也变了形（本轮无线上数据，安全）。轮空不生成比赛，
+ * 与普通赛事同一条纪律。
  *
  * 【名次怎么来】
- * 单败淘汰里每名非冠军恰好输一场，输在第 r 轮者的名次为 size/2^r + 1，
- * 同轮落败者并列；决赛胜者为第 1 名。名次完全由已确认比分推出，不由客户端填写。
+ * 单败由「输了第几轮」推、循环按积分表算、双败按淘汰轮次排——三套口径
+ * 都在 `format-plan.derivePlacements` 里，这里只把结果转成纯对象。
  * ============================================================
  */
 
 const { schoolKey } = require('../utils/school.js');
 const { drawBracket } = require('../utils/bracket.js');
 const { createSeededRandom } = require('../utils/random.js');
+const {
+  MATCH_STATUS,
+  BRACKET_STAGE,
+  EVENT_FORMAT,
+  DEFAULT_EVENT_FORMAT,
+  GROUPED_FORMATS,
+  GROUP_COUNT_FORMATS,
+  DOUBLE_ELIM_FORMATS,
+} = require('../utils/constants.js');
+const { eventMatchKey, planGroupDraw, normalizeGroupCount, normalizeAdvancePerGroup } = require('./draw.js');
+const { planStageMatches, derivePlacements, findDependentMatches } = require('./format-plan.js');
+
+/** 合法赛制集合（与普通赛事同一枚举） */
+const VALID_FORMATS = Object.values(EVENT_FORMAT);
 
 /**
- * 单场跨校比赛的记录键。round 从 1 起、slot 从 0 起，同一签表可稳定复算。
+ * 单场跨校比赛的记录键。
+ *
+ * 键里必须同时含阶段与小组：双败的「败者组第 2 轮第 1 场」与「胜者组第 2 轮
+ * 第 1 场」是两场不同的比赛；小组赛的「第 1 组第 2 轮」与「第 2 组第 2 轮」
+ * 也各是一张不同的桌子。键只由「位置」决定、不含人与时间，抽多少次都复算得出。
+ *
  * @param {string} eventId
- * @param {number} round
- * @param {number} slot
+ * @param {number} round 轮次，从 1 起
+ * @param {number} slot 该轮内的签位序号，从 0 起
+ * @param {string} [stage] 见 constants.BRACKET_STAGE
+ * @param {number} [group] 小组序号，从 0 起；不传表示无小组
  * @returns {string}
  */
-const exchangeMatchKey = (eventId, round, slot) =>
-  schoolKey('xm', eventId, String(round), String(slot));
+function exchangeMatchKey(eventId, round, slot, stage, group) {
+  const hasGroup = group !== undefined && group !== null && group !== '';
+  const middle = hasGroup
+    ? `g${group}_r${round}_${stage || BRACKET_STAGE.MAIN}`
+    : `r${round}_${stage || BRACKET_STAGE.MAIN}`;
+  return schoolKey('xm', eventId, middle, String(slot));
+}
 
-/** 签表轮数：规模为 2 的幂，轮数即 log2(size)。 */
-const exchangeRoundCount = (size) => Math.round(Math.log2(size));
+/** 阶段值收敛到已知枚举；缺省 / 非法一律按主赛处理（老记录无感） */
+function stageOf(value) {
+  return Object.values(BRACKET_STAGE).includes(value) ? value : BRACKET_STAGE.MAIN;
+}
+
+/** 跨校的字符串状态 → 通用引擎的数字状态 */
+function numericStatus(status) {
+  if (status === 'active') return MATCH_STATUS.ACTIVE;
+  if (status === 'revoked') return MATCH_STATUS.REVOKED;
+  return MATCH_STATUS.PENDING;
+}
 
 /**
- * 抽签：把报名者随机落进签表，保留种子值以便复核。
+ * 跨校比赛记录 → 通用赛制引擎认识的形状（纯投影，不落库）。
  *
- * @param {{entries?: Array<{userId:string}>, seedValue?:number}} params
+ * 【为什么比分要折成一局】
+ * 通用引擎按「逐局比分」算积分表；邀请赛只录一个整数比分（谁赢多少分）。
+ * 把整数折成「一局」既保留了净胜分，也不必让邀请赛背上局制的复杂度。
+ * 未录分时给空数组——`standings.tallyOf` 见到空数组会跳过，不会误算。
+ *
+ * @param {Object} match 跨校比赛记录
+ * @returns {Object}
+ */
+function engineMatchOf(match) {
+  const stage = stageOf(match.stage);
+  const playerA = match.playerA || '';
+  const playerB = match.playerB || '';
+  const scored = Number.isInteger(match.scoreA) && Number.isInteger(match.scoreB);
+  return {
+    _id: eventMatchKey(match.eventId, match.round, stage, match.slot, match.group),
+    eventId: match.eventId,
+    round: match.round,
+    stage,
+    slot: match.slot,
+    group: match.group,
+    status: numericStatus(match.status),
+    winner: match.winner ? (match.winner === playerA ? 'A' : 'B') : '',
+    teamA: [playerA],
+    teamB: [playerB],
+    scoreA: scored ? [match.scoreA] : [],
+    scoreB: scored ? [match.scoreB] : [],
+    // 只用于把引擎的返回结果映射回真实记录编号
+    __xid: match._id,
+  };
+}
+
+/**
+ * 引擎给的一对对阵 → 一场跨校比赛草稿。
+ * 双方都要有才生成（轮空不生成比赛，与普通赛事同一纪律）。
+ *
+ * @param {Object} event 邀请赛记录（取 _id）
+ * @param {Object} params
+ * @returns {Object}
+ */
+function exchangeDraftOf(event, { round, stage, slot, group, playerA, playerB, entrantsById }) {
+  const schoolOf = (userId) => {
+    const row = entrantsById instanceof Map ? entrantsById.get(userId) : null;
+    return (row && row.schoolId) || '';
+  };
+  const draft = {
+    _id: exchangeMatchKey(event._id, round, slot, stage, group),
+    eventId: event._id,
+    round,
+    stage,
+    slot,
+    playerA,
+    playerB,
+    schoolA: schoolOf(playerA),
+    schoolB: schoolOf(playerB),
+    scoreA: null,
+    scoreB: null,
+    winner: '',
+    status: 'pending',
+    referee: '',
+    refereeAt: null,
+    refereeBy: '',
+    recordedBy: '',
+    recordedAt: null,
+    revision: 1,
+  };
+  if (group !== undefined && group !== null && group !== '') draft.group = group;
+  return draft;
+}
+
+/**
+ * 抽签落位：把报名者随机落进签表 / 分进小组。
+ * 不设种子（跨校不混排两校校内 ELO），因此是纯随机；seedValue 落库备查。
+ *
+ * @param {Object} params
+ * @param {Array<{userId:string}>} [params.entries]
+ * @param {number} params.seedValue
+ * @param {string} [params.format] 见 constants.EVENT_FORMAT
+ * @param {number} [params.groupCount] 仅小组赛类赛制有意义
+ * @param {number} [params.advancePerGroup] 仅出线类赛制有意义
  * @returns {{ok:true, draw:Object}|{ok:false, message:string}}
  */
-function planExchangeDraw({ entries, seedValue } = {}) {
+function planExchangeDraw({ entries, seedValue, format, groupCount, advancePerGroup } = {}) {
   const list = Array.isArray(entries) ? entries : [];
   const seed = Number(seedValue);
   if (!Number.isFinite(seed)) return { ok: false, message: '缺少随机种子值，无法抽签' };
+  const fmt = VALID_FORMATS.includes(format) ? format : DEFAULT_EVENT_FORMAT;
   // 先按 userId 排序，落位只由种子值决定，与报名先后无关。
   const ids = list.map((entry) => entry.userId).sort();
-  const draw = drawBracket({ entries: ids, seeds: [], random: createSeededRandom(seed) });
-  if (!draw.ok) return { ok: false, message: draw.firstError };
-  return { ok: true, draw: { seedValue: seed, size: draw.size, slots: draw.slots, byes: draw.byes } };
-}
+  if (ids.length < 2) return { ok: false, message: '至少需要两名参赛者才能抽签' };
 
-/**
- * 依当前比分推进签表，返回「此刻应当存在」的全部比赛。
- * 轮空自动晋级、不生成比赛；两侧都定下来才生成下一轮比赛。
- *
- * @param {{eventId:string, draw:Object, entrantsById:Map, matches:Array}} params
- * @returns {{ok:boolean, totalRounds:number, matches:Array}}
- */
-function planExchangeMatches({ eventId, draw, entrantsById, matches } = {}) {
-  const lookup = entrantsById instanceof Map ? entrantsById : new Map();
-  const byId = new Map((matches || []).map((match) => [match._id, match]));
-  const totalRounds = exchangeRoundCount(draw.size);
-  // 叶子：位置 → 参赛者，null 记为轮空（decided 表示这一格不需要再等别人）
-  let nodes = draw.slots.map((entry) => ({ entry: entry || '', decided: true }));
-  const planned = [];
-  for (let round = 1; round <= totalRounds; round += 1) {
-    const next = [];
-    for (let slot = 0; slot < nodes.length / 2; slot += 1) {
-      const left = nodes[slot * 2];
-      const right = nodes[slot * 2 + 1];
-      if (!left.decided || !right.decided) {
-        // 有一侧还在等上轮结果，这一场暂不生成
-        next.push({ entry: '', decided: false });
-      } else if (left.entry && right.entry) {
-        const id = exchangeMatchKey(eventId, round, slot);
-        const existing = byId.get(id);
-        const entrantOf = (userId) => lookup.get(userId) || {};
-        if (!existing) {
-          planned.push({
-            _id: id, eventId, round, slot,
-            playerA: left.entry, playerB: right.entry,
-            schoolA: entrantOf(left.entry).schoolId || '', schoolB: entrantOf(right.entry).schoolId || '',
-            scoreA: null, scoreB: null, winner: '', status: 'pending',
-            referee: '', refereeAt: null, refereeBy: '', recordedBy: '', recordedAt: null, revision: 1,
-          });
-        } else if (existing.status !== 'active' &&
-            (existing.playerA !== left.entry || existing.playerB !== right.entry || existing.status === 'canceled')) {
-          // 【为什么要刷新而不是照抄】撤销上一轮之后重新录分，晋级者可能换人；
-          // 若把待确认 / 已撤销的下一轮原样留着，签表里就挂着上一个晋级者——
-          // 正是「撤销半决赛后决赛仍带旧人」那个缺陷。已生效的比分是既成事实，
-          // 一律不覆盖（撤销入口已经要求从最后一轮往前撤）。
-          planned.push({
-            ...existing,
-            playerA: left.entry, playerB: right.entry,
-            schoolA: entrantOf(left.entry).schoolId || '', schoolB: entrantOf(right.entry).schoolId || '',
-            scoreA: null, scoreB: null, winner: '', status: 'pending',
-            revision: Number(existing.revision || 1) + 1,
-          });
-        } else {
-          planned.push(existing);
-        }
-        const settled = planned[planned.length - 1];
-        const advanced = settled.status === 'active' && settled.winner ? settled.winner : '';
-        next.push({ entry: advanced, decided: Boolean(advanced) });
-      } else {
-        // 至少一侧轮空：有人的一方直接晋级，不生成比赛
-        next.push({ entry: left.entry || right.entry, decided: true });
-      }
+  // 循环 / 小组赛不摆签表，改成分组 + 圆桌排期
+  if (GROUPED_FORMATS.includes(fmt)) {
+    const count = GROUP_COUNT_FORMATS.includes(fmt) ? normalizeGroupCount(groupCount) : 1;
+    const grouped = planGroupDraw({ entries: ids, seeds: [], groupCount: count, seedValue: seed });
+    if (!grouped.ok) return { ok: false, message: grouped.firstError };
+    if (fmt === EVENT_FORMAT.GROUP_DOUBLE_ELIM) {
+      // 双败淘汰阶段至少 4 名出线者：2 个人排不出败者组
+      const advance = normalizeAdvancePerGroup(advancePerGroup);
+      const qualifiers = grouped.groups.reduce(
+        (sum, item) => sum + Math.min(advance, (item.entries || []).length),
+        0
+      );
+      if (qualifiers < 4) return { ok: false, message: '双败淘汰阶段至少需要 4 名出线者，请调整分组或出线人数' };
     }
-    nodes = next;
+    return {
+      ok: true,
+      draw: { seedValue: seed, format: fmt, size: 0, slots: [], byes: [], groups: grouped.groups },
+    };
   }
-  return { ok: true, totalRounds, matches: planned };
+
+  if (DOUBLE_ELIM_FORMATS.includes(fmt) && ids.length < 4) {
+    return { ok: false, message: '双败淘汰至少需要 4 名参赛者' };
+  }
+
+  const drawn = drawBracket({ entries: ids, seeds: [], random: createSeededRandom(seed) });
+  if (!drawn.ok) return { ok: false, message: drawn.firstError };
+  return {
+    ok: true,
+    draw: { seedValue: seed, format: fmt, size: drawn.size, slots: drawn.slots, byes: drawn.byes },
+  };
 }
 
 /**
- * 由已确认比分推出名次。要求每一场都已生效。
+ * 依当前比分推进赛程，返回「此刻应当存在的全部比赛」（全量投影）。
  *
- * @param {{draw:Object, matches:Array}} params
- * @returns {{ok:true, results:Array<{userId:string, placement:number}>}|{ok:false, message:string}}
+ * 与普通赛事的逐轮补入不同，这里每次都交出完整的一份，由调用方与台账比对：
+ * 缺的补上、对阵变了的刷新（已生效的比分一律不动）。这样才能覆盖
+ * 「撤掉半决赛重录 → 已经存在的决赛要换人」这种改签表场景。
+ *
+ * @param {Object} params
+ * @param {Object} params.event 邀请赛记录（含 format / bronzeMode 等赛制字段）
+ * @param {Object} params.draw 赛事的 draw 字段
+ * @param {Map} params.entrantsById userId → { userId, schoolId }
+ * @param {Array<Object>} [params.matches] 该赛事已有的全部比赛
+ * @returns {{ok:boolean, matches:Array<Object>}}
  */
-function placementsFromExchange({ draw, matches } = {}) {
-  const totalRounds = exchangeRoundCount(draw.size);
+function planExchangeMatches({ event, draw, entrantsById, matches } = {}) {
+  if (!event || !event._id || !draw) return { ok: false, matches: [] };
   const list = Array.isArray(matches) ? matches : [];
-  for (const match of list) {
-    if (match.status !== 'active' || !match.winner) return { ok: false, message: '还有比赛未确认比分' };
-  }
-  const finalMatch = list.find((match) => match.round === totalRounds && match.winner);
-  if (!finalMatch) return { ok: false, message: '决赛尚未产生' };
-  const table = new Map();
-  for (const match of list) {
-    const loser = match.winner === match.playerA ? match.playerB : match.playerA;
-    if (!loser) return { ok: false, message: '比赛结果不完整' };
-    table.set(loser, draw.size / Math.pow(2, match.round) + 1);
-  }
-  table.set(finalMatch.winner, 1);
-  const results = [...table.entries()]
-    .map(([userId, placement]) => ({ userId, placement }))
-    .sort((a, b) => a.placement - b.placement || (a.userId < b.userId ? -1 : 1));
-  return { ok: true, results };
+  const existingById = new Map(list.map((row) => [row && row._id, row]));
+  const planned = planStageMatches({ event, draw, matches: list.map(engineMatchOf), full: true });
+
+  const drafts = new Map();
+  (planned.rounds || []).forEach((roundPlan) => {
+    const pairs = Array.isArray(roundPlan.pairs) ? roundPlan.pairs : [];
+    pairs.forEach((pair, slot) => {
+      const playerA = pair && pair[0];
+      const playerB = pair && pair[1];
+      if (!playerA || !playerB) return;
+      const draft = exchangeDraftOf(event, {
+        round: roundPlan.round,
+        stage: stageOf(roundPlan.stage),
+        slot,
+        group: roundPlan.group,
+        playerA,
+        playerB,
+        entrantsById,
+      });
+      const existing = existingById.get(draft._id);
+      if (!existing) {
+        drafts.set(draft._id, draft);
+        return;
+      }
+      // 已生效的比分是既成事实，一律不覆盖（撤销入口已经要求从后往前撤）
+      if (existing.status === 'active') {
+        drafts.set(draft._id, existing);
+        return;
+      }
+      // 对阵没变：原样保留（状态、比分、裁判都还在），别把「待比赛」洗成新记录
+      if (existing.playerA === draft.playerA && existing.playerB === draft.playerB && existing.status === draft.status) {
+        drafts.set(draft._id, existing);
+        return;
+      }
+      // 对阵换了人：刷新成待比赛，比分与裁判一并清掉（与普通赛事改签表同一口径）
+      drafts.set(draft._id, { ...draft, revision: Number(existing.revision || 1) + 1 });
+    });
+  });
+  return { ok: true, matches: [...drafts.values()] };
 }
 
-module.exports = { exchangeMatchKey, exchangeRoundCount, planExchangeDraw, planExchangeMatches, placementsFromExchange };
+/**
+ * 由已确认比分推出名次。名次口径按赛制分流（见 format-plan.derivePlacements）。
+ *
+ * @param {Object} params
+ * @param {Object} params.event 邀请赛记录
+ * @param {Object} params.draw 赛事的 draw 字段
+ * @param {Array<Object>} [params.matches] 该赛事已有的全部比赛
+ * @returns {{ok:boolean, results:Array<{userId:string, placement:number}>, message:string}}
+ */
+function placementsFromExchange({ event, draw, matches } = {}) {
+  if (!event || !draw) return { ok: false, results: [], message: '还没有可推导的赛程' };
+  const list = Array.isArray(matches) ? matches : [];
+  // 收官闸门：凡「此刻应当存在」的比赛都必须已经确认，否则名次是半截的。
+  // 这一道比逐条比对更严：小组赛还有轮次没排、双败还有落败者没打下来，
+  // 都会在这里现形，而不必为每种赛制各写一条完成判据。
+  const projected = planExchangeMatches({ event, draw, entrantsById: new Map(), matches: list });
+  if (projected.matches.some((row) => row.status !== 'active')) {
+    return { ok: false, results: [], message: '还有比赛未确认比分，名次尚未确定' };
+  }
+  const placed = derivePlacements({ event, draw, matches: list.map(engineMatchOf) });
+  if (!placed.ok) return { ok: false, results: [], message: placed.message };
+  return {
+    ok: true,
+    results: placed.results.map((row) => ({ userId: row.userId, placement: row.placement })),
+    message: '',
+  };
+}
+
+/**
+ * 撤销前的依赖自查：找出「已经排在这场比赛之后」的场次（返回真实记录编号）。
+ *
+ * 与普通赛事同一口径：撤掉前面一场，后面那几场还挂着已经作废的晋级者，
+ * 必须要求管理员从最后一轮往前撤。这里只回答「谁挡在后面」，不动数据。
+ *
+ * @param {Object} params
+ * @param {Object} params.match 准备撤销的那场（跨校记录）
+ * @param {Array<Object>} [params.matches] 该赛事已有的全部比赛（跨校记录）
+ * @returns {string[]} 挡在后面的比赛编号
+ */
+function findExchangeDependents({ match, matches } = {}) {
+  if (!match) return [];
+  const list = Array.isArray(matches) ? matches : [];
+  const engine = list.map(engineMatchOf);
+  const target = engine.find((row) => row.__xid === match._id);
+  if (!target) return [];
+  return findDependentMatches({ match: target, matches: engine }).map((row) => row.__xid);
+}
+
+module.exports = {
+  exchangeMatchKey,
+  engineMatchOf,
+  exchangeDraftOf,
+  planExchangeDraw,
+  planExchangeMatches,
+  placementsFromExchange,
+  findExchangeDependents,
+};

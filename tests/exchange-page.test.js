@@ -131,6 +131,72 @@ test('B7 普通会员不能处理邀请或锁定名单，误触发无副作用',
   assert.equal(p.data.detail.statusText, '报名中', '名单仍未锁定');
 });
 
+test('页面：赛制可选、参数项按赛制显隐，创建后按所选赛制抽签', async () => {
+  mock.setDemoActor('demo_muc_admin');
+  const p = page();
+  await p.onLoad();
+  assert.equal(p.data.formatLabel, '单败淘汰');
+  assert.equal(p.data.showGroupCount, false);
+  assert.equal(p.data.showBronze, true);
+  assert.equal(p.data.showGfReset, false);
+
+  // 小组赛+淘汰：组数与出线人数出现；改成双败后三四名消失、重赛出现
+  p.onFormatChange(select(2));
+  assert.equal(p.data.format, 'group_knockout');
+  assert.equal(p.data.showGroupCount, true);
+  assert.equal(p.data.showAdvance, true);
+  p.onGroupCountChange(select(1));
+  assert.equal(p.data.groupCount, 4);
+  p.onAdvanceChange(select(0));
+  assert.equal(p.data.advancePerGroup, 1);
+  p.onFormatChange(select(4));
+  assert.equal(p.data.showGroupCount, false);
+  assert.equal(p.data.showBronze, false);
+  assert.equal(p.data.showGfReset, true);
+
+  // 回到小组赛+淘汰，按所选赛制创建并抽签
+  p.onFormatChange(select(2));
+  p.onGroupCountChange(select(0)); // 2 组
+  p.onAdvanceChange(select(1)); // 每组 2 人出线
+  await p.onActorChange(select(1));
+  await p.onCreate();
+  assert.equal(p.data.error, '');
+  assert.equal(p.data.detail.event.format, 'group_knockout');
+  assert.equal(p.data.detail.event.formatLabel, '小组赛+淘汰');
+  // 切换身份/学校都会 reload 并清空 detail，先把赛事 id 存下来
+  const id = p.data.detail.event._id;
+
+  // 两校各两人报名后锁定，抽签出来的首轮应全是小组赛、且带组号
+  await p.onSchoolChange(select(1));
+  await p.onActorChange(select(2));
+  await p.onOpen({ currentTarget: { dataset: { id } } });
+  await p.onRespond({ currentTarget: { dataset: { decision: 'accepted' } } });
+  await p.onActorChange(select(4));
+  await p.onSignup();
+  await p.onActorChange(select(2));
+  await p.onSignup();
+  await p.onSchoolChange(select(0));
+  await p.onActorChange(select(3));
+  await p.onOpen({ currentTarget: { dataset: { id } } });
+  await p.onSignup();
+  // 民大校管理员自己也报一个：两校各两人，小组赛才排得出对阵
+  await p.onActorChange(select(1));
+  await p.onSignup();
+  await p.onLock();
+  assert.equal(p.data.detail.participants.length, 4);
+  await p.onDraw();
+  assert.equal(p.data.error, '');
+  assert.equal(p.data.detail.matches.length > 0, true);
+  assert.equal(p.data.detail.matches.every(row => row.stage === 'group'), true);
+  // 每行都带组号前缀，且两组都排出了对阵（不依赖排序先后）
+  assert.equal(p.data.detail.matches.every(row => /^第 \d 组 · $/.test(row.groupText)), true);
+  assert.deepEqual(
+    [...new Set(p.data.detail.matches.map(row => row.groupText))].sort(),
+    ['第 1 组 · ', '第 2 组 · '],
+  );
+  assert.equal(p.data.detail.canConfirmRanking, false);
+});
+
 /* ============================================================
  * S4 剩余能力（2026-10-16）：签到 / 退赛移除 / 邀请撤回 / 取消赛事 / 比分撤销
  * ============================================================ */
