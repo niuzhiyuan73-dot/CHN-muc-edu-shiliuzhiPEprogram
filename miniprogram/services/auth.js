@@ -231,28 +231,6 @@ function register(form, options = {}) {
   };
 }
 
-/**
- * 登录：取出当前微信用户对应的会员记录。
- *
- * mock 数据源会返回一位演示会员（状态正常）；云端则由 user.login 云函数
- * 依据 OpenID 查找或创建账号。两种情形对页面而言完全一致。
- *
- * 【require 为什么写在函数里】
- * 门面 index.js 要 require 数据源（mock.js），而数据源现在要 require
- * 本模块的 register/buildAccount 来落库。若在文件顶部取门面的方法，
- * 一旦形成 mock → auth → index → mock 的环，getCurrentUser 会在
- * mock.js 尚未导出时被解构，永久定格成 undefined，login() 直接崩。
- * 挪进函数体后，调用发生在模块加载完之后，环自然解开。
- *
- * @returns {Promise<{ok:boolean, user:Object|null, state:Object}>}
- */
-async function login() {
-  // eslint-disable-next-line global-require —— 见上方注释，这里必须延迟加载
-  const { getCurrentUser } = require('./index.js');
-  const user = await getCurrentUser();
-  return { ok: Boolean(user), user: user || null, state: resolveAuthState(user) };
-}
-
 module.exports = {
   COLLEGES,
   PROFILE_RULES,
@@ -261,5 +239,4 @@ module.exports = {
   buildAccount,
   resolveAuthState,
   register,
-  login,
 };

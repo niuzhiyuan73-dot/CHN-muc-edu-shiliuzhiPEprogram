@@ -16,7 +16,6 @@ const {
   buildAccount,
   resolveAuthState,
   register,
-  login,
 } = require('../miniprogram/services/auth.js');
 const { ROLE, USER_STATUS, COLLEGES: COLLEGES_CONST } = require('../miniprogram/utils/constants.js');
 const { MEMBER_SEED } = require('../miniprogram/services/seed.js');
@@ -239,14 +238,5 @@ describe('register —— 注册申请', () => {
     const after = await facade.getMemberApplications();
     assert.equal(after.length, before.length, 'register 不该多出申请');
     assert.deepEqual(after, before, 'register 不该改动任何一条申请');
-  });
-});
-
-describe('login —— 登录', () => {
-  test('mock 数据源下返回演示会员，且状态正常', async () => {
-    const result = await login();
-    assert.equal(result.ok, true);
-    assert.ok(result.user);
-    assert.equal(result.state.isActive, true);
   });
 });
