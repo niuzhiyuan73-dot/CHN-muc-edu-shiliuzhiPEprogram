@@ -219,9 +219,11 @@ function findDependentMatches({ match, matches } = {}) {
  * @param {Object} params.event 赛事记录
  * @param {Object} params.draw 赛事的 draw 字段
  * @param {Array<Object>} [params.matches] 该赛事已有的全部比赛
+ * @param {boolean} [params.full=false] 全量投影：交出「此刻应当存在」的全部轮次，
+ *   而不只是「还缺哪几轮」。默认 false 保持逐轮补入的原行为（见 draw.planNextRound）。
  * @returns {{ok:boolean, rounds:Array<{group?:number, round:number, stage:string, pairs:Array<Array<string>>}>}}
  */
-function planStageMatches({ event, draw, matches } = {}) {
+function planStageMatches({ event, draw, matches, full = false } = {}) {
   if (!event || !event._id || !draw) return { ok: false, rounds: [] };
   const list = Array.isArray(matches) ? matches : [];
   const format = formatOf(event);
@@ -229,12 +231,28 @@ function planStageMatches({ event, draw, matches } = {}) {
 
   // 纯循环赛：没有淘汰阶段，只有一组一组地排
   if (format === EVENT_FORMAT.ROUND_ROBIN) {
-    const rounds = planGroupPhase(event, draw, list);
+    const rounds = planGroupPhase(event, draw, list, full);
     return { ok: rounds.length > 0, rounds };
   }
 
   // 复合赛：先分组循环，全部小组打完后才转淘汰阶段
   if (GROUPED_FORMATS.includes(format)) {
+    // 全量投影：小组轮次与淘汰阶段轮次要**并起来**交给调用方——小组打完之后
+    // 小组那几轮仍然属于「此刻应当存在」，不能因为转段了就把它从投影里抹掉。
+    if (full) {
+      const groupRounds = planGroupPhase(event, draw, list, true);
+      // 小组还没走完就别谈淘汰阶段。full 模式把「已排过的小组轮次」也交了出来，
+      // 于是不再有「返回空」这个转段信号，只能另问一次非全量的口径。
+      if (planGroupPhase(event, draw, list).length > 0) return { ok: true, rounds: groupRounds };
+      const bracket = knockoutBracket(event, draw, list);
+      if (!bracket) return { ok: groupRounds.length > 0, rounds: groupRounds };
+      const knockout = hasDoubleKnockout(format)
+        ? planDoubleElim({ event, bracket, matches: list, gfReset, full: true })
+        : planSingleKnockout(event, bracket, list, true);
+      return { ok: true, rounds: groupRounds.concat(knockout.rounds || []) };
+    }
+
+    // 逐轮补入：小组轮次非空就先只交小组；返回空才是「该转淘汰阶段了」的信号
     const groupRounds = planGroupPhase(event, draw, list);
     if (groupRounds.length > 0) return { ok: true, rounds: groupRounds };
 
@@ -248,16 +266,17 @@ function planStageMatches({ event, draw, matches } = {}) {
 
   // 纯双败淘汰
   if (hasDoubleKnockout(format)) {
-    return planDoubleElim({ event, bracket: draw, matches: list, gfReset });
+    return planDoubleElim({ event, bracket: draw, matches: list, gfReset, full });
   }
 
-  // 单败淘汰（兼容锚点，一个字不改）
+  // 单败淘汰（兼容锚点；full 时交出全量投影，默认仍是逐轮补入）
   return planNextRound({
     eventId: event._id,
     draw,
     matches: list,
     bronzeMode: event.bronzeMode,
     placementMode: event.placementMode,
+    includeExisting: full,
   });
 }
 
@@ -267,9 +286,21 @@ function planStageMatches({ event, draw, matches } = {}) {
  * @param {Object} event
  * @param {{size:number, slots:Array<string|null>}} bracket
  * @param {Array<Object>} list 已有比赛
+ * @param {boolean} [full=false] 全量投影：已排过的淘汰轮次也交出（供改签表刷新）
  * @returns {{ok:boolean, rounds:Array<Object>}}
  */
-function planSingleKnockout(event, bracket, list) {
+function planSingleKnockout(event, bracket, list, full = false) {
+  if (full) {
+    // 全量投影直接走通用单败走法：首轮由签位给出，后续轮次逐轮推到位
+    return planNextRound({
+      eventId: event._id,
+      draw: bracket,
+      matches: list,
+      bronzeMode: event.bronzeMode,
+      placementMode: event.placementMode,
+      includeExisting: true,
+    });
+  }
   const byId = new Set(list.map((match) => match && match._id));
   const firstPairs = chunkPairs(bracket.slots);
   const missingFirst = firstPairs.some(
@@ -506,11 +537,29 @@ function doubleElimPlacements(state) {
  * @param {{size:number, slots:Array<string|null>}} params.bracket
  * @param {Array<Object>} [params.matches]
  * @param {boolean} [params.gfReset]
+ * @param {boolean} [params.full=false] 全量投影：把已经排过的胜者组 / 败者组 / 总决赛
+ *   轮次也一并交出，而不只是「下一批该排的」。默认 false 保持原行为。
  * @returns {{ok:boolean, rounds:Array<Object>}}
  */
-function planDoubleElim({ event, bracket, matches, gfReset = DEFAULT_GF_RESET } = {}) {
+function planDoubleElim({ event, bracket, matches, gfReset = DEFAULT_GF_RESET, full = false } = {}) {
   if (!event || !event._id || !bracket) return { ok: false, rounds: [] };
   const state = walkDoubleElim({ eventId: event._id, bracket, matches, gfReset });
+
+  if (full) {
+    // walkDoubleElim 已经把「走得到的每一轮」连同对阵一起算好（走到第一个没打完
+    // 的轮次为止），这里只按阶段顺序把它们摊平成轮次列表。
+    const rounds = [];
+    state.wb.forEach((item) => rounds.push({ round: item.round, stage: BRACKET_STAGE.WINNERS, pairs: item.pairs }));
+    state.lb.forEach((item) => rounds.push({ round: item.round, stage: BRACKET_STAGE.LOSERS, pairs: item.pairs }));
+    if (state.gf) {
+      rounds.push({ round: 1, stage: BRACKET_STAGE.GRAND_FINAL, pairs: state.gf.pairs });
+      if (state.gf.reset) {
+        rounds.push({ round: 2, stage: BRACKET_STAGE.GRAND_FINAL, pairs: state.gf.reset.pairs });
+      }
+    }
+    return { ok: rounds.length > 0, rounds };
+  }
+
   if (state.schedule.length === 0) return { ok: false, rounds: [] };
   return { ok: true, rounds: state.schedule };
 }
@@ -526,9 +575,10 @@ function planDoubleElim({ event, bracket, matches, gfReset = DEFAULT_GF_RESET } 
  * @param {Object} event
  * @param {Object} draw
  * @param {Array<Object>} matches
+ * @param {boolean} [full=false] 全量投影：已排过的小组轮次也一并交出
  * @returns {Array<Object>}
  */
-function planGroupPhase(event, draw, matches) {
+function planGroupPhase(event, draw, matches, full = false) {
   const rounds = [];
   (Array.isArray(draw.groups) ? draw.groups : []).forEach((item) => {
     const schedule = scheduleOf(item);
@@ -551,6 +601,8 @@ function planGroupPhase(event, draw, matches) {
         break;
       }
 
+      // 全量投影：这一轮已经排过，但它同样属于「此刻应当存在」，照样交出
+      if (full) rounds.push({ group: item.group, round: roundNo, stage: BRACKET_STAGE.GROUP, pairs });
       if (!roundDecided(pairs, roundNo, byId, event._id, item.group)) break;
     }
   });

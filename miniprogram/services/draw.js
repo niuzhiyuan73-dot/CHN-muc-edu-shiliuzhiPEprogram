@@ -675,9 +675,17 @@ function buildBracketMatches(plan, { event, format = DEFAULT_FORMAT, round = 1, 
  * @param {Array<Object>} [params.matches] 该赛事已有的全部比赛
  * @param {string} [params.bronzeMode] 见 constants.EVENT_BRONZE_MODE
  * @param {string} [params.placementMode] 见 constants.EVENT_PLACEMENT_MODE
+ * @param {boolean} [params.includeExisting=false] 全量投影：把**此刻应当存在**的轮次
+ *   （含已经排过的那几轮）一并交出，而不只是「还缺哪几轮」。默认 false 保持原行为。
  * @returns {{ok:boolean, rounds:Array<{round:number, stage:string, pairs:Array<Array<string>>}>}}
+ *
+ * 【includeExisting 为什么需要】
+ * 逐轮补入（默认口径）只回答「缺什么」，够用于新建；但**改签表**够不上——
+ * 撤掉半决赛重新录分后，已经存在但还没打完的决赛会挂着上一个晋级者。
+ * 调用方要能拿到这一轮的对阵才能把它刷新，于是这里提供「全量投影」：
+ * 对战双方都定得下来的轮次一律交出，交由调用方与台账比对。
  */
-function planNextRound({ eventId, draw, matches, bronzeMode, placementMode = DEFAULT_PLACEMENT_MODE } = {}) {
+function planNextRound({ eventId, draw, matches, bronzeMode, placementMode = DEFAULT_PLACEMENT_MODE, includeExisting = false } = {}) {
   if (!eventId || !draw || !Array.isArray(draw.slots) || draw.slots.length < 2) {
     return { ok: false, rounds: [] };
   }
@@ -691,6 +699,10 @@ function planNextRound({ eventId, draw, matches, bronzeMode, placementMode = DEF
 
   for (let round = 1; round <= totalRounds; round += 1) {
     const pairs = chunkPairs(entrants);
+    // 首轮的对阵由签位直接决定，不需要等任何人打完
+    if (round === 1 && includeExisting) {
+      rounds.push({ round, stage: BRACKET_STAGE.MAIN, pairs });
+    }
     const winners = [];
     const losers = [];
     let resolved = true;
@@ -722,14 +734,14 @@ function planNextRound({ eventId, draw, matches, bronzeMode, placementMode = DEF
     const missing = nextPairs.some(
       (pair, slot) => !byId.has(eventMatchKey(eventId, round + 1, BRACKET_STAGE.MAIN, slot))
     );
-    if (missing) {
+    if (includeExisting || missing) {
       rounds.push({ round: round + 1, stage: BRACKET_STAGE.MAIN, pairs: nextPairs });
     }
 
     // 半决赛打完（下一轮只剩两人）→ 打三四名模式下补一场季军赛
     if (winners.length === 2 && bronzeMode === EVENT_BRONZE_MODE.PLAYOFF && losers.length === 2) {
       const bronzeKey = eventMatchKey(eventId, round + 1, BRACKET_STAGE.BRONZE, 0);
-      if (!byId.has(bronzeKey)) {
+      if (includeExisting || !byId.has(bronzeKey)) {
         rounds.push({ round: round + 1, stage: BRACKET_STAGE.BRONZE, pairs: [[losers[0], losers[1]]] });
       }
     }
@@ -740,7 +752,7 @@ function planNextRound({ eventId, draw, matches, bronzeMode, placementMode = DEF
       winners.length === 4 &&
       losers.length === 4
     ) {
-      planPlacement(losers, round + 1, byId, eventId).forEach((item) => rounds.push(item));
+      planPlacement(losers, round + 1, byId, eventId, includeExisting).forEach((item) => rounds.push(item));
     }
 
     entrants = winners;
@@ -764,9 +776,10 @@ function planNextRound({ eventId, draw, matches, bronzeMode, placementMode = DEF
  * @param {number} startRound 该排位赛首轮的轮次
  * @param {Map<string, Object>} byId 已有比赛（按编号索引）
  * @param {string} eventId
+ * @param {boolean} [includeExisting=false] 全量投影：已排过的轮次也一并交出
  * @returns {Array<Object>} 需要补排的轮次
  */
-function planPlacement(entrants, startRound, byId, eventId) {
+function planPlacement(entrants, startRound, byId, eventId, includeExisting = false) {
   const rounds = [];
   const pairs = chunkPairs(entrants).slice(0, 2);
   const winners = [];
@@ -786,7 +799,7 @@ function planPlacement(entrants, startRound, byId, eventId) {
   const missingFirst = pairs.some(
     (pair, slot) => !byId.has(eventMatchKey(eventId, startRound, BRACKET_STAGE.PLACEMENT, slot))
   );
-  if (missingFirst) {
+  if (missingFirst || includeExisting) {
     rounds.push({ round: startRound, stage: BRACKET_STAGE.PLACEMENT, pairs });
   }
 
@@ -799,7 +812,7 @@ function planPlacement(entrants, startRound, byId, eventId) {
     const missingFinal = finals.some(
       (pair, slot) => !byId.has(eventMatchKey(eventId, startRound + 1, BRACKET_STAGE.PLACEMENT, slot))
     );
-    if (missingFinal) {
+    if (missingFinal || includeExisting) {
       rounds.push({ round: startRound + 1, stage: BRACKET_STAGE.PLACEMENT, pairs: finals });
     }
   }

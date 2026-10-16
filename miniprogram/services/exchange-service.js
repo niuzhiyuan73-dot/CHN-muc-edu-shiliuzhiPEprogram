@@ -1,8 +1,59 @@
-/** S4 跨校单打邀请赛。独立集合，服务端强制不计校内分。 */
+/** S4 跨校邀请赛。独立集合，服务端强制不计校内分。2026-10-16 起支持与普通赛事同样的六种赛制。 */
 const { buildSchoolContext } = require('./school-context.js');
 const { canSchoolAction } = require('./school-permission.js');
 const { schoolKey, schoolAssociationKey, PLATFORM_ROLE, PLATFORM_STATUS, SCHOOL_MEMBER_STATUS } = require('../utils/school.js');
-const { planExchangeDraw, planExchangeMatches, placementsFromExchange } = require('./exchange-plan.js');
+const { planExchangeDraw, planExchangeMatches, placementsFromExchange, findExchangeDependents } = require('./exchange-plan.js');
+const { formatOf, normalizeGroupCount, normalizeAdvancePerGroup } = require('./draw.js');
+const {
+  EVENT_FORMAT, EVENT_FORMAT_LABEL, DEFAULT_EVENT_FORMAT,
+  GROUP_COUNT_FORMATS, ADVANCE_FORMATS, KNOCKOUT_FORMATS, DOUBLE_ELIM_FORMATS,
+  EVENT_BRONZE_MODE, EVENT_PLACEMENT_MODE, DEFAULT_BRONZE_MODE, DEFAULT_PLACEMENT_MODE,
+  DEFAULT_GF_RESET, BRACKET_STAGE, stageOrder,
+} = require('../utils/constants.js');
+
+const FORMAT_VALUES = Object.values(EVENT_FORMAT);
+
+/** 阶段文案（对阵列表用；与普通赛事同一套 BRACKET_STAGE） */
+const STAGE_TEXT = {
+  [BRACKET_STAGE.MAIN]: '正赛',
+  [BRACKET_STAGE.BRONZE]: '三四名赛',
+  [BRACKET_STAGE.GROUP]: '小组赛',
+  [BRACKET_STAGE.WINNERS]: '胜者组',
+  [BRACKET_STAGE.LOSERS]: '败者组',
+  [BRACKET_STAGE.GRAND_FINAL]: '总决赛',
+  [BRACKET_STAGE.PLACEMENT]: '排位赛',
+};
+
+/**
+ * 赛制参数收敛。
+ * 只保留该赛制真正用得到的字段，其余一律落缺省——免得「单败淘汰」的赛事
+ * 里躺着一个幽灵般的 gfReset，日后没人说得清它当初为什么在那儿。
+ *
+ * @param {Object} payload 创建表单
+ * @returns {Object} 可直接并进赛事记录的赛制字段
+ */
+function normalizeExchangeFormat(payload = {}) {
+  const format = FORMAT_VALUES.includes(payload.format) ? payload.format : DEFAULT_EVENT_FORMAT;
+  const config = {
+    format,
+    bronzeMode: DEFAULT_BRONZE_MODE,
+    placementMode: DEFAULT_PLACEMENT_MODE,
+    gfReset: DEFAULT_GF_RESET,
+  };
+  if (GROUP_COUNT_FORMATS.includes(format)) config.groupCount = normalizeGroupCount(payload.groupCount);
+  if (ADVANCE_FORMATS.includes(format)) config.advancePerGroup = normalizeAdvancePerGroup(payload.advancePerGroup);
+  if (KNOCKOUT_FORMATS.includes(format)) {
+    config.bronzeMode = payload.bronzeMode === EVENT_BRONZE_MODE.PLAYOFF
+      ? EVENT_BRONZE_MODE.PLAYOFF : EVENT_BRONZE_MODE.TIED;
+    config.placementMode = payload.placementMode === EVENT_PLACEMENT_MODE.TOP8
+      ? EVENT_PLACEMENT_MODE.TOP8 : EVENT_PLACEMENT_MODE.NONE;
+  }
+  if (DOUBLE_ELIM_FORMATS.includes(format)) {
+    config.gfReset = payload.gfReset === undefined ? DEFAULT_GF_RESET : Boolean(payload.gfReset);
+  }
+  return config;
+}
+
 const ok = data => ({ ok: true, data });
 const refused = message => ({ ok: false, message });
 const invitationKey = (eventId, schoolId) => schoolKey('xi', eventId, schoolId);
@@ -38,6 +89,12 @@ const summary = event => ({
   invitations: event.invitations, quota: event.quota, schoolQuotas: event.schoolQuotas,
   signupCount: event.signupCount, schoolCounts: event.schoolCounts,
   ratingPolicy: 'unrated', eventScope: 'inter_school', matchType: 'singles',
+  // 赛制与它的参数：读端据此在页面上展示「单败淘汰」「小组赛+淘汰」等
+  format: formatOf(event), formatLabel: EVENT_FORMAT_LABEL[formatOf(event)] || '',
+  groupCount: event.groupCount || 0, advancePerGroup: event.advancePerGroup || 0,
+  bronzeMode: event.bronzeMode || DEFAULT_BRONZE_MODE,
+  placementMode: event.placementMode || DEFAULT_PLACEMENT_MODE,
+  gfReset: event.gfReset === undefined ? DEFAULT_GF_RESET : Boolean(event.gfReset),
   draw: event.draw || null, results: event.results || [],
   canceledAt: event.canceledAt || null, canceledBy: event.canceledBy || '',
   cancelReason: event.cancelReason || '',
@@ -65,7 +122,9 @@ async function createExchangeEvent(payload = {}, ctx) {
     ids.reduce((sum, id) => sum + quotas[id], 0) < quota) return ok(refused('请设置有效的总名额和各校名额'));
   const schoolIds = [...ids].sort();
   const schoolQuotas = Object.fromEntries(schoolIds.map(id => [id, quotas[id]]));
-  const fingerprint = JSON.stringify([title, location, start.toISOString(), schoolIds, quota, schoolQuotas]);
+  // 赛制进指纹：同一请求编号下改了赛制就该被拒绝，而不是静默沿用旧的那一场
+  const formatConfig = normalizeExchangeFormat(payload);
+  const fingerprint = JSON.stringify([title, location, start.toISOString(), schoolIds, quota, schoolQuotas, formatConfig]);
   const result = await ctx.repo.transaction(async tx => {
     const fresh = await freshContext(tx, ctx);
     if (!manages(fresh)) return refused('只有本校管理员或协会负责人可以发起邀请赛');
@@ -86,6 +145,8 @@ async function createExchangeEvent(payload = {}, ctx) {
       invitations: Object.fromEntries(schoolIds.map(schoolId => [schoolId, schoolId === fresh.schoolId ? 'accepted' : 'pending'])),
       schoolCounts: Object.fromEntries(schoolIds.map(schoolId => [schoolId, 0])), signupCount: 0,
       status: 'signup', eventScope: 'inter_school', ratingPolicy: 'unrated', matchType: 'singles',
+      // 赛制与参数（见 normalizeExchangeFormat）：项目仍固定单打，赛制可选
+      ...formatConfig,
       revision: 1, fingerprint, createdBy: fresh.actorId, createdAt: fresh.now };
     await tx.exchangeEvents.set(id, event);
     for (const schoolId of schoolIds) await tx.exchangeInvitations.set(invitationKey(id, schoolId), {
@@ -291,10 +352,16 @@ async function revokeExchangeScore(payload = {}, ctx) {
   const match = await ctx.repo.exchangeMatches.getById(payload.matchId);
   if (!snapshot || !match || match.eventId !== snapshot._id) return ok(refused('比赛不存在'));
   if (!canScoreMatch(snapshot, match, ctx)) return ok(refused('没有比分撤销权限'));
-  const later = (await ctx.repo.exchangeMatches.listByEvent(snapshot._id))
-    .filter(row => Number(row.round) > Number(match.round) && row.status === 'active');
-  if (later.length > 0) return ok(refused('后面轮次已有确认的比分，请从最后一轮往前依次撤销'));
-  const laterIds = later.map(row => row._id);
+  // 撤销前的自查：谁排在这场之后。阶段与轮次的先后由 format-plan 判定，
+  // 双败的胜者组 / 败者组 / 总决赛、小组赛与淘汰赛之间也分得清。
+  // 只有「已确认」的后继会挡路——还没录分的下一轮会在重录后被刷新换人。
+  const ledger = await ctx.repo.exchangeMatches.listByEvent(snapshot._id);
+  const laterIds = findExchangeDependents({ match, matches: ledger })
+    .filter(id => {
+      const row = ledger.find(item => item._id === id);
+      return Boolean(row && row.status === 'active');
+    });
+  if (laterIds.length > 0) return ok(refused('后面轮次已有确认的比分，请从最后一轮往前依次撤销'));
   return ok(await ctx.repo.transaction(async tx => {
     const fresh = await freshContext(tx, ctx);
     const event = await tx.exchangeEvents.getById(payload.eventId);
@@ -386,10 +453,11 @@ async function drawExchangeEvent(payload = {}, ctx) {
   const { rows, map } = await entrantsOf(ctx.repo, snapshot._id);
   if (rows.length < 2) return ok(refused('至少需要两名参赛者才能抽签'));
   const seedValue = Number.isInteger(payload.seedValue) ? payload.seedValue : ctx.now.getTime();
-  const planned = planExchangeDraw({ entries: rows, seedValue });
+  const planned = planExchangeDraw({ entries: rows, seedValue, format: formatOf(snapshot),
+    groupCount: snapshot.groupCount, advancePerGroup: snapshot.advancePerGroup });
   if (!planned.ok) return ok(refused(planned.message));
   // 重抽时按当前签表整体重算，旧对阵的残留记录不会被投影出来。
-  const built = planExchangeMatches({ eventId: snapshot._id, draw: planned.draw, entrantsById: map, matches: [] });
+  const built = planExchangeMatches({ event: snapshot, draw: planned.draw, entrantsById: map, matches: [] });
   return ok(await ctx.repo.transaction(async tx => {
     const fresh = await freshContext(tx, ctx);
     const event = await tx.exchangeEvents.getById(payload.eventId);
@@ -462,7 +530,7 @@ async function submitExchangeScore(payload = {}, ctx) {
   const existing = await ctx.repo.exchangeMatches.listByEvent(snapshot._id);
   const preview = { ...match, scoreA, scoreB, winner: scoreA > scoreB ? match.playerA : match.playerB, status: 'active' };
   const ledger = existing.map(row => row._id === match._id ? preview : row);
-  const built = planExchangeMatches({ eventId: snapshot._id, draw: snapshot.draw, entrantsById: map, matches: ledger });
+  const built = planExchangeMatches({ event: snapshot, draw: snapshot.draw, entrantsById: map, matches: ledger });
   return ok(await ctx.repo.transaction(async tx => {
     const fresh = await freshContext(tx, ctx);
     const event = await tx.exchangeEvents.getById(payload.eventId);
@@ -501,10 +569,9 @@ async function confirmExchangeRanking(payload = {}, ctx) {
   if (!managesExchange(snapshot, ctx)) return ok(refused('只有管理员或双方校管理员可以确认名次'));
   if (!snapshot.draw) return ok(refused('请先抽签'));
   if (snapshot.status === 'finished') return ok(refused('名次已确认'));
-  const { rows, map } = await entrantsOf(ctx.repo, snapshot._id);
+  const { rows } = await entrantsOf(ctx.repo, snapshot._id);
   const existing = await ctx.repo.exchangeMatches.listByEvent(snapshot._id);
-  const built = planExchangeMatches({ eventId: snapshot._id, draw: snapshot.draw, entrantsById: map, matches: existing });
-  const placed = placementsFromExchange({ draw: snapshot.draw, matches: built.matches });
+  const placed = placementsFromExchange({ event: snapshot, draw: snapshot.draw, matches: existing });
   if (!placed.ok) return ok(refused(placed.message));
   const byUser = new Map(rows.map(row => [row.userId, row]));
   const results = placed.results.map(row => {
@@ -544,10 +611,16 @@ async function getExchangeEvent(payload = {}, ctx) {
   const rows = (await ctx.repo.exchangeSignups.listByEvent(event._id)).filter(row => row.status === 'signed');
   const byUser = new Map(rows.map(row => [row.userId, row]));
   const canManage = managesExchange(event, ctx);
+  const existingMatches = await ctx.repo.exchangeMatches.listByEvent(event._id);
+  // 全量投影：把「此刻应当存在的比赛」摆出来（含还未确定的对阵槽位之外的已定对阵）。
+  // 展示用；名次确认用的是台账里已经确认的那份（见下 placement）。
   const matches = event.draw
-    ? planExchangeMatches({ eventId: event._id, draw: event.draw, entrantsById: byUser,
-      matches: await ctx.repo.exchangeMatches.listByEvent(event._id) }).matches
+    ? planExchangeMatches({ event, draw: event.draw, entrantsById: byUser, matches: existingMatches }).matches
     : [];
+  // 名次能不能确认，由赛制自己的收官判据说了算（单败看决赛、循环看积分表、双败看总决赛）
+  const placement = event.draw
+    ? placementsFromExchange({ event, draw: event.draw, matches: existingMatches })
+    : { ok: false, message: '' };
   const names = new Map((await ctx.repo.users.list()).map(user => [user._id, user.nickName || '']));
   const referees = (await ctx.repo.schoolMembers.list())
     .filter(row => row.status === SCHOOL_MEMBER_STATUS.ACTIVE && event.participantSchoolIds.includes(row.schoolId))
@@ -571,10 +644,18 @@ async function getExchangeEvent(payload = {}, ctx) {
     canWithdrawInvitation: !canceled && event.status === 'signup' && Boolean(canManage),
     canDraw: !canceled && canManage && (event.status === 'ready' || event.status === 'drawn') &&
       !matches.some(match => match.status === 'active'),
-    canConfirmRanking: !canceled && canManage && event.status === 'drawn' && matches.length > 0 &&
-      matches.every(match => match.status === 'active'),
-    matches: matches.map(match => ({
+    canConfirmRanking: !canceled && canManage && event.status === 'drawn' && Boolean(placement.ok),
+    rankingHint: canceled || placement.ok ? '' : (placement.message || ''),
+    matches: matches
+      // 展示次序：先按阶段（小组赛 → 主赛 / 胜者组 → 败者组 → 季军赛 / 总决赛 / 排位），
+      // 同阶段再按轮次与签位。双败的交错推进因此也读得顺。
+      .slice()
+      .sort((a, b) => stageOrder(a.stage) - stageOrder(b.stage) || a.round - b.round || a.slot - b.slot)
+      .map(match => ({
       _id: match._id, round: match.round, slot: match.slot, status: match.status,
+      stage: match.stage || BRACKET_STAGE.MAIN, stageText: STAGE_TEXT[match.stage || BRACKET_STAGE.MAIN] || '',
+      group: match.group === undefined ? null : match.group,
+      groupText: match.group === undefined || match.group === null ? '' : `第 ${match.group + 1} 组 · `,
       nameA: (byUser.get(match.playerA) || {}).nickName || '', nameB: (byUser.get(match.playerB) || {}).nickName || '',
       schoolNameA: event.schoolNames[match.schoolA] || '', schoolNameB: event.schoolNames[match.schoolB] || '',
       scoreA: match.scoreA, scoreB: match.scoreB, winner: match.winner,
