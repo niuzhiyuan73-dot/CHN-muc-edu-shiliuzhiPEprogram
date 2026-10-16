@@ -20,26 +20,18 @@
  * 【首屏为什么不会「先 0:0 再跳」】
  * 既有读接口（getMatchRecords 等）已经带上实时比分，页面首次渲染就是实时值；
  * 适配器只负责此后的增量。
+ *
+ * 【取数器为什么必须由调用方注入】
+ * 从前这里是「不传就走旧栈门面的 `getLiveScores`」。协议 1 已定完全下线
+ * （P10），那条缺省路径一旦留下，就成了「页面改接 S2 之后，适配器还在悄悄
+ * 读旧台账」的隐患——两处各说各话，且只在真机上才看得出来。现在改为**必填**：
+ * 名单非空却给不出取数器，订阅当场报错。三个调用点（普通比赛面板、个人赛事
+ * 详情、学院赛详情）本就都传了 `getSchoolLiveScores`，行为不变。
  * ============================================================
  */
 
-const facade = require('./index.js');
-
 /** 轮询间隔（毫秒）。要调频率只动这一处。 */
 const POLL_INTERVAL = 2000;
-
-/**
- * 默认取数器：旧栈门面。
- * 学校维度页面（协议 2）改传自己的取数器——`getSchoolLiveScores` 的返回是
- * `{ok, scores}`，摊平后仍是「比分视图数组」。适配器只认「给一组编号、回一组
- * 比分视图」这一件事，不关心数据从哪来。
- *
- * @param {string[]} ids
- * @returns {Promise<Array<Object>>}
- */
-function defaultFetch(ids) {
-  return facade.getLiveScores(ids);
-}
 
 /**
  * 当前订阅。同一时刻只允许一个页面在轮询——小程序同一时刻只有一个页面
@@ -190,18 +182,30 @@ function handleFor(target) {
  *
  * @param {string[]} matchIds 关心的比赛编号；空数组 ⇒ 完全不启表
  * @param {Function} onUpdate 比分真的变了才被调用，参数是实时视图数组
- * @param {{fetch?:Function}} [options] 取数器。缺省走旧栈门面；学校维度页面
- *   传自己的 `getSchoolLiveScores`（摊平后仍是「给一组编号、回一组比分视图」）
+ * @param {{fetch:Function}} options 取数器（**必填**，名单非空时）。
+ *   学校维度页面传 `getSchoolLiveScores`：它的返回是 `{ok, scores}`，
+ *   调用方摊平成「给一组编号、回一组比分视图」再交进来。适配器只认这一件事，
+ *   不关心数据从哪来。
  * @returns {Function & {pause:Function, resume:Function}} 取消订阅
+ * @throws {TypeError} 名单非空却没给取数器——不留「悄悄读旧栈门面」的缺省路径
  */
 function watchLiveScores(matchIds, onUpdate, options = {}) {
   stopSession();
 
   const ids = [...new Set((Array.isArray(matchIds) ? matchIds : []).filter(Boolean))];
+
+  // 空名单：本就不启表、不请求，取数器可有可无
+  const fetch = typeof options.fetch === 'function' ? options.fetch : null;
+  if (ids.length > 0 && !fetch) {
+    throw new TypeError(
+      'watchLiveScores 需要 options.fetch：协议 1 门面已按 P10 下线，没有缺省取数路径'
+    );
+  }
+
   const target = {
     ids,
     onUpdate: typeof onUpdate === 'function' ? onUpdate : () => {},
-    fetch: typeof options.fetch === 'function' ? options.fetch : defaultFetch,
+    fetch,
     last: null,
     timer: null,
     paused: false,

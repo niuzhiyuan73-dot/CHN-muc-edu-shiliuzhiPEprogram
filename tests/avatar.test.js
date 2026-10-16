@@ -10,7 +10,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const facade = require('../miniprogram/services/index.js');
+const runtime = require('../miniprogram/services/runtime-mode.js');
 const { uploadAvatar, isTempPath, buildCloudPath } = require('../miniprogram/services/avatar.js');
 const { DATA_SOURCE } = require('../miniprogram/utils/constants.js');
 
@@ -36,11 +36,11 @@ test.beforeEach(() => {
   uploads = [];
   uploadResult = { fileID: 'cloud://test.env/avatars/a.jpeg' };
   uploadShouldThrow = false;
-  facade.setDataSource(DATA_SOURCE.CLOUD);
+  runtime.setDataSource(DATA_SOURCE.CLOUD);
 });
 
 test.after(() => {
-  facade.setDataSource(DATA_SOURCE.MOCK);
+  runtime.setDataSource(DATA_SOURCE.MOCK);
 });
 
 /* ---------- 地址判定 ---------- */
@@ -108,7 +108,7 @@ test('上传 —— 云存储没回 fileID 也算失败', async () => {
 });
 
 test('上传 —— 本地模拟数据不传云存储，原样留着临时路径', async () => {
-  facade.setDataSource(DATA_SOURCE.MOCK);
+  runtime.setDataSource(DATA_SOURCE.MOCK);
 
   const result = await uploadAvatar('http://tmp/a.jpeg');
   assert.strictEqual(result, 'http://tmp/a.jpeg');

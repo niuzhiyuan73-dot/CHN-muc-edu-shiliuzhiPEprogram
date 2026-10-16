@@ -10,18 +10,18 @@
  *   4. 单拍失败 ⇒ 静默跳过，下一拍照常；
  *   5. pause 停表、resume 立即补一次；取消后旧表不再跑。
  *
- * 用假 getLiveScores 替换门面出口，从而完全掌控每一拍的数据。
+ * 【取数器改为必填后，本测试也换了注入方式】
+ * 从前是「替换门面出口 `getLiveScores`」；协议 1 门面按 P10 下线后，适配器
+ * 不再有缺省取数路径，改为**由调用方注入**（三个页面调用点本就都传了
+ * `getSchoolLiveScores`）。所以这里改为注入一个假取数器，与页面的用法一致——
+ * 顺带把「不传取数器会怎样」也变成可断言的行为。
  * ============================================================
  */
 
 const { test, describe, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 
-const facade = require('../miniprogram/services/index.js');
 const { watchLiveScores, POLL_INTERVAL } = require('../miniprogram/services/live-watch.js');
-
-/** 真实出口，测完要还回去 */
-const realGetLiveScores = facade.getLiveScores;
 
 /** 让已 resolve 的 Promise 链跑完（不用被 mock 的 setImmediate） */
 function flush() {
@@ -49,22 +49,27 @@ function view(matchId, pointsA, pointsB, extra = {}) {
 describe('实时比分轮询适配器', () => {
   let handles = [];
   let calls = 0;
+  /** 假取数器的实际行为，由各用例通过 install 指定 */
+  let impl = async () => [];
 
   /**
-   * 换掉门面出口，记录调用次数。
-   * 每次换桩都把计数清零——calls 是整段 describe 共用的，不归零就会把
-   * 上一个用例的调用累加进来，断言「这一用例只请求了一次」时必然误判。
+   * 指定这一用例的取数行为，并把调用计数清零。
+   * 计数是整段 describe 共用的，不归零就会把上一个用例的调用累加进来，
+   * 断言「这一用例只请求了一次」时必然误判。
    */
   function install(fetcher) {
     calls = 0;
-    facade.getLiveScores = async () => {
-      calls += 1;
-      return fetcher();
-    };
+    impl = fetcher;
+  }
+
+  /** 与页面同样的用法：把取数器交给适配器 */
+  function countingFetch(ids) {
+    calls += 1;
+    return impl(ids);
   }
 
   function watch(ids, cb) {
-    const off = watchLiveScores(ids, cb);
+    const off = watchLiveScores(ids, cb, { fetch: countingFetch });
     handles.push(off);
     return off;
   }
@@ -72,7 +77,6 @@ describe('实时比分轮询适配器', () => {
   afterEach(() => {
     for (const off of handles) off();
     handles = [];
-    facade.getLiveScores = realGetLiveScores;
   });
 
   test('空名单 —— 不启表、不发一次请求', async (t) => {
@@ -118,11 +122,10 @@ describe('实时比分轮询适配器', () => {
   test('单拍失败静默跳过，下一拍照常', async (t) => {
     t.mock.timers.enable({ apis: ['setInterval'] });
     let failing = true;
-    facade.getLiveScores = async () => {
-      calls += 1;
+    install(async () => {
       if (failing) throw new Error('网络异常');
       return [view('m1', 1, 0)];
-    };
+    });
 
     const seen = [];
     watch(['m1'], (views) => seen.push(views));
@@ -172,32 +175,6 @@ describe('实时比分轮询适配器', () => {
     assert.equal(calls, 1);
   });
 
-  test('传取数器时改走取数器，不碰旧栈门面', async (t) => {
-    t.mock.timers.enable({ apis: ['setInterval'] });
-    // 门面故意留桩：一旦被调到就说明取数器没生效
-    let facadeCalls = 0;
-    facade.getLiveScores = async () => {
-      facadeCalls += 1;
-      return [];
-    };
-
-    let fetcherCalls = 0;
-    const seen = [];
-    const off = watchLiveScores(['m1'], (views) => seen.push(views), {
-      fetch: async () => {
-        fetcherCalls += 1;
-        return [view('m1', 3, 0)];
-      },
-    });
-    handles.push(off);
-
-    await flush();
-    assert.equal(fetcherCalls, 1, '订阅时立即补一次走的是取数器');
-    assert.equal(facadeCalls, 0, '传了取数器就不该再碰旧栈门面');
-    assert.equal(seen.length, 1);
-    assert.equal(seen[0][0].pointsA, 3);
-  });
-
   test('换名单重订阅 —— 同一时刻只有一张表在跑', async (t) => {
     t.mock.timers.enable({ apis: ['setInterval'] });
     install(() => [view('m1', 1, 0)]);
@@ -219,5 +196,32 @@ describe('实时比分轮询适配器', () => {
     await flush();
     assert.equal(calls, before + 1, '只应有一张表在轮询');
     assert.equal(firstCallbacks, 1, '旧订阅停了就不再回调');
+  });
+});
+
+/**
+ * 取数器必填：这一组守的是「不留悄悄读旧栈门面的缺省路径」。
+ * 从前不传就回落到门面的 getLiveScores，那条路径在协议 1 下线后必须消失——
+ * 否则页面已改接 S2，适配器却还在读旧台账，两处各说各话且只在真机上看得出来。
+ */
+describe('实时比分轮询适配器 —— 取数器必填', () => {
+  const handles = [];
+
+  afterEach(() => {
+    while (handles.length) handles.pop()();
+  });
+
+  test('名单非空却不给取数器 —— 订阅当场报错', () => {
+    assert.throws(
+      () => watchLiveScores(['m1'], () => {}),
+      /options\.fetch/,
+      '缺省取数路径应当已经不存在'
+    );
+  });
+
+  test('空名单不传取数器也不报错（本就不启表、不请求）', () => {
+    const off = watchLiveScores([], () => {});
+    handles.push(off);
+    assert.equal(typeof off, 'function', '空名单仍应返回可用的取消句柄');
   });
 });

@@ -16,10 +16,14 @@
  * tests/datasource.test.js 守着。上传文件不是取数，而且只在云端模式下
  * 才有意义——本地模拟数据全在内存里，没有云存储可传。放在这里，mock
  * 那边就不必凭空长一个同名的空壳。
+ *
+ * 【为什么模式取自 runtime-mode 而不是门面】
+ * 协议 1 已定完全下线（P10），门面本身要删；运行模式是两个栈共用的运行
+ * 状态，已搬到 runtime-mode.js，这里的判定跟着一起改。
  * ============================================================
  */
 
-const facade = require('./index.js');
+const runtime = require('./runtime-mode.js');
 
 /** 云存储里放头像的目录 */
 const AVATAR_DIR = 'avatars';
@@ -63,7 +67,7 @@ async function uploadAvatar(tempPath) {
 
   // 本地模拟数据没有云存储可传，而且它的账号本来就只活在这一次运行里，
   // 临时路径够用
-  if (facade.isMockNow()) return path;
+  if (runtime.isMockNow()) return path;
   if (typeof wx === 'undefined' || !wx.cloud || typeof wx.cloud.uploadFile !== 'function') {
     return path;
   }
