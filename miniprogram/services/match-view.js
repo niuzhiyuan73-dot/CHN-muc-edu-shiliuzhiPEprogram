@@ -10,16 +10,18 @@
  * 一是把业务规则散进了模板（改规则要翻 wxml），二是没法测试——Node 跑不了
  * 模板。规则全部来自 match-record.js，这里只是把结果放进行数据里。
  *
- * 【为什么用台账而不是 getMatches】
- * getMatches 只给已生效的比赛，「待确认」「已撤销」根本不在里面，而这两类
- * 恰恰是比赛页的主角。所以取数是 getMatchRecords（读 mock 的 ledger）。
+ * 【本模块现在只剩纯构建器】
+ * 取数那一段（loadMatchView，读协议 1 台账）已在 P10 合并批里随协议 1 一并
+ * 删除：页面走 school-match-view.js 的 loadSchoolMatchView，取数经 S2 的
+ * listSchoolMatches（含「待确认」「已撤销」这些 getMatches 给不出的状态）。
+ * 这里保留的是被 S2 装载器与学院赛 / 赛事视图共用的纯构建器与常量。
  *
  * 【确认权的演示口径】
- * mock 下确认权放宽为「参与即可」（见 match-record.canConfirm 的注释）。
- * 放宽这件事必须在界面上说明白，否则会被当成真实规则。视图模型逐行比对
- * 「放宽后的权限」与「严格口径的权限」，只要两者不一致就置 confirmRelaxed，
- * 由 loadMatchView 汇总成一句 demoNotice。这样文案的触发条件是算出来的，
- * 不是靠页面猜的。
+ * 逐行比对「放宽后的权限」与「严格口径的权限」，只要两者不一致就置
+ * confirmRelaxed——文案的触发条件是算出来的，不是靠页面猜的。注意 S2 的
+ * matchSummary **不再放宽**确认（演示数据源也一样严格），因此 confirmRelaxed
+ * 在 S2 链路上恒为假；这里保留是为了纯构建器语义完整，并由
+ * tests/school-match-view.test.js 守着「别把放宽悄悄加回来」。
  * ============================================================
  */
 
@@ -28,7 +30,6 @@ const {
   MATCH_STATUS_LABEL,
   MATCH_TYPE_LABEL,
   ROLE,
-  ROLE_LABEL,
   courtNoTextOf,
 } = require('../utils/constants.js');
 const { formatDateTime, formatScore } = require('../utils/format.js');
@@ -45,7 +46,10 @@ const {
   needsScore,
   sideOf,
 } = require('./match-record.js');
-const { getCurrentUser, getMember, getMembers, getMatchRecords, isMockNow } = require('./index.js');
+// 运行模式取中立模块，不经协议 1 门面（P10-a）。本模块剩下的唯一用途是
+// buildRecordRow 的 isMock 缺省值——S2 装载器都显式传 isMock:false，
+// 这里只是给「忘了传」的场景兜一个与当前数据源一致的底。
+const { isMockNow } = require('./runtime-mode.js');
 
 /**
  * 页面上的两个标签页。
@@ -70,9 +74,6 @@ const TAB_EMPTY = {
   [TAB.MINE]: '你还没有参加过比赛',
   [TAB.PENDING]: '没有待确认的比赛',
 };
-
-/** 访客的空态：没有「自己的比赛」可言，先登录 */
-const VISITOR_EMPTY = '登录后可以看到自己的比赛';
 
 /**
  * 默认取多少场。
@@ -247,100 +248,12 @@ function filterRecords(records, tab, userId) {
   return list;
 }
 
-/**
- * 装载比赛页。
- *
- * 【调用方为什么要把登录态传进来】
- * 与 loadHomeView(user) 同一套约定：页面手上才有全局登录态。若这里
- * 自己去问数据源「当前用户是谁」，mock 下永远答 u06，于是未登录的
- * 访客也会被当成 u06，凭空获得确认与撤销的权限。所以登录态由调用方
- * 明确传入——传 null 就是「访客」，语义清清楚楚。
- *
- * @param {Object} [options]
- * @param {string} [options.tab] 当前标签页，非法值退回「我的比赛」
- * @param {number} [options.limit] 最多多少行
- * @param {Object|null} [options.user] 当前登录会员，传 null 表示访客。
- *        省略该字段时才回退到 userId / 数据源的当前用户
- * @param {string} [options.userId] 看谁的比赛
- * @returns {Promise<Object>} userId 查无此人时返回 { found: false }
- */
-async function loadMatchView(options = {}) {
-  const { tab = TAB.MINE, limit = DEFAULT_LIMIT, userId } = options;
-  // 必须用 hasOwnProperty：传 null（明确表示访客）与不传是两件事
-  const explicitUser = Object.prototype.hasOwnProperty.call(options, 'user');
-
-  let user = null;
-  if (explicitUser) {
-    user = options.user || null;
-  } else if (userId) {
-    user = await getMember(userId);
-    if (!user) return { found: false };
-  } else {
-    user = await getCurrentUser();
-  }
-
-  const viewerId = user ? user._id : null;
-  const activeTab = TAB_LABEL[tab] ? tab : TAB.MINE;
-
-  const [members, ledger] = await Promise.all([getMembers(), getMatchRecords()]);
-  const nameOf = createNameResolver(members);
-  // 学院负责人代录要按学院划范围：这里把「编号 → 学院」一并算出来
-  const collegeByMember = new Map((members || []).map((m) => [m._id, m.college || '']));
-  const collegeOf = (id) => collegeByMember.get(id) || '';
-
-  // 访客没有「自己的比赛」可言，两个标签都不下发任何台账，
-  // 只给一句登录引导——否则别人未确认、已撤销的成绩会一并漏出去
-  const all = viewerId ? ledger : [];
-
-  const filtered = filterRecords(all, activeTab, viewerId);
-  const size = typeof limit === 'number' && limit >= 0 ? limit : DEFAULT_LIMIT;
-  const records = filtered
-    .slice(0, size)
-    .map((record) =>
-      buildRecordRow(record, {
-        userId: viewerId,
-        role: user ? user.role : undefined,
-        college: (user && user.college) || '',
-        collegeOf,
-        nameOf,
-      })
-    );
-
-  return {
-    found: true,
-    viewer: {
-      userId: viewerId,
-      roleLabel: user ? ROLE_LABEL[user.role] || '' : '',
-      loggedIn: Boolean(user),
-    },
-    tabs: Object.values(TAB).map((key) => ({
-      tab: key,
-      label: TAB_LABEL[key],
-      active: key === activeTab,
-    })),
-    activeTab,
-    records,
-    total: filtered.length,
-    hasMore: filtered.length > records.length,
-    // 访客给登录引导，而不是「你还没有参加过比赛」——后者会让人以为登录了也一样
-    emptyText: viewerId ? TAB_EMPTY[activeTab] : VISITOR_EMPTY,
-    needLogin: !viewerId,
-    // 待确认的数量放在标签上，不用点进去才知道有没有事要做
-    pendingCount: filterRecords(all, TAB.PENDING, viewerId).length,
-    demoNotice: records.some((row) => row.confirmRelaxed)
-      ? '当前为演示数据源：只要参与过这场比赛就可以确认比分，正式环境需由对手确认'
-      : '',
-  };
-}
-
 module.exports = {
   TAB,
   TAB_LABEL,
   TAB_EMPTY,
-  VISITOR_EMPTY,
   DEFAULT_LIMIT,
   statusTagOf,
   buildRecordRow,
   filterRecords,
-  loadMatchView,
 };

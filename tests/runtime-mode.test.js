@@ -43,7 +43,6 @@ const FACADE_REQUIRE = "require('./index.js')";
 const SERVICE_FILES_PENDING = [
   'association-scope.js',
   'events-view.js',
-  'match-view.js',
   'profile-view.js',
   'rank-view.js',
 ].sort();

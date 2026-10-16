@@ -5,15 +5,12 @@ const {
   TAB,
   TAB_LABEL,
   TAB_EMPTY,
-  VISITOR_EMPTY,
   DEFAULT_LIMIT,
   statusTagOf,
   buildRecordRow,
   filterRecords,
-  loadMatchView,
 } = require('../miniprogram/services/match-view.js');
 const { MATCH_STATUS, MATCH_TYPE, ROLE } = require('../miniprogram/utils/constants.js');
-const facade = require('../miniprogram/services/index.js');
 
 const ME = 'u06';
 const RIVAL = 'u01';
@@ -43,18 +40,6 @@ function pendingRecord(overrides = {}) {
 /** 编号 → 昵称，替掉真实的数据源 */
 function fakeNameOf(id) {
   return { [ME]: '我', [RIVAL]: '对手' }[id] || id;
-}
-
-/** 写操作会动台账，用例前后各复位一次 */
-function withCleanStore(fn) {
-  return async () => {
-    facade.resetCache();
-    try {
-      await fn();
-    } finally {
-      facade.resetCache();
-    }
-  };
 }
 
 /* ============================================================
@@ -272,177 +257,13 @@ test('filterRecords —— 非法输入退回空数组，不抛错', () => {
 });
 
 /* ============================================================
- * 二、真实模拟数据的端到端部分
+ * 端到端部分已迁走
+ * ============================================================
+ * 原先这一段有 14 条 `loadMatchView`（协议 1 装载器）的端到端用例。该装载器
+ * 已随协议 1 删除，等价覆盖建在 tests/school-match-view.test.js（16 条，守
+ * S2 的 loadSchoolMatchView）。接口形状不同，是重写而不是照搬：
+ *   · 旧栈 loadMatchView({ userId, user, tab, limit })，查无此人返回 found:false；
+ *   · S2  loadSchoolMatchView(api, tab)，viewer 来自服务端上下文，读失败抛错。
+ * 其中「演示数据源放宽确认 + demoNotice 提示」这一条在 S2 无对应——S2 不再
+ * 放宽确认，新用例反向钉住了「confirmRelaxed 恒假、demoNotice 为空」。
  * ============================================================ */
-
-test('loadMatchView —— 查无此人时如实返回 found:false', async () => {
-  assert.deepStrictEqual(await loadMatchView({ userId: 'u99' }), { found: false });
-});
-
-test('loadMatchView —— 不传 userId 时看的是当前登录会员', async () => {
-  const view = await loadMatchView();
-  assert.strictEqual(view.found, true);
-  assert.strictEqual(view.viewer.userId, ME);
-  assert.strictEqual(view.viewer.loggedIn, true);
-});
-
-test('loadMatchView —— 访客不会被当成演示会员，看不到任何台账并收到登录引导', async () => {
-  // 页面把全局登录态传进来；传 null 就是访客。若这里自己去问数据源
-  // 「当前用户是谁」，mock 永远答 u06，访客会凭空获得确认与撤销权
-  const view = await loadMatchView({ user: null });
-
-  assert.strictEqual(view.found, true);
-  assert.strictEqual(view.viewer.userId, null);
-  assert.strictEqual(view.viewer.loggedIn, false);
-  // 访客没有「自己的比赛」可言，两个标签都不下发行数据
-  assert.deepStrictEqual(view.records, []);
-  assert.strictEqual(view.total, 0);
-  assert.strictEqual(view.needLogin, true);
-  assert.strictEqual(view.emptyText, VISITOR_EMPTY);
-  assert.strictEqual(view.pendingCount, 0);
-  assert.strictEqual(view.demoNotice, '');
-});
-
-test('loadMatchView —— 访客两个标签都是空的，不泄露流转中的成绩', async () => {
-  // 待确认、已撤销这类流转中的成绩是临时的，不该进入对外公示口径
-  assert.deepStrictEqual((await loadMatchView({ user: null, tab: TAB.PENDING })).records, []);
-  assert.deepStrictEqual((await loadMatchView({ user: null, tab: TAB.MINE })).records, []);
-});
-
-test('loadMatchView —— 两个标签里恰好有一个是选中的', async () => {
-  const view = await loadMatchView();
-  assert.strictEqual(view.tabs.length, Object.keys(TAB).length);
-
-  const active = view.tabs.filter((item) => item.active);
-  assert.strictEqual(active.length, 1);
-  assert.strictEqual(active[0].tab, view.activeTab);
-});
-
-test('loadMatchView —— 默认落在「我的比赛」', async () => {
-  const view = await loadMatchView();
-  assert.strictEqual(view.activeTab, TAB.MINE);
-  assert.strictEqual(view.emptyText, TAB_EMPTY[TAB.MINE]);
-});
-
-test('loadMatchView —— 非法标签退回「我的比赛」，不给空白页', async () => {
-  const view = await loadMatchView({ tab: 'nope' });
-  assert.strictEqual(view.activeTab, TAB.MINE);
-  assert.strictEqual(view.emptyText, TAB_EMPTY[TAB.MINE]);
-});
-
-test('loadMatchView —— 顺序与台账一致，且不超过默认上限', async () => {
-  const raw = await facade.getMatchRecords();
-  const view = await loadMatchView({ limit: DEFAULT_LIMIT });
-
-  assert.ok(raw.length > 0);
-  // 默认标签是「我的比赛」，页面这一份是该标签下、台账原序（时间倒序）的一段
-  const expected = filterRecords(raw, TAB.MINE, ME)
-    .slice(0, DEFAULT_LIMIT)
-    .map((match) => match._id);
-  assert.deepStrictEqual(view.records.map((row) => row.matchId), expected);
-  // total 报的是筛选后的总数，不是这一页的条数——页面据此提示「只显示最近 N 场」
-  assert.strictEqual(view.total, expected.length);
-  assert.strictEqual(view.hasMore, expected.length > view.records.length);
-});
-
-test('loadMatchView —— 「我的比赛」里每一行都确实有我', async () => {
-  const view = await loadMatchView({ tab: TAB.MINE });
-  assert.ok(view.records.length > 0, '默认会员应当参加过比赛');
-  assert.ok(view.records.every((row) => row.isMine));
-  // 已经分出胜负的必须标出胜/负；演示赛事里还没打的签表场次没有胜负，
-  // 留空由模板挡掉，不能凭空标一个「负」
-  for (const row of view.records.filter((item) => item.winnerSide)) {
-    assert.notStrictEqual(row.resultText, '', '分出胜负的比赛该有胜/负标记');
-  }
-});
-
-test('loadMatchView —— 种子里待我确认的就是演示赛事里我还没打的半决赛', async () => {
-  // 只要与自己有关的场次：u06 进了四强，那场半决赛正等着录分
-  const view = await loadMatchView({ tab: TAB.PENDING });
-  assert.strictEqual(view.records.length, 1, '种子里只留了一场 u06 还没打的半决赛');
-  assert.strictEqual(view.pendingCount, 1);
-
-  const [row] = view.records;
-  assert.strictEqual(row.statusLabel, '待确认');
-  assert.strictEqual(row.isEvent, true, '这是赛事签表里的场次');
-  assert.strictEqual(row.isMine, true);
-  assert.strictEqual(row.scoreText, '—', '还没打，不该渲染成 0:0');
-  assert.strictEqual(row.needsScore, true, '还没比分，应当给「录分」入口而不是「确认」');
-  // 没有比分就谈不上确认，演示口径提示这时不该挂出来
-  assert.strictEqual(view.demoNotice, '');
-});
-
-test('loadMatchView —— 已生效的比赛带出赛制文案', async () => {
-  const view = await loadMatchView();
-  const withFormat = view.records.filter((row) => row.formatText !== '');
-  assert.ok(withFormat.length > 0, '种子比赛都带赛制，应当能渲染出来');
-  assert.match(withFormat[0].formatText, /^\d+ 分制 · (一局一胜|三局两胜|五局三胜)$/);
-});
-
-test('loadMatchView —— 条数受 limit 限制，并如实报告还有更多', async () => {
-  const view = await loadMatchView({ limit: 2 });
-  assert.strictEqual(view.records.length, 2);
-  assert.strictEqual(view.hasMore, true);
-
-  const all = await loadMatchView({ limit: 5000 });
-  assert.strictEqual(all.hasMore, false);
-  assert.strictEqual(all.records.length, all.total);
-});
-
-test(
-  'loadMatchView —— 录一场之后，待确认标签出现它并挂出演示口径提示',
-  withCleanStore(async () => {
-    const submitted = await facade.submitMatch({
-      matchType: MATCH_TYPE.SINGLES,
-      teamA: [ME],
-      teamB: [RIVAL],
-      scoreA: ['11', '11'],
-      scoreB: ['9', '7'],
-      gamePoints: 11,
-      bestOf: 3,
-      matchTime: '2026-05-01T18:00:00',
-    });
-    assert.strictEqual(submitted.ok, true, submitted.firstError);
-
-    const view = await loadMatchView({ tab: TAB.PENDING });
-    // 演示赛事里那场没打的半决赛 + 刚录的这场
-    assert.strictEqual(view.records.length, 2);
-    assert.strictEqual(view.pendingCount, 2);
-
-    const row = view.records.find((item) => item.matchId === submitted.match._id);
-    assert.ok(row, '刚录的这场应当出现在待确认里');
-    assert.strictEqual(row.statusLabel, '待确认');
-    assert.strictEqual(row.canConfirm, true);
-    assert.strictEqual(row.confirmRelaxed, true);
-    assert.strictEqual(row.formatText, '11 分制 · 三局两胜');
-    // 确认权来自 mock 放宽，必须在界面上说清楚
-    assert.match(view.demoNotice, /演示/);
-  })
-);
-
-test(
-  'loadMatchView —— 确认后状态变为已生效，且不再可确认',
-  withCleanStore(async () => {
-    const { match } = await facade.submitMatch({
-      matchType: MATCH_TYPE.SINGLES,
-      teamA: [ME],
-      teamB: [RIVAL],
-      scoreA: ['11', '11'],
-      scoreB: ['9', '7'],
-      gamePoints: 11,
-      bestOf: 3,
-      // 排在种子最后一场（8 月 22 日）之后，因而必然落在最近一批里，
-      // 不受 DEFAULT_LIMIT 截断影响
-      matchTime: '2026-09-01T10:00:00',
-    });
-    await facade.confirmMatch(match._id, RIVAL);
-
-    const view = await loadMatchView({ tab: TAB.MINE });
-    const row = view.records.find((item) => item.matchId === match._id);
-
-    assert.ok(row);
-    assert.strictEqual(row.statusLabel, '已生效');
-    assert.strictEqual(row.canConfirm, false);
-    assert.strictEqual(row.resultText, '胜');
-  })
-);
