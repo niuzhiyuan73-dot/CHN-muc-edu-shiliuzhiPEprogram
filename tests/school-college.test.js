@@ -14,7 +14,7 @@
  *   5. 排阵限本大场参赛学院（管理员可代交），排阵齐才能开大场，开大场铺出的小场
  *      写进 matches 集合并带范围；名次只记已通过审核的学院、冠军唯一。
  */
-const { test } = require('node:test');
+const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { createSchoolDemoSeed } = require('../miniprogram/services/school-seed');
@@ -976,4 +976,86 @@ test('路由编号：未解码 query 下的排阵与小场，照回传的真实�
   } finally {
     schoolMock.reset();
   }
+});
+
+/* ---------------------------------------------- 小场视图（旧栈回归的 S2 对应） */
+
+/**
+ * 下面两条由旧栈 tests/college-view.test.js 迁移而来。
+ *
+ * 【为什么是迁移而不是删除】它们守的是两条曾经让页面直接崩掉的回归：
+ *   1. 找不到比赛时不下发比分行所需字段，页面按 bestOf 读 scoreA[i] 抛错；
+ *   2. 权限布尔量撞暂时性死区，闸门为真时抛 ReferenceError。
+ * S2 的 loadCollegeMatchView 里这两处都已按同一口径实现（见其「找不到比赛」
+ * 分支与 canConfirm / canRevoke 的 Boolean(...)），但**此前没有任何测试覆盖**——
+ * 旧栈那两条随 college-view.js 一并删除后，若不迁移，这两条回归就无人看守了。
+ */
+describe('小场视图 —— 旧栈两条回归在 S2 的对应', () => {
+  test('找不到比赛时如实返回 found:false，并补齐比分行所需的全部字段', async () => {
+    schoolMock.reset({ withDemoContent: false });
+    try {
+      const view = await collegeView.loadCollegeMatchView('不存在的小场',
+        { ...MOCK_SCOPE, actorId: MOCK_ADMIN });
+
+      assert.equal(view.found, false);
+      assert.equal(view.blockReason, '找不到这场比赛');
+      // 页面 refresh 会按 bestOf 逐行读 scoreA / scoreB；缺一个就是读下标抛错
+      assert.deepEqual(view.scoreA, []);
+      assert.deepEqual(view.scoreB, []);
+      assert.deepEqual(view.teamARows, []);
+      assert.deepEqual(view.teamBRows, []);
+      assert.equal(typeof view.gamePoints, 'number');
+      assert.equal(typeof view.bestOf, 'number');
+    } finally {
+      schoolMock.reset();
+    }
+  });
+
+  test('已录分未确认的小场：canConfirm / canRevoke 是布尔量而不是抛错', async () => {
+    const { api, eventId } = await mockEntriesReady();
+    try {
+      const drawn = await api.drawCollegeEvent({ eventId, seedValue: 7 });
+      assert.equal(drawn.ok, true, drawn.message);
+      const began = await api.startCollegeEvent({ eventId });
+      assert.equal(began.ok, true, began.message);
+
+      const ties = (await api.listCollegeTies({ eventId })).ties;
+      assert.ok(ties.length > 0, '开赛后铺出首轮大场');
+      const tieId = ties[0].tieId;
+
+      // 两侧各排一人，开大场铺出小场
+      const playersByCollege = {};
+      for (const collegeId of [C01, C02]) {
+        const players = await mockMemberIds(api, collegeId);
+        assert.ok(players.length > 0, `${collegeId} 应有可排阵的会员`);
+        playersByCollege[collegeId] = players;
+        const saved = await api.submitCollegeLineup({
+          tieId, collegeId, entries: [{ legNo: 1, players: [players[0]] }] });
+        assert.equal(saved.ok, true, saved.message);
+      }
+      const startedTie = await api.startCollegeTie({ tieId });
+      assert.equal(startedTie.ok, true, startedTie.message);
+
+      const started = (await api.listCollegeTies({ eventId })).ties.find(row => row.tieId === tieId);
+      const matchId = started.legRows[0].matchId;
+      assert.ok(matchId, '大场开打后小场才生成');
+
+      // 录分但**不确认**：这正是旧栈 TDZ 的触发条件（待确认 + 有胜方 + 我在场上）。
+      // 种子里恰好一场都没有，必须自己造，线上才会漏网。
+      const recorded = await api.submitSchoolMatch({ matchId, scoreA: [11], scoreB: [7] });
+      assert.equal(recorded.ok, true, recorded.message);
+
+      const onCourt = playersByCollege[C01][0];
+      const view = await collegeView.loadCollegeMatchView(matchId,
+        { ...MOCK_SCOPE, actorId: onCourt });
+
+      assert.equal(view.found, true, view.blockReason);
+      assert.equal(typeof view.canConfirm, 'boolean');
+      assert.equal(typeof view.canRevoke, 'boolean');
+      // 场上参与者即可确认——正是这条路以前会抛 ReferenceError
+      assert.equal(view.canConfirm, true, '场上参与者应当能确认自己这一场');
+    } finally {
+      schoolMock.reset();
+    }
+  });
 });
