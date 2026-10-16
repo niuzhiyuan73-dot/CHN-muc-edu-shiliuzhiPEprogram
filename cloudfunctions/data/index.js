@@ -30,6 +30,7 @@ const { createRepo } = require('./src/adapters/cloud-repo.js');
 const { isKnownAssociation, getAssociation } = require('./lib/utils/associations.js');
 const { ASSOCIATION_STATUS } = require('./lib/utils/constants.js');
 const { handleSchoolRequest } = require('./src/core/school-request.js');
+const { isSchoolRequest } = require('./src/core/route.js');
 
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 
@@ -73,7 +74,10 @@ function resolveAssociation(association) {
 exports.main = async (event = {}) => {
   try {
     const { action, payload } = event;
-    if (event.protocolVersion !== undefined || event.schoolId !== undefined) {
+    // 只认 protocolVersion：协议 2 客户端总是带它（见 src/core/route.js 的说明）。
+    // 从前这里还把顶层 schoolId 当信号，会让「旧协议请求恰好带了 schoolId」
+    // 得到一句误导性的「需要协议版本 2」。
+    if (isSchoolRequest(event)) {
       const { OPENID } = cloud.getWXContext();
       return await handleSchoolRequest(event, { repo: getRepo(), openId: OPENID });
     }

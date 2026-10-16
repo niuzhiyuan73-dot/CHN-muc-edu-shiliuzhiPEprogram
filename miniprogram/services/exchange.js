@@ -9,12 +9,14 @@
  * 注册了这些动作（见 cloudfunctions/data/src/core/school-exchange-handlers.js），
  * 于是这里按数据源直接选择，与「协会空间」保持一致：不再有「只有本地能用」的功能。
  *
- * 仍要提醒的是：邀请赛的任何动作都不写校内 events / matches / memberRatings，
- * 也不产生校内等级分与积分（服务端强制 eventScope=inter_school、ratingPolicy=unrated）。
+ * 仍要提醒的是：邀请赛的任何动作都不写校内 events / matches，也不产生校内等级分
+ * 与积分（服务端强制 eventScope=inter_school、ratingPolicy=unrated）。
  */
 const identity = require('./school-identity.js');
-const mock = require('./school-mock.js');
 const cloud = require('./school-cloud.js');
+// 演示仓储惰性加载（数据源为 cloud 时用不上）：见 school-mock-loader.js 与
+// 2026-10-16 只读审计 H7。
+const { loadSchoolMock } = require('./school-mock-loader.js');
 
 /**
  * 取得绑定到某学校某协会的邀请赛客户端。
@@ -22,7 +24,7 @@ const cloud = require('./school-cloud.js');
  * @returns {Object} 邀请赛动作集合
  */
 function forScope(scope) {
-  return identity.isMockNow() ? mock.forExchange(scope) : cloud.forExchange(scope);
+  return identity.isMockNow() ? loadSchoolMock().forExchange(scope) : cloud.forExchange(scope);
 }
 
 module.exports = { forScope };

@@ -67,8 +67,8 @@
  *     .matches / events / schoolMembers / ... → list / getById / insert / set / update
  *     .transaction(fn)                  → 回调仍为同范围仓储
  *   repo.<collection>.listByScope(scope) → 数据库条件查询，自动分页
- *   schools / schoolAssociations / colleges / schoolMembers / schoolRoles /
- *   memberRatings 新集合提供 getById / set / list。
+ *   schools / schoolAssociations / colleges / schoolMembers / schoolRoles
+ *   新集合提供 getById / set / list。
  *   范围仓储保护数据归属，不替代身份权限与父资源业务校验。
  *
  * 【每个集合都必须齐 getById / set / list 三件套】
@@ -99,7 +99,6 @@ const COLLECTIONS = {
   colleges: COLLECTION.COLLEGES,
   schoolMembers: COLLECTION.SCHOOL_MEMBERS,
   schoolRoles: COLLECTION.SCHOOL_ROLES,
-  memberRatings: COLLECTION.MEMBER_RATINGS,
   studentIdClaims: COLLECTION.STUDENT_ID_CLAIMS,
   exchangeEvents: COLLECTION.EXCHANGE_EVENTS,
   exchangeInvitations: COLLECTION.EXCHANGE_INVITATIONS,

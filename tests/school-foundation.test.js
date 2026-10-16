@@ -31,7 +31,6 @@ test('scope requires explicit school and project; legacy documents never silentl
   assert.equal(S.belongsToSchoolScope(BUAA, MUC), false);
   assert.equal(S.belongsToSchoolScope(MUC, MUC), true);
   assert.notEqual(S.schoolMemberKey('same', 'muc'), S.schoolMemberKey('same', 'buaa'));
-  assert.notEqual(S.ratingKey('same', MUC), S.ratingKey('same', BUAA));
   assert.notEqual(S.schoolMembershipKey('same', MUC), S.schoolMembershipKey('same', BUAA));
   assert.notEqual(S.schoolKey('x', 'a:b', 'c'), S.schoolKey('x', 'a', 'b:c'));
 });
@@ -71,7 +70,7 @@ for (const collection of SCOPED_COLLECTIONS) {
 test('project, season, ranking and manual-rating namespaces remain independent', async () => {
   const repo = createMemoryRepo();
   const tt = repo.forScope({ ...MUC, association: 'tt' });
-  for (const collection of ['matches', 'seasons', 'rankings', 'memberRatings']) {
+  for (const collection of ['matches', 'seasons', 'rankings']) {
     await repo.forScope(MUC)[collection].insert({ _id: 'pkb', value: 123 });
     assert.equal(await tt[collection].getById('pkb'), null);
     await assert.rejects(tt[collection].set('pkb', { value: 456 }));

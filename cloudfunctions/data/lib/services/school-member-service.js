@@ -61,11 +61,16 @@ async function listSchoolMembers(payload = {}, ctx) {
   const collegeName = id => nameByCollegeId.get(id) || '';
   const filterCollegeId = typeof payload.collegeId === 'string' && payload.collegeId ? payload.collegeId : '';
 
+  // 名录要按 userId 补昵称 / 头像。**一次取齐本校账号建索引**，而不是在循环里
+  // 逐条 getById——一本校 200 人就是 200 次 RPC（见 2026-10-16 只读审计 H3）。
+  // buildDirectory（school-actor.js）早就是这个写法，这里照抄。
+  const userById = new Map((await ctx.repo.users.list()).map(user => [user._id, user]));
+
   const members = [];
   for (const row of rows) {
     if (row.status !== SCHOOL_MEMBER_STATUS.ACTIVE) continue;
     if (filterCollegeId && row.collegeId !== filterCollegeId) continue;
-    const user = await ctx.repo.users.getById(row.userId);
+    const user = userById.get(row.userId);
     // 平台停用账号、或已归属别校的用户不进本校本册。
     if (!user || user.platformStatus !== PLATFORM_STATUS.ACTIVE || user.primarySchoolId !== ctx.schoolId) continue;
     members.push(memberRow(user, row, collegeName));

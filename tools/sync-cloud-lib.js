@@ -42,6 +42,9 @@ const MANIFEST = [
   'utils/constants.js',
   'utils/associations.js',
   'utils/school.js',
+  // 协议 2 的动作白名单：云端注册表与本地模拟注册表读**同一份**，
+  // 免得两侧注册面各自漂移（见 2026-10-16 只读审计 H1）。
+  'utils/school-actions.js',
   'utils/random.js',
   'utils/bracket.js',
   'utils/elo.js',

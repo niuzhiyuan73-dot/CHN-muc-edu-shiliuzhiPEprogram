@@ -66,10 +66,9 @@ const schoolMembershipKey = (userId, scope) => {
   return schoolKey('mb', s.schoolId, s.association, userId);
 };
 const collegeKey = (schoolId, collegeId) => schoolKey('co', requireSchoolId(schoolId), collegeId);
-const ratingKey = (userId, scope) => {
-  const s = schoolScope(scope);
-  return schoolKey('mr', s.schoolId, s.association, userId);
-};
+// 【为什么没有 ratingKey】学校维度的等级分一贯「按 scope 重放 matches 流水推导、
+// 从不落库」，因此没有 member_ratings 集合，也不需要有它的键（2026-10-16 只读
+// 审计 H2：曾有一个全链路无人读写的 memberRatings 键与集合，已删）。
 const scopeKey = (scope) => {
   const s = schoolScope(scope);
   return schoolKey('scope', s.schoolId, s.association);
@@ -176,7 +175,7 @@ function belongsToSchoolScope(doc, scope) {
 module.exports = {
   SCHOOL_STATUS, SCHOOL_MEMBER_STATUS, PLATFORM_STATUS, PLATFORM_ROLE, SCHOOL_ROLE,
   LEGACY_SCHOOL_ID, requireSchoolId, schoolScope, schoolKey, schoolMemberKey,
-  schoolRoleKey, schoolAssociationKey, schoolMembershipKey, collegeKey, ratingKey,
+  schoolRoleKey, schoolAssociationKey, schoolMembershipKey, collegeKey,
   scopeKey, belongsToSchoolScope,
   associationGroupKey, associationGroupMemberKey, associationGroupNameKey,
   associationNoticeKey, associationTrainingKey, trainingRegistrationKey,

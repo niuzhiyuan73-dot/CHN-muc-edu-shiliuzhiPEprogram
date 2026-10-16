@@ -345,9 +345,11 @@ async function listTrainingRegistrations(payload = {}, ctx) {
 
   // 普通会员只看有效报名名单（昵称 / 头像），不下发取消记录与任何隐私字段。
   if (!canManage) {
+    // 一次取齐账号建索引，别在循环里逐条 getById（见 2026-10-16 只读审计 H3）。
+    const userById = new Map((await ctx.repo.users.list()).map(user => [user._id, user]));
     const members = [];
     for (const row of registeredRows) {
-      const user = await ctx.repo.users.getById(row.userId);
+      const user = userById.get(row.userId);
       members.push({ userId: row.userId, nickName: (user && user.nickName) || '会员',
         avatarUrl: (user && user.avatarUrl) || '', attendanceStatus: row.attendanceStatus || ATTENDANCE_STATUS.NOT_SUBMITTED });
     }
@@ -389,11 +391,13 @@ async function listTrainingRegistrations(payload = {}, ctx) {
   const registrations = [];
   const colleges = await ctx.repo.forScope(ctx).colleges.list();
   const collegeName = id => (colleges.find(row => row.collegeId === id) || {}).name || '';
+  // 同理：账号与学校身份各取一次建索引，页面每条再逐条 getById 是 N+1。
+  const userById = new Map((await ctx.repo.users.list()).map(user => [user._id, user]));
+  const memberById = new Map((await ctx.repo.forScope(ctx).schoolMembers.list())
+    .map(row => [row._id, row]));
   for (const row of page) {
-    const [user, member] = await Promise.all([
-      ctx.repo.users.getById(row.userId),
-      ctx.repo.schoolMembers.getById(schoolKey('sm', ctx.schoolId, row.userId)),
-    ]);
+    const user = userById.get(row.userId);
+    const member = memberById.get(schoolKey('sm', ctx.schoolId, row.userId));
     registrations.push({
       userId: row.userId,
       nickName: (user && user.nickName) || '会员',

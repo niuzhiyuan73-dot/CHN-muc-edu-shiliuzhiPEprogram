@@ -137,9 +137,18 @@ function buildCollections(scope, inTx) {
     users: {
       list: () => list('users'),
       getById: (id) => readDoc(scope, COLLECTIONS.users, id),
+      // 【为什么必须带 orderBy】同一个 OpenID 可能留下两条账号（旧协议 `u_…`
+      // 与协议 2 `acc:…` 两套编号并存，见 2026-10-16 只读审计 H5/P1）。不加
+      // orderBy 时数据库返回哪一条**不确定**，表现为「注册过却进不去」「榜单里
+      // 没有我」，且不可复现。这里与 readAll / readWhere 同一理由，按 _id 升序
+      // 取定：结果变成确定的、可测试的。真正把两套编号合一见 idempotency.js。
       getByOpenId: async (openId) => {
         if (!openId) return null;
-        const res = await col('users').where({ openId }).limit(1).get();
+        const res = await col('users')
+          .where({ openId })
+          .orderBy('_id', 'asc')
+          .limit(1)
+          .get();
         return (res && res.data && res.data[0]) || null;
       },
       set: (id, doc) => col('users').doc(id).set({ data: withoutId(doc) }),

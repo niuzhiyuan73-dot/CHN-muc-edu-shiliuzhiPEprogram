@@ -296,11 +296,6 @@ function avatarOf(nickName) {
   return (nickName || '?').slice(0, 1);
 }
 
-/** 该校是否有演示内容。页面据此决定是走演示视图还是回落到真实视图 */
-function hasSchoolDemo(schoolId) {
-  return Boolean(DEMO_SCHOOLS[schoolId] && DEMO_SCHOOLS[schoolId].associations);
-}
-
 /**
  * 演示内容的协会元信息：首页角标与提示文案共用。
  * 名称取「学校简称 + 项目名」（如「北航匹克球」），与真实协会的简称体例一致；
@@ -642,7 +637,6 @@ function schoolEvents(schoolId, options = {}) {
 }
 
 module.exports = {
-  hasSchoolDemo,
   schoolShortName,
   schoolAssociations,
   schoolHome,

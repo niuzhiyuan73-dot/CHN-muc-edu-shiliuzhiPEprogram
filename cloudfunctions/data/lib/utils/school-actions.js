@@ -1,0 +1,107 @@
+/**
+ * 协议 2 的动作白名单
+ * ============================================================
+ * 【为什么要有这份清单】
+ * 服务端注册处理器时曾经这样写：
+ *
+ *     const handlers = Object.fromEntries(
+ *       Object.entries({ ...11 个 service }).filter(([, v]) => typeof v === 'function'));
+ *
+ * 于是**所有导出函数**都成了协议 2 的 action——包括 27 个内部辅助函数
+ * （`buildDirectory` / `isEventDoc` / `medalOf` / `tallySignups` …），客户端
+ * 从不声明它们。而 `school-request.js` 只做 `hasOwnProperty(handlers, action)`
+ * 检查，所以任何拿到 OpenID 的客户端都能构造调用这些名字，攻击面被无谓放大
+ * （2026-10-16 只读审计 H1）。
+ *
+ * 【清单从哪来】
+ * 从**客户端三个门面**反推：`school-cloud.js` 的 `forSchoolIdentity` /
+ * `forAssociationSpace` / `forExchange` 才是「客户端真正会发」的动作全集。
+ * 服务端注册面必须与它**恰好相等**——不多（多了就是攻击面）、不少（少了
+ * 客户端一调就报「该操作尚未支持学校范围」）。
+ *
+ * 【为什么住在 utils/、而不是云端与模拟端各写一份】
+ * 本文件被 `tools/sync-cloud-lib.js` 镜像到 `cloudfunctions/data/lib/utils/`，
+ * 因此**云端注册表与本地模拟注册表读的是同一份清单**，结构上不可能分叉。
+ * 清单本身由 `tests/school-action-surface.test.js` 双向守护：
+ * 谁改了客户端门面或服务实现却没同步这里，测试立刻红。
+ * ============================================================
+ */
+
+/** 学校身份（`forSchoolIdentity` 声明，13 个）。 */
+const SCHOOL_IDENTITY_ACTIONS = Object.freeze([
+  'registerSchoolAccount',    'applySchoolMembership',    'reviewSchoolMembership',
+  'getMySchoolMembership',    'getSchoolApplications',    'getSchoolDirectory',
+  'getSchoolIdentitySession', 'getSchoolMembers',         'grantSchoolPermission',
+  'updateSchoolProfile',      'applySchoolTransfer',      'reviewSchoolTransfer',
+  'cancelSchoolTransfer',
+]);
+
+/** 协会空间（`forAssociationSpace` 声明，81 个）。 */
+const SCHOOL_SPACE_ACTIONS = Object.freeze([
+  'listAssociationGroups',        'getAssociationGroup',          'createAssociationGroup',
+  'updateAssociationGroup',       'addAssociationGroupMembers',   'removeAssociationGroupMember',
+  'leaveAssociationGroup',        'archiveAssociationGroup',      'deleteAssociationGroup',
+  'listAssociationMembers',       'listAssociationNotices',       'getAssociationNotice',
+  'publishAssociationNotice',     'updateAssociationNotice',      'withdrawAssociationNotice',
+  'listTrainings',                'getTraining',                  'listTrainingRegistrations',
+  'publishTraining',              'updateTraining',               'cancelTraining',
+  'finishTraining',               'registerTraining',             'cancelTrainingRegistration',
+  'removeTrainingRegistration',   'requestTrainingCheckIn',       'confirmTrainingCheckIn',
+  'rejectTrainingCheckIn',        'revokeTrainingCheckIn',        'listSchoolEvents',
+  'setSchoolEventPinned',         'getSchoolEvent',               'listSchoolEventSignups',
+  'publishSchoolEvent',           'signUpSchoolEvent',            'cancelSchoolEventSignup',
+  'startSchoolEvent',             'drawSchoolEvent',              'checkInSchoolEvent',
+  'finishSchoolEvent',            'listSchoolMatches',            'getSchoolMatchEntryContext',
+  'getSchoolMatch',               'submitSchoolMatch',            'confirmSchoolMatch',
+  'rejectSchoolMatch',            'revokeSchoolMatch',            'forfeitSchoolMatch',
+  'assignSchoolMatchReferee',     'startSchoolLiveScore',         'recordSchoolRally',
+  'undoSchoolRally',              'finishSchoolLiveScore',        'getSchoolLiveScores',
+  'listCollegeEvents',            'getCollegeEvent',              'publishCollegeEvent',
+  'setCollegeEventPinned',        'listCollegeEntries',           'submitCollegeEntry',
+  'reviewCollegeEntry',           'listCollegeTies',              'drawCollegeEvent',
+  'startCollegeEvent',            'listCollegeLineups',           'submitCollegeLineup',
+  'startCollegeTie',              'assignCollegeTieReferee',      'finishCollegeEvent',
+  'forfeitCollegeTieLeg',         'listSchoolAnnouncements',      'publishSchoolAnnouncement',
+  'archiveSchoolAnnouncement',    'listSchoolMembers',            'getSchoolMember',
+  'getSchoolRanking',             'getSchoolMemberStats',         'getSchoolMemberHonors',
+  'getSchoolMemberProfile',       'getSchoolSeason',              'resetSchoolSeason',
+]);
+
+/** 跨校邀请赛（`forExchange` 声明，16 个）。 */
+const SCHOOL_EXCHANGE_ACTIONS = Object.freeze([
+  'createExchangeEvent',        'respondExchangeInvitation',  'signUpExchangeEvent',
+  'cancelExchangeSignup',       'removeExchangeSignup',       'checkInExchangeSignup',
+  'withdrawExchangeInvitation', 'cancelExchangeEvent',        'revokeExchangeScore',
+  'lockExchangeRoster',         'drawExchangeEvent',          'assignExchangeReferee',
+  'submitExchangeScore',        'confirmExchangeRanking',     'getExchangeEvents',
+  'getExchangeEvent',
+]);
+
+/**
+ * 按白名单从若干 service 模块里挑出处理器。
+ *
+ * 【缺一个就当场抛，而不是静默少注册】
+ * 少注册一个动作的后果是「线上调用才报『该操作尚未支持学校范围』」，
+ * 那时离改动现场已经很远。这里在**加载期**就抛，测试与本地启动立刻可见。
+ *
+ * @param {Array<Object>} modules service 模块（后者覆盖前者的同名导出）
+ * @param {ReadonlyArray<string>} names 白名单
+ * @returns {Object} `{ [actionName]: handler }`
+ */
+function pickActions(modules, names) {
+  const pool = Object.assign({}, ...modules);
+  const actions = {};
+  for (const name of names) {
+    const handler = pool[name];
+    if (typeof handler !== 'function') throw new Error(`协议 2 缺少动作实现：${name}`);
+    actions[name] = handler;
+  }
+  return actions;
+}
+
+module.exports = {
+  SCHOOL_IDENTITY_ACTIONS,
+  SCHOOL_SPACE_ACTIONS,
+  SCHOOL_EXCHANGE_ACTIONS,
+  pickActions,
+};

@@ -54,7 +54,7 @@ test('邀请赛动作已在协议 2 注册，且服务端实现来自共享库�
 
 test('云端入口：报名 → 锁定 → 代签 → 抽签 → 录分 → 撤销 → 名次全程可用', async () => {
   const repo = fixture();
-  const baseline = { matches: (await repo.matches.list()).length, ratings: (await repo.memberRatings.list()).length };
+  const baseline = { matches: (await repo.matches.list()).length };
   const id = await readyFour(repo);
 
   const checked = await call(repo, 'checkInExchangeSignup', { eventId: id, userId: 'demo_muc_member' });
@@ -85,7 +85,6 @@ test('云端入口：报名 → 锁定 → 代签 → 抽签 → 录分 → 撤�
   assert.deepEqual(ranked.event.results.map(row => row.placement).sort(), [1, 2, 3, 3]);
   // 全程不写校内流水与等级分（夹具自带演示内容，比的是「没变多」）
   assert.equal((await repo.matches.list()).length, baseline.matches, '校内比赛流水一条没多');
-  assert.equal((await repo.memberRatings.list()).length, baseline.ratings, '校内等级分一条没多');
 });
 
 test('云端入口：跨校边界与权限照样生效（外校不能替主办取消或撤回）', async () => {

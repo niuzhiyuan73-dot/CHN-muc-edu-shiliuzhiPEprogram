@@ -19,6 +19,7 @@
  */
 
 const crypto = require('crypto');
+const { schoolAccountKey } = require('../../lib/utils/school.js');
 
 /**
  * 把若干字段拼成定长十六进制摘要。
@@ -90,11 +91,22 @@ function announcementNaturalKey(record) {
 /**
  * 会员记录的主键：一个 OpenID 只对应一个账号。
  * 用它当 _id，重复提交入会申请就会落到同一条文档上。
+ *
+ * 【为什么与协议 2 用的是同一把键】
+ * 从前这里是 `u_ + md5(openId)`，而协议 2 开户走 `utils/school.js` 的
+ * `schoolAccountKey(openId)` = `acc:<openId>`。同一微信身份若既走过旧注册、
+ * 又走协议 2 注册，就会留下两条账号文档，此后「解析到哪条」不确定，表现为
+ * 「注册过却进不去」「榜单里没有我」（2026-10-16 只读审计 H5 / P1）。
+ *
+ * 产品已定「旧协议完全下线」，那 `u_` 键就没有存在理由；这里直接复用协议 2
+ * 的键生成，两套协议从此落到**同一条账号文档**上。趁线上还没有真实数据统一，
+ * 成本接近零；等跑出真实数据再改就得附迁移脚本。
+ *
  * @param {string} openId
- * @returns {string}
+ * @returns {string} 可直接用作 _id
  */
 function memberKey(openId) {
-  return `u_${digest([openId])}`;
+  return schoolAccountKey(openId);
 }
 
 /**

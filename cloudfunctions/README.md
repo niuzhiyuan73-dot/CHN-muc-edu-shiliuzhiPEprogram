@@ -61,7 +61,7 @@
 
 ## 三、建集合与索引
 
-在云开发控制台 → 数据库里建 **31 个**集合（名称须完全一致）。名称与
+在云开发控制台 → 数据库里建 **30 个**集合（名称须完全一致）。名称与
 `miniprogram/utils/constants.js` 的 `COLLECTION` 常量、云端
 `cloudfunctions/data/src/repository.js` 的 `COLLECTIONS` 一一对应；少建任何一个，
 读写它的那一步都会直接报错。下面按体系分组，同一体系内的集合互不共用。
@@ -79,7 +79,7 @@
 | `rankings` | 排行榜快照，每个协会一条（`_id = 'current_<协会>'`）。它是**纯缓存**：删了会自动重算，写失败也不影响读 |
 | `audit_logs` | 写操作留痕（当前不写入，可选） |
 
-**学校身份与等级分（协议 2，7 个）**：
+**学校身份与等级分（协议 2，6 个）**：
 
 | 集合 | 用途 |
 |---|---|
@@ -88,8 +88,11 @@
 | `colleges` | 每校独立的学院目录（不与个人赛共用） |
 | `school_members` | 学校成员档案 |
 | `school_roles` | 学校级角色（学院负责人 / 协会负责人） |
-| `member_ratings` | 学校维度的会员等级分 |
 | `student_id_claims` | 学号唯一性占用表 |
+
+> 曾有一个 `member_ratings` 集合，但全仓**没有任何代码读写它**——学校维度的等级分
+> 一贯「按范围重放 `matches` 流水推导、从不落库」。该集合与对应的 `ratingKey` 已在
+> 2026-10-16 删除（详见 `docs/隐患与未定产品决策-2026-10-16.md` 的 H2），不要照旧清单建它。
 
 **协会空间（协议 2，6 个）**：
 
@@ -157,7 +160,6 @@
 |---|---|---|---|
 | `school_associations` | `schoolId` + `association` | — | 按「学校 + 协会」取成员资格 |
 | `colleges` / `school_members` / `school_roles` | `schoolId` | — | 按学校取学院目录 / 成员 / 角色 |
-| `member_ratings` | `schoolId` + `association` | — | 按范围取学校维度等级分 |
 | `memberships` | `schoolId` + `association` | — | 按范围取协会角色（另按 `userId` 查个人） |
 | `association_groups` / `association_group_members` / `association_notices` / `association_trainings` / `training_registrations` | `schoolId` + `association` | — | 协会空间一律按「学校 + 协会」取一批 |
 | `exchange_events` / `exchange_invitations` | `schoolId` + `association` | — | 按范围取跨校赛事与邀请 |
@@ -233,7 +235,7 @@
 ## 五、数据库安全规则
 
 **等级分只允许云函数写**——靠的是客户端根本没有写入口，而不是靠规则。
-但为了挡住绕过小程序直接调 SDK 的写，请把 **31 个业务集合全部** 的权限设为
+但为了挡住绕过小程序直接调 SDK 的写，请把 **30 个业务集合全部** 的权限设为
 **「所有用户不可读写」**（云函数以管理员身份运行，不受该规则限制）。
 
 不要设成「所有用户可读」：那样任何人都能直接拉走全量会员与比赛数据。

@@ -1,14 +1,14 @@
 /** 两个适配器共享的学校仓储扩展。原单校接口保留，S2 逐一接入新接口。 */
 const { schoolScope } = require('../lib/utils/school.js');
 
-const SCHOOL_COLLECTIONS = ['schools', 'schoolAssociations', 'colleges', 'schoolMembers', 'schoolRoles', 'memberRatings', 'studentIdClaims',
+const SCHOOL_COLLECTIONS = ['schools', 'schoolAssociations', 'colleges', 'schoolMembers', 'schoolRoles', 'studentIdClaims',
   'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
   'associationGroups', 'associationGroupMembers',
   'associationNotices', 'associationTrainings', 'trainingRegistrations', 'pairCounts'];
 const SCHOOL_ONLY = ['colleges', 'schoolMembers', 'schoolRoles'];
 const SCOPED_COLLECTIONS = [
   'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
-  ...SCHOOL_ONLY, 'schoolAssociations', 'memberRatings', 'memberships',
+  ...SCHOOL_ONLY, 'schoolAssociations', 'memberships',
   'matches', 'events', 'eventSignups', 'announcements', 'collegeEvents', 'collegeEntries',
   'ties', 'lineups', 'liveScores', 'seasons', 'rankings',
   // 协会空间小组 / 通知 / 训练均按「学校 + 协会」双维度范围，写入即校验归属。

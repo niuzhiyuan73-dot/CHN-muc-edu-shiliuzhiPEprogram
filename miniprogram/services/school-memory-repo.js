@@ -30,22 +30,72 @@ function createSchoolMemoryRepo(seed = {}) {
       };
     }
     repo.memberships.get = repo.memberships.getById;
-    repo.users.getByOpenId = async openId => (await repo.users.list()).find(user => user.openId === openId) || null;
+    // 同一 OpenID 可能留下两条账号（旧协议 `u_…` 与协议 2 `acc:…`）。这里与
+    // 云端适配器同口径：按 _id 升序取定，让「解析到哪一条」确定、可复现
+    // （见 2026-10-16 只读审计 H5 / P1）。
+    repo.users.getByOpenId = async openId => (await repo.users.list())
+      .filter(user => user.openId === openId)
+      .sort((a, b) => (a._id < b._id ? -1 : a._id > b._id ? 1 : 0))[0] || null;
     repo.audit = { append: async entry => {
       if (!entry._id) throw new Error('审计记录缺少 ID');
       await repo.auditLogs.set(entry._id, entry);
     } };
+    // 受范围限制的集合：与云端 attachSchoolRepository 的 SCOPED_COLLECTIONS 对齐
+    // （由 tests/for-scope-contract.test.js 守护）。云端多一个 `rankings`——它是
+    // 云端的榜单快照缓存集合，本地模拟端根本没有这个集合，那条差异在契约测试里
+    // **显式列出**，不是漏写。
+    const SCOPED = [
+      'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
+      'colleges', 'schoolMembers', 'schoolRoles', 'schoolAssociations', 'memberships',
+      'matches', 'events', 'eventSignups', 'announcements',
+      'collegeEvents', 'collegeEntries', 'ties', 'lineups', 'liveScores', 'seasons',
+      'associationGroups', 'associationGroupMembers',
+      'associationNotices', 'associationTrainings', 'trainingRegistrations',
+      'pairCounts',
+    ];
+    // 只按学校（不带协会）判归属的集合：学院目录 / 身份 / 校级角色是学校级的。
+    const SCHOOL_SCOPED = ['colleges', 'schoolMembers', 'schoolRoles'];
     repo.forScope = input => {
       const scope = schoolScope(input);
-      return Object.fromEntries(['colleges', 'schoolMembers', 'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
-        'associationGroups', 'associationGroupMembers',
-        'associationNotices', 'associationTrainings', 'trainingRegistrations',
-        'announcements',
-        'events', 'eventSignups', 'matches', 'liveScores',
-        'collegeEvents', 'collegeEntries', 'ties', 'lineups', 'pairCounts'].map(key => [key, {
-        list: async () => (await repo[key].list()).filter(doc => doc.schoolId === scope.schoolId &&
-          (['colleges', 'schoolMembers'].includes(key) || doc.association === scope.association)),
-      }]));
+      const result = { scope };
+      for (const key of SCOPED) {
+        const expected = SCHOOL_SCOPED.includes(key)
+          ? { schoolId: scope.schoolId }
+          : { schoolId: scope.schoolId, association: scope.association };
+        const owns = doc => Boolean(doc) && Object.keys(expected).every(field => doc[field] === expected[field]);
+        const checked = doc => {
+          for (const field of Object.keys(expected)) {
+            if (doc[field] !== undefined && doc[field] !== expected[field]) {
+              throw new Error('不能写入其他学校或协会的数据');
+            }
+          }
+          return { ...doc, ...expected };
+        };
+        const write = async (id, doc, mode) => {
+          if (!id || typeof id !== 'string') throw new Error('缺少记录 ID');
+          if (doc._id !== undefined && doc._id !== id) throw new Error('记录 ID 不一致');
+          const patch = checked(doc);
+          const current = await repo[key].getById(id);
+          if (current && !owns(current)) throw new Error('记录不存在或不属于当前范围');
+          if (current && mode === 'insert') throw new Error('记录已存在');
+          if (!current && mode === 'update') throw new Error('记录不存在或不属于当前范围');
+          const next = { ...(mode === 'update' ? current : {}), ...patch, _id: id };
+          await repo[key].set(id, next);
+          return next;
+        };
+        result[key] = {
+          list: async () => (await repo[key].list()).filter(owns),
+          getById: async id => {
+            const doc = await repo[key].getById(id);
+            return owns(doc) ? doc : null;
+          },
+          set: (id, doc) => write(id, doc, 'set'),
+          insert: doc => write(doc._id, doc, 'insert'),
+          update: (id, patch) => write(id, patch, 'update'),
+        };
+      }
+      if (!inTx) result.transaction = fn => repo.transaction(tx => fn(tx.forScope(scope)));
+      return result;
     };
     repo.exchangeSignups.listByEvent = async eventId => (await repo.exchangeSignups.list()).filter(doc => doc.eventId === eventId);
     repo.exchangeMatches.listByEvent = async eventId => (await repo.exchangeMatches.list()).filter(doc => doc.eventId === eventId);

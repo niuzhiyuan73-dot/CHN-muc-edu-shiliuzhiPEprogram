@@ -11,8 +11,10 @@
  */
 
 const identity = require('./school-identity.js');
-const mock = require('./school-mock.js');
 const cloud = require('./school-cloud.js');
+// 演示仓储惰性加载（数据源为 cloud 时用不上，别付那 400ms 冷启动）：
+// 见 school-mock-loader.js 与 2026-10-16 只读审计 H7。
+const { loadSchoolMock } = require('./school-mock-loader.js');
 
 /**
  * 取得绑定到某学校某协会的空间客户端。
@@ -20,7 +22,9 @@ const cloud = require('./school-cloud.js');
  * @returns {Object} 分组与成员名录的动作集合
  */
 function forScope(scope) {
-  return identity.isMockNow() ? mock.forAssociationSpace(scope) : cloud.forAssociationSpace(scope);
+  return identity.isMockNow()
+    ? loadSchoolMock().forAssociationSpace(scope)
+    : cloud.forAssociationSpace(scope);
 }
 
 module.exports = { forScope };

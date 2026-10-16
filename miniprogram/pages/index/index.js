@@ -279,11 +279,4 @@ Page({
     this.switchTo(association);
     return wx.navigateTo({ url: '/pages/announcements/announcements' });
   },
-
-  /** 去看某个会员的主页 */
-  onOpenMember(event) {
-    const userId = event.currentTarget.dataset.userId;
-    if (!userId) return;
-    wx.navigateTo({ url: `/pages/member/member?userId=${encodeURIComponent(userId)}` });
-  },
 });

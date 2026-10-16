@@ -6,7 +6,7 @@ const {
 } = require('../utils/constants.js');
 const { allAssociations } = require('../utils/associations.js');
 const {
-  schoolAssociationKey, collegeKey, schoolMemberKey, schoolRoleKey, ratingKey,
+  schoolAssociationKey, collegeKey, schoolMemberKey, schoolRoleKey,
   schoolMembershipKey, schoolEventKey, schoolEventSignupKey, schoolMatchKey,
   schoolAnnouncementKey, schoolKey,
 } = require('../utils/school.js');
@@ -107,11 +107,6 @@ function createSchoolDemoSeed() {
     role: account.membership.role,
     ...(account.membership.collegeId ? { collegeId: account.membership.collegeId } : {}),
     status: 'active', simulated: true,
-  }));
-  seed.memberRatings = DEMO_ACCOUNTS.map((account) => ({
-    _id: ratingKey(account.id, { schoolId: account.schoolId, association: 'pkb' }),
-    userId: account.id, schoolId: account.schoolId, association: 'pkb',
-    initialElo: null, currentElo: { singles: [], doubles: [] },
   }));
   return seed;
 }

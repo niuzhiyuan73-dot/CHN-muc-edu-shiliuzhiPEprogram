@@ -14,8 +14,7 @@
  * 身份、角色与「本校是否在这场赛事里」都由服务端按该范围复核，客户端传的
  * 学校字段不被信任。
  */
+const { SCHOOL_EXCHANGE_ACTIONS, pickActions } = require('../../lib/utils/school-actions.js');
 const exchangeService = require('../../lib/services/exchange-service.js');
 
-module.exports = Object.fromEntries(
-  Object.entries(exchangeService).filter(([, value]) => typeof value === 'function')
-);
+module.exports = Object.freeze(pickActions([exchangeService], SCHOOL_EXCHANGE_ACTIONS));

@@ -650,7 +650,6 @@ const COLLECTION = {
   COLLEGES: 'colleges',
   SCHOOL_MEMBERS: 'school_members',
   SCHOOL_ROLES: 'school_roles',
-  MEMBER_RATINGS: 'member_ratings',
   STUDENT_ID_CLAIMS: 'student_id_claims',
   EXCHANGE_EVENTS: 'exchange_events',
   EXCHANGE_INVITATIONS: 'exchange_invitations',

@@ -4,9 +4,12 @@ const { createSchoolHandlers } = require('./school-membership-service.js');
 const { buildSchoolContext } = require('./school-context.js');
 const {
   LEGACY_SCHOOL_ID, schoolScope, schoolKey,
-  schoolMemberKey, schoolRoleKey, schoolMembershipKey, ratingKey,
+  schoolMemberKey, schoolRoleKey, schoolMembershipKey,
 } = require('../utils/school.js');
 const { ROLE, COLLEGES } = require('../utils/constants.js');
+const {
+  SCHOOL_IDENTITY_ACTIONS, SCHOOL_SPACE_ACTIONS, SCHOOL_EXCHANGE_ACTIONS, pickActions,
+} = require('../utils/school-actions.js');
 const { MEMBER_SEED, ASSOC_ROLE_SEED } = require('./seed.js');
 const exchange = require('./exchange-service.js');
 const groupService = require('./association-group-service.js');
@@ -21,12 +24,23 @@ const announcementService = require('./school-announcement-service.js');
 const schoolMemberService = require('./school-member-service.js');
 const rankService = require('./school-rank-service.js');
 
-/** 协会空间处理器集合（仅函数；STATUS 常量等非函数条目不参与分发） */
-const spaceHandlers = Object.freeze(Object.fromEntries(
-  Object.entries({ ...groupService, ...memberService, ...noticeService, ...trainingService,
-    ...eventService, ...matchService, ...liveService, ...collegeService, ...announcementService,
-    ...schoolMemberService, ...rankService })
-    .filter(([, value]) => typeof value === 'function')));
+/**
+ * 协会空间处理器集合。
+ *
+ * 【注册面按白名单收口，且与云端同一份清单】
+ * 从前这里是「11 个 service 的所有导出函数」，于是 27 个内部辅助函数
+ * （buildDirectory / isEventDoc / medalOf …）也成了可被调用的协议 2 action，
+ * 云端与本地模拟**同时**放大攻击面。现在从 `../utils/school-actions.js`
+ * 取白名单——那份文件被镜像到云端（tools/sync-cloud-lib.js），两侧读同一份，
+ * 结构上不可能分叉。见 2026-10-16 只读审计 H1。
+ */
+const spaceHandlers = Object.freeze(pickActions([
+  groupService, memberService, noticeService, trainingService, eventService, matchService,
+  liveService, collegeService, announcementService, schoolMemberService, rankService,
+], SCHOOL_SPACE_ACTIONS));
+
+/** 跨校邀请赛处理器集合（同样按白名单收口）。 */
+const exchangeHandlers = Object.freeze(pickActions([exchange], SCHOOL_EXCHANGE_ACTIONS));
 
 const DEMO_ACTORS = Object.freeze([
   { id: 'demo_applicant', label: '模拟申请人' },
@@ -102,11 +116,6 @@ function attachLegacyMembers(seed) {
     role: 'staff', status: 'active', simulated: true,
   });
   seed.memberships = seed.memberships.concat(memberships);
-  seed.memberRatings = seed.memberRatings.concat(legacy.map(({ userId }) => ({
-    _id: ratingKey(userId, { schoolId: LEGACY_SCHOOL_ID, association: 'pkb' }),
-    userId, schoolId: LEGACY_SCHOOL_ID, association: 'pkb',
-    initialElo: null, currentElo: { singles: [], doubles: [] },
-  })));
 }
 
 /**
@@ -129,7 +138,9 @@ let actorId = DEMO_ACTORS[0].id;
  */
 let wechatOpenId = '';
 let repo;
-const handlers = createSchoolHandlers({ claimKey: (schoolId, studentId) => schoolKey('demo-claim', schoolId, studentId) });
+const handlers = Object.freeze(pickActions([
+  createSchoolHandlers({ claimKey: (schoolId, studentId) => schoolKey('demo-claim', schoolId, studentId) }),
+], SCHOOL_IDENTITY_ACTIONS));
 /**
  * 重置学校维度内存仓储。
  *
@@ -225,7 +236,7 @@ function forExchange(input) {
   const target = schoolScope(input);
   const binding = actorBinding();
   const boundRepo = repo;
-  return Object.freeze(Object.fromEntries(Object.entries(exchange).map(([name, handler]) => [name, async payload => {
+  return Object.freeze(Object.fromEntries(Object.entries(exchangeHandlers).map(([name, handler]) => [name, async payload => {
     const ctx = await buildSchoolContext({ repo: boundRepo, ...binding, scope: target });
     return (await handler(payload || {}, ctx)).data;
   }])));

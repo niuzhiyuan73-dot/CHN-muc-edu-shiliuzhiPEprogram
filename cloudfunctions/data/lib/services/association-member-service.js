@@ -37,10 +37,14 @@ async function listAssociationMembers(payload = {}, ctx) {
   ]);
   const collegeName = id => (colleges.find(row => row.collegeId === id) || {}).name || '';
 
+  // 一次取齐本校账号建索引，避免在循环里逐条 getById（一本校 200 人 = 200 次
+  // RPC）。见 2026-10-16 只读审计 H3。
+  const userById = new Map((await ctx.repo.users.list()).map(user => [user._id, user]));
+
   const base = [];
   for (const row of rows) {
     if (row.status !== SCHOOL_MEMBER_STATUS.ACTIVE) continue;
-    const user = await ctx.repo.users.getById(row.userId);
+    const user = userById.get(row.userId);
     if (!user || user.platformStatus !== PLATFORM_STATUS.ACTIVE || user.primarySchoolId !== ctx.schoolId) continue;
     base.push({ userId: row.userId, nickName: user.nickName || '',
       realName: user.realName || '', avatarUrl: user.avatarUrl || '',
