@@ -14,14 +14,15 @@
 
 | 项目 | 截至本文的事实 |
 |---|---|
-| 最近提交 | `abcfd68 feat(space): 建组选人加搜索栏，可按昵称或姓名找人`（同日追加需求） |
-| 上一提交 | `eaf1c62 fix(events): 修好赛事报名「不存在」、人数显示、名次姓名与协会空间删除小组`（用户报障修复批次，见 [验收记录](赛事与小组四类缺陷修复-验收记录.md)） |
-| 上一个提交 | 本轮统一提交：B4～B8 全部成果 + mock 演示数据扩充 + 「民大春季杯」路由编号修复（见 [验收记录](mock演示数据扩充与春季杯修复-验收记录.md)） |
+| 最近提交 | `c9202a5 feat(exchange): 跨校邀请赛扩到六种赛制，与普通比赛同一套口径`（见 [验收记录](跨校邀请赛六赛制-验收记录.md)） |
+| 上一提交 | `abcfd68 feat(space): 建组选人加搜索栏，可按昵称或姓名找人`（同日追加需求） |
+| 上一个提交 | `eaf1c62 fix(events): 修好赛事报名「不存在」、人数显示、名次姓名与协会空间删除小组`（用户报障修复批次，见 [验收记录](赛事与小组四类缺陷修复-验收记录.md)） |
+| 更早 | 本轮统一提交：B4～B8 全部成果 + mock 演示数据扩充 + 「民大春季杯」路由编号修复（见 [验收记录](mock演示数据扩充与春季杯修复-验收记录.md)） |
 | 合并前的 B3 提交 | `925010e feat(school-session): 完成 B3 登录与会话统一`（保留） |
 | 学院赛提交 | `08648ab feat(school-dim): 接入赛事页面并完成学院赛 S2 闭环验收`（B3 之前，保留） |
-| 最近全量测试 | 逐文件 `node --test-isolation=none --test`：2584 条通过，0 失败（Windows 沙箱下 `node --test` 无法 spawn 子进程，见 §10.2） |
+| 最近全量测试 | `npm test`：**2591 条通过，0 失败**（上一批 2584，本批 +7） |
 | 云端共享库 | `npm run check:cloud-sync`：55 个文件一致 |
-| Git 工作区 | 上述提交后干净；接手时必须重新检查 |
+| Git 工作区 | 上述提交后干净（唯一未跟踪项是 `.workbuddy/` —— 智能体的工作记忆，不入库）；接手时必须重新检查 |
 | 云环境配置 | `miniprogram/config.js` 中 `CLOUD_ENV_ID` 仍为空 |
 | 验证层级 | Node 自动测试、页面装配测试、S2 内存仓储；没有完成真实云端和真机验收 |
 | 默认演示身份 | `mock.js` 的 `DEFAULT_CURRENT_USER_ID = 'u06'`（普通会员）——这是文档与全量用例的约定，**不要**为了演示管理功能把它改掉不还原（要用 u01 就按 [mock 演示账号](mock演示账号.md) 临时改，并知道会有 26 条既有用例按 u06 预期失败） |
@@ -459,12 +460,20 @@ F3 **新建 `pair_counts` 集合**做事务级交手名额保护（键含赛季�
 
 ### 10.2 标准验证命令
 
-```powershell
-# 先选本批相关测试，例如登录会话：
-node --test-isolation=none --test tests/login-session.test.js tests/app-session.test.js tests/page.test.js
+> **2026-10-16 环境更正**：本机 Node 22.22.2 **不支持** `--test-isolation=none`
+> （报 `bad option`）。现在直接用 `npm test`（即 `node --test "tests/**/*.test.js"`）
+> 即可跑完全量，2591 条通过、无 EPERM。下面旧的逐文件写法保留作参考，
+> 只有在 `node --test` 因沙箱拒绝 spawn 子进程时才需要退回。
 
-# 全量（Windows 沙箱下 node --test 会为每个文件 spawn 子进程，被沙箱以 EPERM 拒绝；
-# 逐文件跑进程内隔离模式等价于原 npm test 的进程隔离）：
+```powershell
+# 全量（首选，2026-10-16 起在本机可用）：
+npm test
+
+# 只跑本批相关测试：
+node --test tests/exchange-service.test.js tests/exchange-page.test.js
+
+# 旧口径：Windows 沙箱下 node --test 曾为每个文件 spawn 子进程并被拒绝；
+# 逐文件跑进程内隔离模式等价于原 npm test 的进程隔离（Node 22.22.2 已不支持该 flag）：
 $files = Get-ChildItem tests -Filter *.test.js | Sort-Object Name
 $pass = 0; $fail = 0; $failed = @()
 foreach ($f in $files) {
