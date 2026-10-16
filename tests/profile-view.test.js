@@ -1,32 +1,17 @@
-const test = require('node:test');
+const { test, describe } = require('node:test');
 const assert = require('node:assert');
-const { beforeEach } = require('node:test');
 
 const {
   pickProject,
   buildChart,
   buildHistoryRow,
-  loadMemberView,
   loadSchoolMemberView,
+  loadSchoolProfileSummaryView,
   DEFAULT_HISTORY_LIMIT,
 } = require('../miniprogram/services/profile-view.js');
 const { PLACEHOLDER } = require('../miniprogram/utils/format.js');
 const { sortProjectsForDisplay } = require('../miniprogram/utils/leaderboard.js');
-const { RANK_PROJECT_CONFIG, ROLE, USER_STATUS } = require('../miniprogram/utils/constants.js');
-const {
-  getMatchHistory,
-  getMyProjects,
-  setMemberElo,
-  resetCache,
-} = require('../miniprogram/services/index.js');
-
-/* 模拟数据源默认会装载学院赛演示场景（见 services/college-demo.js），
- * 其中的演示账号 u06 被任命为法学院负责人。本文件断言的是干净种子
- * （u06 还是普通会员），所以每个用例前复位一次——resetCache 同时会
- * 关掉演示场景，之后各用例拿到的都是 24 人基线。 */
-beforeEach(() => {
-  resetCache();
-});
+const { RANK_PROJECT_CONFIG } = require('../miniprogram/utils/constants.js');
 
 /* ============================================================
  * 一、纯函数部分
@@ -219,355 +204,28 @@ test('buildHistoryRow —— 老数据没有赛制时 formatText 是空串，模
 });
 
 /* ============================================================
- * 二、真实模拟数据的端到端部分
- * ============================================================ */
-
-test('loadMemberView —— 查无此人时如实返回 found:false', async () => {
-  const view = await loadMemberView('u99');
-  assert.deepStrictEqual(view, { found: false });
-});
-
-test('loadMemberView —— 不传 userId 时看的是当前登录会员', async () => {
-  const view = await loadMemberView();
-  assert.strictEqual(view.found, true);
-  assert.strictEqual(view.user.userId, 'u06');
-  assert.ok(view.user.nickName.length > 0);
-});
-
-test('loadMemberView —— 项目切换标签里恰好有一个是选中的', async () => {
-  const view = await loadMemberView();
-  const active = view.projectTabs.filter((tab) => tab.active);
-  assert.strictEqual(active.length, 1);
-  assert.strictEqual(active[0].project, view.activeProject);
-  assert.strictEqual(view.hasProject, true);
-});
-
-test('loadMemberView —— 默认停在单打上，而不是场次更多的双打', async () => {
-  const raw = await getMyProjects('u06');
-  const singles = raw.find((item) => item.pool === 'singles');
-  const doubles = raw.find((item) => item.pool === 'doubles');
-  assert.ok(singles, '这位会员应当有单打成绩，否则这条测试没有意义');
-  // 双打场次确实更多——正是靠这一点确认「默认单打」不是碰巧
-  assert.ok(doubles.matchCount > singles.matchCount);
-
-  const view = await loadMemberView('u06');
-
-  assert.strictEqual(view.activeProject, singles.project);
-  assert.strictEqual(view.projectTabs[0].active, true, '默认项目应当排在标签首位');
-});
-
-test('loadMemberView —— 分数卡与曲线的末点必须是同一个数', async () => {
-  // 这两处分别从「池快照」和「逐场流水」算出来，是对同一事实的两种推导。
-  // 一旦对不上，说明回放链路里有一环算错了。
-  const view = await loadMemberView();
-  assert.strictEqual(view.chart.currentElo, view.summary.elo);
-  assert.strictEqual(view.chart.values[0], view.summary.startElo);
-  assert.strictEqual(view.chart.values.length, view.chart.pointCount + 1);
-});
-
-test('loadMemberView —— 曲线的高低点与数据一致', async () => {
-  const view = await loadMemberView();
-  const values = view.chart.values;
-  assert.strictEqual(view.chart.maxElo, Math.max(...values));
-  assert.strictEqual(view.chart.minElo, Math.min(...values));
-});
-
-test('loadMemberView —— 分数卡上的名次和百分位都算得出来', async () => {
-  const view = await loadMemberView();
-  assert.ok(view.summary.rank >= 1);
-  assert.ok(view.summary.total >= view.summary.rank);
-  assert.match(view.summary.rankText, /第 \d+ \/ \d+ 名/);
-  assert.match(view.summary.beatText, /超过 \d+% 的会员/);
-  assert.strictEqual(view.summary.matchCount, view.summary.wins + view.summary.losses);
-});
-
-test('loadMemberView —— 交锋记录里每行的胜负之和等于交手场次', async () => {
-  const view = await loadMemberView();
-  assert.ok(view.headToHead.length > 0, '默认视角应当有交锋记录');
-
-  for (const row of view.headToHead) {
-    const matched = /^(\d+) 胜 (\d+) 负$/.exec(row.recordText);
-    assert.ok(matched, `无法解析的胜负文案：${row.recordText}`);
-    assert.strictEqual(Number(matched[1]) + Number(matched[2]), row.matchCount);
-  }
-});
-
-test('loadMemberView —— 逐场战绩按时间倒序，最近的排在最前', async () => {
-  // 比对原始流水，确认页面这一份既没有被打乱、也没有漏掉任何一场。
-  // 只检查日期文案是不够的——同一天可能有好几场，顺序错了也看不出来。
-  const view = await loadMemberView('u06', { historyLimit: DEFAULT_HISTORY_LIMIT });
-  // 逐场战绩是按「池」过滤的：项目只是展示口径，池才是比赛流水口径
-  const raw = await getMatchHistory('u06', {
-    pool: RANK_PROJECT_CONFIG[view.activeProject].pool,
-    limit: DEFAULT_HISTORY_LIMIT,
-  });
-
-  assert.ok(raw.length > 1);
-  assert.deepStrictEqual(
-    view.history.map((row) => row.matchId),
-    raw.map((row) => row.matchId)
-  );
-
-  for (let i = 1; i < raw.length; i += 1) {
-    assert.ok(
-      new Date(raw[i - 1].matchTime) >= new Date(raw[i].matchTime),
-      '流水必须是时间倒序的'
-    );
-  }
-});
-
-test('loadMemberView —— 逐场战绩条数受 historyLimit 限制', async () => {
-  const view = await loadMemberView(null, { historyLimit: 3 });
-  assert.ok(view.history.length <= 3);
-  assert.ok(view.history.length > 0);
-});
-
-test('loadMemberView —— 赛事汇总与赛事明细对得上', async () => {
-  const view = await loadMemberView();
-  assert.strictEqual(view.events.summary.eventCount, view.events.records.length);
-
-  for (const record of view.events.records) {
-    assert.ok(record.placement >= 1);
-    assert.ok(record.participantCount > 0);
-    // 名次不可能比参赛人数还靠后
-    assert.ok(record.placement <= record.participantCount);
-    assert.notStrictEqual(record.placementText, PLACEHOLDER);
-  }
-});
-
-test('loadMemberView —— 近期状态最多 5 个点', async () => {
-  const view = await loadMemberView();
-  assert.ok(view.form.dots.length <= 5);
-  for (const dot of view.form.dots) {
-    assert.ok(dot === 'W' || dot === 'L');
-  }
-  assert.strictEqual(view.form.wins + view.form.losses, view.form.dots.length);
-});
-
-test('loadMemberView —— 切换项目之后整页数据都跟着换', async () => {
-  const view = await loadMemberView(null, { project: 'men_singles' });
-
-  assert.strictEqual(view.activeProject, 'men_singles');
-  assert.strictEqual(view.activeProjectLabel, '男单');
-
-  // 这是本页最重要的不变式：切到男单之后，下面每一行都必须是单打
-  for (const row of view.history) {
-    assert.strictEqual(row.poolLabel, '单打');
-    assert.strictEqual(row.partnerText, '单打');
-  }
-  for (const record of view.events.records) {
-    assert.strictEqual(record.title.includes('双打'), false);
-  }
-  // 单打没有搭档，搭档记录必须为空，而不是把别的池的搭档混进来
-  assert.strictEqual(view.partners.length, 0);
-});
-
-test('loadMemberView —— 切到双打时每行都有搭档', async () => {
-  const view = await loadMemberView(null, { project: 'doubles' });
-
-  assert.strictEqual(view.activeProject, 'doubles');
-  assert.ok(view.history.length > 0);
-  for (const row of view.history) {
-    assert.strictEqual(row.poolLabel, '双打');
-    assert.ok(row.partnerText.startsWith('搭档 '), `双打必须有搭档：${row.partnerText}`);
-  }
-  assert.ok(view.partners.length > 0, '双打视角应当有搭档记录');
-});
-
-test('loadMemberView —— 指定的项目不存在时退回默认项目，而不是给空白页', async () => {
-  // 赵明宇是男会员，没有女单成绩
-  const view = await loadMemberView(null, { project: 'women_singles' });
-  assert.strictEqual(view.found, true);
-  assert.strictEqual(view.hasProject, true);
-  assert.notStrictEqual(view.activeProject, 'women_singles');
-  assert.ok(view.history.length > 0);
-});
-
-test('loadMemberView —— 曲线点数等于该项目的出场次数', async () => {
-  const view = await loadMemberView(null, { project: 'doubles' });
-  // 出场多少次就有多少个赛后分，再加上首部的入池起点分
-  assert.strictEqual(view.chart.pointCount, view.summary.matchCount);
-});
-
-test('loadMemberView —— 不同会员看到的是各自的数据', async () => {
-  const me = await loadMemberView('u06');
-  const other = await loadMemberView('u01');
-
-  assert.strictEqual(other.user.userId, 'u01');
-  assert.notStrictEqual(other.user.nickName, me.user.nickName);
-  assert.notStrictEqual(other.summary.elo, me.summary.elo);
-});
-
-test('loadMemberView —— 头卡同时给出昵称与真名，真名另标一个字段', async () => {
-  const view = await loadMemberView('u06');
-
-  // 昵称在主位，真名另存一处交给模板以小字并排渲染
-  assert.strictEqual(view.user.nickName, '明宇');
-  assert.strictEqual(view.user.realName, '赵明宇');
-  assert.strictEqual(view.user.showRealName, true);
-  // 学号也带出来，编辑页要展示且不可改
-  assert.ok(view.user.studentId);
-});
-
-test('loadMemberView —— 头像缺省时用昵称首字兜底', async () => {
-  const view = await loadMemberView('u06');
-  assert.strictEqual(view.user.avatarText, view.user.nickName.slice(0, 1));
-});
-
-/* ============================================================
- * 任免学院负责人的入口
+ * 二、端到端部分（已迁走）
  * ============================================================
- * 种子里 u01 巴特尔是管理员、u02 张宇轩是学院负责人，其余是普通会员。
- * 按钮只该出现在「管理员看别人的主页」这一种情形里。
+ * 原先这一段有 30 条 `loadMemberView`（协议 1 装载器）的端到端用例，连同它
+ * 依赖的门面（getMembers / getMyProjects / setMemberElo）一起删除。逐条去向：
+ *
+ * A. 展示口径（19 条）→ 已迁到本文件后面「loadSchoolMemberView —— 旧栈
+ *    loadMemberView 的 S2 对应」一组。S2 里这些规则全部由**客户端**从 DTO
+ *    整形出来（服务端只给数据），因此是重写而不是照搬：
+ *      · 项目标签恰好一个选中 / 默认停在单打 / 项目不存在退回默认
+ *      · 分数卡与曲线末点同源 / 曲线高低点 / 名次与百分位
+ *      · 交锋胜负之和 / 逐场时间倒序 / historyLimit 下传
+ *      · 赛事汇总与明细对得上 / 近期状态 W·L
+ *      · 切项目整页跟着换 / 不同会员各自数据 / 头卡昵称真名 / 头像首字兜底
+ *
+ * B. 任免与改分入口（8 条）+ 角色徽标按 isGlobalAdmin 推断（3 条）
+ *    → **S2 无对应，且不是漏了**：这些入口在 B4 / B8 就已从个人主页移除
+ *    （指定权限统一走学校身份页 `grantSchoolPermission`，改分收尾归 B5），
+ *    S2 装载器里 leader / associationLeader / currentElo 三个 visible 恒为
+ *    false。旧栈那几条守的是**已经被产品移除的行为**——协议 1 装载器一删，
+ *    它们守护的对象也随之消失。由新组里「任免 / 改分入口一律不出现」与
+ *    「角色徽标直接来自服务端 permissionLabel」两条反向钉住。
  * ============================================================ */
-
-const ADMIN_VIEWER = { _id: 'u01', role: ROLE.ADMIN, status: USER_STATUS.ACTIVE };
-const STAFF_VIEWER = { _id: 'u02', role: ROLE.STAFF, status: USER_STATUS.ACTIVE };
-
-test('loadMemberView —— 管理员看普通会员，入口是「设为学院负责人」', async () => {
-  const view = await loadMemberView('u06', { viewer: ADMIN_VIEWER });
-  assert.strictEqual(view.leader.visible, true);
-  assert.strictEqual(view.leader.makeLeader, true);
-  assert.strictEqual(view.leader.label, '设为学院负责人');
-  assert.ok(view.leader.hint);
-});
-
-test('loadMemberView —— 管理员看已经是学院负责人的人，入口翻成「撤销学院负责人」', async () => {
-  const view = await loadMemberView('u02', { viewer: ADMIN_VIEWER });
-  assert.strictEqual(view.leader.visible, true);
-  assert.strictEqual(view.leader.makeLeader, false);
-  assert.strictEqual(view.leader.label, '撤销学院负责人');
-});
-
-test('loadMemberView —— 看自己的主页不给入口', async () => {
-  const view = await loadMemberView('u01', { viewer: ADMIN_VIEWER });
-  assert.strictEqual(view.leader.visible, false);
-});
-
-test('loadMemberView —— 学院负责人与普通会员都看不到入口，访客同理', async () => {
-  // 任免只给管理员（见 member-review.canSetCollegeLeader）
-  assert.strictEqual((await loadMemberView('u06', { viewer: STAFF_VIEWER })).leader.visible, false);
-  assert.strictEqual(
-    (await loadMemberView('u06', { viewer: { _id: 'u06', role: ROLE.MEMBER, status: USER_STATUS.ACTIVE } }))
-      .leader.visible,
-    false
-  );
-  // 不传 viewer 时按「没有旁观者」处理，一律不出现
-  assert.strictEqual((await loadMemberView('u06')).leader.visible, false);
-});
-
-/* ============================================================
- * 协会负责人任免入口（仅全局管理员）
- * ============================================================
- * 协会负责人的**有效角色**也是 ADMIN，单看 role 分不出他与全局管理员。
- * 所以这条入口只认 isGlobalAdmin——否则协会负责人就能反手把自己人提成
- * 协会负责人，层层自封（见 member-review.validateAssociationLeader）。
- * ============================================================ */
-
-/** 全局管理员：既有 ADMIN 角色，也带 isGlobalAdmin 标记 */
-const GLOBAL_ADMIN_VIEWER = {
-  _id: 'u01',
-  role: ROLE.ADMIN,
-  status: USER_STATUS.ACTIVE,
-  isGlobalAdmin: true,
-};
-
-test('loadMemberView —— 协会负责人入口只对全局管理员出现，文案随目标身份翻转', async () => {
-  const asGlobalAdmin = await loadMemberView('u06', { viewer: GLOBAL_ADMIN_VIEWER });
-  assert.strictEqual(asGlobalAdmin.associationLeader.visible, true);
-  assert.strictEqual(asGlobalAdmin.associationLeader.makeLeader, true);
-  assert.strictEqual(asGlobalAdmin.associationLeader.label, '设为协会负责人');
-  assert.ok(asGlobalAdmin.associationLeader.hint);
-});
-
-test('loadMemberView —— 协会负责人与学院负责人、普通会员、访客都看不到协会负责人入口', async () => {
-  // 有效角色同为 ADMIN 的协会负责人（isGlobalAdmin=false）也进不来
-  const assocLeaderViewer = {
-    _id: 'u06',
-    role: ROLE.ADMIN,
-    status: USER_STATUS.ACTIVE,
-    isGlobalAdmin: false,
-  };
-  assert.strictEqual(
-    (await loadMemberView('u05', { viewer: assocLeaderViewer })).associationLeader.visible,
-    false
-  );
-  assert.strictEqual((await loadMemberView('u06', { viewer: STAFF_VIEWER })).associationLeader.visible, false);
-  assert.strictEqual(
-    (await loadMemberView('u06', { viewer: { _id: 'u05', role: ROLE.MEMBER, status: USER_STATUS.ACTIVE } }))
-      .associationLeader.visible,
-    false
-  );
-  assert.strictEqual((await loadMemberView('u06')).associationLeader.visible, false);
-});
-
-test('loadMemberView —— 看自己的主页不给协会负责人入口', async () => {
-  const view = await loadMemberView('u01', { viewer: GLOBAL_ADMIN_VIEWER });
-  assert.strictEqual(view.associationLeader.visible, false);
-});
-
-/* ============================================================
- * 角色徽标：协会负责人要显「协会负责人」，不是「管理员」
- * ============================================================
- * 协会负责人的有效角色也是 ADMIN，但它是**本协会**给的身份。徽标要按
- * isGlobalAdmin 把两种人分开（见 profile-view.roleLabelOf），否则协会
- * 负责人会在本协会里被显示成跨协会的「管理员」。
- * ============================================================ */
-
-test('loadMemberView —— 全局管理员显「管理员」，协会负责人显「协会负责人」', async () => {
-  // u01 是全站唯一的全局管理员
-  assert.strictEqual((await loadMemberView('u01')).user.roleLabel, '管理员');
-  // u09 在默认协会 pkb 是协会负责人：有效角色 ADMIN，但不是全局管理员
-  assert.strictEqual((await loadMemberView('u09')).user.roleLabel, '协会负责人');
-});
-
-test('loadMemberView —— 学院负责人与普通会员的角色徽标照旧', async () => {
-  assert.strictEqual((await loadMemberView('u02')).user.roleLabel, '学院负责人');
-  assert.strictEqual((await loadMemberView('u06')).user.roleLabel, '会员');
-});
-
-test('loadMemberView —— 角色徽标随协会变化：u04 在 tt 是协会负责人，在 pkb 只是会员', async () => {
-  assert.strictEqual((await loadMemberView('u04', { association: 'tt' })).user.roleLabel, '协会负责人');
-  assert.strictEqual((await loadMemberView('u04', { association: 'pkb' })).user.roleLabel, '会员');
-});
-
-/* ============================================================
- * 当前等级分调整入口
- * ============================================================
- * 出过场的人也能改——用来同步「在外面打完比赛」的分数。改的是**当前显示
- * 项目**对应的池，所以入口只有在该会员有项目时才出现。
- * ============================================================ */
-
-test('loadMemberView —— 有权限时出现当前等级分入口，跟着当前项目走', async () => {
-  const view = await loadMemberView('u06', { viewer: GLOBAL_ADMIN_VIEWER });
-  assert.strictEqual(view.currentElo.visible, true);
-  // 入口作用在当前显示的项目上
-  assert.strictEqual(view.currentElo.project, view.activeProject);
-  assert.strictEqual(view.currentElo.label, view.activeProjectLabel);
-  // 当前值就是该项目解析出来的原始分数
-  assert.strictEqual(typeof view.currentElo.current, 'number');
-});
-
-test('loadMemberView —— 普通会员看不到当前等级分入口', async () => {
-  const view = await loadMemberView('u06', {
-    viewer: { _id: 'u05', role: ROLE.MEMBER, status: USER_STATUS.ACTIVE },
-  });
-  assert.strictEqual(view.currentElo.visible, false);
-});
-
-test('loadMemberView —— 改分后入口显示新值', async () => {
-  const before = await loadMemberView('u06', { viewer: GLOBAL_ADMIN_VIEWER });
-  const pool = before.currentElo.pool;
-
-  const set = await setMemberElo('u06', pool, 1750, 'u01');
-  assert.strictEqual(set.ok, true, set.message);
-
-  const after = await loadMemberView('u06', {
-    viewer: GLOBAL_ADMIN_VIEWER,
-    project: before.activeProject,
-  });
-  assert.strictEqual(after.currentElo.current, 1750);
-});
 
 /* ============================================================
  * S2 装载器（B4-c）
@@ -627,6 +285,282 @@ test('loadSchoolMemberView —— 由 S2 资料 DTO 整形出与旧栈一致的�
   assert.strictEqual(view.leader.visible, false);
   assert.strictEqual(view.associationLeader.visible, false);
   assert.strictEqual(view.currentElo.visible, false);
+});
+
+/* --------------------------------------------- 旧栈 loadMemberView 的 S2 对应 */
+
+/**
+ * 【为什么补这一组】loadSchoolMemberView 是个人详情页 / 他人主页（
+ * templates/member-view.js）唯一的取数口，但**此前只有 2 条**假 DTO 用例
+ * （形状对了没、查无此人）。旧栈 loadMemberView 那 26 条守的展示口径
+ * （项目标签、默认单打、分数卡与曲线同源、交锋、逐场倒序、historyLimit、
+ * 赛事汇总、近期状态、角色徽标）在 S2 全是**客户端**整形出来的（服务端只给
+ * DTO），删旧栈前必须先把它们建起来。
+ *
+ * 【哪些旧用例不再有对应】
+ *   · 任免学院 / 协会负责人、手工改分那 8 条：这些入口在 B4 / B8 就已从个人
+ *     主页移除（指定权限统一走学校身份页），S2 装载器里三个 visible 恒为 false。
+ *     旧栈那几条守的是**已经被产品移除的行为**，连同 loadMemberView 一并删除，
+ *     由本组「任免 / 改分入口一律不出现」反向钉住。
+ *   · 「协会负责人显协会负责人」那条：S2 的 roleLabel 直接来自服务端
+ *     permissionLabel，不再由客户端按 isGlobalAdmin 推断，规则换了地方。
+ */
+describe('loadSchoolMemberView —— 旧栈 loadMemberView 的 S2 对应', () => {
+  /** 单打 + 双打都在，双打场次更多：用来确认「默认单打」不是碰巧 */
+  function twoProjectDto(overrides = {}) {
+    return schoolProfileDto({
+      projects: [
+        { project: 'doubles', pool: 'doubles', label: '双打', elo: 1480, startElo: 1450, delta: 30,
+          matchCount: 9, wins: 6, losses: 3, rank: 4, total: 12, beatPercent: 66 },
+        { project: 'men_singles', pool: 'singles', label: '男单', elo: 1520, startElo: 1450, delta: 70,
+          matchCount: 3, wins: 2, losses: 1, rank: 2, total: 10, beatPercent: 80 },
+      ],
+      active: 'men_singles',
+      // 末点必须与项目的 elo 一致：分数卡与曲线是对同一事实的两种推导，
+      // fixture 里对不上，这条不变式就形同没有在守
+      ratingHistory: [
+        { eloAfter: 1500, eloDelta: 50, matchTime: '2026-10-02T09:00:00Z' },
+        { eloAfter: 1520, eloDelta: 20, matchTime: '2026-10-03T09:00:00Z' },
+      ],
+      ...overrides,
+    });
+  }
+
+  const apiOf = dto => ({ getSchoolMemberProfile: async () => dto });
+
+  test('项目切换标签里恰好有一个是选中的', async () => {
+    const view = await loadSchoolMemberView(apiOf(twoProjectDto()), {});
+    const active = view.projectTabs.filter(tab => tab.active);
+    assert.strictEqual(active.length, 1);
+    assert.strictEqual(active[0].project, view.activeProject);
+    assert.strictEqual(view.hasProject, true);
+  });
+
+  test('默认停在单打上，而不是场次更多的双打', async () => {
+    const view = await loadSchoolMemberView(apiOf(twoProjectDto()), {});
+    assert.strictEqual(view.activeProject, 'men_singles');
+    assert.strictEqual(view.projectTabs[0].active, true, '默认项目应当排在标签首位');
+    assert.strictEqual(view.projectTabs[0].project, 'men_singles');
+  });
+
+  test('分数卡与曲线的末点必须是同一个数', async () => {
+    const view = await loadSchoolMemberView(apiOf(twoProjectDto()), {});
+    const values = view.chart.values;
+    assert.strictEqual(values[values.length - 1], view.summary.elo);
+  });
+
+  test('曲线高低点与数据一致，首部补上入池起点分', async () => {
+    const dto = twoProjectDto({
+      ratingHistory: [
+        { eloAfter: 1460, eloDelta: 10, matchTime: '2026-10-01T09:00:00Z' },
+        { eloAfter: 1440, eloDelta: -20, matchTime: '2026-10-02T09:00:00Z' },
+        { eloAfter: 1520, eloDelta: 80, matchTime: '2026-10-03T09:00:00Z' },
+      ],
+    });
+    const view = await loadSchoolMemberView(apiOf(dto), {});
+    assert.strictEqual(view.chart.values[0], 1450, '首部补上入池起点分');
+    assert.ok(view.chart.maxElo >= 1520);
+    assert.ok(view.chart.minElo <= 1440);
+    assert.strictEqual(view.summary.deltaUp, true);
+    assert.strictEqual(view.summary.recordText, '2 胜 1 负');
+  });
+
+  test('交锋记录里每行的胜负之和等于交手场次', async () => {
+    const view = await loadSchoolMemberView(apiOf(twoProjectDto()), {});
+    assert.ok(view.headToHead.length > 0);
+    for (const row of view.headToHead) {
+      assert.strictEqual(row.recordText, '1 胜 0 负');
+      assert.ok(row.winRateText.length > 0);
+    }
+  });
+
+  test('逐场战绩按时间倒序，最近的排在最前', async () => {
+    const dto = twoProjectDto({
+      history: [
+        { matchId: 'm1', matchTime: '2026-10-05T09:00:00Z', isWin: true, opponentNames: ['思远'],
+          partnerNames: [], score: { mine: [11], theirs: [8] }, eloDelta: 8, pointDelta: 0,
+          eventId: '', pool: 1, gamePoints: 11, bestOf: 3 },
+        { matchId: 'm0', matchTime: '2026-10-01T09:00:00Z', isWin: false, opponentNames: ['子涵'],
+          partnerNames: [], score: { mine: [8], theirs: [11] }, eloDelta: -5, pointDelta: 0,
+          eventId: '', pool: 1, gamePoints: 11, bestOf: 3 },
+      ],
+    });
+    const view = await loadSchoolMemberView(apiOf(dto), {});
+    assert.strictEqual(view.history[0].matchId, 'm1');
+    assert.ok(view.history[0].dateText >= view.history[1].dateText, '时间倒序');
+  });
+
+  test('historyLimit 如实下传给服务端', async () => {
+    const seen = [];
+    const api = {
+      getSchoolMemberProfile: async (payload) => { seen.push(payload); return twoProjectDto(); },
+    };
+    await loadSchoolMemberView(api, { userId: 'u06', historyLimit: 3 });
+    assert.strictEqual(seen.length, 1);
+    assert.strictEqual(seen[0].historyLimit, 3);
+    assert.strictEqual(seen[0].userId, 'u06');
+    // 不传时按模块默认值
+    seen.length = 0;
+    await loadSchoolMemberView(api, {});
+    assert.strictEqual(seen[0].historyLimit, DEFAULT_HISTORY_LIMIT);
+  });
+
+  test('赛事汇总与赛事明细对得上，名次翻成人话', async () => {
+    const view = await loadSchoolMemberView(apiOf(twoProjectDto()), {});
+    assert.strictEqual(view.events.records.length, view.events.summary.eventCount);
+    assert.strictEqual(view.events.records[0].placementText, '四强');
+    assert.strictEqual(view.events.records[0].isTop, true);
+    assert.strictEqual(view.events.summary.topThreeCount, 1);
+    assert.strictEqual(view.events.summary.championCount, 0);
+  });
+
+  test('近期状态是 W / L 串，胜负之和等于点数', async () => {
+    const dto = twoProjectDto({ form: { results: [true, true, false], wins: 2, losses: 1, streak: 0 } });
+    const view = await loadSchoolMemberView(apiOf(dto), {});
+    assert.deepStrictEqual(view.form.dots, ['W', 'W', 'L']);
+    assert.strictEqual(view.form.wins + view.form.losses, view.form.dots.length);
+    assert.strictEqual(view.form.streakText, '暂无连胜');
+  });
+
+  test('切换项目之后整页跟着换；项目不存在时退回默认而不是空白页', async () => {
+    const api = apiOf(twoProjectDto());
+
+    const doubles = await loadSchoolMemberView(api, { project: 'doubles' });
+    assert.strictEqual(doubles.activeProject, 'doubles');
+    assert.strictEqual(doubles.activeProjectLabel, '双打');
+    assert.strictEqual(doubles.summary.matchCount, 9);
+
+    // 女单不在他的项目里：退回默认（单打），不给空白页
+    const fallback = await loadSchoolMemberView(api, { project: 'women_singles' });
+    assert.strictEqual(fallback.found, true);
+    assert.strictEqual(fallback.hasProject, true);
+    assert.notStrictEqual(fallback.activeProject, 'women_singles');
+    assert.strictEqual(fallback.activeProject, 'men_singles');
+  });
+
+  test('不同会员看到的是各自的数据', async () => {
+    const mk = (userId, elo) => apiOf(schoolProfileDto({
+      user: { userId, nickName: '昵称' + userId, realName: '', avatarUrl: '', gender: 'M',
+        collegeId: 'c12', college: '法学院', studentId: 's1', points: 0,
+        permissionLabel: '会员', role: 0 },
+      projects: [{ project: 'men_singles', pool: 1, label: '男单', elo, startElo: 1450,
+        delta: elo - 1450, matchCount: 3, wins: 2, losses: 1, rank: 2, total: 10, beatPercent: 80 }],
+      honors: { summary: { eventCount: 0, championCount: 0, topThreeCount: 0, bestPlacement: null }, records: [] },
+    }));
+    const me = await loadSchoolMemberView(mk('u06', 1520), {});
+    const other = await loadSchoolMemberView(mk('u01', 1600), {});
+    assert.notStrictEqual(other.user.userId, me.user.userId);
+    assert.notStrictEqual(other.summary.elo, me.summary.elo);
+  });
+
+  test('头卡同时给出昵称与真名；头像缺省时用昵称首字兜底', async () => {
+    const view = await loadSchoolMemberView(apiOf(twoProjectDto()), {});
+    assert.strictEqual(view.user.nickName, '明宇');
+    assert.strictEqual(view.user.realName, '赵明宇');
+    assert.strictEqual(view.user.showRealName, true);
+    assert.strictEqual(view.user.avatarText, view.user.nickName.slice(0, 1));
+    assert.ok(view.user.studentId);
+  });
+
+  test('角色徽标直接来自服务端 permissionLabel，不由客户端推断', async () => {
+    const withLabel = label => apiOf(schoolProfileDto({
+      user: { userId: 'u06', nickName: '明宇', realName: '赵明宇', avatarUrl: '', gender: 'M',
+        collegeId: 'c12', college: '法学院', studentId: 's1', points: 0,
+        permissionLabel: label, role: 0 },
+    }));
+    assert.strictEqual((await loadSchoolMemberView(withLabel('协会负责人'), {})).user.roleLabel, '协会负责人');
+    assert.strictEqual((await loadSchoolMemberView(withLabel('管理员'), {})).user.roleLabel, '管理员');
+    assert.strictEqual((await loadSchoolMemberView(withLabel('会员'), {})).user.roleLabel, '会员');
+  });
+
+  test('任免 / 改分入口一律不出现（统一走学校身份页）', async () => {
+    const view = await loadSchoolMemberView(apiOf(twoProjectDto()), {});
+    assert.strictEqual(view.leader.visible, false);
+    assert.strictEqual(view.associationLeader.visible, false);
+    assert.strictEqual(view.currentElo.visible, false);
+  });
+});
+
+/* -------------------------------------- loadSchoolProfileSummaryView（「我的」页） */
+
+describe('loadSchoolProfileSummaryView —— 头卡与跨协会荣誉聚合', () => {
+  const SESSION = {
+    user: { userId: 'u06', nickName: '明宇', realName: '赵明宇', avatarUrl: '' },
+    account: { status: 'active', studentId: '2023000006' },
+    permissionLabel: '会员',
+    isPlatformAdmin: false,
+  };
+
+  const honorsOf = (records, summary) => ({ records, summary });
+
+  /** 造一个只认指定协会的替身门面：其余协会读不到 */
+  function clientFor(entries) {
+    return {
+      forScope: scope => ({
+        getSchoolMember: async () => (entries[scope.association]
+          ? { member: { collegeName: entries[scope.association].collegeName } } : {}),
+        getSchoolMemberHonors: async () => (entries[scope.association]
+          ? { ok: true, honors: entries[scope.association].honors } : { ok: false }),
+      }),
+    };
+  }
+
+  test('未登录（无会话）时返回 found:false', async () => {
+    assert.deepStrictEqual(await loadSchoolProfileSummaryView({ schoolId: 'muc', session: null }), { found: false });
+    assert.deepStrictEqual(await loadSchoolProfileSummaryView({ schoolId: 'muc', session: {} }), { found: false });
+  });
+
+  test('头卡：昵称 / 真名 / 学院 / 学号 / 身份状态都带出来', async () => {
+    const view = await loadSchoolProfileSummaryView({
+      schoolId: 'muc', session: SESSION,
+      client: clientFor({ pkb: { collegeName: '法学院',
+        honors: honorsOf([], { eventCount: 0, championCount: 0, topThreeCount: 0, bestPlacement: null }) } }),
+    });
+    assert.strictEqual(view.found, true);
+    assert.strictEqual(view.user.nickName, '明宇');
+    assert.strictEqual(view.user.realName, '赵明宇');
+    assert.strictEqual(view.user.college, '法学院');
+    assert.strictEqual(view.user.studentId, '2023000006');
+    assert.strictEqual(view.user.statusLabel, '正常');
+    assert.strictEqual(view.user.roleLabel, '会员');
+  });
+
+  test('荣誉跨协会聚合：汇总数字相加，没参赛的协会不出现', async () => {
+    const record = (id, placement) => ({
+      eventId: id, title: '赛事' + id, startTime: '2026-03-01T09:00:00Z',
+      placement, participantCount: 8,
+    });
+    const view = await loadSchoolProfileSummaryView({
+      schoolId: 'muc', session: SESSION,
+      client: clientFor({
+        pkb: { collegeName: '法学院', honors: honorsOf([record('e1', 1)],
+          { eventCount: 2, championCount: 1, topThreeCount: 1, bestPlacement: 1 }) },
+        tt: { collegeName: '法学院', honors: honorsOf([record('e2', 3)],
+          { eventCount: 1, championCount: 0, topThreeCount: 1, bestPlacement: 3 }) },
+      }),
+    });
+    assert.strictEqual(view.honors.summary.eventCount, 3, '汇总数字各协会相加');
+    assert.strictEqual(view.honors.summary.championCount, 1);
+    assert.strictEqual(view.honors.summary.topThreeCount, 2);
+    assert.strictEqual(view.honors.summary.bestPlacementText, '冠军', '取各协会里最好的名次');
+    // 只有真有荣誉的协会才成组
+    assert.strictEqual(view.honors.groups.length, 2);
+    for (const group of view.honors.groups) {
+      assert.ok(group.associationId);
+      assert.ok(group.records.length > 0);
+    }
+  });
+
+  test('某个协会读不到（未启用 / 无权限）时跳过，不拖垮整页', async () => {
+    const view = await loadSchoolProfileSummaryView({
+      schoolId: 'muc', session: SESSION,
+      client: { forScope: () => { throw new Error('该协会未启用'); } },
+    });
+    assert.strictEqual(view.found, true);
+    assert.strictEqual(view.honors.groups.length, 0);
+    assert.strictEqual(view.honors.summary.eventCount, 0);
+    assert.strictEqual(view.user.college, '', '档案读不到时降级为空而不是抛错');
+  });
 });
 
 test('loadSchoolMemberView —— 查无此人返回 found:false', async () => {

@@ -19,18 +19,19 @@
  * 【项目与池的配合】
  * 项目决定「看哪张榜」（女单榜只列女生），池决定「取哪些比赛」
  * （单打的比赛流水）。所以筛选比赛时用的是 item.pool，
- * 取榜单名次时用的是 item.project，两者都从 getMyProjects 拿。
+ * 取榜单名次时用的是 item.project。
+ *
+ * 【P10 合并批之后】取数那两个协议 1 入口（loadMemberView 读门面台账、
+ * loadProfileSummary 用 scope.mapActiveAssociations 跨协会捞 getEventRecord）
+ * 已随协议 1 一并删除，页面只剩两个 S2 装载器：loadSchoolMemberView（个人
+ * 详情 / 他人主页）与 loadSchoolProfileSummaryView（「我的」页）。纯整形
+ * 用的构建器（buildChart / buildHistoryRow / pickProject）两边共用，保留。
+ * 原先由客户端按 isGlobalAdmin 推断的角色徽标，S2 直接取服务端
+ * permissionLabel，roleLabelOf 那条旧规则一并删除。
  * ============================================================
  */
 
-const {
-  ROLE,
-  ROLE_LABEL,
-  ASSOC_ROLE,
-  ASSOC_ROLE_LABEL,
-  USER_STATUS_LABEL,
-  RATING_POOL_LABEL,
-} = require('../utils/constants.js');
+const { RATING_POOL_LABEL } = require('../utils/constants.js');
 const {
   formatDate,
   formatSigned,
@@ -44,14 +45,6 @@ const { sortProjectsForDisplay } = require('../utils/leaderboard.js');
 const { allAssociations } = require('../utils/associations.js');
 const { formatMatchFormat } = require('../utils/match-format.js');
 const { resolveNameDisplay } = require('./profile.js');
-const {
-  validateCollegeLeader,
-  validateAssociationLeader,
-  canEditCurrentElo,
-  isGlobalAdminMember,
-} = require('./member-review.js');
-const scope = require('./association-scope.js');
-const { getCurrentUser } = require('./index.js');
 
 /** 默认取多少场逐场战绩。太多会拖慢首屏，剩下的靠「加载更多」。 */
 const DEFAULT_HISTORY_LIMIT = 20;
@@ -153,313 +146,11 @@ function buildHistoryRow(row) {
 }
 
 /**
- * 会员头上的角色徽标。
- *
- * 【为什么 ADMIN 要再分两种】协会负责人的**有效角色**也是 ADMIN（见
- * context.effectiveRole），但它其实是「本协会」给的身份，与账号级的全局
- * 管理员不是一回事。只看 role 会把协会负责人显示成「管理员」，在本协会里
- * 看着像是跨协会的权限。用 isGlobalAdminMember 区分：全局管理员显「管理员」，
- * 本协会的 leader 显「协会负责人」。学院负责人（STAFF）沿用角色表的说法。
- *
- * @param {Object} user 会员记录（带有效 role 与 isGlobalAdmin）
- * @returns {string}
- */
-function roleLabelOf(user) {
-  if (isGlobalAdminMember(user)) return ROLE_LABEL[ROLE.ADMIN];
-  if (Number(user.role || 0) >= ROLE.ADMIN) return ASSOC_ROLE_LABEL[ASSOC_ROLE.LEADER];
-  return ROLE_LABEL[user.role] || '';
-}
-
-/**
- * 装载个人主页的全部数据。
- *
- * @param {string} [userId] 想看谁的页面。不传则看当前登录会员（即「我的」）。
- * @param {Object} [options]
- * @param {string} [options.project] 初始选中的项目
- * @param {number} [options.historyLimit] 逐场战绩取多少条
- * @param {Object|null} [options.viewer] 当前看页面的人（任免学院负责人要判权限）。
- *        与 loadMatchView 同一约定：由调用方从本地登录态传入，传 null 就是访客；
- *        不传则视为「没有旁观者」，任免入口一律不出现。
- * @returns {Promise<Object>} 查无此人时返回 { found: false }
- */
-async function loadMemberView(userId, options = {}) {
-  const { project, historyLimit = DEFAULT_HISTORY_LIMIT, viewer = null, association } = options;
-
-  // 页面局部的协会切换（个人详情页 / 他人主页）：只想让这一页按另一个协会取数，
-  // 不改变全局的当前协会。递归一次即可——第二次不再带 association，取完由
-  // withAssociation 还原全局作用域。
-  const api = require('./index.js').forAssociation(association || scope.getAssociation());
-
-  const user = userId ? await api.getMember(userId) : await api.getCurrentUser();
-  if (!user) {
-    return { found: false };
-  }
-
-  // 入口判定（学院负责人 / 协会负责人 / 初始等级分）要读「本人是否已出场」，
-  // 这只有派生数据集里的会员才带 ratings（见 rating.summarizeCareer）。云端
-  // getCurrentUser 给的是账号原始文档（含手机号等本人字段）但不含 ratings，
-  // 故本人场景补取一份派生记录专供判定；「看的是谁」仍用 user，展示字段不变。
-  const target = user.ratings ? user : (await api.getMember(user._id)) || user;
-
-  const projects = sortProjectsForDisplay(await api.getMyProjects(user._id));
-  const active = pickProject(projects, project);
-  // 没打过任何比赛的人没有项目，此时不能拿 null 去查池相关的接口
-  const poolFilter = active ? { pool: active.pool } : {};
-
-  const [ratingHistory, headToHead, partners, eventRecord, history, form] = await Promise.all([
-    active ? api.getRatingHistory(user._id, active.pool) : Promise.resolve([]),
-    api.getHeadToHead(user._id, poolFilter),
-    api.getPartnerRecord(user._id, poolFilter),
-    api.getEventRecord(user._id, poolFilter),
-    api.getMatchHistory(user._id, { ...poolFilter, limit: historyLimit }),
-    api.getForm(user._id, { limit: FORM_LIMIT }),
-  ]);
-
-  const eventRecords = eventRecord.records.map((row) => ({
-    eventId: row.eventId,
-    title: row.title,
-    dateText: formatDate(row.startTime),
-    placement: row.placement,
-    placementText: formatPlacement(row.placement),
-    // 前三名值得在界面上高亮，其余不强调
-    isTop: row.placement <= 3,
-    participantCount: row.participantCount,
-  }));
-
-  // 昵称与真名一起给：昵称占主位，真名小一号缀在旁边。
-  // 两者相同时不重复显示（见 profile.resolveNameDisplay）。
-  const nameDisplay = resolveNameDisplay(user);
-
-  // 管理员在别人的主页上可以任免学院负责人。四条边界（是管理员、不是自己、对方
-  // 状态正常且有确定学院、对方不是管理员）全部交给 validateCollegeLeader 判定，
-  // 与写入端一字不差；这里只据结果决定按钮显不显示、写什么字，不另写一套规则。
-  // 当前不是学院负责人时动作为「设为学院负责人」，已经是学院负责人则是「撤销学院负责人」。
-  const makeLeader = Number(target.role || 0) < ROLE.STAFF;
-  const leaderCheck = validateCollegeLeader(viewer, target, makeLeader);
-
-  // 协会负责人任免入口：仅**全局管理员**可见并生效（协会负责人的有效角色也是
-  // ADMIN，故用 isGlobalAdmin 区分）。目标是全局管理员或自己时整张卡不出现。
-  // 目标当前已是本协会协会负责人时，按钮转为「撤销」。
-  const targetIsAssocLeader =
-    !isGlobalAdminMember(target) && Number(target.role || 0) >= ROLE.ADMIN;
-  const makeAssocLeader = !targetIsAssocLeader;
-  const assocLeaderCheck = validateAssociationLeader(viewer, target, makeAssocLeader, {
-    isGlobalAdmin: Boolean(viewer && viewer.isGlobalAdmin),
-  });
-
-  // 当前等级分调整入口。不限出场与否——用来处理「在外打完比赛、对手不在本
-  // 程序里」的同步（也是手工改分的唯一入口）。权限交给 canEditCurrentElo
-  // （与写入端一字不差）；改分作用在**当前显示的项目**对应的池上，所以没有
-  // 项目时不出现。
-  const currentEloCheck = canEditCurrentElo(viewer, target);
-
-  return {
-    found: true,
-    user: {
-      userId: user._id,
-      nickName: nameDisplay.nickName,
-      realName: nameDisplay.realName,
-      showRealName: nameDisplay.showRealName,
-      // 没有头像时用昵称首字当占位。整串名字塞进圆形头像里会溢出。
-      avatarText: (nameDisplay.nickName || '?').slice(0, 1),
-      avatarUrl: user.avatarUrl || '',
-      college: user.college || '',
-      // 实名信息，个人资料页只读展示
-      studentId: user.studentId || '',
-      roleLabel: roleLabelOf(user),
-      statusLabel: USER_STATUS_LABEL[user.status] || '',
-      joinDateText: formatDate(user.joinDate),
-      points: user.points || 0,
-      // 赛季积分各协会不同。「我的」页不套协会，故那里显式关掉这个标签
-      // （见 loadProfileSummary）；详情页与他人主页按协会取数，照常显示。
-      showPoints: true,
-    },
-    // 项目切换标签。只有出过场的项目才会出现——展示一个从没打过的项目的
-    // 初始分没有意义，反而会让人以为自己在那个项目上很差。
-    projectTabs: projects.map((item) => ({
-      project: item.project,
-      label: item.label,
-      elo: formatElo(item.elo),
-      active: Boolean(active) && item.project === active.project,
-    })),
-    activeProject: active ? active.project : null,
-    activeProjectLabel: active ? active.label : '',
-    hasProject: Boolean(active),
-    summary: active
-      ? {
-          elo: formatElo(active.elo),
-          startElo: formatElo(active.startElo),
-          delta: active.delta,
-          deltaText: formatSigned(active.delta),
-          deltaUp: active.delta >= 0,
-          matchCount: active.matchCount,
-          wins: active.wins,
-          losses: active.losses,
-          recordText: `${active.wins} 胜 ${active.losses} 负`,
-          winRateText: formatPercent(active.wins / Math.max(active.matchCount, 1)),
-          rank: active.rank,
-          total: active.total,
-          rankText: formatRank(active.rank, active.total),
-          beatText: `超过 ${formatPercent(active.beatPercent / 100)} 的会员`,
-        }
-      : null,
-    chart: buildChart(ratingHistory, active ? active.startElo : 0),
-    form: {
-      dots: form.results.map((isWin) => (isWin ? 'W' : 'L')),
-      wins: form.wins,
-      losses: form.losses,
-      streakText: form.streak > 0 ? `${form.streak} 连胜` : '暂无连胜',
-    },
-    events: {
-      records: eventRecords,
-      summary: {
-        eventCount: eventRecord.summary.eventCount,
-        championCount: eventRecord.summary.championCount,
-        topThreeCount: eventRecord.summary.topThreeCount,
-        bestPlacementText: formatPlacement(eventRecord.summary.bestPlacement),
-      },
-    },
-    headToHead: headToHead.map((row) => ({
-      opponentId: row.opponentId,
-      nickName: row.nickName,
-      matchCount: row.matchCount,
-      recordText: `${row.wins} 胜 ${row.losses} 负`,
-      winRateText: formatPercent(row.winRate),
-      // 领先为正、落后为负：直接从分数上看「跟这个人打我是赚是亏」
-      deltaText: formatSigned(row.eloDeltaSum),
-      deltaUp: row.eloDeltaSum >= 0,
-    })),
-    partners: partners.map((row) => ({
-      partnerId: row.partnerId,
-      nickName: row.nickName,
-      matchCount: row.matchCount,
-      recordText: `${row.wins} 胜 ${row.losses} 负`,
-      winRateText: formatPercent(row.winRate),
-    })),
-    history: history.map(buildHistoryRow),
-    // 任免学院负责人的入口。没有权限时整张卡不渲染，而不是给一个点下去被拒的按钮
-    leader: {
-      visible: leaderCheck.ok,
-      makeLeader,
-      label: makeLeader ? '设为学院负责人' : '撤销学院负责人',
-      hint: makeLeader ? '代签、代录本学院的比赛' : '收回本学院的管理权限',
-    },
-    // 协会负责人任免入口（仅全局管理员）。与学院负责人同一位置并排出现。
-    associationLeader: {
-      visible: assocLeaderCheck.ok,
-      makeLeader: makeAssocLeader,
-      label: makeAssocLeader ? '设为协会负责人' : '撤销协会负责人',
-      hint: makeAssocLeader ? '管理本协会的赛事、会员与公告' : '收回本协会的管理权限',
-    },
-    // 当前等级分调整入口：有权限、且当前有可展示的项目时才出现。改的是当前
-    // 项目对应的池，所以带上 label / pool / project 让页面知道改的是哪一项。
-    currentElo: {
-      visible: currentEloCheck.ok && Boolean(active),
-      project: active ? active.project : '',
-      pool: active ? active.pool : '',
-      label: active ? active.label : '',
-      current: active ? active.elo : null,
-    },
-  };
-}
-
-/**
- * 装载「我的」页的视图模型。
- *
- * 【与 loadMemberView 的分工】「我的」页不套任何协会，因此：
- *   · 头卡只给全局信息（角色只到「会员 / 管理员」，赛季积分标签关掉）；
- *   · 赛事荣誉**跨全部协会聚合**——汇总数字各协会相加，下面按协会分组列出名次，
- *     没参加过赛事的协会不出现。
- * 等级分、走势、逐场战绩这些「随协会变化」的内容都搬去了个人详情页，
- * 因此这里一概不算（见需求整理 §11.4）。
- *
- * @returns {Promise<Object>} 未登录时返回 { found: false }
- */
-async function loadProfileSummary() {
-  const user = await getCurrentUser();
-  if (!user) return { found: false };
-
-  const nameDisplay = resolveNameDisplay(user);
-
-  const loaded = await scope.mapActiveAssociations(async (assoc, api) => ({
-    assoc,
-    record: await api.getEventRecord(user._id, {}),
-  }));
-
-  let eventCount = 0;
-  let championCount = 0;
-  let topThreeCount = 0;
-  let bestPlacement = 0;
-  const groups = [];
-
-  for (const { assoc, record } of loaded) {
-    if (!record || !Array.isArray(record.records) || record.records.length === 0) continue;
-
-    const records = record.records.map((row) => ({
-      eventId: row.eventId,
-      title: row.title,
-      dateText: formatDate(row.startTime),
-      placement: row.placement,
-      placementText: formatPlacement(row.placement),
-      isTop: row.placement <= 3,
-      participantCount: row.participantCount,
-    }));
-
-    eventCount += record.summary.eventCount;
-    championCount += record.summary.championCount;
-    topThreeCount += record.summary.topThreeCount;
-    const best = record.summary.bestPlacement;
-    if (best > 0 && (bestPlacement === 0 || best < bestPlacement)) bestPlacement = best;
-
-    groups.push({
-      associationId: assoc.id,
-      associationName: assoc.shortName,
-      associationGlyph: assoc.logoGlyph,
-      records,
-    });
-  }
-
-  // 角色徽标只显示全局身份：协会角色（学院负责人 / 协会负责人）按协会各异，
-  // 不属于这一页。全局角色只有会员与管理员两档（STAFF 是协会角色叠加出来的）。
-  const globalRoleLabel =
-    Number(user.role) === ROLE.ADMIN ? ROLE_LABEL[ROLE.ADMIN] : ROLE_LABEL[ROLE.MEMBER];
-
-  return {
-    found: true,
-    user: {
-      userId: user._id,
-      nickName: nameDisplay.nickName,
-      realName: nameDisplay.realName,
-      showRealName: nameDisplay.showRealName,
-      avatarText: (nameDisplay.nickName || '?').slice(0, 1),
-      avatarUrl: user.avatarUrl || '',
-      college: user.college || '',
-      studentId: user.studentId || '',
-      roleLabel: globalRoleLabel,
-      statusLabel: USER_STATUS_LABEL[user.status] || '',
-      joinDateText: formatDate(user.joinDate),
-      points: user.points || 0,
-      showPoints: false,
-    },
-    honors: {
-      summary: {
-        eventCount,
-        championCount,
-        topThreeCount,
-        bestPlacementText: eventCount > 0 ? formatPlacement(bestPlacement) : '',
-      },
-      groups,
-      total: eventCount,
-    },
-  };
-}
-
-/**
  * 学校维度的个人主页装载器（B4-c）。
  *
  * 取数走绑定范围的 S2 客户端（getSchoolMemberProfile：一次回放取齐卡片、
  * 项目、走势、交锋、搭档、逐场战绩、近期状态与本范围荣誉），整形与旧栈
- * loadMemberView 共用同一套纯函数（buildChart / buildHistoryRow / format*），
+ * 旧栈 loadMemberView 共用同一套纯函数（buildChart / buildHistoryRow / format*），
  * 页面与模板因此不需要改形状。
  *
  * 【任免 / 改分入口为什么在这里关掉】S2 下「指定权限」统一走学校身份页的
@@ -471,7 +162,7 @@ async function loadProfileSummary() {
  * @param {string} [options.userId] 想看谁；不传即本人
  * @param {string} [options.project] 初始选中的项目
  * @param {number} [options.historyLimit] 逐场战绩取多少条
- * @returns {Promise<Object>} 与 loadMemberView 同形状；查无此人时 { found: false }
+ * @returns {Promise<Object>} 与旧栈 loadMemberView 同形状；查无此人时 { found: false }
  */
 async function loadSchoolMemberView(api, options = {}) {
   const { project, historyLimit = DEFAULT_HISTORY_LIMIT } = options;
@@ -685,8 +376,6 @@ module.exports = {
   pickProject,
   buildChart,
   buildHistoryRow,
-  loadMemberView,
   loadSchoolMemberView,
-  loadProfileSummary,
   loadSchoolProfileSummaryView,
 };
