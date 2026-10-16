@@ -1,11 +1,7 @@
 <view class="page-container exchange-page">
   <view class="card">
     <view class="card-title">跨校邀请赛</view>
-<<<<<<< HEAD
-    <view class="hint">本地模拟体验 · 交流赛不计入校内等级分和积分 · 项目固定单打</view>
-=======
     <view class="hint">{{isMock ? '本地模拟体验 · ' : ''}}交流赛不计入校内等级分和积分 · 项目固定单打</view>
->>>>>>> workbuddy/master-babf6080
     <picker range="{{schools}}" range-key="name" value="{{schoolIndex}}" disabled="{{busy}}" bindchange="onSchoolChange"><view class="selection">{{schoolName}} · 切换学校 ›</view></picker>
     <picker wx:if="{{isMock}}" range="{{actors}}" range-key="label" value="{{actorIndex}}" disabled="{{busy}}" bindchange="onActorChange"><view class="selection">{{actorName}} · 切换体验身份 ›</view></picker>
   </view>

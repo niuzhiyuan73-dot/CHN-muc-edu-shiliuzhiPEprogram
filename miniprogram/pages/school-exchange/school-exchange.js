@@ -37,8 +37,6 @@ Page({
     bronzeLabel: constants.EVENT_BRONZE_MODE_LABEL[constants.DEFAULT_BRONZE_MODE],
     gfReset: constants.DEFAULT_GF_RESET,
     showGroupCount: false, showAdvance: false, showBronze: true, showGfReset: false,
-<<<<<<< HEAD
-=======
     /**
      * 当前是否本地模拟数据。只影响两处展示口径：
      *   · 顶部那行「本地模拟体验」提示（云端不写，否则真实赛事被说成演示）；
@@ -47,7 +45,6 @@ Page({
      * 进不进得去、能不能操作，一律由页面自身的权限与状态决定，不看这个字段。
      */
     isMock: identity.isMockNow(),
->>>>>>> workbuddy/master-babf6080
   },
   onLoad() {
     const tomorrow = new Date(Date.now() + 86400000);
