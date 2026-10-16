@@ -1059,3 +1059,256 @@ describe('小场视图 —— 旧栈两条回归在 S2 的对应', () => {
     }
   });
 });
+
+/* --------------------------------------- 名次与隔离（旧栈 college-placement 的 S2 对应） */
+
+/**
+ * 下面一组由旧栈 tests/college-placement.test.js 迁移而来。
+ *
+ * 【为什么是迁移而不是删除】旧栈那 11 条守的是「名次只按学院落库、不产生任何
+ * 个人等级分与积分、也不进个人赛事集合」这条隔离边界，以及名次页 / 详情页两个
+ * 视图的拦截文案。S2 的 finishCollegeEvent 与 loadCollegePlacementView /
+ * loadCollegeEventDetailView 里这些规则都已按同一口径实现，但此前只被
+ * 「裁判 / 名次」那一条顺带碰到两点（名次记给非参赛学院被拒、缺冠军被拒），
+ * 其余各点（缺项只有冠军、未开始拒绝、非管理员拒绝、重名次拒绝、等级分与积分
+ * 零变化、不进个人赛事集合、两个视图的文案）在 S2 **零覆盖**。随
+ * college-view.js 一并删除旧栈文件后若不迁移，这些边界就无人看守了。
+ */
+describe('名次与隔离 —— 旧栈 college-placement 的 S2 对应', () => {
+  /** 走到「进行中」：两院过审 → 抽签 → 开赛 */
+  async function toOngoing(repo) {
+    const t = await publish(repo, 'placement-1', { legPlan: [LEG_DISCIPLINE.MS] });
+    await approveCollege(repo, t.eventId, C01, ['demo_muc_member_2']);
+    await approveCollege(repo, t.eventId, C02, ['demo_muc_member_3', 'demo_muc_member_4']);
+    await call(repo, 'drawCollegeEvent', { eventId: t.eventId, seedValue: 42 });
+    const started = await call(repo, 'startCollegeEvent', { eventId: t.eventId });
+    assert.equal(started.ok, true, started.message);
+    return t.eventId;
+  }
+
+  const resultsOf = () => [
+    { college: NAME_C01, placement: 1 },
+    { college: NAME_C02, placement: 2 },
+  ];
+
+  test('名次允许缺项，但必须有一位冠军', async () => {
+    const repo = fixture();
+    const eventId = await toOngoing(repo);
+
+    // 只记冠军，其余学院可能没到场
+    const only = await call(repo, 'finishCollegeEvent',
+      { eventId, results: [{ college: NAME_C01, placement: 1 }] });
+    assert.equal(only.ok, true, only.message);
+    assert.equal((await repo.collegeEvents.getById(eventId)).results.length, 1);
+  });
+
+  test('未开始的学院赛不能录名次', async () => {
+    const repo = fixture();
+    const t = await publish(repo, 'placement-not-started', { legPlan: [LEG_DISCIPLINE.MS] });
+    await approveCollege(repo, t.eventId, C01, ['demo_muc_member_2']);
+
+    const result = await call(repo, 'finishCollegeEvent',
+      { eventId: t.eventId, results: [{ college: NAME_C01, placement: 1 }] });
+    assert.equal(result.ok, false);
+    assert.match(result.message, /还没开始/);
+    assert.equal((await repo.collegeEvents.getById(t.eventId)).status, COLLEGE_EVENT_STATUS.SIGNUP);
+  });
+
+  test('学院负责人与会员都无权录入名次', async () => {
+    const repo = fixture();
+    const eventId = await toOngoing(repo);
+
+    for (const actor of ['demo_muc_member_3', 'demo_muc_member']) {
+      const result = await call(repo, 'finishCollegeEvent', { eventId, results: resultsOf() }, { actor });
+      assert.equal(result.ok, false);
+      assert.match(result.message, /只有管理员/);
+    }
+    // 一次都没落库
+    assert.equal((await repo.collegeEvents.getById(eventId)).status, COLLEGE_EVENT_STATUS.ONGOING);
+  });
+
+  /**
+   * 这一条是迁移时**新补**的，不是旧栈搬过来的。
+   *
+   * 【为什么必须补】`finishCollegeEvent` 在事务内复查管理权（撤权后不能再录
+   * 名次），既有用例「写路径：请求期间管理权被撤销，开赛与录名次都不落库」的
+   * 标题里提到了录名次，但正文只调到 `startCollegeEvent`——赛事停在待开赛，
+   * 根本走不到名次那条分支。反向验证时把事务内复查整行短路，全量仍 39/0 通过，
+   * 证实了这一处此前无人看守。
+   */
+  test('写路径：请求期间管理权被撤销，事务内复查拦下录名次', async () => {
+    const repo = fixture();
+    const eventId = await toOngoing(repo);
+
+    // 撤掉校级管理员角色（账号本身仍有效，所以只有「事务内重判角色」才拦得住）
+    const transaction = repo.transaction;
+    repo.transaction = async fn => {
+      const { schoolRoleKey } = require('../miniprogram/utils/school');
+      const key = schoolRoleKey('demo_muc_admin', 'muc');
+      const role = await repo.schoolRoles.getById(key);
+      await repo.schoolRoles.set(key, { ...role, status: 'disabled' });
+      return transaction(fn);
+    };
+
+    const result = await call(repo, 'finishCollegeEvent', { eventId, results: resultsOf() });
+    assert.equal(result.ok, false, '撤权之后不能再录名次');
+    assert.equal((await repo.collegeEvents.getById(eventId)).status, COLLEGE_EVENT_STATUS.ONGOING,
+      '状态没有被改动');
+  });
+
+  test('同一学院记两次名次被拒（每院只记一次）', async () => {
+    const repo = fixture();
+    const eventId = await toOngoing(repo);
+
+    const twice = await call(repo, 'finishCollegeEvent', {
+      eventId,
+      results: [
+        { college: NAME_C01, placement: 1 },
+        { college: NAME_C01, placement: 2 },
+      ],
+    });
+    assert.equal(twice.ok, false);
+    assert.match(twice.message, /每院只记一次/);
+  });
+
+  test('隔离 —— 录入名次不改变任何人的等级分与积分', async () => {
+    const repo = fixture();
+    const eventId = await toOngoing(repo);
+
+    // 【为什么盯「全部集合」而不是盯某个分数字段】S2 里等级分与积分都不是存在
+    // 会员文档上的字段，而是由 matches / 赛事 / 训练事实「回放」出来的
+    // （见 school-rank-service 的 replayScope）。所以「不动任何人的分数」等价于
+    // 「除了本赛事记录与审计，一个字都没往别处写」。末尾再确认本赛事确实变了，
+    // 免得「哪儿都没动」被误当成隔离通过——那只是这次写根本没生效。
+    const COLLECTIONS = ['users', 'schools', 'schoolAssociations', 'colleges', 'schoolMembers',
+      'schoolRoles', 'memberships', 'studentIdClaims', 'auditLogs',
+      'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
+      'associationGroups', 'associationGroupMembers',
+      'associationNotices', 'associationTrainings', 'trainingRegistrations',
+      'announcements', 'events', 'eventSignups', 'matches', 'liveScores',
+      'collegeEvents', 'collegeEntries', 'ties', 'lineups', 'seasons', 'pairCounts'];
+    const snapshot = async () => Object.fromEntries(await Promise.all(
+      COLLECTIONS.map(async key => [key, await repo[key].list()])));
+
+    const before = await snapshot();
+    const finished = await call(repo, 'finishCollegeEvent', { eventId, results: resultsOf() });
+    assert.equal(finished.ok, true, finished.message);
+    const after = await snapshot();
+
+    assert.notDeepEqual(after.collegeEvents, before.collegeEvents, '名次应当已落到本赛事记录上');
+    const touched = COLLECTIONS.filter(
+      key => JSON.stringify(after[key]) !== JSON.stringify(before[key]));
+    assert.deepEqual(
+      touched.filter(key => key !== 'auditLogs'),
+      ['collegeEvents'],
+      '学院名次不该动任何个人的等级分与积分'
+    );
+  });
+
+  test('隔离 —— 学院赛不进个人赛事集合', async () => {
+    const repo = fixture();
+    const eventId = await toOngoing(repo);
+    await call(repo, 'finishCollegeEvent', { eventId, results: resultsOf() });
+
+    const personal = await repo.forScope({ schoolId: 'muc', association: 'pkb' }).events.list();
+    assert.equal(
+      personal.some(row => (row.eventId || row._id) === eventId),
+      false,
+      '学院赛写在 college_events 集合，个人赛事读路径里不应出现'
+    );
+  });
+
+  /** 演示栈里走到「进行中」：两院过审 → 抽签 → 开赛（视图层只认 association-space） */
+  async function mockOngoing() {
+    const { api, eventId } = await mockEntriesReady();
+    const drawn = await api.drawCollegeEvent({ eventId, seedValue: 42 });
+    assert.equal(drawn.ok, true, drawn.message);
+    const started = await api.startCollegeEvent({ eventId });
+    assert.equal(started.ok, true, started.message);
+    return { api, eventId };
+  }
+
+  test('名次页视图 —— 管理员在赛事进行中可提交，候选只有参赛学院', async () => {
+    const { eventId } = await mockOngoing();
+    try {
+      const view = await collegeView.loadCollegePlacementView(eventId,
+        { ...MOCK_SCOPE, actorId: MOCK_ADMIN });
+      assert.equal(view.found, true);
+      assert.equal(view.canSubmit, true);
+      assert.equal(view.blockReason, '');
+      assert.deepEqual(
+        view.rows.map(row => row.college).sort(),
+        [NAME_C01, NAME_C02].sort(),
+        '一行一所已通过名单的学院'
+      );
+      assert.ok(view.rows.every(row => row.placementText === ''), '还没录过名次，输入框留空');
+    } finally {
+      schoolMock.reset();
+    }
+  });
+
+  test('名次页视图 —— 未开始 / 已结束 / 无权限各有各的拦截文案', async () => {
+    const { api, eventId } = await mockEntriesReady();
+    try {
+      const signupView = await collegeView.loadCollegePlacementView(eventId,
+        { ...MOCK_SCOPE, actorId: MOCK_ADMIN });
+      assert.equal(signupView.canSubmit, false);
+      assert.match(signupView.blockReason, /还没开始/);
+
+      const drawn = await api.drawCollegeEvent({ eventId, seedValue: 42 });
+      assert.equal(drawn.ok, true, drawn.message);
+      const started = await api.startCollegeEvent({ eventId });
+      assert.equal(started.ok, true, started.message);
+
+      // 【为什么这里要换演示身份而不是只换 options.actorId】S2 的装载器只拿
+      // options.actorId 判「有没有登录」，真正的 canManage 由服务端按**当前会话
+      // 身份**算（school-mock 的 actor）。这与旧栈 `{ user }` 直接决定视图权限
+      // 不同——旧栈删掉后，想守「非管理员被拦」就必须切会话身份。已记入
+      // docs 的隐患清单，本批不擅自改行为。
+      schoolMock.setDemoActor('demo_muc_member_2');
+      const staffView = await collegeView.loadCollegePlacementView(eventId,
+        { ...MOCK_SCOPE, actorId: 'demo_muc_member_2' });
+      assert.equal(staffView.canSubmit, false);
+      assert.match(staffView.blockReason, /只有管理员/);
+      schoolMock.setDemoActor(MOCK_ADMIN);
+
+      const guestView = await collegeView.loadCollegePlacementView(eventId, { ...MOCK_SCOPE });
+      assert.equal(guestView.canSubmit, false);
+      assert.match(guestView.blockReason, /请先登录/);
+
+      const finished = await api.finishCollegeEvent({ eventId, results: resultsOf() });
+      assert.equal(finished.ok, true, finished.message);
+      const doneView = await collegeView.loadCollegePlacementView(eventId,
+        { ...MOCK_SCOPE, actorId: MOCK_ADMIN });
+      assert.equal(doneView.canSubmit, false);
+      assert.match(doneView.blockReason, /已经结束/);
+    } finally {
+      schoolMock.reset();
+    }
+  });
+
+  test('详情页视图 —— 进行中给录入入口，结束后展示名次文案', async () => {
+    const { api, eventId } = await mockOngoing();
+    try {
+      const ongoing = await collegeView.loadCollegeEventDetailView(eventId,
+        { ...MOCK_SCOPE, actorId: MOCK_ADMIN });
+      assert.equal(ongoing.canFinish, true, '进行中的赛事给管理员录入入口');
+      assert.equal(ongoing.hasResults, false);
+
+      const done = await api.finishCollegeEvent({ eventId, results: resultsOf() });
+      assert.equal(done.ok, true, done.message);
+
+      const finished = await collegeView.loadCollegeEventDetailView(eventId,
+        { ...MOCK_SCOPE, actorId: MOCK_ADMIN });
+      assert.equal(finished.isFinished, true);
+      assert.equal(finished.canFinish, false, '已结束不再给录入入口');
+      assert.equal(finished.hasResults, true);
+      assert.deepEqual(
+        finished.resultRows.map(row => [row.college, row.placementText]),
+        [[NAME_C01, '冠军'], [NAME_C02, '亚军']]
+      );
+    } finally {
+      schoolMock.reset();
+    }
+  });
+});

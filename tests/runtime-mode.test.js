@@ -42,7 +42,6 @@ const FACADE_REQUIRE = "require('./index.js')";
  */
 const SERVICE_FILES_PENDING = [
   'association-scope.js',
-  'college-view.js',
   'events-view.js',
   'match-view.js',
   'profile-view.js',
