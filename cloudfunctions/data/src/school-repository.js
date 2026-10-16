@@ -4,7 +4,7 @@ const { schoolScope } = require('../lib/utils/school.js');
 const SCHOOL_COLLECTIONS = ['schools', 'schoolAssociations', 'colleges', 'schoolMembers', 'schoolRoles', 'memberRatings', 'studentIdClaims',
   'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
   'associationGroups', 'associationGroupMembers',
-  'associationNotices', 'associationTrainings', 'trainingRegistrations'];
+  'associationNotices', 'associationTrainings', 'trainingRegistrations', 'pairCounts'];
 const SCHOOL_ONLY = ['colleges', 'schoolMembers', 'schoolRoles'];
 const SCOPED_COLLECTIONS = [
   'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
@@ -14,6 +14,8 @@ const SCOPED_COLLECTIONS = [
   // 协会空间小组 / 通知 / 训练均按「学校 + 协会」双维度范围，写入即校验归属。
   'associationGroups', 'associationGroupMembers',
   'associationNotices', 'associationTrainings', 'trainingRegistrations',
+  // 交手名额计数：每对一条，同属「学校 + 协会 + 赛季」，写入即校验归属。
+  'pairCounts',
 ];
 
 function attachSchoolRepository(repo, io, inTx) {

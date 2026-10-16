@@ -286,36 +286,72 @@ function checkSubmitAllowed(match, matches, options = {}) {
   if (!Number.isFinite(limit) || limit <= 0) return allow;
 
   const usage = tallyPairUsage(matches, { seasonStart });
+  const capped = findCappedPairs(crossPairList(match), usage, { limit });
+  if (capped.ok) return allow;
 
-  // 同一对在一场双打里可能出现两次（两队各有交集时），去重后只报一次
+  return { ok: false, pairs: capped.full, message: pairCapMessage(capped.full, { limit, nameOf }) };
+}
+
+/** 取某个无序对键的已用场次；Map 与普通对象都认（计数文档读回来是对象）。 */
+function usedCountOf(used, key) {
+  if (used instanceof Map) return Number(used.get(key)) || 0;
+  if (used && typeof used === 'object') return Number(used[key]) || 0;
+  return 0;
+}
+
+/**
+ * 一场比赛涉及的每一对里，哪些已经用满名额。
+ *
+ * 【为什么单独抽出来】
+ * 提交闸门原先只认「整份台账算出来的用量」——那是在事务外读的快照，两个并发
+ * 录分各自都能从同一份快照通过（见 school-match-service 里 pairCounts 一段）。
+ * 现在闸门在事务内还要拿**计数文档**再判一次，判的就是同一件事：每对已用几场、
+ * 是否到顶。两处共用本函数，避免「事务外说满了、事务内说没满」这种各判各的。
+ *
+ * @param {Array<{key:string,a:string,b:string}>} pairs 待判的对（可含重复，内部去重）
+ * @param {Map<string,number>|Object} used 无序对键 → 已用场次
+ * @param {Object} [options]
+ * @param {number} [options.limit=RATED_PAIR_LIMIT]
+ * @returns {{ok:boolean, full:Array<{key:string,a:string,b:string,count:number}>}}
+ *          ok 为 false 时 full 是已满额的那些对（按发现顺序，已去重）
+ */
+function findCappedPairs(pairs, used, options = {}) {
+  const limit = options.limit === undefined ? RATED_PAIR_LIMIT : options.limit;
+  if (!Number.isFinite(limit) || limit <= 0) return { ok: true, full: [] };
+
   const seen = new Set();
   const full = [];
-  for (const pair of crossPairList(match)) {
-    if (seen.has(pair.key)) continue;
+  for (const pair of Array.isArray(pairs) ? pairs : []) {
+    if (!pair || !pair.key || seen.has(pair.key)) continue;
     seen.add(pair.key);
-    if ((usage.get(pair.key) || 0) >= limit) {
-      full.push({ ...pair, count: usage.get(pair.key) || 0 });
-    }
+    const count = usedCountOf(used, pair.key);
+    if (count >= limit) full.push({ key: pair.key, a: pair.a, b: pair.b, count });
   }
-  if (full.length === 0) return allow;
+  return { ok: full.length === 0, full };
+}
 
-  const name = (id) => {
-    if (typeof nameOf !== 'function') return id;
-    return nameOf(id) || id;
-  };
+/**
+ * 满额提示文案。事务外闸门与事务内复核共用，两处说的话一模一样。
+ *
+ * @param {Array<{a:string,b:string,count:number}>} full 已满额的对
+ * @param {Object} [options]
+ * @param {number} [options.limit=RATED_PAIR_LIMIT]
+ * @param {Function} [options.nameOf] 编号 → 昵称；不给就用编号
+ * @returns {string}
+ */
+function pairCapMessage(full, options = {}) {
+  const limit = options.limit === undefined ? RATED_PAIR_LIMIT : options.limit;
+  const nameOf = options.nameOf;
+  const list = Array.isArray(full) ? full : [];
+  if (list.length === 0) return '';
+  const name = (id) => (typeof nameOf === 'function' ? nameOf(id) || id : id);
 
   // 只报第一对：一场双打最多两组对满额，全报出来是一句读不完的话
-  const first = full[0];
-  const extra = full.length > 1 ? `（另有 ${full.length - 1} 对也已满额）` : '';
-
-  return {
-    ok: false,
-    pairs: full,
-    message:
-      `本赛季 ${name(first.a)} 与 ${name(first.b)} 已经打了 ${first.count} 场，` +
-      `达到上限（${limit} 场），这场比赛不能再录入${extra}。` +
-      '请换一位对手，或等下个赛季。',
-  };
+  const first = list[0];
+  const extra = list.length > 1 ? `（另有 ${list.length - 1} 对也已满额）` : '';
+  return `本赛季 ${name(first.a)} 与 ${name(first.b)} 已经打了 ${first.count} 场，` +
+    `达到上限（${limit} 场），这场比赛不能再录入${extra}。` +
+    '请换一位对手，或等下个赛季。';
 }
 
 module.exports = {
@@ -328,4 +364,6 @@ module.exports = {
   seasonPairCounts,
   findCappedMatchIds,
   checkSubmitAllowed,
+  findCappedPairs,
+  pairCapMessage,
 };

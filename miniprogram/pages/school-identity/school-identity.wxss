@@ -12,3 +12,6 @@
   border-top: 1rpx solid #eee; margin-top: 24rpx; padding-top: 24rpx; }
 .member-main { flex: 1; }
 .member-meta { margin-top: 6rpx; }
+/* 转校申请标签：审核列表里一眼看出这条不是普通入会，而是从别校转来 */
+.transfer-tag { margin-left: 12rpx; padding: 2rpx 12rpx; border-radius: 8rpx;
+  background: #fbf3e0; color: #a1841f; font-size: 22rpx; font-weight: 400; }

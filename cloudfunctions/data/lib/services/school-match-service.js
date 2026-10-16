@@ -32,7 +32,7 @@ const {
 const { legacyRoleOf, buildDirectory, recordOptions } = require('./school-actor.js');
 const {
   schoolKey, schoolMemberKey, belongsToSchoolScope, schoolMatchKey, schoolLiveKey,
-  PLATFORM_STATUS, SCHOOL_MEMBER_STATUS,
+  pairCountKey, PLATFORM_STATUS, SCHOOL_MEMBER_STATUS,
 } = require('../utils/school.js');
 const {
   MATCH_TYPE, MATCH_TYPE_LABEL,
@@ -42,7 +42,11 @@ const {
   canRecordScore, canConfirm, canRevoke, canAssignReferee, canForfeit, needsScore,
   isParticipant, buildMatchRecord, fillScheduledMatch, buildRefereePatch, buildForfeitPatch,
 } = require('./match-record.js');
-const { checkSubmitAllowed, seasonPairCounts } = require('./rating-cap.js');
+const {
+  checkSubmitAllowed, seasonPairCounts, crossPairList, tallyPairUsage,
+  findCappedPairs, pairCapMessage, isCasualMatch,
+} = require('./rating-cap.js');
+const { findDependentMatches } = require('./format-plan.js');
 const { loadSeason } = require('./school-rank-service.js');
 const { RATED_PAIR_LIMIT } = require('../utils/constants.js');
 const { liveScoreOf } = require('./live-score.js');
@@ -68,6 +72,150 @@ const matchAuditKey = (matchId, action, revision) =>
 
 const isMatchDoc = doc => Boolean(doc && Array.isArray(doc.teamA) && Array.isArray(doc.teamB) &&
   typeof doc.status === 'number' && doc.matchTime);
+
+/**
+ * 交手名额的计数文档（每对每赛季一条）。
+ * ============================================================
+ * 为什么需要它（2026-10-16 独立验收 F3）：上限原先只按「事务外读到的整份台账」
+ * 判断，两个并发请求拿到同一份「还差一场」的快照，各自都能通过；两边写的是
+ * **不同的比赛文档**，谁也拦不住谁，最终 16 场 > 上限 15。
+ * 计数文档就是给这一对准备的**共享冲突点**：提交时在同一事务里读它、加一、写回，
+ * 于是并发的第二次要么在真库上写冲突重试、要么在内存仓储的串行事务队列里排队，
+ * 重试后必然看见第一次的结果，闸门这才真的生效。
+ *
+ * 【懒初始化】
+ * 文档不存在＝这一对在本赛季还没走过新口径（历史数据、规则生效前录的场次）。
+ * 用事务外台账算出的用量做初值写进去；两个并发请求同时初始化时，谁先写谁赢，
+ * 后到的那次要么冲突重试、要么（内存仓储）排队后直接读到。所以不必先跑批迁移。
+ *
+ * 【为什么释放时「没有文档就不建」】
+ * 作废（撤销 / 驳回）要对称地把名额还回去。但这一场可能是新口径之前录的：
+ * 那时台账里已经算过它、计数文档却还不存在。这时凭空写一条 count=0 会把台账里的
+ * 占用抹掉；正确做法是不建——下次提交按台账懒初始化，自然会算上（作废的场次
+ * 本来就不计入用量）。
+ */
+
+/** 一场比赛涉及的无序对（按 key 去重；双打最多四对）。 */
+const distinctPairs = record => {
+  const seen = new Set();
+  const out = [];
+  for (const pair of crossPairList(record)) {
+    if (seen.has(pair.key)) continue;
+    seen.add(pair.key);
+    out.push(pair);
+  }
+  return out;
+};
+
+/** 赛季分界点的键形态：与 rating-cap.countedMatches 用的是同一个值（空＝从未重置）。 */
+const seasonStampOf = season => (season && season.resetTime ? iso(season.resetTime) : 'all');
+
+/** 计数文档的键：范围 + 赛季分界点 + 两人编号。 */
+const pairUsageKeyOf = (pair, ctx, season) => pairCountKey(pair.a, pair.b, seasonStampOf(season), ctx);
+
+/**
+ * 事务内复核并占用这一场的交手名额。名额已满时一个都不占（要么全占、要么全拒）。
+ *
+ * @param {Object} tx 事务内仓储
+ * @param {Object} ctx 事务内 fresh 上下文（提供 schoolId / association / now）
+ * @param {Object} record 待写入的比赛记录（buildMatchRecord 的产物）
+ * @param {Object} options
+ * @param {number} options.limit 每对每赛季上限
+ * @param {Object} options.season 本范围赛季文档（决定键与是否已重置）
+ * @param {Map<string,number>} options.seedUsage 事务外按台账算出的用量（懒初始化用）
+ * @param {Function} [options.nameOf] 编号 → 昵称，供提示文案
+ * @returns {Promise<{ok:boolean, message:string}>}
+ */
+async function occupyPairUsage(tx, ctx, record, options) {
+  const { limit, season, seedUsage, nameOf = null } = options;
+  // 只有「自行录入」的日常约球占名额；赛事 / 学院赛比赛有名次与赛程兜底，不设限
+  if (!isCasualMatch(record)) return { ok: true, message: '' };
+  if (!Number.isFinite(limit) || limit <= 0) return { ok: true, message: '' };
+
+  const pendingWrites = [];
+  const usedByKey = new Map();
+  for (const pair of distinctPairs(record)) {
+    const id = pairUsageKeyOf(pair, ctx, season);
+    const doc = await tx.pairCounts.getById(id);
+    const used = doc ? Number(doc.count || 0)
+      : Number((seedUsage && seedUsage.get(pair.key)) || 0);
+    usedByKey.set(pair.key, used);
+    pendingWrites.push({ id, doc, pair, used });
+  }
+
+  const capped = findCappedPairs(distinctPairs(record), usedByKey, { limit });
+  if (!capped.ok) return { ok: false, message: pairCapMessage(capped.full, { limit, nameOf }) };
+
+  const nowIso = iso(ctx.now);
+  for (const item of pendingWrites) {
+    await tx.pairCounts.set(item.id, {
+      _id: item.id, schoolId: ctx.schoolId, association: ctx.association,
+      seasonStamp: seasonStampOf(season), seasonNumber: Number(season && season.seasonNumber) || 1,
+      pairKey: item.pair.key, users: [item.pair.a, item.pair.b],
+      count: item.used + 1,
+      revision: Number((item.doc && item.doc.revision) || 0) + 1,
+      updatedAt: nowIso,
+    });
+  }
+  return { ok: true, message: '' };
+}
+
+/** 作废一场「自行录入」的比赛时，把名额还回去（与 occupyPairUsage 对称）。 */
+async function releasePairUsage(tx, ctx, record) {
+  if (!isCasualMatch(record)) return;
+  const season = await loadSeason(ctx);
+  const nowIso = iso(ctx.now);
+  for (const pair of distinctPairs(record)) {
+    const id = pairUsageKeyOf(pair, ctx, season);
+    const doc = await tx.pairCounts.getById(id);
+    if (!doc) continue;
+    await tx.pairCounts.set(id, {
+      ...doc,
+      count: Math.max(0, Number(doc.count || 0) - 1),
+      revision: Number(doc.revision || 1) + 1,
+      updatedAt: nowIso,
+    });
+  }
+}
+
+/** 编号 → 昵称（提示文案用）；拿不到就退回编号。 */
+function nameResolverOf(dir) {
+  const byId = new Map((dir && dir.members ? dir.members : []).map(user => [user._id, user.nickName || user.realName || user._id]));
+  return id => byId.get(id) || id;
+}
+
+/**
+ * 个人赛签表里「已经排在这场比赛之后」的场次（2026-10-16 独立验收 F5）。
+ *
+ * 旧协议与旧 mock 都用 `findDependentMatches` 在撤销前拦一道，S2 迁移时只保留了
+ * 学院赛小场那一道，个人赛这条规则漏掉了：撤掉半决赛后，已经排出来的决赛仍带着
+ * 原晋级者，等着谁随手录个比分确认掉，凭空多出一场不该有的成绩。
+ * 事务内不许整表查询，所以这里在事务外先列出候选，事务内再逐个点读复查。
+ */
+async function bracketDependentsFor(ctx, matchId) {
+  if (typeof matchId !== 'string' || !matchId) return [];
+  const doc = await ctx.repo.matches.getById(matchId);
+  if (!isMatchDoc(doc) || !belongsToSchoolScope(doc, ctx) || !doc.eventId) return [];
+  const matches = (await ctx.repo.forScope(ctx).matches.list())
+    .filter(row => row.eventId === doc.eventId);
+  return findDependentMatches({ match: doc, matches });
+}
+
+/** 事务内复查：候选下游里还有没作废的，就仍然挡着撤销。 */
+async function stillPendingDependents(tx, dependents) {
+  const still = [];
+  for (const row of dependents) {
+    const doc = await tx.matches.getById(row._id);
+    if (doc && doc.status !== MATCH_STATUS.REVOKED) still.push(doc || row);
+  }
+  return still;
+}
+
+/** 撤销被下游挡住时的提示：与学院赛小场 blocker 同一句话。 */
+function dependentRevokeMessage(dependent) {
+  const round = dependent && Number(dependent.round) > 0 ? `第 ${Number(dependent.round)} 轮` : '下一轮';
+  return `这场的结果已经排进了${round}，请从最后一轮往前依次撤销`;
+}
 
 /** 比赛记录 DTO：数据 + 权限旗标，展示交给页面。 */
 function matchSummary(doc, ctx, dir) {
@@ -207,21 +355,37 @@ async function submitSchoolMatch(payload = {}, ctx) {
   const token = payload.requestId;
   if (typeof token !== 'string' || !REQUEST_ID_PATTERN.test(token)) return ok(refused('录入请求编号无效'));
 
-  const roster = dir.memberIds;
+  // 新比赛的阵容按「在册 **且** 账号可用」校验（2026-10-16 独立验收 F4）：
+  // 与录分页可选名单同一口径，改请求体直接传停用会员的编号也不会被收下。
+  const roster = dir.activeMemberIds;
   const built = buildMatchRecord(
     { ...payload, recorder: ctx.actorId },
     { members: roster, now: ctx.now }
   );
   if (!built.ok) return ok(refused(built.firstError, { errors: built.errors, scoreErrors: built.scoreErrors }));
+
+  const nameOf = nameResolverOf(dir);
+  // 事务外的预判只为了「明显不行就别进事务」；真正管用的是事务内那一遍（见下）
   if (!canRecordScore(built.record, ctx.actorId, recordOptions(ctx, dir))) {
     return ok(refused('只有参赛者、本学院负责人或管理员可以录入这场比赛的成绩'));
   }
 
   // 防刷分闸门要读本范围完整台账；事务内不允许整表查询，故在事务外先取好。
-  const ledger = await ctx.repo.forScope(ctx).matches.list();
+  const [ledger, season] = await Promise.all([
+    ctx.repo.forScope(ctx).matches.list(),
+    loadSeason(ctx),
+  ]);
+  const seedUsage = tallyPairUsage(ledger, { seasonStart: season.resetTime });
+
   const result = await ctx.repo.transaction(async tx => {
     const fresh = await freshContext(tx, ctx);
     if (!canReadAssociationSpace(fresh)) return refused('没有读取协会空间的权限');
+    // 【录分资格必须在事务内按最新身份重判】2026-10-16 独立验收 F2：
+    // 预检查用的是请求进入时的上下文，管理员在这之后被撤权，这一笔仍会写进去。
+    // 角色、学院都取事务内重读到的身份（见 recordOptions）。
+    if (!canRecordScore(built.record, fresh.actorId, recordOptions(fresh, dir))) {
+      return refused('只有参赛者、本学院负责人或管理员可以录入这场比赛的成绩');
+    }
     const matchId = schoolMatchKey(schoolKey('m', fresh.actorId, token), fresh);
     const existing = await tx.matches.getById(matchId);
     if (isMatchDoc(existing)) {
@@ -229,11 +393,17 @@ async function submitSchoolMatch(payload = {}, ctx) {
         ? { ok: true, match: matchSummary(existing, fresh, dir), message: '' }
         : refused('请求编号已使用，请重新录入');
     }
-    // 一对会员本赛季打满上限后不再让录（判据取本范围完整台账）。
+    const freshSeason = await loadSeason(fresh);
+    // 一对会员本赛季打满上限后不再让录：先按台账判一次（一句人话），
+    // 再按事务内的计数文档复核并占位——后者才是并发下真正管用的那一道
     const gate = checkSubmitAllowed(built.record, ledger, {
-      seasonStart: (await loadSeason(fresh)).resetTime, nameOf: null,
+      seasonStart: freshSeason.resetTime, nameOf,
     });
     if (!gate.ok) return refused(gate.message);
+    const occupied = await occupyPairUsage(tx, fresh, built.record, {
+      limit: RATED_PAIR_LIMIT, season: freshSeason, seedUsage, nameOf,
+    });
+    if (!occupied.ok) return refused(occupied.message);
 
     const doc = matchDocFromRecord(built.record, matchId, fresh, fingerprintOf(built.record));
     await tx.matches.set(matchId, doc);
@@ -276,8 +446,12 @@ async function submitScheduledMatch(payload, ctx, dir) {
     }
 
     const filled = fillScheduledMatch(doc, { scoreA: payload.scoreA, scoreB: payload.scoreB }, {
-      // 阵容校验取在册名单；时间下界不设（与日常约球同口径，S2 赛季锚点归 M4）。
-      members: dir.memberIds, now: fresh.now, recorder: fresh.actorId,
+      // 【为什么不传名单】对阵由抽签钉死，参赛者是既成事实，这里只补比分。
+      // 若拿「当前可用会员」去校验，一方事后被平台停用就会把对手永久卡在
+      // 「录不了分」上——2026-10-16 用户定的口径：已排定的赛程照常录分，
+      // F4 那条「停用选手不得进新比赛」只管新比赛与新阵容。
+      // 时间下界不设（与日常约球同口径，S2 赛季锚点归 M4）。
+      now: fresh.now, recorder: fresh.actorId,
     });
     if (!filled.ok) {
       return refused(filled.firstError, { errors: filled.errors, scoreErrors: filled.scoreErrors });
@@ -363,6 +537,9 @@ async function revokeSchoolMatch(payload = {}, ctx) {
   // 够不着，先单独拦一道（与云端 revokeMatch 的 collegeLegRevokeBlocker 同源）。
   const blocked = await collegeRevokeBlockerFor(ctx, payload.matchId);
   if (blocked) return ok(refused(blocked));
+  // 个人赛签表反过来：下游就在 matches 里，用 findDependentMatches 拦（与旧协议同规则）
+  const dependents = await bracketDependentsFor(ctx, payload.matchId);
+  if (dependents.length > 0) return ok(refused(dependentRevokeMessage(dependents[0])));
   const result = await transition(payload, ctx, {
     action: 'revoke',
     auditAction: 'revokeMatch',
@@ -370,6 +547,12 @@ async function revokeSchoolMatch(payload = {}, ctx) {
     allow: (doc, opts) => canRevoke(doc, ctx.actorId, opts),
     notRevoked: true,
     patch: () => ({ status: MATCH_STATUS.REVOKED, reason }),
+    // 读了依赖与写状态之间还有一道缝：并发确认可能刚把决赛落成生效。
+    // 事务内逐个点读复查（整表查询在事务里不允许），缝就没了。
+    precondition: async (tx) => {
+      const still = await stillPendingDependents(tx, dependents);
+      return still.length > 0 ? dependentRevokeMessage(still[0]) : '';
+    },
   });
   return ok(await revertCollegeAfterRevoked(ctx, result.data));
 }
@@ -382,16 +565,28 @@ async function collegeRevokeBlockerFor(ctx, matchId) {
   return collegeLegRevokeBlocker(ctx, doc);
 }
 
-/** confirm / reject / revoke 共用的状态机：取记录 → 判权 → 写状态 + 审计。 */
+/**
+ * confirm / reject / revoke 共用的状态机：取记录 → 判权 → 写状态 + 审计。
+ *
+ * 【为什么要拿事务内的 fresh 重判身份与角色】2026-10-16 独立验收 F1：
+ * 原先只判「记录归属 + 行级权限」，而行级权限用的角色取自请求进入时的上下文；
+ * 一个已被停用的账号（platformStatus !== active）读不了任何数据，却仍能把
+ * 比赛确认成生效。现在事务内先过「账号 / 学籍 / 学校协会有效」这道闸，
+ * 再用重读到的角色重算行级权限——请求飞在路上时被停用、被撤权都不算数。
+ *
+ * 【spec.precondition】留给个别动作的事务内复查（目前是撤销前的下游依赖），
+ * 返回非空字符串即拒绝；放在权限判定之后，先答复「你有没有资格」再谈「撤不撤得动」。
+ */
 async function transition(payload, ctx, spec) {
   if (!ctx.actorId) return ok(refused('请先登录'));
   if (typeof payload.matchId !== 'string' || !payload.matchId) return ok(refused('缺少比赛编号'));
 
   const dir = await buildDirectory(ctx);
-  const roleOptions = { isMock: ctx.isMock === true, role: legacyRoleOf(ctx) };
   const result = await ctx.repo.transaction(async tx => {
+    const fresh = await freshContext(tx, ctx);
+    if (!canReadAssociationSpace(fresh)) return refused('账号已停用，或没有本协会的访问权限');
     const doc = await tx.matches.getById(payload.matchId);
-    if (!isMatchDoc(doc) || !belongsToSchoolScope(doc, ctx)) return refused('找不到这场比赛');
+    if (!isMatchDoc(doc) || !belongsToSchoolScope(doc, fresh)) return refused('找不到这场比赛');
     if (spec.requirePending && doc.status !== MATCH_STATUS.PENDING) {
       return refused('只有待确认的比赛可以驳回');
     }
@@ -399,7 +594,13 @@ async function transition(payload, ctx, spec) {
     if (spec.requireWinner && !doc.winner) {
       return refused('这场比赛还没有比分，请先录入成绩');
     }
-    if (!spec.allow(doc, roleOptions)) return refused(spec.message);
+    // mock 放宽只影响演示：isMock 由 mock 端打在 ctx 上，这里原样带进事务
+    const allowOptions = { isMock: ctx.isMock === true, ...recordOptions(fresh, dir) };
+    if (!spec.allow(doc, allowOptions)) return refused(spec.message);
+    if (typeof spec.precondition === 'function') {
+      const blocked = await spec.precondition(tx, doc);
+      if (blocked) return refused(blocked);
+    }
 
     const nowIso = iso(ctx.now);
     const patch = { ...spec.patch(), action: spec.action, actor: ctx.actorId, actedAt: nowIso };
@@ -408,7 +609,12 @@ async function transition(payload, ctx, spec) {
     await tx.audit.append({ _id: matchAuditKey(doc._id, spec.auditAction, next.revision),
       action: spec.auditAction, schoolId: ctx.schoolId, association: ctx.association,
       actorId: ctx.actorId, matchId: doc._id, at: nowIso });
-    return { ok: true, match: matchSummary(next, ctx, dir), message: '' };
+    // 作废即把「自行录入」的交手名额还回去（与提交时的占用对称）。
+    // 已作废的场次本就不计入用量（见 rating-cap.countedMatches）。
+    if (next.status === MATCH_STATUS.REVOKED && doc.status !== MATCH_STATUS.REVOKED) {
+      await releasePairUsage(tx, fresh, next);
+    }
+    return { ok: true, match: matchSummary(next, fresh, dir), message: '' };
   });
   return ok(result);
 }
@@ -419,20 +625,24 @@ async function forfeitSchoolMatch(payload = {}, ctx) {
   const forfeitBy = String(payload.forfeitBy || ctx.actorId).trim();
 
   const dir = await buildDirectory(ctx);
-  const role = legacyRoleOf(ctx);
   const result = await ctx.repo.transaction(async tx => {
+    const fresh = await freshContext(tx, ctx);
+    // 与 confirm / revoke 同一道闸：停用账号、失效学籍都不能借弃权改成绩（F1 同类）
+    if (!canReadAssociationSpace(fresh)) return refused('账号已停用，或没有本协会的访问权限');
     const doc = await tx.matches.getById(payload.matchId);
-    if (!isMatchDoc(doc) || !belongsToSchoolScope(doc, ctx)) return refused('找不到这场比赛');
-    if (!canForfeit(doc, forfeitBy, ctx.actorId, { role })) return refused('你无权记录这次弃权');
+    if (!isMatchDoc(doc) || !belongsToSchoolScope(doc, fresh)) return refused('找不到这场比赛');
+    if (!canForfeit(doc, forfeitBy, fresh.actorId, { role: recordOptions(fresh, dir).role })) {
+      return refused('你无权记录这次弃权');
+    }
 
     const nowIso = iso(ctx.now);
-    const patch = buildForfeitPatch(doc, forfeitBy, { actorId: ctx.actorId, now: ctx.now });
+    const patch = buildForfeitPatch(doc, forfeitBy, { actorId: fresh.actorId, now: fresh.now });
     const next = { ...doc, ...patch, actedAt: nowIso, revision: doc.revision + 1 };
     await tx.matches.set(doc._id, next);
     await tx.audit.append({ _id: matchAuditKey(doc._id, 'forfeitMatch', next.revision),
-      action: 'forfeitMatch', schoolId: ctx.schoolId, association: ctx.association,
-      actorId: ctx.actorId, matchId: doc._id, targetUserId: forfeitBy, at: nowIso });
-    return { ok: true, match: matchSummary(next, ctx, dir), message: '' };
+      action: 'forfeitMatch', schoolId: fresh.schoolId, association: fresh.association,
+      actorId: fresh.actorId, matchId: doc._id, targetUserId: forfeitBy, at: nowIso });
+    return { ok: true, match: matchSummary(next, fresh, dir), message: '' };
   });
   const resolved = await advanceAfterResolved(ctx, result);
   return ok(await advanceCollegeAfterResolved(ctx, resolved));
@@ -441,27 +651,30 @@ async function forfeitSchoolMatch(payload = {}, ctx) {
 async function assignSchoolMatchReferee(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
   if (typeof payload.matchId !== 'string' || !payload.matchId) return ok(refused('缺少比赛编号'));
-  if (!canManageAssociationSpace(ctx)) return ok(refused('只有管理员可以指派裁判'));
 
   const refereeId = String(payload.refereeId || '').trim();
+  // 名录（整表读）只能在事务外取；事务内只按主键点读，见 buildDirectory 的约束
+  const dir = await buildDirectory(ctx);
   const result = await ctx.repo.transaction(async tx => {
+    const fresh = await freshContext(tx, ctx);
+    // 指派裁判是管理动作：事务内按最新身份重判（请求期间被撤权不予放行，F1/F2 同类）
+    if (!canManageAssociationSpace(fresh)) return refused('只有管理员可以指派裁判');
     const doc = await tx.matches.getById(payload.matchId);
-    if (!isMatchDoc(doc) || !belongsToSchoolScope(doc, ctx)) return refused('找不到这场比赛');
+    if (!isMatchDoc(doc) || !belongsToSchoolScope(doc, fresh)) return refused('找不到这场比赛');
     if (!canAssignReferee(doc)) return refused('这场比赛已生效或已作废，不能再改派裁判');
 
     if (refereeId) {
-      const refusal = await refereeRejection(tx, ctx, refereeId);
+      const refusal = await refereeRejection(tx, fresh, refereeId);
       if (refusal) return refused(refusal);
     }
-    const nowIso = iso(ctx.now);
-    const patch = buildRefereePatch(refereeId, { actorId: ctx.actorId, now: ctx.now });
+    const nowIso = iso(fresh.now);
+    const patch = buildRefereePatch(refereeId, { actorId: fresh.actorId, now: fresh.now });
     const next = { ...doc, ...patch, refereeAt: nowIso, revision: doc.revision + 1 };
     await tx.matches.set(doc._id, next);
     await tx.audit.append({ _id: matchAuditKey(doc._id, 'assignMatchReferee', next.revision),
-      action: 'assignMatchReferee', schoolId: ctx.schoolId, association: ctx.association,
-      actorId: ctx.actorId, matchId: doc._id, refereeId, at: nowIso });
-    const dir = await buildDirectory(ctx);
-    return { ok: true, match: matchSummary(next, ctx, dir), message: '' };
+      action: 'assignMatchReferee', schoolId: fresh.schoolId, association: fresh.association,
+      actorId: fresh.actorId, matchId: doc._id, refereeId, at: nowIso });
+    return { ok: true, match: matchSummary(next, fresh, dir), message: '' };
   });
   return ok(result);
 }

@@ -4,6 +4,8 @@ const { buildSchoolContext } = require('./school-context.js');
 const handlers = {
   ...require('./school-member-handlers.js'),
   ...require('./school-space-handlers.js'),
+  // 跨校邀请赛：2026-10-16 接入协议 2（此前只在本地模拟口径开放）
+  ...require('./school-exchange-handlers.js'),
 };
 
 async function handleSchoolRequest(event, { repo, openId, now = new Date() }) {

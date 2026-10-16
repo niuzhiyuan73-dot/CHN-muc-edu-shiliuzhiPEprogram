@@ -4,6 +4,8 @@ const { isKnownAssociation } = require('./associations.js');
 const SCHOOL_STATUS = Object.freeze({ ACTIVE: 'active', DISABLED: 'disabled' });
 const SCHOOL_MEMBER_STATUS = Object.freeze({
   PENDING: 'pending', ACTIVE: 'active', REJECTED: 'rejected', LEFT: 'left', DISABLED: 'disabled',
+  // 转出：本人已转到另一所学校（历史记录仍留在原学校，见 school-membership-service 的转校一段）
+  TRANSFERRED: 'transferred',
 });
 const PLATFORM_STATUS = Object.freeze({ ACTIVE: 'active', DISABLED: 'disabled' });
 const PLATFORM_ROLE = Object.freeze({ MEMBER: 'member', ADMIN: 'admin' });
@@ -143,6 +145,21 @@ const collegeLineupKey = (tieId, collegeId, scope) => {
   const s = schoolScope(scope);
   return schoolKey('cln', s.schoolId, s.association, tieId, collegeId);
 };
+// 交手名额计数：scope + 赛季分界点 + 两人编号（升序）。两人编号直接作为键的两段，
+// 不用 '|' 拼接——键本身就带分隔语义，少一层转义就少一处能拼错的地方。
+//
+// 【为什么用「赛季分界点」而不是赛季序号当键】
+// 名额算的是「本赛季」的场次，而「本赛季」在台账那边的定义就是
+// `matchTime >= season.resetTime`（见 rating-cap.countedMatches）。计数文档的键
+// 必须用同一个定义，两处才不可能分叉：重置赛季时 resetTime 变、键跟着变，
+// 旧赛季的计数天然失效、不必迁移；从没重置过的范围用 'all'，与「从未开始过新赛季」
+// 同义。分界点为空 / 非法时也归到 'all'，不会把不同赛季挤进同一个桶。
+const pairCountKey = (a, b, seasonStamp, scope) => {
+  const s = schoolScope(scope);
+  const [first, second] = String(a) <= String(b) ? [a, b] : [b, a];
+  const stamp = typeof seasonStamp === 'string' && seasonStamp ? seasonStamp : 'all';
+  return schoolKey('pc', s.schoolId, s.association, stamp, first, second);
+};
 // 全校公告：_id 由服务端按 scope + 发布者 + 请求编号生成，翻不出别的学校/协会。
 const schoolAnnouncementKey = (announcementId, scope) => {
   const s = schoolScope(scope);
@@ -165,5 +182,5 @@ module.exports = {
   associationNoticeKey, associationTrainingKey, trainingRegistrationKey,
   schoolEventKey, schoolEventSignupKey, schoolMatchKey, schoolLiveKey,
   collegeEventKey, collegeEntryKey, collegeLineupKey, schoolAnnouncementKey,
-  schoolAccountKey,
+  schoolAccountKey, pairCountKey,
 };

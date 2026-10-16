@@ -10,7 +10,9 @@ const KEYS = ['users', 'schools', 'schoolAssociations', 'colleges', 'schoolMembe
   'events', 'eventSignups', 'matches', 'liveScores',
   'collegeEvents', 'collegeEntries', 'ties', 'lineups',
   // M4：赛季文档（每范围一份，_id 由 scopeKey 组成，跨范围读不到也改不掉）
-  'seasons'];
+  'seasons',
+  // 交手名额计数：每对每赛季一条，_id 由 scope + 赛季号 + 两人编号组成
+  'pairCounts'];
 
 function createSchoolMemoryRepo(seed = {}) {
   let state = Object.fromEntries(KEYS.map(key => [key, new Map((seed[key] || []).map(doc => [doc._id, clone(doc)]))]));
@@ -40,7 +42,7 @@ function createSchoolMemoryRepo(seed = {}) {
         'associationNotices', 'associationTrainings', 'trainingRegistrations',
         'announcements',
         'events', 'eventSignups', 'matches', 'liveScores',
-        'collegeEvents', 'collegeEntries', 'ties', 'lineups'].map(key => [key, {
+        'collegeEvents', 'collegeEntries', 'ties', 'lineups', 'pairCounts'].map(key => [key, {
         list: async () => (await repo[key].list()).filter(doc => doc.schoolId === scope.schoolId &&
           (['colleges', 'schoolMembers'].includes(key) || doc.association === scope.association)),
       }]));

@@ -1,7 +1,7 @@
 const identity = require('../../services/school-identity.js');
 const exchange = require('../../services/exchange.js');
-const STATE = { signup: '报名中', ready: '名单已锁定', drawn: '已抽签', finished: '名次已确认' };
-const INVITATION = { pending: '待确认', accepted: '已接受', declined: '已婉拒' };
+const STATE = { signup: '报名中', ready: '名单已锁定', drawn: '已抽签', finished: '名次已确认', canceled: '已取消' };
+const INVITATION = { pending: '待确认', accepted: '已接受', declined: '已婉拒', withdrawn: '已撤回' };
 const MATCH_STATUS = { pending: '待比赛', active: '已确认' };
 
 Page({
@@ -23,7 +23,8 @@ Page({
     const seq = this.sequence = (this.sequence || 0) + 1;
     this.update({ loading: true, error: '', events: [], detail: null, canCreate: false });
     try {
-      if (!identity.isMockNow()) throw new Error('跨校交流当前仅开放本地模拟体验');
+      // 2026-10-16 起云端也已接入（协议 2 注册了邀请赛动作），门面按数据源自己选，
+      // 页面不再拦「非模拟模式」——否则云环境一上线，这里就成了唯一的死路。
       const target = { schoolId: this.data.schoolId, association: 'pkb' };
       const sessionApi = identity.forSchoolIdentity(target);
       const api = exchange.forScope(target);
@@ -56,15 +57,31 @@ Page({
   },
   describeDetail(response, schoolId) {
     const event = response.event;
-    return { ...response, statusText: STATE[event.status],
-      canLock: response.canManage && event.status === 'signup',
+    const canceled = response.canceled === true || event.status === 'canceled';
+    return { ...response, statusText: STATE[event.status], canceled,
+      canLock: !canceled && response.canManage && event.status === 'signup',
       schools: event.participantSchoolIds.map(id => ({ id, name: event.schoolNames[id],
-        status: INVITATION[event.invitations[id]], count: event.schoolCounts[id], quota: event.schoolQuotas[id] })),
+        status: INVITATION[event.invitations[id]], count: event.schoolCounts[id], quota: event.schoolQuotas[id],
+        // 撤回邀请：报名阶段、不是主办校自己、该校还没人报名时才能撤
+        canWithdraw: Boolean(response.canWithdrawInvitation) && id !== event.schoolId &&
+          (event.schoolCounts[id] || 0) === 0 &&
+          ['pending', 'accepted'].includes(event.invitations[id]),
+      })),
       invitationText: INVITATION[event.invitations[schoolId]],
       results: (event.results || []).slice(),
+      participants: (response.participants || []).map(row => ({ ...row,
+        checkInText: row.checkInTime ? '已签到' : '未签到' })),
       matches: (response.matches || []).map(match => ({ ...match, statusText: MATCH_STATUS[match.status],
         scoreText: match.status === 'active' ? `${match.scoreA}:${match.scoreB}` : '未开始' })),
     };
+  },
+
+  /** 破坏性动作的二次确认：与协会空间面板同一写法，测试环境放行 */
+  confirmAction(content, title = '请确认') {
+    return new Promise(resolve => {
+      if (typeof wx === 'undefined' || typeof wx.showModal !== 'function') { resolve(true); return; }
+      wx.showModal({ title, content, success: res => resolve(Boolean(res.confirm)), fail: () => resolve(false) });
+    });
   },
   onSchoolChange(event) {
     if (this.data.busy) return;
@@ -175,5 +192,62 @@ Page({
     if (!this.data.detail || !this.data.detail.canConfirmRanking) return;
     const eventId = this.data.detail.event._id;
     return this.write(api => api.confirmExchangeRanking({ eventId }));
+  },
+
+  /* ---------- S4 剩余能力（2026-10-16）：签到 / 退赛 / 撤回邀请 / 取消 / 撤销比分 ---------- */
+
+  /** 代签：管理员在场边替参赛者签到（与普通赛事同一口径，本人不自助签到） */
+  onCheckIn(event) {
+    const { detail } = this.data;
+    if (this.data.busy || !detail) return;
+    const userId = event.currentTarget.dataset.userid;
+    if (!userId) return;
+    return this.write(api => api.checkInExchangeSignup({ eventId: detail.event._id, userId }));
+  },
+
+  /** 移除报名者（退赛处理）：只在报名阶段，需二次确认 */
+  onRemoveSignup(event) {
+    const { detail } = this.data;
+    if (this.data.busy || !detail) return;
+    const userId = event.currentTarget.dataset.userid;
+    if (!userId) return;
+    return this.confirmAction('移除后该名额会释放，确定移除这位报名者吗？', '移除报名')
+      .then(confirmed => (confirmed
+        ? this.write(api => api.removeExchangeSignup({ eventId: detail.event._id, userId }))
+        : undefined));
+  },
+
+  /** 撤回对某校的邀请（主办方撤别人、受邀校撤自己那一条） */
+  onWithdrawInvitation(event) {
+    const { detail } = this.data;
+    if (this.data.busy || !detail) return;
+    const schoolId = event.currentTarget.dataset.schoolid;
+    if (!schoolId) return;
+    return this.confirmAction('撤回后该校不能再报名，确定撤回邀请吗？', '撤回邀请')
+      .then(confirmed => (confirmed
+        ? this.write(api => api.withdrawExchangeInvitation({ eventId: detail.event._id, schoolId }))
+        : undefined));
+  },
+
+  /** 取消整场赛事：主办校管理员或平台管理员 */
+  onCancelEvent() {
+    const { detail } = this.data;
+    if (this.data.busy || !detail || !detail.canCancel) return;
+    return this.confirmAction('取消后不能再报名、抽签与录入比分，已确认的比分作为历史保留。确定取消吗？', '取消赛事')
+      .then(confirmed => (confirmed
+        ? this.write(api => api.cancelExchangeEvent({ eventId: detail.event._id }))
+        : undefined));
+  },
+
+  /** 撤销已确认的比分（从最后一轮往前撤），撤销后可以重新录入 */
+  onRevokeScore(event) {
+    const { detail } = this.data;
+    if (this.data.busy || !detail) return;
+    const matchId = event.currentTarget.dataset.matchid;
+    if (!matchId) return;
+    return this.confirmAction('撤销后这场比赛回到待确认，比分要重新录入。确定撤销吗？', '撤销比分')
+      .then(confirmed => (confirmed
+        ? this.write(api => api.revokeExchangeScore({ eventId: detail.event._id, matchId }))
+        : undefined));
   },
 });

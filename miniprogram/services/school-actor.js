@@ -22,6 +22,7 @@
 
 const { permissionOf, isPlatformAdminCtx, PERMISSION } = require('./school-permission.js');
 const { ROLE, USER_STATUS } = require('../utils/constants.js');
+const { PLATFORM_STATUS } = require('../utils/school.js');
 
 /**
  * S2 角色 → 旧栈 ROLE 数值，供旧栈纯判定复用。
@@ -43,8 +44,18 @@ function legacyRoleOf(ctx) {
  * members 是**会员档案**（含 gender），抽签算种子、配对要用；memberIds 是在册编号，
  * 供 match-record 的阵容校验。user 表是全局的，这里只取本范围在册会员那几份。
  *
+ * 【memberIds 与 activeMemberIds 为什么要分开（2026-10-16 独立验收 F4）】
+ * 「在册」与「账号还能用」是两件事：
+ *   · `memberIds` 只按学籍行状态过滤——离校 / 被拒的人不在里面，但**平台账号被停用**
+ *     的人还在。它记录的是「这个人在本校有学籍」这个事实，展示与历史口径要用；
+ *   · `activeMemberIds` 再叠一层 `platformStatus === active`，与录分页可选名单
+ *     同一口径。**新比赛 / 新阵容**的资格校验用它——否则界面上看不见的人，改个
+ *     请求体直接传 ID 就能录进来。
+ * 已排定的赛程（签表场次、学院赛小场）不在此列：对阵是抽签定死的既成事实，
+ * 一方事后被停用不该把对手卡住，那条通路按记录本身校验（见 submitScheduledMatch）。
+ *
  * @param {Object} ctx
- * @returns {Promise<{memberIds:string[], members:Array<Object>, actorCollege:string, collegeOf:function(string):string}>}
+ * @returns {Promise<{memberIds:string[], activeMemberIds:string[], members:Array<Object>, actorCollege:string, collegeIdOf:function(string):string, collegeNameById:function(string):string, collegeOf:function(string):string}>}
  */
 async function buildDirectory(ctx) {
   const [members, colleges, users] = await Promise.all([
@@ -56,10 +67,17 @@ async function buildDirectory(ctx) {
   const collegeIdOf = new Map(members.map(item => [item.userId, item.collegeId]));
   const userById = new Map(users.map(item => [item._id, item]));
   const active = members.filter(item => item.status === 'active');
+  const activeUsers = active.filter(item => {
+    const user = userById.get(item.userId);
+    return Boolean(user && user.platformStatus === PLATFORM_STATUS.ACTIVE);
+  });
   return {
     memberIds: active.map(item => item.userId),
+    activeMemberIds: activeUsers.map(item => item.userId),
     members: active.map(item => userById.get(item.userId)).filter(Boolean),
     actorCollege: nameByCollegeId.get(collegeIdOf.get(ctx.actorId)) || '',
+    collegeIdOf: userId => collegeIdOf.get(userId) || '',
+    collegeNameById: collegeId => nameByCollegeId.get(collegeId) || '',
     collegeOf: userId => nameByCollegeId.get(collegeIdOf.get(userId)) || '',
   };
 }
@@ -119,9 +137,22 @@ async function buildCollegeDirectory(ctx) {
   };
 }
 
-/** 权限判定的公共入参：角色 + 操作者学院 + 编号→学院。 */
+/**
+ * 权限判定的公共入参：角色 + 操作者学院 + 编号→学院。
+ *
+ * 学院取**传进来的 ctx 自己的学籍**（而不是调用方在事务外缓存的快照）：
+ * 撤权、调学院、离校都可能发生在一个请求飞在路上的时候，事务内用 `fresh`
+ * 再算一次，学院关系才不会过期（2026-10-16 独立验收 F2）。
+ *
+ * @param {Object} ctx 事务内 fresh 上下文或事务外上下文
+ * @param {Object} dir buildDirectory 的结果（只用到「学院编号 → 全名」的静态映射）
+ */
 function recordOptions(ctx, dir) {
-  return { role: legacyRoleOf(ctx), college: dir.actorCollege, collegeOf: dir.collegeOf };
+  const collegeId = (ctx.schoolMember && ctx.schoolMember.collegeId) ||
+    (dir && typeof dir.collegeIdOf === 'function' ? dir.collegeIdOf(ctx.actorId) : '');
+  const college = (dir && typeof dir.collegeNameById === 'function' ? dir.collegeNameById(collegeId) : '') ||
+    (dir && dir.actorCollege) || '';
+  return { role: legacyRoleOf(ctx), college, collegeOf: dir.collegeOf };
 }
 
 /**

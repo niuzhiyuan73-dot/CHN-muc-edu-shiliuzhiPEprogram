@@ -108,7 +108,12 @@ test('roster and session projections do not expose student IDs or identity refer
   await accept(repo, id);
   await signup(repo, id, 'demo_buaa_member', 'buaa');
   const detail = await call(repo, 'getExchangeEvent', { eventId: id });
-  assert.deepEqual(Object.keys(detail.participants[0]).sort(), ['nickName', 'representedSchoolId', 'schoolName', 'userId']);
+  // 恰恰是「字段白名单」式的断言：多出任何字段都要在这里显式过一遍，
+  // 免得某天顺手把 schoolMemberId / studentId 塞进名单投影。
+  assert.deepEqual(Object.keys(detail.participants[0]).sort(),
+    ['canCheckIn', 'canRemove', 'checkInTime', 'checkedIn', 'nickName',
+      'representedSchoolId', 'schoolName', 'userId']);
+  assert.equal(detail.participants[0].checkInTime, null, '未签到就是 null，不是 undefined');
   assert.equal(detail.event.fingerprint, undefined);
   assert.equal(detail.event.createdBy, undefined);
 });
@@ -291,4 +296,204 @@ test('ranking is derived from confirmed results and confirmed only by managers',
   assert.equal((await call(repo, 'confirmExchangeRanking', { eventId: id })).ok, false, '不能重复确认');
   // 名次只回传昵称、代表学校与用户标识
   assert.deepEqual(Object.keys(done.event.results[0]).sort(), ['nickName', 'placement', 'representedSchoolId', 'schoolName', 'userId']);
+});
+
+/* ============================================================
+ * S4 剩余能力（2026-10-16）：签到 / 退赛 / 邀请撤回 / 取消赛事 / 比分撤销
+ * ============================================================
+ * 规则与普通赛事对齐：代签由管理员做、退赛只在报名阶段、比分撤销要求从最后一轮
+ * 往前撤、赛事取消后一切写动作停止。
+ */
+
+test('签到：名单锁定后由管理员代签，重复签到幂等，不能替外校签', async () => {
+  const repo = fixture();
+  const id = await readyFour(repo);
+  const before = await call(repo, 'getExchangeEvent', { eventId: id });
+  assert.equal(before.participants.every(row => row.checkInTime === null), true);
+  assert.equal(before.canCheckIn, true);
+  // 民大管理员只能替民大的参赛者签到（和普通赛事一样，签到由管理员在场边做）
+  const muc = before.participants.filter(row => row.representedSchoolId === 'muc');
+  const buaa = before.participants.filter(row => row.representedSchoolId === 'buaa');
+  assert.equal(muc.length > 0 && muc.every(row => row.canCheckIn === true), true);
+  assert.equal(buaa.every(row => row.canCheckIn === false), true, '不能替外校签');
+
+  const signed = await call(repo, 'checkInExchangeSignup', { eventId: id, userId: 'demo_muc_member' });
+  assert.equal(signed.ok, true, signed.message);
+  const again = await call(repo, 'checkInExchangeSignup', { eventId: id, userId: 'demo_muc_member' });
+  assert.equal(again.ok, true, '重复签到幂等');
+  const rows = await repo.exchangeSignups.listByEvent(id);
+  assert.equal(rows.filter(row => row.checkInTime).length, 1, '只落一次签到时间');
+
+  // 民大管理员只能替民大的人签；普通会员不能替别人签
+  assert.equal((await call(repo, 'checkInExchangeSignup', { eventId: id, userId: 'demo_buaa_member' })).ok, false);
+  assert.equal((await call(repo, 'checkInExchangeSignup', { eventId: id, userId: 'demo_muc_admin' },
+    'demo_muc_member', 'muc')).ok, false);
+  // 北航管理员可以替本校的人签
+  assert.equal((await call(repo, 'checkInExchangeSignup', { eventId: id, userId: 'demo_buaa_member' },
+    'demo_buaa_admin', 'buaa')).ok, true);
+  // 名单锁定前不能签到（新建一场，别撞上上面那场的幂等编号）
+  const early = await create(repo, { requestId: 'test_early_checkin' });
+  await accept(repo, early);
+  await signup(repo, early, 'demo_muc_member');
+  assert.equal((await call(repo, 'checkInExchangeSignup', { eventId: early, userId: 'demo_muc_member' })).ok, false);
+});
+
+test('退赛：本人取消与管理员移除都只在报名阶段，且释放名额', async () => {
+  const repo = fixture();
+  const id = await create(repo);
+  await accept(repo, id);
+  await signup(repo, id, 'demo_muc_member');
+  await signup(repo, id, 'demo_muc_admin');
+  await signup(repo, id, 'demo_buaa_member', 'buaa');
+  assert.equal((await repo.exchangeEvents.getById(id)).signupCount, 3);
+
+  // 管理员移除本校一位报名者：名额释放
+  const removed = await call(repo, 'removeExchangeSignup', { eventId: id, userId: 'demo_muc_admin', reason: '临时有事' });
+  assert.equal(removed.ok, true, removed.message);
+  const after = await repo.exchangeEvents.getById(id);
+  assert.equal(after.signupCount, 2);
+  assert.equal(after.schoolCounts.muc, 1);
+  const row = await repo.exchangeSignups.getById(require('../miniprogram/utils/school')
+    .schoolKey('xs', id, 'demo_muc_admin'));
+  assert.equal(row.status, 'removed');
+  assert.equal(row.removeReason, '临时有事');
+  // 重复移除幂等；外校的人不能由本方管理员移除
+  assert.equal((await call(repo, 'removeExchangeSignup', { eventId: id, userId: 'demo_muc_admin' })).ok, true);
+  assert.equal((await call(repo, 'removeExchangeSignup', { eventId: id, userId: 'demo_buaa_member' })).ok, false);
+
+  // 名单锁定后不能再退赛
+  await call(repo, 'lockExchangeRoster', { eventId: id });
+  assert.equal((await call(repo, 'removeExchangeSignup', { eventId: id, userId: 'demo_muc_member' })).ok, false);
+  assert.equal((await call(repo, 'cancelExchangeSignup', { eventId: id }, 'demo_muc_member')).ok, false);
+});
+
+test('邀请撤回：主办方可撤未锁定的邀请，受邀校也能撤回自己那条，已有人报名要先清', async () => {
+  const repo = fixture();
+  const id = await create(repo);
+  await accept(repo, id);
+  await signup(repo, id, 'demo_buaa_member', 'buaa');
+
+  // 该校已经有人报名：先拒绝
+  assert.equal((await call(repo, 'withdrawExchangeInvitation', { eventId: id, schoolId: 'buaa' })).ok, false);
+  // 移除报名只能由该校管理员做（跨校不管对方的人），再去撤回邀请
+  assert.equal((await call(repo, 'removeExchangeSignup', { eventId: id, userId: 'demo_buaa_member' })).ok, false);
+  await call(repo, 'removeExchangeSignup', { eventId: id, userId: 'demo_buaa_member' }, 'demo_buaa_admin', 'buaa');
+
+  // 受邀校自己的管理员撤回自己那条
+  const byGuest = await call(repo, 'withdrawExchangeInvitation', { eventId: id, schoolId: 'buaa' },
+    'demo_buaa_admin', 'buaa');
+  assert.equal(byGuest.ok, true, byGuest.message);
+  assert.equal(byGuest.event.invitations.buaa, 'withdrawn');
+  // 撤回后该校不能再报名
+  assert.equal((await signup(repo, id, 'demo_buaa_member', 'buaa')).ok, false);
+
+  // 主办方可以撤回对另一校的邀请；主办校自己不能被撤回
+  const other = await create(repo, { requestId: 'test2' });
+  assert.equal((await call(repo, 'withdrawExchangeInvitation', { eventId: other, schoolId: 'muc' })).ok, false);
+  // 名单锁定后不能再撤回
+  const third = await create(repo, { requestId: 'test3' });
+  await accept(repo, third);
+  await signup(repo, third, 'demo_muc_member');
+  await signup(repo, third, 'demo_buaa_member', 'buaa');
+  await call(repo, 'lockExchangeRoster', { eventId: third });
+  assert.equal((await call(repo, 'withdrawExchangeInvitation', { eventId: third, schoolId: 'buaa' })).ok, false);
+});
+
+test('取消赛事：主办方可取消，取消后报名 / 抽签 / 录分 / 名次全部停止', async () => {
+  const repo = fixture();
+  const id = await readyFour(repo);
+  assert.equal((await call(repo, 'cancelExchangeEvent', { eventId: id, reason: '场地冲突' },
+    'demo_buaa_admin', 'buaa')).ok, false, '受邀校不能取消整场赛事');
+
+  const canceled = await call(repo, 'cancelExchangeEvent', { eventId: id, reason: '场地冲突' });
+  assert.equal(canceled.ok, true, canceled.message);
+  assert.equal(canceled.event.status, 'canceled');
+  assert.equal((await repo.exchangeEvents.getById(id)).cancelReason, '场地冲突');
+
+  await call(repo, 'drawExchangeEvent', { eventId: id, seedValue: 3 });
+  assert.equal((await call(repo, 'drawExchangeEvent', { eventId: id, seedValue: 3 })).ok, false, '取消后不能抽签');
+  const detail = await call(repo, 'getExchangeEvent', { eventId: id });
+  assert.equal(detail.canceled, true);
+  assert.equal(detail.canDraw, false);
+  assert.equal(detail.participants.every(row => row.canCheckIn === false), true);
+  // 取消后再取消幂等
+  assert.equal((await call(repo, 'cancelExchangeEvent', { eventId: id })).ok, true);
+});
+
+test('比分撤销：可从最后一轮往前撤，撤掉后重录会刷新下一轮对阵', async () => {
+  const repo = fixture();
+  const id = await readyFour(repo);
+  await call(repo, 'drawExchangeEvent', { eventId: id, seedValue: 9 });
+  let rows = await repo.exchangeMatches.listByEvent(id);
+  const semis = rows.filter(row => row.round === 1).sort((a, b) => (a._id < b._id ? -1 : 1));
+  await call(repo, 'submitExchangeScore', { eventId: id, matchId: semis[0]._id, scoreA: 11, scoreB: 6 });
+  await call(repo, 'submitExchangeScore', { eventId: id, matchId: semis[1]._id, scoreA: 11, scoreB: 4 });
+  rows = await repo.exchangeMatches.listByEvent(id);
+  const final = rows.find(row => row.round === 2);
+  assert.ok(final, '两场半决赛确认后应生成决赛');
+  await call(repo, 'submitExchangeScore', { eventId: id, matchId: final._id, scoreA: 11, scoreB: 7 });
+
+  // 后面轮次已确认：必须先撤决赛
+  assert.equal((await call(repo, 'revokeExchangeScore', { eventId: id, matchId: semis[0]._id })).ok, false);
+  assert.equal((await call(repo, 'revokeExchangeScore', { eventId: id, matchId: final._id, reason: '比分记错' })).ok, true);
+  const revokedFinal = await repo.exchangeMatches.getById(final._id);
+  assert.equal(revokedFinal.status, 'pending');
+  assert.equal(revokedFinal.winner, '');
+  assert.equal(revokedFinal.scoreA, null);
+
+  // 现在可以撤半决赛；撤掉之后重录，若晋级者换人，决赛对阵跟着刷新
+  assert.equal((await call(repo, 'revokeExchangeScore', { eventId: id, matchId: semis[0]._id })).ok, true);
+  const loserOfSemi = semis[0].winner === 'A' ? semis[0].playerB : semis[0].playerA;
+  const flipped = semis[0].winner === 'A' ? { scoreA: 5, scoreB: 11 } : { scoreA: 11, scoreB: 5 };
+  await call(repo, 'submitExchangeScore', { eventId: id, matchId: semis[0]._id, ...flipped });
+  const finalAfter = await repo.exchangeMatches.getById(final._id);
+  assert.equal(finalAfter.playerA === loserOfSemi || finalAfter.playerB === loserOfSemi, true,
+    '重新录分后，决赛里的晋级者要换成新的胜者');
+  assert.equal(finalAfter.status, 'pending');
+  // 非参赛者且非管理员没有撤销权（参赛者本人可以撤销，与录分权限同一把尺子）
+  await call(repo, 'submitExchangeScore', { eventId: id, matchId: finalAfter._id, scoreA: 11, scoreB: 9 });
+  assert.equal((await call(repo, 'revokeExchangeScore', { eventId: id, matchId: finalAfter._id },
+    'demo_buaa_member_2', 'buaa')).ok, false);
+  // 参赛者本人可以撤销（该场未指定裁判时，与录分同权）
+  assert.equal((await call(repo, 'revokeExchangeScore', { eventId: id, matchId: finalAfter._id },
+    finalAfter.playerA, await schoolOf(repo, id, finalAfter.playerA))).ok, true);
+});
+
+test('失效身份在锁定名单时被清理并释放名额，仍够两校则照常锁定', async () => {
+  const repo = fixture();
+  const id = await create(repo);
+  await accept(repo, id);
+  await signup(repo, id, 'demo_muc_member');
+  await signup(repo, id, 'demo_muc_admin');
+  await signup(repo, id, 'demo_buaa_member', 'buaa');
+  await signup(repo, id, 'demo_buaa_admin', 'buaa');
+  // 北航两位里的一位退学（学籍停用）
+  const memberId = schoolMemberKey('demo_buaa_admin', 'buaa');
+  const member = await repo.schoolMembers.getById(memberId);
+  await repo.schoolMembers.set(memberId, { ...member, status: 'disabled' });
+
+  const locked = await call(repo, 'lockExchangeRoster', { eventId: id });
+  assert.equal(locked.ok, true, locked.message);
+  const event = await repo.exchangeEvents.getById(id);
+  assert.equal(event.signupCount, 3, '失效者不再占名额');
+  assert.equal(event.schoolCounts.buaa, 1);
+  assert.deepEqual(event.prunedSignups.map(row => row.userId), ['demo_buaa_admin']);
+  const pruned = await repo.exchangeSignups.getById(require('../miniprogram/utils/school')
+    .schoolKey('xs', id, 'demo_buaa_admin'));
+  assert.equal(pruned.status, 'removed');
+  assert.equal(pruned.removeReason, '参赛身份已失效');
+
+  // 只剩一校有人时：清理后锁定被拒，并说明原因
+  // （先把上一步停用的北航管理员学籍恢复——受邀校的邀请处理也要靠它）
+  await repo.schoolMembers.set(memberId, member);
+  const only = await create(repo, { requestId: 'test_only' });
+  await accept(repo, only);
+  await signup(repo, only, 'demo_muc_member');
+  await signup(repo, only, 'demo_buaa_member', 'buaa');
+  const buaaMember = schoolMemberKey('demo_buaa_member', 'buaa');
+  const row = await repo.schoolMembers.getById(buaaMember);
+  await repo.schoolMembers.set(buaaMember, { ...row, status: 'disabled' });
+  const blocked = await call(repo, 'lockExchangeRoster', { eventId: only });
+  assert.equal(blocked.ok, false);
+  assert.match(blocked.message, /两校/);
 });

@@ -30,7 +30,11 @@
     <view wx:if="{{detail}}" class="card">
       <view class="card-title">{{detail.event.title}}</view>
       <view class="hint">{{detail.event.location}} · {{detail.statusText}}</view>
-      <view wx:for="{{detail.schools}}" wx:key="id" class="hint">{{item.name}}：{{item.status}}，报名 {{item.count}}/{{item.quota}}</view>
+      <view wx:if="{{detail.canceled}}" class="hint">赛事已取消{{detail.event.cancelReason ? '：' + detail.event.cancelReason : ''}}，不再接受报名与比分</view>
+      <view wx:for="{{detail.schools}}" wx:key="id" class="hint">
+        {{item.name}}：{{item.status}}，报名 {{item.count}}/{{item.quota}}
+        <button wx:if="{{item.canWithdraw}}" size="mini" disabled="{{busy}}" data-schoolid="{{item.id}}" bindtap="onWithdrawInvitation">撤回邀请</button>
+      </view>
       <view wx:if="{{detail.canRespond}}" class="actions">
         <button size="mini" data-decision="accepted" disabled="{{busy}}" bindtap="onRespond">接受邀请</button>
         <button size="mini" data-decision="declined" disabled="{{busy}}" bindtap="onRespond">婉拒邀请</button>
@@ -38,7 +42,13 @@
       <button wx:if="{{detail.canSignup}}" class="btn btn-primary" disabled="{{busy}}" bindtap="onSignup">{{detail.signed ? '取消我的报名' : '代表本校报名'}}</button>
       <view class="section-title">参赛名单</view>
       <view wx:if="{{!detail.participants.length}}" class="hint">暂无报名</view>
-      <view wx:for="{{detail.participants}}" wx:key="userId" class="hint">{{item.nickName}} · {{item.schoolName}}</view>
+      <view wx:for="{{detail.participants}}" wx:key="userId" class="participant-row">
+        <view class="hint">{{item.nickName}} · {{item.schoolName}}{{item.checkInTime ? ' · ' + item.checkInText : ''}}</view>
+        <view class="actions">
+          <button wx:if="{{item.canCheckIn}}" size="mini" disabled="{{busy}}" data-userid="{{item.userId}}" bindtap="onCheckIn">代签</button>
+          <button wx:if="{{item.canRemove}}" size="mini" disabled="{{busy}}" data-userid="{{item.userId}}" bindtap="onRemoveSignup">移出</button>
+        </view>
+      </view>
       <button wx:if="{{detail.canLock}}" disabled="{{busy}}" bindtap="onLock">锁定报名名单</button>
       <button wx:if="{{detail.canDraw}}" disabled="{{busy}}" bindtap="onDraw">{{detail.event.draw ? '重新抽签' : '抽签生成对阵'}}</button>
       <block wx:if="{{detail.matches.length}}">
@@ -54,9 +64,11 @@
             <input class="field score-input" type="number" placeholder="{{item.nameB}}" value="{{scoreDraft[item._id].b}}" data-matchid="{{item._id}}" data-side="b" bindinput="onScoreInput" />
             <button size="mini" disabled="{{busy}}" data-matchid="{{item._id}}" bindtap="onSubmitScore">确认比分</button>
           </view>
+          <button wx:if="{{item.canRevoke}}" size="mini" disabled="{{busy}}" data-matchid="{{item._id}}" bindtap="onRevokeScore">撤销比分</button>
         </view>
       </block>
       <button wx:if="{{detail.canConfirmRanking}}" disabled="{{busy}}" bindtap="onConfirmRanking">确认最终名次</button>
+      <button wx:if="{{detail.canCancel}}" class="btn" disabled="{{busy}}" bindtap="onCancelEvent">取消整场赛事</button>
       <block wx:if="{{detail.results.length}}">
         <view class="section-title">最终名次</view>
         <view wx:for="{{detail.results}}" wx:key="userId" class="hint">第{{item.placement}}名 · {{item.nickName}}（{{item.schoolName}}）</view>

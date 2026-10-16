@@ -687,6 +687,10 @@ const COLLECTION = {
   ASSOCIATION_TRAININGS: 'association_trainings',
   // 训练报名：_id = scope + trainingId + userId，含取消/移除与资格快照（规划 §5.5）。
   TRAINING_REGISTRATIONS: 'training_registrations',
+  // 每赛季「一对会员的自行录入场次」计数：_id = scope + 赛季号 + 两人编号。
+  // 它本身没有业务含义，只为一件事存在——把名额判断放进事务，让并发的两次录分
+  // 在同一份文档上撞车（见 school-match-service 的 pairUsage 一段）。
+  PAIR_COUNTS: 'pair_counts',
 };
 
 /** 本地缓存键名 */

@@ -217,6 +217,149 @@ test('identity session exposes local review capability without disclosing global
   assert.equal(guest.canReview, false);
 });
 
+/* ============================================================
+ * 转校（2026-10-16 用户口径：只需**转入学校**的校级管理员同意）
+ * ============================================================ */
+
+/** 让某人在某校成为正式会员：申请 + 由该校校管理员审批。 */
+async function join(repo, user, schoolId, studentId) {
+  await apply(repo, user, schoolId, studentId);
+  const res = await request(repo, 'reviewSchoolMembership',
+    { userId: user, decision: 'approve', revision: 1 }, `mock_openid_${schoolId}_admin`, schoolId);
+  assert.equal(res.data.ok, true, res.data.message);
+}
+
+test('转校：申请落在目标学校待审，原学校管理员无权审批', async () => {
+  const repo = fixture();
+  // new1 已经在民大（原学校），现在要转到北航
+  await join(repo, 'new1', 'muc', 'MUC001');
+  const applied = (await request(repo, 'applySchoolTransfer',
+    { collegeId: 'c01', studentId: 'BUAA001' }, 'new1', 'buaa')).data;
+  assert.equal(applied.ok, true, applied.message);
+  assert.equal(applied.account.status, 'pending');
+  assert.equal(applied.account.transferFrom, 'muc', '申请上记下从哪转来');
+
+  // 目标学校（北航）的待审台账里能看到它，并标明是转校、来自哪所学校
+  const pending = (await request(repo, 'getSchoolApplications', {}, 'mock_openid_buaa_admin', 'buaa')).data.applications;
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].transfer, true);
+  assert.equal(pending[0].transferFromName, '中央民族大学');
+
+  // 原学校（民大）的待审台账里没有这条：转校不需要原学校处理
+  const fromSide = (await request(repo, 'getSchoolApplications', {}, 'mock_openid_muc_admin', 'muc')).data.applications;
+  assert.deepEqual(fromSide, [], '原学校没有待办');
+
+  // 原学校的校级管理员**不能**审批（用户口径：原学校不需要任何同意）
+  const byOldSchool = (await request(repo, 'reviewSchoolTransfer',
+    { userId: 'new1', decision: 'approve', revision: applied.account.revision },
+    'mock_openid_muc_admin', 'muc')).data;
+  assert.equal(byOldSchool.ok, false, '原学校审批不了');
+  assert.equal((await repo.users.getById('new1')).primarySchoolId, 'muc', '归属没有被改动');
+});
+
+test('转校：目标学校通过后，归属切换、原校身份转出、历史留在原校', async () => {
+  const repo = fixture();
+  await join(repo, 'new1', 'muc', 'MUC001');
+  // 原校给他一个协会负责人身份与一场历史比赛，验证转校后的处理
+  await request(repo, 'grantSchoolPermission',
+    { userId: 'new1', permission: 'associationLeader', make: true },
+    'mock_openid_muc_admin', 'muc');
+  await repo.matches.insert({
+    _id: 'legacy_match', schoolId: 'muc', association: 'pkb', matchType: 1, pool: 'singles',
+    teamA: ['new1'], teamB: ['demo_muc_member'], scoreA: [11], scoreB: [5], winner: 'A',
+    status: 1, matchTime: '2026-10-01T10:00:00.000Z', gamePoints: 11, bestOf: 1,
+  });
+  // 审计读端不在这个仓储里，就在事务里把写进去的条目收下来
+  const audits = [];
+  const originalTransaction = repo.transaction.bind(repo);
+  repo.transaction = fn => originalTransaction(async tx => {
+    const append = tx.audit.append.bind(tx.audit);
+    tx.audit.append = async entry => { audits.push(entry); return append(entry); };
+    return fn(tx);
+  });
+
+  const applied = (await request(repo, 'applySchoolTransfer',
+    { collegeId: 'c01', studentId: 'BUAA001' }, 'new1', 'buaa')).data;
+
+  // 只有目标学校（北航）的管理员能通过
+  const approved = (await request(repo, 'reviewSchoolTransfer',
+    { userId: 'new1', decision: 'approve', revision: applied.account.revision },
+    'mock_openid_buaa_admin', 'buaa')).data;
+  assert.equal(approved.ok, true, approved.message);
+
+  // 账号归属与两侧身份
+  assert.equal((await repo.users.getById('new1')).primarySchoolId, 'buaa');
+  const target = await repo.schoolMembers.getById(schoolMemberKey('new1', 'buaa'));
+  assert.equal(target.status, 'active');
+  assert.equal(target.transferredFrom, 'muc', '新身份记下从哪转来');
+  const source = await repo.schoolMembers.getById(schoolMemberKey('new1', 'muc'));
+  assert.equal(source.status, 'transferred', '原校身份转出');
+  assert.equal(source.transferredTo, 'buaa');
+
+  // 原校的校级角色 / 协会身份停用；新学校从普通会员起步（权限要重新指定）
+  const oldRole = await repo.schoolRoles.getById(schoolRoleKey('new1', 'muc'));
+  assert.ok(!oldRole || oldRole.status !== 'active');
+  const { schoolMembershipKey } = require('../miniprogram/utils/school');
+  const oldMembership = await repo.memberships.get(schoolMembershipKey('new1', { schoolId: 'muc', association: 'pkb' }));
+  assert.equal(oldMembership.status, 'revoked');
+
+  // 历史记录仍在原学校范围内：比赛没有被搬走，也没有被改
+  const legacy = await repo.matches.getById('legacy_match');
+  assert.equal(legacy.schoolId, 'muc');
+  assert.equal(legacy.teamA[0], 'new1');
+
+  // 两侧各有一条审计：目标校的审批 + 原校的转出备案
+  assert.ok(audits.some(row => row.action === 'reviewSchoolTransfer' && row.schoolId === 'buaa'));
+  assert.ok(audits.some(row => row.action === 'transferSchoolOut' && row.schoolId === 'muc'));
+
+  // 转校成功后，本人在新学校是正式会员；想回原校要走同样的流程
+  const session = (await request(repo, 'getSchoolIdentitySession', {}, 'new1', 'buaa')).data;
+  assert.equal(session.account.status, 'active');
+  const back = (await request(repo, 'applySchoolMembership',
+    { collegeId: 'c01', studentId: 'MUC002' }, 'new1', 'muc')).data;
+  assert.equal(back.ok, false, '已有其他学校身份时不能直接入会');
+  assert.match(back.message, /转校/);
+});
+
+test('转校：驳回 / 撤回都留在原校；重复申请幂等；学号被占拒绝', async () => {
+  const repo = fixture();
+  await join(repo, 'new1', 'muc', 'MUC001');
+  const first = (await request(repo, 'applySchoolTransfer',
+    { collegeId: 'c01', studentId: 'BUAA001' }, 'new1', 'buaa')).data;
+  // 幂等：同样内容再提交返回同一条
+  const again = (await request(repo, 'applySchoolTransfer',
+    { collegeId: 'c01', studentId: 'BUAA001' }, 'new1', 'buaa')).data;
+  assert.equal(again.account.revision, first.account.revision);
+
+  // 驳回：申请人仍在原校
+  const rejected = (await request(repo, 'reviewSchoolTransfer',
+    { userId: 'new1', decision: 'reject', reason: '材料不全', revision: first.account.revision },
+    'mock_openid_buaa_admin', 'buaa')).data;
+  assert.equal(rejected.ok, true, rejected.message);
+  assert.equal((await repo.users.getById('new1')).primarySchoolId, 'muc');
+  assert.equal((await repo.schoolMembers.getById(schoolMemberKey('new1', 'muc'))).status, 'active');
+
+  // 重新申请后可自行撤回
+  const second = (await request(repo, 'applySchoolTransfer',
+    { collegeId: 'c01', studentId: 'BUAA002' }, 'new1', 'buaa')).data;
+  assert.equal(second.ok, true, second.message);
+  const canceled = (await request(repo, 'cancelSchoolTransfer', {}, 'new1', 'buaa')).data;
+  assert.equal(canceled.ok, true, canceled.message);
+  assert.equal((await repo.schoolMembers.getById(schoolMemberKey('new1', 'buaa'))).status, 'rejected');
+
+  // 目标学校学号已被占用：审批时拒绝
+  await join(repo, 'new2', 'buaa', 'BUAA003');
+  const third = (await request(repo, 'applySchoolTransfer',
+    { collegeId: 'c01', studentId: 'BUAA003' }, 'new1', 'buaa')).data;
+  assert.equal(third.ok, true, third.message);
+  const blocked = (await request(repo, 'reviewSchoolTransfer',
+    { userId: 'new1', decision: 'approve', revision: third.account.revision },
+    'mock_openid_buaa_admin', 'buaa')).data;
+  assert.equal(blocked.ok, false);
+  assert.match(blocked.message, /学号/);
+  assert.equal((await repo.users.getById('new1')).primarySchoolId, 'muc');
+});
+
 test('identity session discloses the actor own permission tier and college-manage ability', async () => {
   const repo = fixture();
   const session = (openId, schoolId = 'muc') =>

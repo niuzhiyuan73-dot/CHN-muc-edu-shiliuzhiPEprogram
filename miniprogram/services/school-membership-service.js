@@ -6,6 +6,7 @@ const {
 } = require('./school-permission.js');
 const { buildSchoolApplication, buildSchoolAccount } = require('./school-member.js');
 const { buildProfilePatch } = require('./profile.js');
+const { allAssociations } = require('../utils/associations.js');
 const {
   schoolMemberKey, schoolRoleKey, schoolMembershipKey, collegeKey,
   PLATFORM_ROLE, PLATFORM_STATUS, SCHOOL_MEMBER_STATUS, SCHOOL_ROLE,
@@ -73,7 +74,9 @@ function createSchoolHandlers({ claimKey }) {
     const result = await ctx.repo.transaction(async tx => {
       const fresh = await freshContext(tx, ctx);
       if (!fresh.actor || fresh.actor.platformStatus !== 'active') return refused('账号不可用');
-      if (fresh.actor.primarySchoolId && fresh.actor.primarySchoolId !== fresh.schoolId) return refused('已有其他学校身份，转校流程尚未开放');
+      if (fresh.actor.primarySchoolId && fresh.actor.primarySchoolId !== fresh.schoolId) {
+        return refused('已有其他学校身份，请改用「转校申请」（由转入学校审批）');
+      }
       const previous = fresh.schoolMember;
       if (previous && ['active', 'left', 'disabled'].includes(previous.status)) return refused('当前学校身份不能重新申请，请联系管理员');
       const college = typeof payload.collegeId === 'string' && payload.collegeId
@@ -149,6 +152,200 @@ function createSchoolHandlers({ claimKey }) {
     return ok({ ok: true, account: ctx.schoolMember, message: '' });
   }
 
+  /* ============================================================
+   * 转校（2026-10-16 用户口径）
+   * ============================================================
+   * 【谁说了算】只需**转入学校**的校级管理员同意，原学校不需要任何同意。
+   * 于是申请的落点就是「目标学校的一条待审身份申请」（带 `transferFrom` 标记），
+   * 由目标学校的管理员用 `reviewSchoolTransfer` 审批；原学校那一侧只在通过时写
+   * 一条转出备案审计——不用它点头，但名录与角色的变化要看得见。
+   *
+   * 【为什么复用 schoolMembers 而不新开集合】
+   * 待审申请本来就是一条 pending 的学校身份行；转校与首次入会的差别，只在
+   * 「申请人原本属于另一所学校」以及通过时要做的搬运。复用同一张表，目标校
+   * 管理员的待办列表、revision 版本校验与并发保护全都沿用既有的一套。
+   *
+   * 【历史归属不搬】
+   * 比赛、赛事、积分与积分事实仍留在原学校范围（它们记的是「当时那所学校那个
+   * 协会发生的事」）。通过时只做三件事：原学校身份转出、原学校校级角色与协会
+   * 身份停用、账号的 primarySchoolId 指向新学校。新学校从普通会员起步，权限
+   * 需要重新指定。
+   */
+
+  /**
+   * 发起转校申请：把「我想转到本校」写成目标学校的一条待审身份申请。
+   *
+   * @param {Object} payload { collegeId, studentId }
+   * @param {Object} ctx 当前浏览的学校即**目标学校**
+   * @returns {Promise<Object>} {ok, account, message}
+   */
+  async function applySchoolTransfer(payload = {}, ctx) {
+    if (!ctx.actorId) return ok(refused('请先登录'));
+    const result = await ctx.repo.transaction(async tx => {
+      const fresh = await freshContext(tx, ctx);
+      if (!fresh.actor || fresh.actor.platformStatus !== PLATFORM_STATUS.ACTIVE) return refused('账号不可用');
+      const fromSchoolId = fresh.actor.primarySchoolId || '';
+      if (!fromSchoolId) return refused('当前没有学校身份，请直接申请加入本校');
+      if (fromSchoolId === fresh.schoolId) return refused('你已经是本校成员，无需转校');
+      const previous = fresh.schoolMember;
+      if (previous && previous.status === SCHOOL_MEMBER_STATUS.ACTIVE) return refused('你已是本校有效会员，无需转校');
+      if (previous && previous.status === SCHOOL_MEMBER_STATUS.PENDING && !previous.transferFrom) {
+        return refused('你已有本校入会申请待审核');
+      }
+      const college = typeof payload.collegeId === 'string' && payload.collegeId
+        ? await tx.colleges.getById(collegeKey(fresh.schoolId, payload.collegeId)) : null;
+      let application;
+      try {
+        application = buildSchoolApplication({ userId: fresh.actorId, school: fresh.school,
+          college, studentId: payload.studentId, now: fresh.now });
+      } catch (err) { return refused(err.message); }
+      application.transferFrom = fromSchoolId;
+      // 幂等：同一目标学校、同一学院学号的待审转校申请重复提交返回同一条
+      if (previous && previous.status === SCHOOL_MEMBER_STATUS.PENDING && previous.transferFrom &&
+          previous.collegeId === application.collegeId && previous.studentId === application.studentId) {
+        return { ok: true, account: previous, message: '' };
+      }
+      application.revision = Number((previous && previous.revision) || 0) + 1;
+      await tx.schoolMembers.set(application._id, application);
+      await tx.audit.append({ _id: `transfer_apply_${application._id}_${application.revision}`,
+        action: 'applySchoolTransfer', schoolId: fresh.schoolId, actorId: fresh.actorId,
+        userId: fresh.actorId, fromSchoolId, revision: application.revision, at: fresh.now });
+      return { ok: true, account: application, message: '' };
+    });
+    return ok(result);
+  }
+
+  /**
+   * 审批转校申请。**必须由转入学校的审核人（校级管理员）操作**——
+   * 原学校的管理员在这里没有角色：ctx.schoolId 就是目标学校。
+   *
+   * 通过时按顺序做完整搬运：目标校学号占用与学院复核 → 原校身份转出 →
+   * 原校校级角色与协会身份停用 → 账号归属切到新学校 → 两侧各写一条审计。
+   * 驳回只改申请状态，申请人仍留在原学校。
+   *
+   * @param {Object} payload { userId, decision: 'approve'|'reject', reason, revision }
+   * @param {Object} ctx
+   */
+  async function reviewSchoolTransfer(payload = {}, ctx) {
+    if (!ctx.actorId) return ok(refused('请先登录'));
+    if (!canSchoolAction(ctx, 'reviewMembers', ctx)) return ok(refused('没有本校审核权限'));
+    if (!['approve', 'reject'].includes(payload.decision)) return ok(refused('审核决定无效'));
+    if (typeof payload.userId !== 'string' || !payload.userId) return ok(refused('缺少申请人'));
+    if (!Number.isInteger(payload.revision) || payload.revision < 1) return ok(refused('请刷新申请版本后重试'));
+    const reason = typeof payload.reason === 'string' ? payload.reason.trim() : '';
+    if (payload.decision === 'reject' && !reason) return ok(refused('驳回必须填写理由'));
+    if (reason.length > 500) return ok(refused('审核理由过长'));
+    const priorMembers = payload.decision === 'approve'
+      ? await ctx.repo.forScope(ctx).schoolMembers.list() : [];
+
+    const result = await ctx.repo.transaction(async tx => {
+      const fresh = await freshContext(tx, ctx);
+      if (!canSchoolAction(fresh, 'reviewMembers', fresh)) return refused('没有本校审核权限');
+      if (payload.userId === fresh.actorId) return refused('不能审核自己的申请');
+      const id = schoolMemberKey(payload.userId, fresh.schoolId);
+      const application = await tx.schoolMembers.getById(id);
+      if (!application || application.userId !== payload.userId ||
+          application.schoolId !== fresh.schoolId ||
+          application.status !== SCHOOL_MEMBER_STATUS.PENDING || !application.transferFrom) {
+        return refused('转校申请不存在或已处理');
+      }
+      if (application.revision !== payload.revision) return refused('申请已修改，请刷新后重新审核');
+      const user = await tx.users.getById(payload.userId);
+      if (!user || user.platformStatus !== PLATFORM_STATUS.ACTIVE) return refused('申请人账号不可用');
+      const approved = payload.decision === 'approve';
+      let moved = null;
+
+      if (approved) {
+        const fromSchoolId = application.transferFrom;
+        if (fromSchoolId === fresh.schoolId) return refused('申请人已经属于本校');
+        // 目标学校这一侧：学号占用与学院复核，与首次入会同一把尺子
+        if (priorMembers.some(row => row.userId !== user._id && row.studentId === application.studentId &&
+            [SCHOOL_MEMBER_STATUS.ACTIVE, SCHOOL_MEMBER_STATUS.LEFT, SCHOOL_MEMBER_STATUS.DISABLED].includes(row.status))) {
+          return refused('该学号已被其他账号使用');
+        }
+        const college = await tx.colleges.getById(collegeKey(fresh.schoolId, application.collegeId));
+        if (!college || college.status !== 'active' || college.schoolId !== fresh.schoolId) return refused('申请学院已失效');
+        const claimId = claimKey(fresh.schoolId, application.studentId);
+        const claim = await tx.studentIdClaims.getById(claimId);
+        if (claim && (claim.userId !== user._id || claim.schoolId !== fresh.schoolId)) return refused('该学号已被其他账号使用');
+        await tx.studentIdClaims.set(claimId, { schoolId: fresh.schoolId, userId: user._id, claimedAt: fresh.now });
+
+        // 原学校这一侧：身份转出 + 角色 / 协会身份停用（历史记录与积分事实不动）
+        const fromMemberKey = schoolMemberKey(user._id, fromSchoolId);
+        const fromMember = await tx.schoolMembers.getById(fromMemberKey);
+        let fromRevision = 1;
+        if (fromMember) {
+          fromRevision = Number(fromMember.revision || 1) + 1;
+          await tx.schoolMembers.set(fromMemberKey, { ...fromMember,
+            status: SCHOOL_MEMBER_STATUS.TRANSFERRED,
+            transferredTo: fresh.schoolId, transferredAt: fresh.now, revision: fromRevision });
+        }
+        const fromRoleKey = schoolRoleKey(user._id, fromSchoolId);
+        const fromRole = await tx.schoolRoles.getById(fromRoleKey);
+        if (fromRole && fromRole.status === 'active') {
+          await tx.schoolRoles.set(fromRoleKey, { ...fromRole, status: 'disabled',
+            updatedBy: fresh.actorId, updatedAt: fresh.now });
+        }
+        const revokedAssociations = [];
+        for (const sport of allAssociations()) {
+          const key = schoolMembershipKey(user._id, { schoolId: fromSchoolId, association: sport.id });
+          const row = await tx.memberships.get(key);
+          if (!row || row.status !== 'active') continue;
+          await tx.memberships.set(key, { ...row, status: 'revoked',
+            updatedBy: fresh.actorId, updatedAt: fresh.now });
+          revokedAssociations.push(sport.id);
+        }
+        await tx.users.set(user._id, { ...user, primarySchoolId: fresh.schoolId,
+          schoolIdentityVersion: Number(user.schoolIdentityVersion || 0) + 1 });
+        // 原学校备案：不需要它同意，但「谁在什么时候转走、停了哪些身份」要留痕
+        await tx.audit.append({ _id: `transfer_out_${fromMemberKey}_${fromRevision}`,
+          action: 'transferSchoolOut', schoolId: fromSchoolId, actorId: fresh.actorId,
+          userId: user._id, toSchoolId: fresh.schoolId,
+          revokedAssociations, at: fresh.now });
+        moved = { fromSchoolId, revokedAssociations };
+      }
+
+      const next = { ...application,
+        status: approved ? SCHOOL_MEMBER_STATUS.ACTIVE : SCHOOL_MEMBER_STATUS.REJECTED,
+        reviewedBy: fresh.actorId, reviewedAt: fresh.now, reviewReason: reason,
+        revision: application.revision + 1 };
+      if (approved) {
+        // 转校来的人留一个「从哪来」的印记，便于日后排查；不再是待审状态
+        delete next.transferFrom;
+        next.transferredFrom = application.transferFrom;
+      }
+      await tx.schoolMembers.set(id, next);
+      await tx.audit.append({ _id: `review_transfer_${id}_${next.revision}`,
+        action: 'reviewSchoolTransfer', schoolId: fresh.schoolId, actorId: fresh.actorId,
+        userId: user._id, decision: payload.decision, reason,
+        fromSchoolId: application.transferFrom, revision: next.revision, at: fresh.now });
+      return { ok: true, account: next, moved, message: '' };
+    });
+    return ok(result);
+  }
+
+  /** 申请人撤回自己的待审转校申请（只能撤自己的，撤回后仍留在原学校）。 */
+  async function cancelSchoolTransfer(_payload, ctx) {
+    if (!ctx.actorId) return ok(refused('请先登录'));
+    const result = await ctx.repo.transaction(async tx => {
+      const fresh = await freshContext(tx, ctx);
+      const id = schoolMemberKey(fresh.actorId, fresh.schoolId);
+      const application = await tx.schoolMembers.getById(id);
+      if (!application || application.status !== SCHOOL_MEMBER_STATUS.PENDING || !application.transferFrom) {
+        return refused('没有待处理的本校转校申请');
+      }
+      const next = { ...application, status: SCHOOL_MEMBER_STATUS.REJECTED,
+        reviewReason: '申请人撤回', reviewedBy: fresh.actorId, reviewedAt: fresh.now,
+        revision: application.revision + 1 };
+      await tx.schoolMembers.set(id, next);
+      await tx.audit.append({ _id: `cancel_transfer_${id}_${next.revision}`,
+        action: 'cancelSchoolTransfer', schoolId: fresh.schoolId, actorId: fresh.actorId,
+        userId: fresh.actorId, revision: next.revision, at: fresh.now });
+      return { ok: true, account: next, message: '' };
+    });
+    return ok(result);
+  }
+
   /**
    * 本校待审核入会申请台账。**只返回待审核记录**——通过的人已是正式会员
    * （进 `getSchoolMembers` 名单），驳回的人留在学校身份记录里但不再出现在
@@ -170,9 +367,15 @@ function createSchoolHandlers({ claimKey }) {
     const rows = await ctx.repo.forScope(ctx).schoolMembers.list();
     const applications = await Promise.all(rows.filter(row => row.status === 'pending').map(async row => {
       const user = await ctx.repo.users.getById(row.userId);
+      // 转校申请在同一条待审台账里，但要标出来「从哪转来」：
+      // 审核页据此走 reviewSchoolTransfer，而不是普通入会审批（两条口径不同）。
+      const fromSchool = row.transferFrom ? await ctx.repo.schools.getById(row.transferFrom) : null;
       return { userId: row.userId, schoolId: row.schoolId,
         collegeId: row.collegeId, collegeName: collegeName(row.collegeId),
         studentId: row.studentId, revision: row.revision, appliedAt: row.appliedAt,
+        transfer: Boolean(row.transferFrom),
+        transferFrom: row.transferFrom || '',
+        transferFromName: fromSchool ? fromSchool.name || row.transferFrom : '',
         nickName: user && user.nickName || '申请人',
         realName: user && user.realName || '',
         gender: user && user.gender || '',
@@ -386,7 +589,9 @@ function createSchoolHandlers({ claimKey }) {
 
   return { registerSchoolAccount, applySchoolMembership, reviewSchoolMembership, getMySchoolMembership,
     getSchoolApplications, getSchoolDirectory, getSchoolIdentitySession, getSchoolMembers,
-    grantSchoolPermission, updateSchoolProfile };
+    grantSchoolPermission, updateSchoolProfile,
+    // 转校：仅转校申请 + 目标学校审批 + 申请人撤回（原学校无需同意）
+    applySchoolTransfer, reviewSchoolTransfer, cancelSchoolTransfer };
 }
 
 module.exports = { createSchoolHandlers };

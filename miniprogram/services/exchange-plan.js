@@ -82,8 +82,8 @@ function planExchangeMatches({ eventId, draw, entrantsById, matches } = {}) {
       } else if (left.entry && right.entry) {
         const id = exchangeMatchKey(eventId, round, slot);
         const existing = byId.get(id);
+        const entrantOf = (userId) => lookup.get(userId) || {};
         if (!existing) {
-          const entrantOf = (userId) => lookup.get(userId) || {};
           planned.push({
             _id: id, eventId, round, slot,
             playerA: left.entry, playerB: right.entry,
@@ -91,10 +91,24 @@ function planExchangeMatches({ eventId, draw, entrantsById, matches } = {}) {
             scoreA: null, scoreB: null, winner: '', status: 'pending',
             referee: '', refereeAt: null, refereeBy: '', recordedBy: '', recordedAt: null, revision: 1,
           });
+        } else if (existing.status !== 'active' &&
+            (existing.playerA !== left.entry || existing.playerB !== right.entry || existing.status === 'canceled')) {
+          // 【为什么要刷新而不是照抄】撤销上一轮之后重新录分，晋级者可能换人；
+          // 若把待确认 / 已撤销的下一轮原样留着，签表里就挂着上一个晋级者——
+          // 正是「撤销半决赛后决赛仍带旧人」那个缺陷。已生效的比分是既成事实，
+          // 一律不覆盖（撤销入口已经要求从最后一轮往前撤）。
+          planned.push({
+            ...existing,
+            playerA: left.entry, playerB: right.entry,
+            schoolA: entrantOf(left.entry).schoolId || '', schoolB: entrantOf(right.entry).schoolId || '',
+            scoreA: null, scoreB: null, winner: '', status: 'pending',
+            revision: Number(existing.revision || 1) + 1,
+          });
         } else {
           planned.push(existing);
         }
-        const advanced = existing && existing.status === 'active' && existing.winner ? existing.winner : '';
+        const settled = planned[planned.length - 1];
+        const advanced = settled.status === 'active' && settled.winner ? settled.winner : '';
         next.push({ entry: advanced, decided: Boolean(advanced) });
       } else {
         // 至少一侧轮空：有人的一方直接晋级，不生成比赛

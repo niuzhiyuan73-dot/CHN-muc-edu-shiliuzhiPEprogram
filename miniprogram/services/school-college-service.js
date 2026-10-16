@@ -82,6 +82,49 @@ const freshContext = (tx, ctx) => buildSchoolContext({
   scope: { schoolId: ctx.schoolId, association: ctx.association }, now: ctx.now,
 });
 
+/**
+ * 事务内重判身份与角色（2026-10-16 独立验收 F1/F2 的同类扫尾，与个人赛同一口径）。
+ *
+ * 学院赛的写动作原先一律在事务**外**判一次 `canReadAssociationSpace(ctx)`，
+ * 事务里用的还是外层推出来的 actor。账号被停用、学籍离校、学院 / 协会角色被撤
+ * 都可能发生在请求飞在路上的那一瞬——那种情况下抽签、开赛、交名单、录名次
+ * 都不该落库。事务里重建上下文再判一次（全是按主键点读，事务允许），窗口就没了。
+ *
+ * @param {Object} tx 事务内仓储
+ * @param {Object} ctx 外层上下文
+ * @param {Object} dir buildCollegeDirectory 的结果（角色判定的静态部分）
+ * @returns {Promise<{ok:boolean, message:string, actor:Object|null}>}
+ */
+async function freshActorGate(tx, ctx, dir) {
+  const fresh = await freshContext(tx, ctx);
+  if (!canReadAssociationSpace(fresh)) {
+    return { ok: false, message: '账号已停用，或没有本协会的访问权限', actor: null };
+  }
+  return { ok: true, message: '', actor: legacyActorOf(fresh, dir) };
+}
+
+/**
+ * 学院赛写动作的统一入口：先过事务内身份闸，再把重算出来的 actor 交给动作体。
+ *
+ * 【为什么包一层而不是每处抄一段】
+ * 十来个写动作（交名单 / 审核 / 抽签 / 开赛 / 排阵 / 大场 / 弃权 / 名次 / 置顶）
+ * 的事务体形状一致：进来先重判身份，再按角色走行级权限。抄十遍迟早漏一处，
+ * 包一层之后「新写的动作忘了判身份」这件事在结构上就难发生——动作体拿到的
+ * `actor` 天生是事务内重算的那一份。
+ *
+ * @param {Object} ctx 外层上下文
+ * @param {Object} dir buildCollegeDirectory 的结果
+ * @param {Function} work async (tx, actor) => 结果
+ * @returns {Promise<Object>} 与仓储事务同形
+ */
+async function inTransaction(ctx, dir, work) {
+  return ctx.repo.transaction(async tx => {
+    const gate = await freshActorGate(tx, ctx, dir);
+    if (!gate.ok) return refused(gate.message);
+    return work(tx, gate.actor);
+  });
+}
+
 const collegeEventAuditKey = (eventId, action, revision) =>
   schoolKey('ceau', eventId, action, String(revision));
 const collegeEntryAuditKey = (eventId, collegeId, action, revision) =>
@@ -354,7 +397,7 @@ async function publishCollegeEvent(payload = {}, ctx) {
   built.record.audienceMode = audience.audienceMode;
   built.record.audienceGroupIds = audience.audienceGroupIds;
 
-  const result = await ctx.repo.transaction(async tx => {
+  const result = await inTransaction(ctx, dir, async (tx, actor) => {
     const fresh = await freshContext(tx, ctx);
     // 发布权与旧栈同一门槛：仅管理员（学院负责人 / 会员都不行）。
     if (!canManageCollegeEvent(legacyActorOf(fresh, dir))) return refused('只有管理员可以发布学院赛');
@@ -386,7 +429,7 @@ async function submitCollegeEntry(payload = {}, ctx) {
   const { collegeId, college } = resolveCollege(payload, dir);
   const members = memberMapOf(dir);
 
-  const result = await ctx.repo.transaction(async tx => {
+  const result = await inTransaction(ctx, dir, async (tx, actor) => {
     const doc = await tx.collegeEvents.getById(payload.eventId);
     if (!isCollegeEventDoc(doc) || !belongsToSchoolScope(doc, ctx)) return refused('学院赛不存在');
 
@@ -444,7 +487,7 @@ async function reviewCollegeEntry(payload = {}, ctx) {
   if (!collegeId) return ok(refused('请指定要审核的学院'));
   const members = memberMapOf(dir);
 
-  const result = await ctx.repo.transaction(async tx => {
+  const result = await inTransaction(ctx, dir, async (tx, actor) => {
     const doc = await tx.collegeEvents.getById(payload.eventId);
     if (!isCollegeEventDoc(doc) || !belongsToSchoolScope(doc, ctx)) return refused('学院赛不存在');
 
@@ -503,11 +546,13 @@ async function drawCollegeEvent(payload = {}, ctx) {
   const draw = buildCollegeDrawRecord(plan, { drawnAt: ctx.now, drawnBy: ctx.actorId });
   const nowIso = iso(ctx.now);
 
-  const result = await ctx.repo.transaction(async tx => {
+  const result = await inTransaction(ctx, dir, async (tx, actor) => {
     const current = await tx.collegeEvents.getById(payload.eventId);
     if (!isCollegeEventDoc(current) || !belongsToSchoolScope(current, ctx)) return refused('学院赛不存在');
     // 事务内复查状态：并发两次抽签只落一次。
     if (current.status !== COLLEGE_EVENT_STATUS.SIGNUP) return refused('只能在报名阶段抽签');
+    // 事务内复查权限：请求飞在路上时被撤掉管理员角色，这一次抽签就不算数（F2 同类）
+    if (!canDrawCollegeEvent(current, actor)) return refused('只有管理员可以抽签');
 
     // 抽签顺带锁定名单：status 转 READY，而名单提交权只看「是否报名中」，自然不可再改（D13）。
     const next = {
@@ -544,11 +589,13 @@ async function startCollegeEvent(payload = {}, ctx) {
   const ties = buildTiesForRound({ event, round: 1, pairs: firstRoundPairsOf(event.draw) });
   const nowIso = iso(ctx.now);
 
-  const result = await ctx.repo.transaction(async tx => {
+  const result = await inTransaction(ctx, dir, async (tx, actor) => {
     const current = await tx.collegeEvents.getById(payload.eventId);
     if (!isCollegeEventDoc(current) || !belongsToSchoolScope(current, ctx)) return refused('学院赛不存在');
     // 事务内复查：并发的第二次「开始」不再覆盖首轮——只补不覆盖，免得冲掉其间已录的排阵 / 比分。
     if (current.status !== COLLEGE_EVENT_STATUS.READY) return refused('这场学院赛已经开始了');
+    // 事务内复查权限：撤权之后不能再开赛（F2 同类）
+    if (!canStartCollegeEvent(current, actor)) return refused('只有管理员可以开始赛事');
 
     const stored = [];
     for (const tie of ties) {
@@ -619,7 +666,7 @@ async function submitCollegeLineup(payload = {}, ctx) {
   const members = memberMapOf(dir);
   const nowIso = iso(ctx.now);
 
-  const result = await ctx.repo.transaction(async tx => {
+  const result = await inTransaction(ctx, dir, async (tx, actor) => {
     const current = await tx.ties.getById(payload.tieId);
     if (!isCollegeTieDoc(current) || !belongsToSchoolScope(current, ctx)) return refused('找不到这个大场');
     // 事务内复查：大场已开始 / 已结束就不能再改排阵。
@@ -677,10 +724,12 @@ async function startCollegeTie(payload = {}, ctx) {
   }));
   const nowIso = iso(ctx.now);
 
-  const result = await ctx.repo.transaction(async tx => {
+  const result = await inTransaction(ctx, dir, async (tx, actor) => {
     const current = await tx.ties.getById(payload.tieId);
     if (!isCollegeTieDoc(current) || !belongsToSchoolScope(current, ctx)) return refused('找不到这个大场');
     if (tieStatusOf(current) !== TIE_STATUS.READY) return refused('这个大场已经开始');
+    // 事务内复查权限：撤权之后不能再开大场（F2 同类）
+    if (!canStartTie(current, actor)) return refused('只有管理员可以开始大场');
 
     for (const draft of built.drafts) {
       const existing = await tx.matches.getById(draft._id);
@@ -715,10 +764,12 @@ async function assignCollegeTieReferee(payload = {}, ctx) {
 
   const refereeId = String(payload.refereeId || '').trim();
   const nowIso = iso(ctx.now);
-  const result = await ctx.repo.transaction(async tx => {
+  const result = await inTransaction(ctx, dir, async (tx, actor) => {
     const current = await tx.ties.getById(payload.tieId);
     if (!isCollegeTieDoc(current) || !belongsToSchoolScope(current, ctx)) return refused('找不到这个大场');
     if (!canAssignTieReferee(current)) return refused('这个大场已经结束，不能再改派裁判');
+    // 事务内复查权限：撤权之后不能再改派裁判（F2 同类）
+    if (!canManageCollegeEvent(actor)) return refused('只有管理员可以指派裁判');
     if (refereeId) {
       const rejection = await refereeRejection(tx, ctx, refereeId);
       if (rejection) return refused(rejection);
@@ -763,10 +814,12 @@ async function finishCollegeEvent(payload = {}, ctx) {
   if (!checked.ok) return ok(refused(checked.firstError));
 
   const nowIso = iso(ctx.now);
-  const result = await ctx.repo.transaction(async tx => {
+  const result = await inTransaction(ctx, dir, async (tx, actor) => {
     const current = await tx.collegeEvents.getById(payload.eventId);
     if (!isCollegeEventDoc(current) || !belongsToSchoolScope(current, ctx)) return refused('学院赛不存在');
     if (current.status !== COLLEGE_EVENT_STATUS.ONGOING) return refused('这场学院赛已经结束了');
+    // 事务内复查权限：撤权之后不能再录名次（F2 同类）
+    if (!canFinishCollegeEvent(current, actor)) return refused('只有管理员可以录入名次');
 
     const next = { ...current, status: COLLEGE_EVENT_STATUS.FINISHED, results: checked.results,
       finishedAt: nowIso, revision: Number(current.revision || 1) + 1, updatedAt: nowIso };
@@ -824,10 +877,12 @@ async function forfeitCollegeTieLeg(payload = {}, ctx) {
   }
 
   const nowIso = iso(ctx.now);
-  const result = await ctx.repo.transaction(async tx => {
+  const result = await inTransaction(ctx, dir, async (tx, actor) => {
     const match = await tx.matches.getById(leg.matchId);
     if (!isCollegeLegDoc(match) || !belongsToSchoolScope(match, ctx)) return refused('找不到这个小项的比赛');
     if (match.status === MATCH_STATUS.ACTIVE) return refused('这个小项已经生效，不能再记弃权');
+    // 事务内复查权限：撤权之后不能再记录弃权（F2 同类）
+    if (!canManageCollegeEvent(actor)) return refused('只有管理员可以记录弃权');
 
     // 站在 A 边的人弃权，就是 B 边获胜（与个人赛 buildForfeitPatch 同一换算）。
     const winner = college === tie.collegeA ? TEAM.B : TEAM.A;

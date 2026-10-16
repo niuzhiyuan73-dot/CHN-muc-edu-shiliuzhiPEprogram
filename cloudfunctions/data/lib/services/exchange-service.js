@@ -39,6 +39,8 @@ const summary = event => ({
   signupCount: event.signupCount, schoolCounts: event.schoolCounts,
   ratingPolicy: 'unrated', eventScope: 'inter_school', matchType: 'singles',
   draw: event.draw || null, results: event.results || [],
+  canceledAt: event.canceledAt || null, canceledBy: event.canceledBy || '',
+  cancelReason: event.cancelReason || '',
 });
 async function audit(tx, ctx, event, action) {
   await tx.audit.append({ _id: schoolKey('xa', event._id, String(event.revision)), action,
@@ -101,6 +103,7 @@ async function respondExchangeInvitation(payload = {}, ctx) {
     const fresh = await freshContext(tx, ctx);
     const event = await tx.exchangeEvents.getById(payload.eventId);
     if (!eventMatches(event, fresh) || !manages(fresh) || event.schoolId === fresh.schoolId) return refused('没有此邀请的处理权限');
+    if (event.status === 'canceled') return refused('赛事已取消');
     if (event.invitations[fresh.schoolId] === payload.decision) return { ok: true, event: summary(event), message: '' };
     if (event.status !== 'signup' || event.invitations[fresh.schoolId] !== 'pending') return refused('邀请已处理或报名已锁定');
     const next = { ...event, invitations: { ...event.invitations, [fresh.schoolId]: payload.decision }, revision: event.revision + 1 };
@@ -137,6 +140,185 @@ async function changeSignup(payload, ctx, cancel) {
 const signUpExchangeEvent = (payload = {}, ctx) => changeSignup(payload, ctx, false);
 const cancelExchangeSignup = (payload = {}, ctx) => changeSignup(payload, ctx, true);
 
+/**
+ * 管理员移除一位报名者（退赛处理）。
+ * ============================================================
+ * 与本人取消报名同一口径：**只在报名阶段**（名单锁定后名单就定了），
+ * 释放总名额与本校名额，写审计；重复移除幂等。普通赛事里这条路对应
+ * 「管理员把某人从报名名单里去掉」，因此参赛者的代表学校由服务端从报名
+ * 记录读取，不接受客户端传学校。
+ *
+ * @param {Object} payload { eventId, userId, reason? }
+ * @param {Object} ctx
+ */
+async function removeExchangeSignup(payload = {}, ctx) {
+  const userId = String(payload.userId || '').trim();
+  if (!userId) return ok(refused('请选择要移除的报名者'));
+  const reason = typeof payload.reason === 'string' ? payload.reason.trim().slice(0, 200) : '';
+  const snapshot = await ctx.repo.exchangeEvents.getById(payload.eventId);
+  if (!managesExchange(snapshot, ctx)) return ok(refused('只有管理员或双方校管理员可以移除报名'));
+  return ok(await ctx.repo.transaction(async tx => {
+    const fresh = await freshContext(tx, ctx);
+    const event = await tx.exchangeEvents.getById(payload.eventId);
+    if (!managesExchange(event, fresh)) return refused('只有管理员或双方校管理员可以移除报名');
+    if (event.status !== 'signup') return refused('名单已锁定，不能再移除报名');
+    const row = await tx.exchangeSignups.getById(signupKey(event._id, userId));
+    if (!row || row.status !== 'signed') return { ok: true, event: summary(event), message: '' };
+    if (!isPlatformAdmin(fresh) && row.representedSchoolId !== fresh.schoolId) {
+      return refused('只能移除本校的报名者');
+    }
+    const next = { ...event,
+      signupCount: Math.max(0, event.signupCount - 1),
+      schoolCounts: { ...event.schoolCounts,
+        [row.representedSchoolId]: Math.max(0, (event.schoolCounts[row.representedSchoolId] || 0) - 1) },
+      revision: event.revision + 1 };
+    await tx.exchangeSignups.set(row._id, { ...row, status: 'removed', removedBy: fresh.actorId,
+      removedAt: fresh.now, removeReason: reason, revision: Number(row.revision || 1) + 1 });
+    await tx.exchangeEvents.set(next._id, next);
+    await audit(tx, fresh, next, 'removeExchangeSignup');
+    return { ok: true, event: summary(next), message: '' };
+  }));
+}
+
+/**
+ * 代签：与普通赛事一样，由管理员在场边替参赛者签到（本人不自助签到）。
+ * 只有「名单已锁定（ready / drawn）」到赛事结束之间可签，重复签到幂等。
+ *
+ * @param {Object} payload { eventId, userId }
+ * @param {Object} ctx
+ */
+async function checkInExchangeSignup(payload = {}, ctx) {
+  const userId = String(payload.userId || '').trim();
+  if (!userId) return ok(refused('请选择要签到的参赛者'));
+  const snapshot = await ctx.repo.exchangeEvents.getById(payload.eventId);
+  if (!managesExchange(snapshot, ctx)) return ok(refused('只有管理员或双方校管理员可以签到'));
+  return ok(await ctx.repo.transaction(async tx => {
+    const fresh = await freshContext(tx, ctx);
+    const event = await tx.exchangeEvents.getById(payload.eventId);
+    if (!managesExchange(event, fresh)) return refused('只有管理员或双方校管理员可以签到');
+    if (event.status !== 'ready' && event.status !== 'drawn') return refused('名单锁定后才能签到');
+    const row = await tx.exchangeSignups.getById(signupKey(event._id, userId));
+    if (!row || row.status !== 'signed') return refused('这位参赛者不在名单里');
+    if (!isPlatformAdmin(fresh) && row.representedSchoolId !== fresh.schoolId) {
+      return refused('只能为本校参赛者签到');
+    }
+    if (row.checkInTime) return { ok: true, event: summary(event), message: '' };
+    await tx.exchangeSignups.set(row._id, { ...row, checkInTime: fresh.now,
+      checkedInBy: fresh.actorId, revision: Number(row.revision || 1) + 1 });
+    await audit(tx, fresh, event, 'checkInExchangeSignup');
+    return { ok: true, event: summary(event), message: '' };
+  }));
+}
+
+/**
+ * 撤回邀请。
+ * ============================================================
+ * 主办方可以撤回对某校的邀请；受邀校自己的管理员也可以撤回（等价于「不参加了」，
+ * 但它不是婉拒——婉拒是受邀校给主办方的答复，撤回是把这条邀请作废）。
+ * 只在报名阶段可撤；该校已经有人报名时先拒绝，要求先把报名清掉——
+ * 否则名额计数与参赛名单会对不上。
+ *
+ * @param {Object} payload { eventId, schoolId? } schoolId 缺省为操作者本校
+ */
+async function withdrawExchangeInvitation(payload = {}, ctx) {
+  const schoolId = String(payload.schoolId || ctx.schoolId || '').trim();
+  const snapshot = await ctx.repo.exchangeEvents.getById(payload.eventId);
+  if (!managesExchange(snapshot, ctx)) return ok(refused('只有管理员或双方校管理员可以撤回邀请'));
+  return ok(await ctx.repo.transaction(async tx => {
+    const fresh = await freshContext(tx, ctx);
+    const event = await tx.exchangeEvents.getById(payload.eventId);
+    if (!managesExchange(event, fresh)) return refused('只有管理员或双方校管理员可以撤回邀请');
+    // 主办方可以撤任意受邀校；受邀校只能撤自己那一条
+    const isOrganizer = event.schoolId === fresh.schoolId || isPlatformAdmin(fresh);
+    if (!isOrganizer && schoolId !== fresh.schoolId) return refused('只能撤回本校的邀请');
+    if (!Object.prototype.hasOwnProperty.call(event.invitations, schoolId)) return refused('该学校不在这场邀请赛里');
+    if (event.schoolId === schoolId) return refused('主办学校不能撤回自己的邀请');
+    if (event.status !== 'signup') return refused('名单已锁定，不能再撤回邀请');
+    if ((event.schoolCounts[schoolId] || 0) > 0) return refused('该校已有人报名，请先移除报名再撤回邀请');
+    if (event.invitations[schoolId] === 'withdrawn') return { ok: true, event: summary(event), message: '' };
+    const next = { ...event, invitations: { ...event.invitations, [schoolId]: 'withdrawn' },
+      revision: event.revision + 1 };
+    await tx.exchangeEvents.set(next._id, next);
+    await audit(tx, fresh, next, 'withdrawExchangeInvitation');
+    return { ok: true, event: summary(next), message: '' };
+  }));
+}
+
+/**
+ * 取消整场邀请赛（主办方或平台管理员）。
+ * 报名中 / 待开赛 / 已抽签都可取消；结束后不能再取消（名次已定）。
+ * 取消后一切写动作停止（报名、抽签、录分、名次确认各自复核状态），
+ * 已确认的比分与名单保留作为历史。
+ *
+ * @param {Object} payload { eventId, reason? }
+ */
+async function cancelExchangeEvent(payload = {}, ctx) {
+  const reason = typeof payload.reason === 'string' ? payload.reason.trim().slice(0, 200) : '';
+  const snapshot = await ctx.repo.exchangeEvents.getById(payload.eventId);
+  if (!snapshot || !eventMatches(snapshot, ctx) && !isPlatformAdmin(ctx)) return ok(refused('赛事不存在或没有访问权限'));
+  const isOrganizer = isPlatformAdmin(ctx) || (snapshot.schoolId === ctx.schoolId && manages(ctx));
+  if (!isOrganizer) return ok(refused('只有主办学校的管理员可以取消赛事'));
+  return ok(await ctx.repo.transaction(async tx => {
+    const fresh = await freshContext(tx, ctx);
+    const event = await tx.exchangeEvents.getById(payload.eventId);
+    if (!event || event.eventScope !== 'inter_school') return refused('赛事不存在');
+    if (!(isPlatformAdmin(fresh) || (event.schoolId === fresh.schoolId && manages(fresh)))) {
+      return refused('只有主办学校的管理员可以取消赛事');
+    }
+    if (event.status === 'canceled') return { ok: true, event: summary(event), message: '' };
+    if (event.status === 'finished') return refused('赛事已结束，不能再取消');
+    const next = { ...event, status: 'canceled', canceledAt: fresh.now,
+      canceledBy: fresh.actorId, cancelReason: reason, revision: event.revision + 1 };
+    await tx.exchangeEvents.set(next._id, next);
+    await audit(tx, fresh, next, 'cancelExchangeEvent');
+    return { ok: true, event: summary(next), message: '' };
+  }));
+}
+
+/**
+ * 撤销一场已经确认的跨校比分（比分修订的第一步）。
+ * ============================================================
+ * 与普通比赛同一条规则：**后面还有已确认的场次就先撤后面的**（从最后一轮往前撤）。
+ * 撤销把这一场退回「待确认」并清掉比分与胜者；下一轮的场次由签表投影重算——
+ * 对阵在两侧重新定下来时会自动刷新（见 exchange-plan 的刷新逻辑），因此不会
+ * 留下「上一轮的败者还在下一轮里」这种自相矛盾的签表。
+ * 权限与录分一致：平台管理员、双方校管理员、或该场指定裁判。
+ *
+ * @param {Object} payload { eventId, matchId, reason? }
+ */
+async function revokeExchangeScore(payload = {}, ctx) {
+  const snapshot = await ctx.repo.exchangeEvents.getById(payload.eventId);
+  const match = await ctx.repo.exchangeMatches.getById(payload.matchId);
+  if (!snapshot || !match || match.eventId !== snapshot._id) return ok(refused('比赛不存在'));
+  if (!canScoreMatch(snapshot, match, ctx)) return ok(refused('没有比分撤销权限'));
+  const later = (await ctx.repo.exchangeMatches.listByEvent(snapshot._id))
+    .filter(row => Number(row.round) > Number(match.round) && row.status === 'active');
+  if (later.length > 0) return ok(refused('后面轮次已有确认的比分，请从最后一轮往前依次撤销'));
+  const laterIds = later.map(row => row._id);
+  return ok(await ctx.repo.transaction(async tx => {
+    const fresh = await freshContext(tx, ctx);
+    const event = await tx.exchangeEvents.getById(payload.eventId);
+    const current = await tx.exchangeMatches.getById(payload.matchId);
+    if (!event || !current || current.eventId !== event._id) return refused('比赛不存在');
+    if (!canScoreMatch(event, current, fresh)) return refused('没有比分撤销权限');
+    if (current.status !== 'active') return refused('这场比赛还没有确认的比分');
+    // 事务内复查：读到撤销之前，可能刚有人确认了下一轮（整表查询事务里不允许，逐个点读）
+    for (const id of laterIds) {
+      const row = await tx.exchangeMatches.getById(id);
+      if (row && row.status === 'active') return refused('后面轮次已有确认的比分，请从最后一轮往前依次撤销');
+    }
+    const scored = { ...current, scoreA: null, scoreB: null, winner: '', status: 'pending',
+      recordedBy: '', recordedAt: null, revokedBy: fresh.actorId, revokedAt: fresh.now,
+      revokeReason: typeof payload.reason === 'string' ? payload.reason.trim().slice(0, 200) : '',
+      revision: Number(current.revision || 1) + 1 };
+    await tx.exchangeMatches.set(scored._id, scored);
+    const next = { ...event, revision: event.revision + 1 };
+    await tx.exchangeEvents.set(next._id, next);
+    await audit(tx, fresh, next, 'revokeExchangeScore');
+    return { ok: true, event: summary(next), message: '' };
+  }));
+}
+
 async function lockExchangeRoster(payload = {}, ctx) {
   const snapshot = await ctx.repo.exchangeEvents.getById(payload.eventId);
   if (!eventMatches(snapshot, ctx) || snapshot.schoolId !== ctx.schoolId || !manages(ctx)) return ok(refused('只有主办学校可以锁定名单'));
@@ -150,17 +332,39 @@ async function lockExchangeRoster(payload = {}, ctx) {
     if (Object.values(event.invitations).some(value => value === 'pending')) return refused('请等待受邀学校处理邀请');
     if (event.signupCount < 2 || Object.values(event.schoolCounts).filter(count => count > 0).length < 2) return refused('至少需要两校各有一名参赛者');
     if (roster.length !== event.signupCount) return refused('报名计数不一致，请联系管理员');
+    // 失效身份处理：报名之后退学 / 转校 / 停用的人已经没有代表该校参赛的资格，
+    // 在这里移除并释放名额（与训练「本人失效自动移除报名」同一处理），
+    // 否则一场邀请赛会因为某个人退学而永远锁不上名单。
+    const pruned = [];
     for (const row of roster) {
-      const member = await tx.schoolMembers.getById(row.schoolMemberId);
-      const user = await tx.users.getById(row.userId);
-      const school = await tx.schools.getById(row.representedSchoolId);
-      if (!member || member.userId !== row.userId || member.schoolId !== row.representedSchoolId || member.status !== 'active' ||
-          !user || user.platformStatus !== 'active' || user.primarySchoolId !== row.representedSchoolId ||
-          !school || school.status !== 'active') return refused('有参赛者或学校身份已失效，请先处理参赛资格');
+      const [member, user, school] = await Promise.all([
+        tx.schoolMembers.getById(row.schoolMemberId),
+        tx.users.getById(row.userId),
+        tx.schools.getById(row.representedSchoolId),
+      ]);
+      const valid = member && member.userId === row.userId && member.schoolId === row.representedSchoolId &&
+        member.status === 'active' && user && user.platformStatus === 'active' &&
+        user.primarySchoolId === row.representedSchoolId && school && school.status === 'active';
+      if (valid) continue;
+      const removed = { ...row, status: 'removed', removedBy: fresh.actorId, removedAt: fresh.now,
+        removeReason: '参赛身份已失效', revision: Number(row.revision || 1) + 1 };
+      await tx.exchangeSignups.set(removed._id, removed);
+      pruned.push({ userId: row.userId, representedSchoolId: row.representedSchoolId });
     }
-    const next = { ...event, status: 'ready', lockedAt: fresh.now, lockedBy: fresh.actorId, revision: event.revision + 1 };
+    const schoolCounts = { ...event.schoolCounts };
+    for (const row of pruned) {
+      schoolCounts[row.representedSchoolId] = Math.max(0, (schoolCounts[row.representedSchoolId] || 0) - 1);
+    }
+    const signupCount = event.signupCount - pruned.length;
+    if (pruned.length > 0 && (signupCount < 2 ||
+        Object.values(schoolCounts).filter(count => count > 0).length < 2)) {
+      return refused('清理失效身份后不足两校各一名参赛者，请补充报名');
+    }
+    const next = { ...event, status: 'ready', lockedAt: fresh.now, lockedBy: fresh.actorId,
+      signupCount, schoolCounts, prunedSignups: pruned, revision: event.revision + 1 };
     await tx.exchangeEvents.set(event._id, next);
     await audit(tx, fresh, next, 'lockExchangeRoster');
+    if (pruned.length > 0) await audit(tx, fresh, next, 'pruneInvalidExchangeSignups');
     return { ok: true, event: summary(next), message: '' };
   }));
 }
@@ -174,6 +378,7 @@ async function entrantsOf(repo, eventId) {
 async function drawExchangeEvent(payload = {}, ctx) {
   const snapshot = await ctx.repo.exchangeEvents.getById(payload.eventId);
   if (!managesExchange(snapshot, ctx)) return ok(refused('只有管理员或双方校管理员可以抽签'));
+  if (snapshot.status === 'canceled') return ok(refused('赛事已取消'));
   if (snapshot.status === 'signup') return ok(refused('请先锁定报名名单'));
   if (snapshot.status === 'finished') return ok(refused('赛事已结束，不能再抽签'));
   const existing = await ctx.repo.exchangeMatches.listByEvent(snapshot._id);
@@ -221,6 +426,7 @@ async function assignExchangeReferee(payload = {}, ctx) {
     const fresh = await freshContext(tx, ctx);
     const event = await tx.exchangeEvents.getById(payload.eventId);
     if (!managesExchange(event, fresh)) return refused('只有管理员或双方校管理员可以指定裁判');
+    if (event.status === 'canceled') return refused('赛事已取消');
     const current = await tx.exchangeMatches.getById(payload.matchId);
     if (!current || current.eventId !== event._id) return refused('比赛不存在');
     if (current.status !== 'pending') return refused('比赛已确认比分，不能再改派裁判');
@@ -257,24 +463,31 @@ async function submitExchangeScore(payload = {}, ctx) {
   const preview = { ...match, scoreA, scoreB, winner: scoreA > scoreB ? match.playerA : match.playerB, status: 'active' };
   const ledger = existing.map(row => row._id === match._id ? preview : row);
   const built = planExchangeMatches({ eventId: snapshot._id, draw: snapshot.draw, entrantsById: map, matches: ledger });
-  const known = new Set(existing.map(row => row._id));
-  const additions = built.matches.filter(row => !known.has(row._id));
   return ok(await ctx.repo.transaction(async tx => {
     const fresh = await freshContext(tx, ctx);
     const event = await tx.exchangeEvents.getById(payload.eventId);
     const current = await tx.exchangeMatches.getById(payload.matchId);
     if (!current || !event || current.eventId !== event._id) return refused('比赛不存在');
     if (!canScoreMatch(event, current, fresh)) return refused('没有比分确认权限');
+    if (event.status === 'canceled') return refused('赛事已取消');
     if (current.status !== 'pending') return refused('这场比赛已确认比分');
     if (event.revision !== snapshot.revision || current.revision !== match.revision) return refused('赛事已变化，请刷新后重试');
     const scored = { ...current, scoreA, scoreB, winner: scoreA > scoreB ? current.playerA : current.playerB,
       status: 'active', recordedBy: fresh.actorId, recordedAt: fresh.now, revision: current.revision + 1 };
     await tx.exchangeMatches.set(scored._id, scored);
-    // 比分确认后，下一轮对阵可能首次确定，补齐新生成的比赛。
-    for (const row of additions) {
+    // 把「此刻应当存在」的比赛补齐 / 刷新：新确定的对阵补进来；撤销后重录导致的
+    // 换人（待确认 / 已撤销的下一轮）按新对阵刷新。已生效的比分不动。
+    for (const row of built.matches) {
       const clash = await tx.exchangeMatches.getById(row._id);
-      if (clash) continue;
-      await tx.exchangeMatches.set(row._id, { ...row, schoolId: event.schoolId, association: event.association });
+      if (!clash) {
+        await tx.exchangeMatches.set(row._id, { ...row, schoolId: event.schoolId, association: event.association });
+        continue;
+      }
+      if (clash.status === 'active') continue;
+      if (clash.playerA === row.playerA && clash.playerB === row.playerB && clash.status === row.status) continue;
+      await tx.exchangeMatches.set(row._id, { ...clash, playerA: row.playerA, playerB: row.playerB,
+        schoolA: row.schoolA, schoolB: row.schoolB, scoreA: null, scoreB: null, winner: '',
+        status: 'pending', revision: Number(clash.revision || 1) + 1 });
     }
     const nextEvent = { ...event, revision: event.revision + 1 };
     await tx.exchangeEvents.set(nextEvent._id, nextEvent);
@@ -303,6 +516,7 @@ async function confirmExchangeRanking(payload = {}, ctx) {
     const fresh = await freshContext(tx, ctx);
     const event = await tx.exchangeEvents.getById(payload.eventId);
     if (!managesExchange(event, fresh)) return refused('只有管理员或双方校管理员可以确认名次');
+    if (event.status === 'canceled') return refused('赛事已取消');
     if (event.status !== 'drawn') return refused('当前状态不能确认名次');
     if (event.revision !== snapshot.revision) return refused('赛事已变化，请刷新后重试');
     const next = { ...event, status: 'finished', results,
@@ -339,14 +553,25 @@ async function getExchangeEvent(payload = {}, ctx) {
     .filter(row => row.status === SCHOOL_MEMBER_STATUS.ACTIVE && event.participantSchoolIds.includes(row.schoolId))
     .map(row => ({ userId: row.userId, nickName: names.get(row.userId) || '', schoolId: row.schoolId,
       schoolName: event.schoolNames[row.schoolId] || '' }));
+  const canceled = event.status === 'canceled';
+  const isOrganizer = isPlatformAdmin(ctx) || (event.schoolId === ctx.schoolId && manages(ctx));
+  // 签到：名单锁定后到结束前，管理员替参赛者签（与普通赛事的代签同一口径）
+  const canCheckIn = !canceled && (event.status === 'ready' || event.status === 'drawn') && managesExchange(event, ctx);
   return ok({ ok: true, event: summary(event), participants: rows.map(row => ({
     userId: row.userId, nickName: row.nickName, representedSchoolId: row.representedSchoolId, schoolName: row.schoolName,
+    checkInTime: row.checkInTime || null, checkedIn: Boolean(row.checkInTime),
+    canCheckIn: canCheckIn && (isPlatformAdmin(ctx) || row.representedSchoolId === ctx.schoolId),
+    canRemove: !canceled && event.status === 'signup' && managesExchange(event, ctx) &&
+      (isPlatformAdmin(ctx) || row.representedSchoolId === ctx.schoolId),
   })), referees, canManage, canRespond: event.schoolId !== ctx.schoolId && event.invitations[ctx.schoolId] === 'pending' && manages(ctx),
-    canSignup: participates(ctx) && event.invitations[ctx.schoolId] === 'accepted' && event.status === 'signup' && new Date(event.startTime) > new Date(ctx.now),
+    canSignup: !canceled && participates(ctx) && event.invitations[ctx.schoolId] === 'accepted' && event.status === 'signup' && new Date(event.startTime) > new Date(ctx.now),
     signed: rows.some(row => row.userId === ctx.actorId),
-    canDraw: canManage && (event.status === 'ready' || event.status === 'drawn') &&
+    canceled, canCheckIn,
+    canCancel: !canceled && event.status !== 'finished' && isOrganizer,
+    canWithdrawInvitation: !canceled && event.status === 'signup' && Boolean(canManage),
+    canDraw: !canceled && canManage && (event.status === 'ready' || event.status === 'drawn') &&
       !matches.some(match => match.status === 'active'),
-    canConfirmRanking: canManage && event.status === 'drawn' && matches.length > 0 &&
+    canConfirmRanking: !canceled && canManage && event.status === 'drawn' && matches.length > 0 &&
       matches.every(match => match.status === 'active'),
     matches: matches.map(match => ({
       _id: match._id, round: match.round, slot: match.slot, status: match.status,
@@ -354,11 +579,14 @@ async function getExchangeEvent(payload = {}, ctx) {
       schoolNameA: event.schoolNames[match.schoolA] || '', schoolNameB: event.schoolNames[match.schoolB] || '',
       scoreA: match.scoreA, scoreB: match.scoreB, winner: match.winner,
       referee: match.referee || '', refereeName: names.get(match.referee) || '',
-      canAssignReferee: canManage && match.status === 'pending',
-      canScore: match.status === 'pending' && canScoreMatch(event, match, ctx),
+      canAssignReferee: !canceled && canManage && match.status === 'pending',
+      canScore: !canceled && match.status === 'pending' && canScoreMatch(event, match, ctx),
+      canRevoke: !canceled && match.status === 'active' && canScoreMatch(event, match, ctx),
     })), message: '' });
 }
 
 module.exports = { createExchangeEvent, respondExchangeInvitation, signUpExchangeEvent,
-  cancelExchangeSignup, lockExchangeRoster, drawExchangeEvent, assignExchangeReferee,
+  cancelExchangeSignup, removeExchangeSignup, checkInExchangeSignup, withdrawExchangeInvitation,
+  cancelExchangeEvent, revokeExchangeScore,
+  lockExchangeRoster, drawExchangeEvent, assignExchangeReferee,
   submitExchangeScore, confirmExchangeRanking, getExchangeEvents, getExchangeEvent };

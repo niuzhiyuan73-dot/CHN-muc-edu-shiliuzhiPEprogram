@@ -738,6 +738,75 @@ describe('checkSubmitAllowed —— 提交前那道闸门', () => {
 });
 
 /* ============================================================
+ * 事务内复核用的两个小函数（2026-10-16 独立验收 F3 的配套）
+ * ============================================================
+ * 提交闸门原先只看「整份台账算出来的用量」，那是事务外快照；并发下两个请求
+ * 各自都能通过。现在事务内还要按计数文档再判一次，判的就是这两个函数：
+ * findCappedPairs 挑出已满的对，pairCapMessage 说同一句话。
+ */
+
+const { findCappedPairs, pairCapMessage } = require('../miniprogram/services/rating-cap.js');
+
+describe('findCappedPairs —— 按给定用量挑出已满额的对', () => {
+  const pairs = [
+    { key: 'a|b', a: 'a', b: 'b' },
+    { key: 'a|c', a: 'a', b: 'c' },
+  ];
+
+  test('Map 与普通对象两种用量都认', () => {
+    const viaMap = findCappedPairs(pairs, new Map([['a|b', RATED_PAIR_LIMIT]]), { limit: RATED_PAIR_LIMIT });
+    assert.equal(viaMap.ok, false);
+    assert.deepEqual(viaMap.full.map(row => row.key), ['a|b']);
+
+    const viaObject = findCappedPairs(pairs, { 'a|b': RATED_PAIR_LIMIT }, { limit: RATED_PAIR_LIMIT });
+    assert.deepEqual(viaObject.full.map(row => row.count), [RATED_PAIR_LIMIT]);
+  });
+
+  test('差一场不算满：14 场在上限 15 下必须放行', () => {
+    const result = findCappedPairs(pairs, { 'a|b': RATED_PAIR_LIMIT - 1 }, { limit: RATED_PAIR_LIMIT });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.full, []);
+  });
+
+  test('同一对出现两次只报一次；超限的历史数据如实报出用量', () => {
+    const twice = [...pairs, { key: 'a|b', a: 'a', b: 'b' }];
+    const result = findCappedPairs(twice, { 'a|b': RATED_PAIR_LIMIT + 3 }, { limit: RATED_PAIR_LIMIT });
+    assert.equal(result.full.length, 1);
+    assert.equal(result.full[0].count, RATED_PAIR_LIMIT + 3);
+  });
+
+  test('上限关闭（<=0）或传空清单时一律放行', () => {
+    assert.equal(findCappedPairs(pairs, { 'a|b': 99 }, { limit: 0 }).ok, true);
+    assert.equal(findCappedPairs([], { 'a|b': 99 }).ok, true);
+    assert.equal(findCappedPairs(null, null).ok, true);
+  });
+});
+
+describe('pairCapMessage —— 满额提示', () => {
+  test('给出名字、场次与上限，并提示换对手或等下赛季', () => {
+    const message = pairCapMessage([{ key: 'a|b', a: 'a', b: 'b', count: RATED_PAIR_LIMIT }],
+      { limit: RATED_PAIR_LIMIT, nameOf: id => ({ a: '甲', b: '乙' }[id]) });
+    assert.match(message, /甲 与 乙/);
+    assert.match(message, new RegExp(`已经打了 ${RATED_PAIR_LIMIT} 场`));
+    assert.match(message, /等下个赛季/);
+  });
+
+  test('多对满额时只报第一对，其余给一句计数', () => {
+    const full = [
+      { key: 'a|b', a: 'a', b: 'b', count: RATED_PAIR_LIMIT },
+      { key: 'a|c', a: 'a', b: 'c', count: RATED_PAIR_LIMIT },
+    ];
+    const message = pairCapMessage(full, { limit: RATED_PAIR_LIMIT });
+    assert.match(message, /另有 1 对也已满额/);
+  });
+
+  test('没有满额的对时给空串（调用方据此放行）', () => {
+    assert.equal(pairCapMessage([], { limit: RATED_PAIR_LIMIT }), '');
+    assert.equal(pairCapMessage(null), '');
+  });
+});
+
+/* ============================================================
  * 端到端：这条上限确实作用在数据源上
  * ============================================================ */
 

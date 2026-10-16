@@ -81,6 +81,28 @@ const freshContext = (tx, ctx) => buildSchoolContext({
   scope: { schoolId: ctx.schoolId, association: ctx.association }, now: ctx.now,
 });
 
+/**
+ * 事务内重判身份与角色（2026-10-16 独立验收 F1/F2 的同类扫尾）。
+ *
+ * 【为什么每次写都要在事务里再问一遍「你还是你吗」】
+ * 开赛 / 抽签 / 代签 / 录名次这些动作，权限都取自请求进入时的上下文；而账号被
+ * 停用、学籍离校、协会角色被撤都可能发生在请求飞在路上的那一瞬。只在外层判一次，
+ * 就会出现「读不了任何数据的人，却把赛事开了 / 把名次录了」。事务里重建上下文
+ * （全是按主键点读，事务允许）再判一次，窗口就没了。
+ *
+ * @param {Object} tx 事务内仓储
+ * @param {Object} ctx 外层上下文
+ * @param {Object} dir buildDirectory 的结果（角色判定的静态部分）
+ * @returns {Promise<{ok:boolean, message:string, actor:Object|null}>}
+ */
+async function freshActorGate(tx, ctx, dir) {
+  const fresh = await freshContext(tx, ctx);
+  if (!canReadAssociationSpace(fresh)) {
+    return { ok: false, message: '账号已停用，或没有本协会的访问权限', actor: null };
+  }
+  return { ok: true, message: '', actor: legacyActorOf(fresh, dir) };
+}
+
 const eventAuditKey = (eventId, action, revision) =>
   schoolKey('evau', eventId, action, String(revision));
 const signupAuditKey = (eventId, actorId, action, revision) =>
@@ -643,8 +665,10 @@ async function startSchoolEvent(payload = {}, ctx) {
   if (!canReadAssociationSpace(ctx)) return ok(refused('没有读取协会空间的权限'));
 
   const dir = await buildDirectory(ctx);
-  const actor = legacyActorOf(ctx, dir);
   const result = await ctx.repo.transaction(async tx => {
+    const gate = await freshActorGate(tx, ctx, dir);
+    if (!gate.ok) return refused(gate.message);
+    const actor = gate.actor;
     const doc = await tx.events.getById(payload.eventId);
     if (!isEventDoc(doc) || !belongsToSchoolScope(doc, ctx)) return refused('赛事不存在');
     if (!canStartEvent(doc, actor)) {
@@ -705,9 +729,11 @@ async function drawSchoolEvent(payload = {}, ctx) {
   // 场号在 buildInitialMatches 内已由 court.js 统一排好，结果落库备查。
 
   const result = await ctx.repo.transaction(async tx => {
+    const gate = await freshActorGate(tx, ctx, dir);
+    if (!gate.ok) return refused(gate.message);
     const fresh = await tx.events.getById(payload.eventId);
     if (!isEventDoc(fresh) || !belongsToSchoolScope(fresh, ctx)) return refused('赛事不存在');
-    if (!canDrawEvent(fresh, actor)) return refused('只能在报名阶段抽签');
+    if (!canDrawEvent(fresh, gate.actor)) return refused('只能在报名阶段抽签');
 
     const nowIso = iso(ctx.now);
     for (const draft of drafts) {
@@ -737,11 +763,13 @@ async function checkInSchoolEvent(payload = {}, ctx) {
   if (!canReadAssociationSpace(ctx)) return ok(refused('没有读取协会空间的权限'));
 
   const dir = await buildDirectory(ctx);
-  const actor = legacyActorOf(ctx, dir);
   // 始终带上目标学院，避免「未指定目标」的短路把学院边界放行（见 event.canCheckIn）。
   const target = { college: dir.collegeOf(userId) };
 
   const result = await ctx.repo.transaction(async tx => {
+    const gate = await freshActorGate(tx, ctx, dir);
+    if (!gate.ok) return refused(gate.message);
+    const actor = gate.actor;
     const doc = await tx.events.getById(payload.eventId);
     if (!isEventDoc(doc) || !belongsToSchoolScope(doc, ctx)) return refused('赛事不存在');
     if (!canCheckIn(doc, actor, { target })) {
@@ -775,11 +803,13 @@ async function finishSchoolEvent(payload = {}, ctx) {
   if (!canReadAssociationSpace(ctx)) return ok(refused('没有读取协会空间的权限'));
 
   const dir = await buildDirectory(ctx);
-  const actor = legacyActorOf(ctx, dir);
   const signups = (await ctx.repo.forScope(ctx).eventSignups.list())
     .filter(row => row.eventId === payload.eventId);
 
   const result = await ctx.repo.transaction(async tx => {
+    const gate = await freshActorGate(tx, ctx, dir);
+    if (!gate.ok) return refused(gate.message);
+    const actor = gate.actor;
     const doc = await tx.events.getById(payload.eventId);
     if (!isEventDoc(doc) || !belongsToSchoolScope(doc, ctx)) return refused('赛事不存在');
     if (!canFinishEvent(doc, actor)) {

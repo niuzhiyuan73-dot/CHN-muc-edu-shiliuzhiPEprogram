@@ -395,6 +395,65 @@ test('抽签：仅管理员、报名中、抽完转待开赛并锁名单', async
   assert.match(again.message, /报名阶段/);
 });
 
+/**
+ * 写路径扫尾（2026-10-16 独立验收 F1/F2 的同类）：学院赛的写动作原先一律在事务外
+ * 判一次身份，事务里用的还是外层推出来的 actor。账号被停用、角色被撤之后，
+ * 只要请求已经进来，抽签 / 开赛 / 录名次仍然会落库。这里逐个守住。
+ */
+test('写路径：请求期间账号被停用，抽签与开赛都不落库', async () => {
+  const repo = fixture();
+  const t = await publish(repo, 'inflight_draw');
+  await approveCollege(repo, t.eventId, C01, ['demo_muc_member']);
+  await approveCollege(repo, t.eventId, C02, ['demo_muc_member_3']);
+
+  const disableAdminAtTxStart = (target) => {
+    const transaction = target.transaction;
+    target.transaction = async fn => {
+      const user = await target.users.getById('demo_muc_admin');
+      await target.users.set(user._id, { ...user, platformStatus: 'disabled' });
+      return transaction(fn);
+    };
+    return () => { target.transaction = transaction; };
+  };
+
+  const restore = disableAdminAtTxStart(repo);
+  const drawn = await call(repo, 'drawCollegeEvent', { eventId: t.eventId, seedValue: 42 });
+  assert.equal(drawn.ok, false, '停用之后不能再抽签');
+  assert.match(drawn.message, /停用|权限/);
+  assert.equal((await repo.collegeEvents.getById(t.eventId)).status, COLLEGE_EVENT_STATUS.SIGNUP,
+    '状态没有被改动');
+
+  // 撤掉注入、把账号改回来：同一笔抽签就能正常落库（说明拒绝的是身份，不是流程本身）
+  restore();
+  const user = await repo.users.getById('demo_muc_admin');
+  await repo.users.set(user._id, { ...user, platformStatus: 'active' });
+  const okDraw = await call(repo, 'drawCollegeEvent', { eventId: t.eventId, seedValue: 42 });
+  assert.equal(okDraw.ok, true, okDraw.message);
+});
+
+test('写路径：请求期间管理权被撤销，开赛与录名次都不落库', async () => {
+  const repo = fixture();
+  const t = await publish(repo, 'inflight_start');
+  await approveCollege(repo, t.eventId, C01, ['demo_muc_member']);
+  await approveCollege(repo, t.eventId, C02, ['demo_muc_member_3']);
+  await call(repo, 'drawCollegeEvent', { eventId: t.eventId, seedValue: 42 });
+
+  // 撤掉校级管理员角色（账号本身仍有效，所以只有「事务内重判角色」才拦得住）
+  const transaction = repo.transaction;
+  repo.transaction = async fn => {
+    const { schoolRoleKey } = require('../miniprogram/utils/school');
+    const key = schoolRoleKey('demo_muc_admin', 'muc');
+    const role = await repo.schoolRoles.getById(key);
+    await repo.schoolRoles.set(key, { ...role, status: 'disabled' });
+    return transaction(fn);
+  };
+
+  const started = await call(repo, 'startCollegeEvent', { eventId: t.eventId });
+  assert.equal(started.ok, false, '撤权之后不能再开赛');
+  assert.equal((await repo.collegeEvents.getById(t.eventId)).status, COLLEGE_EVENT_STATUS.READY,
+    '状态没有被改动');
+});
+
 test('抽签：已通过学院不足 2 个被拒；种子必须是已通过学院', async () => {
   const repo = fixture();
   const t = await publish(repo, 'r1');

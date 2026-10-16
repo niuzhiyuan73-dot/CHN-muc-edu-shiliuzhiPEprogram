@@ -25,11 +25,32 @@
       </block>
       <view wx:elif="{{account}}" class="hint">{{collegeName}} · 学号 {{studentId}}</view>
     </view>
+    <!-- 转校： browse 外校且本人在别校有身份时可以申请转入本校。
+         只需**本校**（转入学校）的校级管理员同意，原学校不需要处理。 -->
+    <view wx:if="{{user && (canTransfer || transferPending)}}" class="card">
+      <view class="card-title">转入 {{schoolName}}</view>
+      <block wx:if="{{transferPending}}">
+        <view class="hint">转校申请已提交，等待 {{schoolName}} 的校级管理员审核（原学校无需处理）。</view>
+        <view class="hint">申请信息：{{collegeName || '学院待核实'}} · 学号 {{studentId}}</view>
+        <button class="btn" loading="{{submitting}}" disabled="{{submitting}}" bindtap="onCancelTransfer">撤回转校申请</button>
+      </block>
+      <block wx:else>
+        <view class="hint">当前身份属于其他学校。转校只需转入学校同意，原学校的历史与成绩不会被搬走。</view>
+        <picker range="{{colleges}}" range-key="name" value="{{collegeIndex}}" disabled="{{submitting}}" bindchange="onCollegeChange">
+          <view class="selection">{{collegeName || '请选择学院'}} <text>›</text></view>
+        </picker>
+        <input class="identity-input" placeholder="请输入{{schoolName}}的学号" value="{{studentId}}" maxlength="64" disabled="{{submitting}}" bindinput="onStudentIdInput" />
+        <button class="btn btn-primary" loading="{{submitting}}" disabled="{{submitting}}" bindtap="onTransfer">提交转校申请</button>
+      </block>
+    </view>
     <view wx:if="{{canReview}}" class="card">
       <view class="card-title">{{schoolName}} · 待审核 {{applications.length}} 人</view>
       <view wx:if="{{!applications.length}}" class="hint">当前没有待审核申请</view>
       <view wx:for="{{applications}}" wx:key="userId" class="application">
-        <view class="applicant-name">{{item.nickName}}</view>
+        <view class="applicant-name">
+          {{item.nickName}}
+          <text wx:if="{{item.transfer}}" class="transfer-tag">转校 · 来自{{item.transferFromName}}</text>
+        </view>
         <view class="hint">{{item.collegeName}} · 学号 {{item.studentId}}</view>
         <input class="identity-input" placeholder="驳回时请填写理由" maxlength="500" value="{{item.reason}}" data-user-id="{{item.userId}}" disabled="{{submitting}}" bindinput="onReasonInput" />
         <view class="actions">

@@ -26,11 +26,14 @@ function forSchoolIdentity(input) {
     getSchoolMembers: () => request('getSchoolMembers'),
     grantSchoolPermission: payload => request('grantSchoolPermission', payload),
     updateSchoolProfile: payload => request('updateSchoolProfile', payload),
+    // 转校：申请 / 目标学校审批 / 申请人撤回（原学校无需同意）
+    applySchoolTransfer: payload => request('applySchoolTransfer', payload),
+    reviewSchoolTransfer: payload => request('reviewSchoolTransfer', payload),
+    cancelSchoolTransfer: payload => request('cancelSchoolTransfer', payload),
   });
 }
 
-/** 协会空间客户端：分组与成员名录，动作名与云端 school-request 注册的一致。 */
-function forAssociationSpace(input) {
+/** 协会空间客户端：分组与成员名录，动作名与云端 school-request 注册的一致。 */function forAssociationSpace(input) {
   const request = requestFor(schoolScope(input));
   return Object.freeze({
     listAssociationGroups: payload => request('listAssociationGroups', payload),
@@ -116,4 +119,31 @@ function forAssociationSpace(input) {
   });
 }
 
-module.exports = { forSchoolIdentity, forAssociationSpace };
+/**
+ * 跨校邀请赛客户端（协议 2）。
+ * 动作名与服务端 school-exchange-handlers 注册的一致；范围仍取调用者的
+ * 学校 + 协会，跨校能力由服务端按「赛事邀请了哪些学校」判定，不由客户端声明。
+ */
+function forExchange(input) {
+  const request = requestFor(schoolScope(input));
+  return Object.freeze({
+    createExchangeEvent: payload => request('createExchangeEvent', payload),
+    respondExchangeInvitation: payload => request('respondExchangeInvitation', payload),
+    signUpExchangeEvent: payload => request('signUpExchangeEvent', payload),
+    cancelExchangeSignup: payload => request('cancelExchangeSignup', payload),
+    removeExchangeSignup: payload => request('removeExchangeSignup', payload),
+    checkInExchangeSignup: payload => request('checkInExchangeSignup', payload),
+    withdrawExchangeInvitation: payload => request('withdrawExchangeInvitation', payload),
+    cancelExchangeEvent: payload => request('cancelExchangeEvent', payload),
+    revokeExchangeScore: payload => request('revokeExchangeScore', payload),
+    lockExchangeRoster: payload => request('lockExchangeRoster', payload),
+    drawExchangeEvent: payload => request('drawExchangeEvent', payload),
+    assignExchangeReferee: payload => request('assignExchangeReferee', payload),
+    submitExchangeScore: payload => request('submitExchangeScore', payload),
+    confirmExchangeRanking: payload => request('confirmExchangeRanking', payload),
+    getExchangeEvents: payload => request('getExchangeEvents', payload),
+    getExchangeEvent: payload => request('getExchangeEvent', payload),
+  });
+}
+
+module.exports = { forSchoolIdentity, forAssociationSpace, forExchange };

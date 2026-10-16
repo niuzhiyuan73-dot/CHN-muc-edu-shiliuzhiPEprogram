@@ -8,6 +8,10 @@ Page({
     loading: true, submitting: false, error: '', notice: '',
     user: null, account: null, statusText: '', canApply: false, canReview: false, applications: [],
     members: [], grants: [], readOnly: false,
+    /** 能不能在这所学校发起转校申请（浏览外校 + 本人在别校有有效身份） */
+    canTransfer: false,
+    /** 我在本校是否已有待审的转校申请 */
+    transferPending: false,
   },
   onLoad() { this.unloaded = false; return this.reload(); },
   onUnload() { this.unloaded = true; this.loadVersion = (this.loadVersion || 0) + 1; },
@@ -21,7 +25,7 @@ Page({
     const schoolId = this.data.schoolId;
     const api = service.forSchoolIdentity({ schoolId, association: 'pkb' });
     this.update({ loading: true, error: '', applications: [], canReview: false, canApply: false,
-      members: [], grants: [], readOnly: false,
+      members: [], grants: [], readOnly: false, canTransfer: false, transferPending: false,
       user: null, account: null, statusText: '' });
     try {
       const [directory, session] = await Promise.all([api.getSchoolDirectory(), api.getSchoolIdentitySession()]);
@@ -47,6 +51,11 @@ Page({
       const collegeIndex = account ? directory.colleges.findIndex(c => c.collegeId === account.collegeId) : -1;
       const schoolIndex = directory.schools.findIndex(s => s.schoolId === schoolId);
       const homeMismatch = session.user && session.user.primarySchoolId && session.user.primarySchoolId !== schoolId;
+      // 转校：正在浏览外校、本人在别校有有效身份，且本校这一侧没有已生效身份。
+      // 「谁能批」不在这里判——审批权由目标学校的管理员在服务端复核（见 reviewSchoolTransfer）。
+      const transferPending = Boolean(homeMismatch && account && account.status === 'pending' && account.transferFrom);
+      const canTransfer = Boolean(session.user && homeMismatch && !transferPending &&
+        (!account || account.status !== 'active'));
       this.update({ schools: directory.schools, schoolIndex, colleges: directory.colleges,
         schoolName: schoolIndex >= 0 ? directory.schools[schoolIndex].name : schoolId,
         collegeIndex, collegeName: collegeIndex >= 0 ? directory.colleges[collegeIndex].name : '',
@@ -55,7 +64,13 @@ Page({
         canReview: session.canReview,
         members, grants, readOnly,
         canApply: Boolean(session.user && !homeMismatch && (!account || ['pending', 'rejected'].includes(account.status))),
-        notice: homeMismatch ? '当前浏览外校。转校需要单独办理，不能通过普通申请更改归属。' : session.message || '',
+        canTransfer,
+        transferPending,
+        notice: homeMismatch
+          ? (transferPending
+            ? '转校申请已提交，等待本校管理员审核；原学校无需处理。'
+            : '当前浏览外校。要转到这所学校，请提交转校申请（只需该校管理员同意）。')
+          : session.message || '',
         applications: applications.map(row => ({ ...row, reason: '',
           collegeName: (directory.colleges.find(c => c.collegeId === row.collegeId) || {}).name || '学院待核实' })),
       });
@@ -102,13 +117,32 @@ Page({
     const studentId = this.data.studentId;
     return this.write(api => api.applySchoolMembership({ collegeId: college.collegeId, studentId }));
   },
+
+  /** 提交转校申请：转入这所学校，只需该校校级管理员同意（原学校不参与审批）。 */
+  onTransfer() {
+    if (!this.data.canTransfer) return;
+    const college = this.data.colleges[this.data.collegeIndex];
+    if (!college) { this.update({ error: '请选择学院' }); return; }
+    const studentId = this.data.studentId;
+    return this.write(api => api.applySchoolTransfer({ collegeId: college.collegeId, studentId }));
+  },
+
+  /** 撤回自己的待审转校申请（撤回后仍留在原学校）。 */
+  onCancelTransfer() {
+    if (!this.data.transferPending) return;
+    return this.write(api => api.cancelSchoolTransfer({}));
+  },
+
   onReview(event) {
     if (!this.data.canReview) return;
     const { userId, decision } = event.currentTarget.dataset;
     const row = this.data.applications.find(item => item.userId === userId);
     if (!row || !['approve', 'reject'].includes(decision)) return;
     if (decision === 'reject' && !row.reason.trim()) { this.update({ error: '请先填写驳回理由' }); return; }
-    return this.write(api => api.reviewSchoolMembership({ userId, decision, revision: row.revision, reason: row.reason }));
+    // 转校申请走自己的审批动作：通过时要搬运两侧身份，与普通入会不是同一条口径
+    return this.write(api => (row.transfer
+      ? api.reviewSchoolTransfer({ userId, decision, revision: row.revision, reason: row.reason })
+      : api.reviewSchoolMembership({ userId, decision, revision: row.revision, reason: row.reason })));
   },
   /**
    * 统一的「指定权限」入口。点某位会员后，按当前身份**可授予**的档位给出选项，

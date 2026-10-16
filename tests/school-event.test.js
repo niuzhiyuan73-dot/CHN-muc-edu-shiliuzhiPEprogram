@@ -329,6 +329,48 @@ test('名额与展示同一把尺子：计数偏小时不许超员，计数偏�
   assert.match(finalDetail.signupNote, /满/);
 });
 
+test('写路径：请求期间账号被停用，开赛 / 抽签 / 录名次都不落库（F1/F2 同类扫尾）', async () => {
+  const repo = fixture();
+  const event = await publish(repo, 'inflight_event');
+  await call(repo, 'signUpSchoolEvent', { eventId: event.eventId }, { actor: 'demo_muc_member' });
+  await call(repo, 'signUpSchoolEvent', { eventId: event.eventId }, { actor: 'demo_muc_member_2' });
+
+  const disableAtTxStart = () => {
+    const transaction = repo.transaction;
+    repo.transaction = async fn => {
+      const user = await repo.users.getById('demo_muc_admin');
+      await repo.users.set(user._id, { ...user, platformStatus: 'disabled' });
+      return transaction(fn);
+    };
+    return () => { repo.transaction = transaction; };
+  };
+
+  const restore = disableAtTxStart();
+  const drawn = await call(repo, 'drawSchoolEvent', { eventId: event.eventId, seedValue: 42 });
+  assert.equal(drawn.ok, false, '停用之后不能再抽签');
+  assert.match(drawn.message, /停用|权限/);
+  assert.equal((await repo.events.getById(event.eventId)).status, EVENT_STATUS.SIGNUP, '状态没有被改动');
+
+  // 撤掉注入、恢复账号：同一笔抽签照常落库（拒绝的是身份，不是流程）
+  restore();
+  const user = await repo.users.getById('demo_muc_admin');
+  await repo.users.set(user._id, { ...user, platformStatus: 'active' });
+  const okDraw = await call(repo, 'drawSchoolEvent', { eventId: event.eventId, seedValue: 42 });
+  assert.equal(okDraw.ok, true, okDraw.message);
+
+  // 开赛与录名次共用同一道闸：管理员角色在事务前被撤，两个动作都不该生效
+  const transaction = repo.transaction;
+  repo.transaction = async fn => {
+    const key = require('../miniprogram/utils/school').schoolRoleKey('demo_muc_admin', 'muc');
+    const role = await repo.schoolRoles.getById(key);
+    await repo.schoolRoles.set(key, { ...role, status: 'disabled' });
+    return transaction(fn);
+  };
+  const started = await call(repo, 'startSchoolEvent', { eventId: event.eventId });
+  assert.equal(started.ok, false, '撤权之后不能再开赛');
+  assert.equal((await repo.events.getById(event.eventId)).status, EVENT_STATUS.SIGNUP);
+});
+
 test('报名：性别项目只收相符性别', async () => {
   const repo = fixture({ memberGender: 'F' });
   const event = await publish(repo, 'r1', { discipline: 'MS' }); // 男单
