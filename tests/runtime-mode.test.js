@@ -45,7 +45,6 @@ const SERVICE_FILES_PENDING = [
   'auth.js',
   'college-view.js',
   'events-view.js',
-  'home-view.js',
   'match-view.js',
   'profile-view.js',
   'rank-view.js',

@@ -62,29 +62,40 @@ async function liveFailureLocksScore() {
   assert.equal((await call(repo, 'finishLiveScore', { matchId: match._id })).data.ok, false);
 }
 async function homeScopeRace() {
-  const facade = require('../miniprogram/services/index');
-  const scope = require('../miniprogram/services/association-scope');
-  const { loadHomeView } = require('../miniprogram/services/home-view');
-  facade.setDataSource(C.DATA_SOURCE.CLOUD);
-  scope.setAssociation('pkb');
-  const wrong = [];
-  global.wx = { cloud: { callFunction: async ({ data }) => {
-    const { action, association, payload } = data;
-    let value;
-    if (action === 'getAnnouncements') value = [];
-    else if (action === 'getEvents') value = [{ _id: `event-${association}`, status: C.EVENT_STATUS.SIGNUP, startTime: '2026-06-02', matchType: C.MATCH_TYPE.SINGLES }];
-    else if (action === 'getEventSignups') {
-      if (payload.eventId !== `event-${association}`) wrong.push({ eventId: payload.eventId, association });
-      value = [];
-    } else if (action === 'getHomeSummary') value = { memberCount: 1, matchCount: 0, eventCount: 1, seasonRange: {} };
-    else throw new Error(action);
-    return { result: { ok: true, data: value } };
-  } } };
-  await loadHomeView({ _id: 'u01', role: C.ROLE.MEMBER, status: C.USER_STATUS.ACTIVE });
-  assert.deepEqual(wrong, []);
-  delete global.wx;
-  facade.setDataSource(C.DATA_SOURCE.MOCK);
-  scope.resetAssociation();
+  const { loadSchoolHomeView } = require('../miniprogram/services/school-home-view');
+  // 跨协会并发聚合时，每个协会的分页游标必须各走各的：旧栈 home-view 曾把
+  // 「A 协会的赛事」拿去问「B 协会的报名记录」（eventId 与 association 配错）。
+  // 协议 2 用「每个协会各自建绑定范围客户端」杜绝，这条用例守的就是这个不变量。
+  // 注入替身客户端（school-home-view 的 options.client），记录每次请求带着哪个协会。
+  const seen = [];
+  const client = {
+    forScope(scope) {
+      return {
+        listSchoolAnnouncements: async () => ({ ok: true, announcements: [], hasMore: false }),
+        listSchoolEvents: async (payload = {}) => {
+          seen.push({ association: scope.association, offset: payload.offset || 0 });
+          return {
+            ok: true,
+            events: [{
+              _id: `event-${scope.association}`, status: C.EVENT_STATUS.SIGNUP,
+              startTime: '2026-06-02', matchType: C.MATCH_TYPE.SINGLES, isSignup: true,
+            }],
+            hasMore: false,
+          };
+        },
+        listSchoolMatches: async () => ({ ok: true, total: 0 }),
+        getSchoolSeason: async () => ({ ok: true, season: { seasonNumber: 1 } }),
+        listSchoolMembers: async () => ({ ok: true, total: 1 }),
+      };
+    },
+  };
+  await loadSchoolHomeView({ schoolId: 'muc', viewerId: 'u01', client });
+
+  assert.ok(seen.length > 0, '一个协会都没取数，这条用例就失去意义了');
+  for (const association of [...new Set(seen.map((row) => row.association))]) {
+    const offsets = seen.filter((row) => row.association === association).map((row) => row.offset);
+    assert.deepStrictEqual(offsets, [0], `${association} 的赛事分页游标串了：${JSON.stringify(offsets)}`);
+  }
 }
 async function secondEloEditRewritesOpponents() {
   const repo = createFixtureRepo({ matches: [MATCHES[0]] });
