@@ -36,7 +36,7 @@ const {
 } = require('../utils/school.js');
 const {
   MATCH_TYPE, MATCH_TYPE_LABEL,
-  MATCH_STATUS, MATCH_STATUS_LABEL, MATCH_COMPETITION, MATCH_OUTCOME,
+  MATCH_STATUS, MATCH_STATUS_LABEL, MATCH_COMPETITION, MATCH_OUTCOME, EVENT_STATUS,
 } = require('../utils/constants.js');
 const {
   canRecordScore, canConfirm, canRevoke, canAssignReferee, canForfeit, needsScore,
@@ -566,6 +566,30 @@ async function collegeRevokeBlockerFor(ctx, matchId) {
 }
 
 /**
+ * 父赛事已进终态时，比赛记录不可再改。
+ *
+ * 【为什么需要这道闸（2026-10-16 审计）】confirm / reject / revoke / forfeit 原先
+ * 只看比赛自身的状态，不看父赛事。于是「赛事已结束、名次已公布」之后，
+ *   · 还能把 PENDING 的比赛确认生效 —— 收尾的 `advanceSchoolEvent` 会在**已结束**
+ *     的赛事上再补排一轮（凭空多出一场决赛）；
+ *   · 还能把 ACTIVE 的比赛作废 —— 等级分回放随之改变，而对外公布的 results 纹丝不动。
+ * 名次是唯一对外口径，赛事结束就该只读；要更正得走赛事修订，不是偷偷改比赛。
+ *
+ * 日常约球没有 eventId，自然跳过（它们不受任何赛事约束）；学院赛小场的
+ * eventId 留空，其父赛事是大场/学院赛，闸门在 school-college-service 那侧。
+ *
+ * @param {Object} tx 事务内仓储
+ * @param {Object} doc 比赛记录
+ * @returns {Promise<string>} 非空即为拒绝理由
+ */
+async function finishedEventBlocker(tx, doc) {
+  if (typeof doc.eventId !== 'string' || !doc.eventId) return '';
+  const event = await tx.events.getById(doc.eventId);
+  if (!event || event.status !== EVENT_STATUS.FINISHED) return '';
+  return '赛事已结束，比赛记录不可再改';
+}
+
+/**
  * confirm / reject / revoke 共用的状态机：取记录 → 判权 → 写状态 + 审计。
  *
  * 【为什么要拿事务内的 fresh 重判身份与角色】2026-10-16 独立验收 F1：
@@ -597,6 +621,9 @@ async function transition(payload, ctx, spec) {
     // mock 放宽只影响演示：isMock 由 mock 端打在 ctx 上，这里原样带进事务
     const allowOptions = { isMock: ctx.isMock === true, ...recordOptions(fresh, dir) };
     if (!spec.allow(doc, allowOptions)) return refused(spec.message);
+    // 先答复「你有没有资格」，再谈「赛事还让不让改」（与下面 precondition 同序）。
+    const terminal = await finishedEventBlocker(tx, doc);
+    if (terminal) return refused(terminal);
     if (typeof spec.precondition === 'function') {
       const blocked = await spec.precondition(tx, doc);
       if (blocked) return refused(blocked);
@@ -634,6 +661,9 @@ async function forfeitSchoolMatch(payload = {}, ctx) {
     if (!canForfeit(doc, forfeitBy, fresh.actorId, { role: recordOptions(fresh, dir).role })) {
       return refused('你无权记录这次弃权');
     }
+    // 弃权会改胜负与等级分，同样受「赛事已结束即只读」约束（见 finishedEventBlocker）
+    const terminal = await finishedEventBlocker(tx, doc);
+    if (terminal) return refused(terminal);
 
     const nowIso = iso(ctx.now);
     const patch = buildForfeitPatch(doc, forfeitBy, { actorId: fresh.actorId, now: fresh.now });

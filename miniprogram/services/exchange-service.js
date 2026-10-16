@@ -351,6 +351,9 @@ async function revokeExchangeScore(payload = {}, ctx) {
   const snapshot = await ctx.repo.exchangeEvents.getById(payload.eventId);
   const match = await ctx.repo.exchangeMatches.getById(payload.matchId);
   if (!snapshot || !match || match.eventId !== snapshot._id) return ok(refused('比赛不存在'));
+  // 见 submitExchangeScore：已结束 / 已取消的赛事不再动比分。
+  if (snapshot.status === 'finished') return ok(refused('赛事已结束，不能再撤销比分'));
+  if (snapshot.status === 'canceled') return ok(refused('赛事已取消'));
   if (!canScoreMatch(snapshot, match, ctx)) return ok(refused('没有比分撤销权限'));
   // 撤销前的自查：谁排在这场之后。阶段与轮次的先后由 format-plan 判定，
   // 双败的胜者组 / 败者组 / 总决赛、小组赛与淘汰赛之间也分得清。
@@ -368,6 +371,8 @@ async function revokeExchangeScore(payload = {}, ctx) {
     const current = await tx.exchangeMatches.getById(payload.matchId);
     if (!event || !current || current.eventId !== event._id) return refused('比赛不存在');
     if (!canScoreMatch(event, current, fresh)) return refused('没有比分撤销权限');
+    if (event.status === 'finished') return refused('赛事已结束，不能再撤销比分');
+    if (event.status === 'canceled') return refused('赛事已取消');
     if (current.status !== 'active') return refused('这场比赛还没有确认的比分');
     // 事务内复查：读到撤销之前，可能刚有人确认了下一轮（整表查询事务里不允许，逐个点读）
     for (const id of laterIds) {
@@ -518,6 +523,11 @@ async function submitExchangeScore(payload = {}, ctx) {
   const match = await ctx.repo.exchangeMatches.getById(payload.matchId);
   if (!snapshot || !match || match.eventId !== snapshot._id) return ok(refused('比赛不存在'));
   if (!snapshot.draw) return ok(refused('请先抽签'));
+  // 终态不可变（2026-10-16 审计）：名次一旦确认（status='finished'），
+  // event.results 就是对外唯一口径，比分台账不能事后被改写——否则「公布的冠军」
+  // 与「台账里的冠军」会静默分叉。要更正得走赛事修订，不是改比分。
+  if (snapshot.status === 'finished') return ok(refused('赛事已结束，不能再改比分'));
+  if (snapshot.status === 'canceled') return ok(refused('赛事已取消'));
   if (!canScoreMatch(snapshot, match, ctx)) return ok(refused('没有比分确认权限'));
   if (match.status !== 'pending') return ok(refused('这场比赛已确认比分'));
   if (!match.playerA || !match.playerB) return ok(refused('对阵尚未确定'));
@@ -537,6 +547,7 @@ async function submitExchangeScore(payload = {}, ctx) {
     const current = await tx.exchangeMatches.getById(payload.matchId);
     if (!current || !event || current.eventId !== event._id) return refused('比赛不存在');
     if (!canScoreMatch(event, current, fresh)) return refused('没有比分确认权限');
+    if (event.status === 'finished') return refused('赛事已结束，不能再改比分');
     if (event.status === 'canceled') return refused('赛事已取消');
     if (current.status !== 'pending') return refused('这场比赛已确认比分');
     if (event.revision !== snapshot.revision || current.revision !== match.revision) return refused('赛事已变化，请刷新后重试');

@@ -61,23 +61,57 @@
 
 ## 三、建集合与索引
 
-在云开发控制台 → 数据库里建 **11 个**集合（名称须完全一致）：个人赛 7 个，
-学院赛 4 个。学院赛独立成体系，不与个人赛共用集合。
+在云开发控制台 → 数据库里建 **31 个**集合（名称须完全一致）。名称与
+`miniprogram/utils/constants.js` 的 `COLLECTION` 常量、云端
+`cloudfunctions/data/src/repository.js` 的 `COLLECTIONS` 一一对应；少建任何一个，
+读写它的那一步都会直接报错。下面按体系分组，同一体系内的集合互不共用。
 
-个人赛：
+**个人赛（旧栈，8 个）**：
 
 | 集合 | 用途 |
 |---|---|
 | `users` | 会员档案与入会申请（含 `openId`、`college`；等级分本身不存这里） |
-| `matches` | 比赛流水，等级分的唯一来源（学院赛小场也写在这里） |
+| `matches` | 比赛流水，等级分的唯一来源（学院赛与跨校赛事的小场也写在这里） |
 | `events` | 个人赛事 |
 | `event_signups` | 赛事报名与签到 |
 | `announcements` | 公告 |
-| `seasons` | 赛季锚点与版本号，只会有 `_id = 'current'` 一条 |
-| `rankings` | 排行榜快照，只会有 `_id = 'current'` 一条。它是**纯缓存**：删了会自动重算，写失败也不影响读 |
+| `seasons` | 赛季锚点与版本号，每个协会一条（`_id = 'current_<协会>'`；旧数据没有协会时才落回 `current`） |
+| `rankings` | 排行榜快照，每个协会一条（`_id = 'current_<协会>'`）。它是**纯缓存**：删了会自动重算，写失败也不影响读 |
 | `audit_logs` | 写操作留痕（当前不写入，可选） |
 
-学院赛：
+**学校身份与等级分（协议 2，7 个）**：
+
+| 集合 | 用途 |
+|---|---|
+| `schools` | 学校目录 |
+| `school_associations` | 学校 × 协会的成员资格 |
+| `colleges` | 每校独立的学院目录（不与个人赛共用） |
+| `school_members` | 学校成员档案 |
+| `school_roles` | 学校级角色（学院负责人 / 协会负责人） |
+| `member_ratings` | 学校维度的会员等级分 |
+| `student_id_claims` | 学号唯一性占用表 |
+
+**协会空间（协议 2，6 个）**：
+
+| 集合 | 用途 |
+|---|---|
+| `memberships` | 协会角色表，无行即普通会员 |
+| `association_groups` | 长期会员小组（只存在于一个学校的一个协会内） |
+| `association_group_members` | 组内成员关系，含退出 / 被移除状态 |
+| `association_notices` | 协会内部通知，只在本校协会可见，绝不进首页与全局统计 |
+| `association_trainings` | 空间训练活动 |
+| `training_registrations` | 训练报名，含取消 / 移除与资格快照 |
+
+**跨校邀请赛（协议 2，4 个）**：
+
+| 集合 | 用途 |
+|---|---|
+| `exchange_events` | 跨校邀请赛本体（`eventScope=inter_school`、`ratingPolicy=unrated`） |
+| `exchange_invitations` | 赛事邀请：这场赛事请了哪些学校 |
+| `exchange_signups` | 跨校报名与签到 |
+| `exchange_matches` | 跨校对阵与比分 |
+
+**学院赛（4 个，学院赛独立成体系，不与个人赛共用集合）**：
 
 | 集合 | 用途 |
 |---|---|
@@ -86,7 +120,18 @@
 | `ties` | 大场：两院之间的一轮对抗 |
 | `lineups` | 大场排阵，键为「大场 + 学院」 |
 
-索引（**权限选「仅创建者可读写」或「所有用户不可读写」，见第五节**）：
+**运行支撑（2 个）**：
+
+| 集合 | 用途 |
+|---|---|
+| `live_scores` | 逐球计分的过程态，一场一条（`_id = 'ls_' + matchId`），定稿后转进 `matches` |
+| `pair_counts` | 每赛季「一对会员的自行录入场次」计数，只为把并发名额判断放进同一事务 |
+
+索引（**权限选「仅创建者可读写」或「所有用户不可读写」，见第五节**）。
+下面按取数方式分两组：旧栈与学院赛按业务字段查，学校维度（协议 2）以复合
+主键读为主、只在「取一批」时才需要联合索引。
+
+旧栈与学院赛：
 
 | 集合 | 字段 | 唯一 | 为什么 |
 |---|---|---|---|
@@ -101,6 +146,27 @@
 | `ties` | `eventId` + `round` | — | 按赛事与轮次查大场 |
 | `lineups` | `eventId` + `tieId` | — | 按赛事或大场查排阵 |
 
+学校维度（协议 2）：
+
+这些集合的记录一律以 `miniprogram/utils/school.js` 的 `schoolKey` 造复合 `_id`
+（如 `sa:<学校>:<协会>`、`mb:<学校>:<协会>:<用户>`），所以按主键读最省事；只有
+`school-repository.js` 的 `listByScope` / `listByEvent` 那种「取一个范围的一批」
+才需要额外的联合索引：
+
+| 集合 | 字段 | 唯一 | 为什么 |
+|---|---|---|---|
+| `school_associations` | `schoolId` + `association` | — | 按「学校 + 协会」取成员资格 |
+| `colleges` / `school_members` / `school_roles` | `schoolId` | — | 按学校取学院目录 / 成员 / 角色 |
+| `member_ratings` | `schoolId` + `association` | — | 按范围取学校维度等级分 |
+| `memberships` | `schoolId` + `association` | — | 按范围取协会角色（另按 `userId` 查个人） |
+| `association_groups` / `association_group_members` / `association_notices` / `association_trainings` / `training_registrations` | `schoolId` + `association` | — | 协会空间一律按「学校 + 协会」取一批 |
+| `exchange_events` / `exchange_invitations` | `schoolId` + `association` | — | 按范围取跨校赛事与邀请 |
+| `exchange_signups` / `exchange_matches` | `eventId` | — | 按赛事取跨校报名与对阵 |
+| `pair_counts` | `schoolId` + `association` | — | 按范围取交手名额计数 |
+
+> 上面这张表是按 `school-repository.js` 里实际出现的 `where` 条件列的。这些索引
+> 不是「启动必需」——控制台只在数据量变大、出现慢查询告警时才提示缺索引，照着补即可。
+
 > **所有集合都是必建的**（含 `rankings`）。等级分仍以比赛流水为唯一事实
 > 来源，`rankings` 只存一份「重放结果的落库缓存」：容器冷启动时先读它，
 > 省掉全表读 + 两遍回放。它的键由赛季版本号 + 算法版本 + 锚点拼成，任何
@@ -110,6 +176,10 @@
 > `event_signups` 与 4 个学院赛集合是**必建**的：报名 / 签到会写
 > `event_signups`；学院赛的名单、大场、排阵分别写另外 4 个。少建任何一个，
 > 对应步骤会直接报错。
+>
+> 学校身份与等级分 7 个、协会空间 6 个、跨校邀请赛 4 个，以及运行支撑的
+> `live_scores` / `pair_counts`，同样是**必建**的：协议 2 的注册、入会、
+> 分组、通知、训练、赛事、比分都直接读写它们，少建一个，走到那一步就报错。
 
 ## 四、创建第一个管理员（首次部署必做）
 
@@ -163,7 +233,7 @@
 ## 五、数据库安全规则
 
 **等级分只允许云函数写**——靠的是客户端根本没有写入口，而不是靠规则。
-但为了挡住绕过小程序直接调 SDK 的写，请把 **11 个业务集合全部** 的权限设为
+但为了挡住绕过小程序直接调 SDK 的写，请把 **31 个业务集合全部** 的权限设为
 **「所有用户不可读写」**（云函数以管理员身份运行，不受该规则限制）。
 
 不要设成「所有用户可读」：那样任何人都能直接拉走全量会员与比赛数据。
@@ -203,11 +273,13 @@ Node API、不做 I/O）。当前共 27 个文件，学院赛的纯逻辑（`col
 只有一种情况需要手动介入：**导入历史比赛之前**先把锚点定死。否则首次写入可能
 发生在历史数据导入的中间态，锚点会取到错误的日期。
 
-若确实要手工初始化，在云开发控制台向 `seasons` 集合插入一条：
+若确实要手工初始化，在云开发控制台向 `seasons` 集合插入一条。**`_id` 必须带协会
+后缀**，形如 `current_<协会 id>`（协会取 `utils/associations.js` 里的 id，例如匹克球
+是 `pkb`）——每个协会各持一条赛季锚点，写错 `_id` 会读不到：
 
 ```json
 {
-  "_id": "current",
+  "_id": "current_pkb",
   "anchorTime": "2026-04-08T18:00:00",
   "version": 0,
   "algoVersion": 1
@@ -242,7 +314,7 @@ Node API、不做 I/O）。当前共 27 个文件，学院赛的纯逻辑（`col
    标准输出会打印 `共 N 行，通过 M 行，问题 K 行` 与「已导入比赛中最早的一场」。
    问题行为空才继续。
 
-3. 按第六节把 `seasons/current` 的 `anchorTime` 定死。
+3. 按第七节把 `seasons/current_<协会>` 的 `anchorTime` 定死。
 4. 用控制台的「导入」功能把 JSON 写进 `matches` 集合。
 
 导入的文档 `_id` 是按（项目、双方阵容、比分、时间、录入人）算出的自然键，

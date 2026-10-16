@@ -71,6 +71,18 @@
  *   memberRatings 新集合提供 getById / set / list。
  *   范围仓储保护数据归属，不替代身份权限与父资源业务校验。
  *
+ * 【每个集合都必须齐 getById / set / list 三件套】
+ *   学校维度的服务只依赖注入的 repo，并且要与本地模拟仓储
+ *   （miniprogram/services/school-memory-repo.js）**互换使用**——同一份业务代码
+ *   两边都要跑通。因此每个集合都缺一不可，`set(id, doc)` 的语义是「按 _id 整体
+ *   写入（upsert）」，与模拟仓储一致（insert / update 是云端额外的便捷形态，
+ *   模拟仓储没有，业务代码不得依赖）。
+ *
+ *   这条不变式有历史教训：云端适配器当初只给一部分集合补了 set，而共享服务写得
+ *   最多的是 `ctx.repo.transaction(tx => tx.events.set(...))`，于是同一个动作在本地
+ *   mock 全绿、在云端抛 `tx.X.set is not a function`（被兜成「服务异常」）。
+ *   2026-10-16 审计发现后补齐，并由 tests/cloud-repo-contract.test.js 持续守护。
+ *
  * 【为什么写操作只给 set / update 两种形态】
  * 微信云开发的事务里，集合查询受限而 doc(id) 的读写稳定可靠。把写操作
  * 收敛成「按主键整体写」和「按主键改字段」，事务里就不必做集合查询，

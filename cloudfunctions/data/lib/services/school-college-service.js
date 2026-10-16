@@ -639,6 +639,26 @@ async function refereeRejection(tx, ctx, refereeId) {
   return '';
 }
 
+/**
+ * 学院赛已结束即为终态：大场与小场层面的写动作一律不许再动。
+ *
+ * 【为什么需要这道闸（2026-10-16 审计）】`forfeitCollegeTieLeg` 原先只校验大场自己的
+ * 状态（ONGOING）与小项未定胜负，从不看所属学院赛——`finishCollegeEvent` 之后仍能
+ * 记弃权，顺手把小场改成生效、大场改成结束，必要时还会按胜者**补排下一轮大场**。
+ * 排阵 / 开大场 / 改派裁判三处同样只看大场。名次一旦录入即为对外口径，赛事必须只读。
+ *
+ * 内外各判一次：事务外先给一句人话，事务内用重读到的赛事状态复核（与判权同一套路）。
+ *
+ * @param {Object} repo 仓储（顶层或事务内，两者接口一致）
+ * @param {string} eventId 学院赛编号
+ * @returns {Promise<boolean>} 已结束返回 true
+ */
+async function collegeEventFinished(repo, eventId) {
+  if (typeof eventId !== 'string' || !eventId) return false;
+  const event = await repo.collegeEvents.getById(eventId);
+  return Boolean(event && event.status === COLLEGE_EVENT_STATUS.FINISHED);
+}
+
 async function submitCollegeLineup(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
   if (typeof payload.tieId !== 'string' || !payload.tieId) return ok(refused('缺少大场编号'));
@@ -653,6 +673,7 @@ async function submitCollegeLineup(payload = {}, ctx) {
   if (!isCollegeTieDoc(tie) || !belongsToSchoolScope(tie, ctx)) return ok(refused('找不到这个大场'));
   const event = await ctx.repo.collegeEvents.getById(tie.eventId);
   if (!isCollegeEventDoc(event) || !belongsToSchoolScope(event, ctx)) return ok(refused('找不到这场学院赛'));
+  if (event.status === COLLEGE_EVENT_STATUS.FINISHED) return ok(refused('学院赛已结束，不能再改排阵'));
 
   // 排阵的人必须出自本学院已通过审核的名单（D37）；校验复用旧栈 college-lineup 纯规则。
   const entry = await ctx.repo.collegeEntries.getById(collegeEntryKey(tie.eventId, collegeId, ctx));
@@ -671,6 +692,7 @@ async function submitCollegeLineup(payload = {}, ctx) {
     if (!isCollegeTieDoc(current) || !belongsToSchoolScope(current, ctx)) return refused('找不到这个大场');
     // 事务内复查：大场已开始 / 已结束就不能再改排阵。
     if (!canSubmitLineup(current, actor, { college, event })) return refused('大场已经开始，不能再改排阵');
+    if (await collegeEventFinished(tx, current.eventId)) return refused('学院赛已结束，不能再改排阵');
 
     const existing = await tx.lineups.getById(key);
     const doc = {
@@ -706,6 +728,7 @@ async function startCollegeTie(payload = {}, ctx) {
   if (!isCollegeTieDoc(tie) || !belongsToSchoolScope(tie, ctx)) return ok(refused('找不到这个大场'));
   const event = await ctx.repo.collegeEvents.getById(tie.eventId);
   if (!isCollegeEventDoc(event) || !belongsToSchoolScope(event, ctx)) return ok(refused('找不到这场学院赛'));
+  if (event.status === COLLEGE_EVENT_STATUS.FINISHED) return ok(refused('学院赛已结束，不能再开大场'));
 
   if (!canStartTie(tie, actor)) {
     if (tie.status === TIE_STATUS.ONGOING || tie.status === TIE_STATUS.FINISHED) return ok(refused('这个大场已经开始'));
@@ -730,6 +753,7 @@ async function startCollegeTie(payload = {}, ctx) {
     if (tieStatusOf(current) !== TIE_STATUS.READY) return refused('这个大场已经开始');
     // 事务内复查权限：撤权之后不能再开大场（F2 同类）
     if (!canStartTie(current, actor)) return refused('只有管理员可以开始大场');
+    if (await collegeEventFinished(tx, current.eventId)) return refused('学院赛已结束，不能再开大场');
 
     for (const draft of built.drafts) {
       const existing = await tx.matches.getById(draft._id);
@@ -761,6 +785,7 @@ async function assignCollegeTieReferee(payload = {}, ctx) {
   const tie = await ctx.repo.ties.getById(payload.tieId);
   if (!isCollegeTieDoc(tie) || !belongsToSchoolScope(tie, ctx)) return ok(refused('找不到这个大场'));
   if (!canAssignTieReferee(tie)) return ok(refused('这个大场已经结束，不能再改派裁判'));
+  if (await collegeEventFinished(ctx.repo, tie.eventId)) return ok(refused('学院赛已结束，不能再改派裁判'));
 
   const refereeId = String(payload.refereeId || '').trim();
   const nowIso = iso(ctx.now);
@@ -770,6 +795,7 @@ async function assignCollegeTieReferee(payload = {}, ctx) {
     if (!canAssignTieReferee(current)) return refused('这个大场已经结束，不能再改派裁判');
     // 事务内复查权限：撤权之后不能再改派裁判（F2 同类）
     if (!canManageCollegeEvent(actor)) return refused('只有管理员可以指派裁判');
+    if (await collegeEventFinished(tx, current.eventId)) return refused('学院赛已结束，不能再改派裁判');
     if (refereeId) {
       const rejection = await refereeRejection(tx, ctx, refereeId);
       if (rejection) return refused(rejection);
@@ -864,6 +890,7 @@ async function forfeitCollegeTieLeg(payload = {}, ctx) {
   if (!isCollegeTieDoc(tie) || !belongsToSchoolScope(tie, ctx)) return ok(refused('找不到这个大场'));
   if (tie.status === TIE_STATUS.FINISHED) return ok(refused('这个大场已经结束'));
   if (tie.status !== TIE_STATUS.ONGOING) return ok(refused('大场还没开始，不能记弃权'));
+  if (await collegeEventFinished(ctx.repo, tie.eventId)) return ok(refused('学院赛已结束，不能再记弃权'));
 
   const legNo = Number(payload.legNo);
   const leg = (Array.isArray(tie.legs) ? tie.legs : []).find(item => Number(item.legNo) === legNo);
@@ -881,6 +908,7 @@ async function forfeitCollegeTieLeg(payload = {}, ctx) {
     const match = await tx.matches.getById(leg.matchId);
     if (!isCollegeLegDoc(match) || !belongsToSchoolScope(match, ctx)) return refused('找不到这个小项的比赛');
     if (match.status === MATCH_STATUS.ACTIVE) return refused('这个小项已经生效，不能再记弃权');
+    if (await collegeEventFinished(tx, tie.eventId)) return refused('学院赛已结束，不能再记弃权');
     // 事务内复查权限：撤权之后不能再记录弃权（F2 同类）
     if (!canManageCollegeEvent(actor)) return refused('只有管理员可以记录弃权');
 

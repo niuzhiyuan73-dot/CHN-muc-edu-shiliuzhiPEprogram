@@ -1,15 +1,29 @@
 /** S2 身份接口客户端，明确范围，不改变旧业务门面的行为。 */
 const { schoolScope } = require('../utils/school.js');
+const { guardWrite, isSchoolWriteAction } = require('../utils/write.js');
 
-/** 绑定范围 + 协议 2 的请求器；身份与协会空间共用一份，避免两处各写一遍。 */
+/**
+ * 绑定范围 + 协议 2 的请求器；身份 / 协会空间 / 跨校邀请赛三个门面共用一份。
+ *
+ * 【写动作要不要套 guardWrite 的差别】
+ * 云端的基础设施故障（未登录 / 账号停用 / 事务失败 / 云环境未就绪）会让
+ * callFunction 当场抛出。页面写惯了「等一个 {ok:...} 回来」，若这层没人接住
+ * 抛出，一次故障就能让 submitting 永远停在 true、提交按钮从此点不动——这正是
+ * 学校维度 11 个页面此前在真实环境下的表现。所以写动作套 guardWrite，把抛出
+ * 收敛成与 mock 同形的 {ok:false,...}；读动作放行，读失败仍让页面自己 catch
+ * （收敛成空数据会把故障伪装成「没有内容」）。口径与 utils/write.js 一致。
+ */
 function requestFor(scope) {
-  return async (action, payload = {}) => {
-    if (typeof wx === 'undefined' || !wx.cloud) throw new Error('云开发尚未初始化');
-    const { result } = await wx.cloud.callFunction({ name: 'data', data: {
-      protocolVersion: 2, ...scope, action, payload,
-    } });
-    if (!result || !result.ok) throw new Error(result && result.message || '学校接口请求失败');
-    return result.data;
+  return (action, payload = {}) => {
+    const run = async () => {
+      if (typeof wx === 'undefined' || !wx.cloud) throw new Error('云开发尚未初始化');
+      const { result } = await wx.cloud.callFunction({ name: 'data', data: {
+        protocolVersion: 2, ...scope, action, payload,
+      } });
+      if (!result || !result.ok) throw new Error(result && result.message || '学校接口请求失败');
+      return result.data;
+    };
+    return isSchoolWriteAction(action) ? guardWrite(run) : run();
   };
 }
 
@@ -68,6 +82,11 @@ function forSchoolIdentity(input) {
     listSchoolEvents: payload => request('listSchoolEvents', payload),
     setSchoolEventPinned: payload => request('setSchoolEventPinned', payload),
     getSchoolEvent: payload => request('getSchoolEvent', payload),
+    // 报名名单：之前漏在门外。`school-event-view.js` 的 loadEventParts（赛事详情页
+    // 与名次录入页共用）会调它，云数据源下曾经直接 `api.listSchoolEventSignups is
+    // not a function`。服务端一直注册着这个动作（school-event-service.js 有导出），
+    // mock 门面也有——只有这一份清单漏写。
+    listSchoolEventSignups: payload => request('listSchoolEventSignups', payload),
     publishSchoolEvent: payload => request('publishSchoolEvent', payload),
     signUpSchoolEvent: payload => request('signUpSchoolEvent', payload),
     cancelSchoolEventSignup: payload => request('cancelSchoolEventSignup', payload),

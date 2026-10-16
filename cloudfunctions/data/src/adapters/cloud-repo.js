@@ -220,8 +220,9 @@ function buildCollections(scope, inTx) {
       update: (id, patch) => col('lineups').doc(id).update({ data: withoutId(patch) }),
     },
 
-    // 实时比分：一场一条，_id = 'ls_' + matchId。轮询按编号逐条读，
-    // 因此不需要整表读——也就不提供 list（事务内外都用不着）。
+    // 实时比分：一场一条，_id = 'ls_' + matchId。轮询按编号逐条读。
+    // list 也照三件套补上（见下方补齐循环）——业务目前不整表读，但两个适配器
+    // 的接口形状必须一致，否则「本地能跑、云端 TypeError」还会再犯。
     liveScores: {
       getById: (id) => readDoc(scope, COLLECTIONS.liveScores, id),
       insert: (doc) => col('liveScores').doc(doc._id).set({ data: withoutId(doc) }),
@@ -264,6 +265,36 @@ function buildCollections(scope, inTx) {
         : col('auditLogs').add({ data: withoutId(entry) }),
     },
   };
+  // ── 三件套补齐 ────────────────────────────────────────────────
+  // 本地 mock 仓储（miniprogram/services/school-memory-repo.js）对**每个**集合都
+  // 提供 getById / set / list 一整套；上面这份手写实现却只给一部分集合定义了
+  // set（另有 insert / update）。而共享服务（lib/services/**，与
+  // miniprogram/services/** 逐字节同源）大量这么写：
+  //
+  //     ctx.repo.transaction(async tx => { await tx.events.set(id, doc) })
+  //
+  // 于是同一个动作在 mock 下全绿、在云端抛 `tx.events.set is not a function`，
+  // 被 index.js 兜成「服务异常，请稍后再试」——2026-10-16 的只读审计就是这么
+  // 发现整条云端写入链全断的（本地测试全注入内存仓储，照不出来）。
+  //
+  // 这里把三件套补齐：**已有实现优先保留**（`...repo[key]` 在后覆盖同名方法，
+  // 语义与顺序都不变），缺什么补什么，让两套仓储可互换。清单与 mock 的 KEYS
+  // 对应，由 tests/cloud-repo-contract.test.js 守护，不要再靠人比对。
+  for (const key of ['users', 'schools', 'schoolAssociations', 'colleges', 'schoolMembers',
+    'schoolRoles', 'memberships', 'studentIdClaims', 'auditLogs',
+    'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
+    'associationGroups', 'associationGroupMembers',
+    'associationNotices', 'associationTrainings', 'trainingRegistrations',
+    'announcements', 'events', 'eventSignups', 'matches', 'liveScores',
+    'collegeEvents', 'collegeEntries', 'ties', 'lineups', 'seasons', 'pairCounts']) {
+    repo[key] = {
+      getById: (id) => readDoc(scope, COLLECTIONS[key], id),
+      set: (id, doc) => col(key).doc(id).set({ data: withoutId(doc) }),
+      list: () => list(key),
+      ...repo[key],
+    };
+  }
+
   return attachSchoolRepository(repo, {
     read: (key, id) => readDoc(scope, COLLECTIONS[key], id),
     set: (key, id, doc) => col(key).doc(id).set({ data: withoutId(doc) }),
