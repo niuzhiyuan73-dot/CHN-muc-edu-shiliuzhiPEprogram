@@ -14,6 +14,16 @@ function page() {
 const select = value => ({ detail: { value } });
 beforeEach(() => { facade.setDataSource('mock'); mock.reset(); });
 
+/**
+ * 演示种子里预置的跨校邀请赛场次（2026-10-16 起）。
+ * 两场都发生在民大 ↔ 北航之间，所以任何一校的列表里都会先看到它们：
+ *   · open   —— 报名中的单败淘汰赛，用来演示「接受邀请 → 报名 → 锁定名单」；
+ *   · drawn  —— 已抽签的小组赛+淘汰，用来演示「录入比分 → 推进 → 确认名次」。
+ * 用例里「新建一场后列表里有两场演示 + 一场新建」就是靠这个常量表达，
+ * 免得把数字写死后，下一次调整演示数据又变成一道谜题。
+ */
+const DEMO_EXCHANGE_EVENTS = 2;
+
 test('local page completes invitation, guest acceptance, two-school signup and locking', async () => {
   const p = page();
   await p.onLoad();
@@ -23,7 +33,7 @@ test('local page completes invitation, guest acceptance, two-school signup and l
   await p.onCreate();
   assert.equal(p.data.error, '');
   const id = p.data.detail.event._id;
-  assert.equal(p.data.events.length, 1);
+  assert.equal(p.data.events.length, DEMO_EXCHANGE_EVENTS + 1);
   await p.onSchoolChange(select(1));
   await p.onActorChange(select(2));
   await p.onOpen({ currentTarget: { dataset: { id } } });
@@ -65,7 +75,7 @@ test('page retains create request ID on retry, blocks duplicate writes and reset
   assert.equal(calls, 1);
   const id = p.data.detail.event._id;
   await p.onCreate();
-  assert.equal(p.data.events.length, 1);
+  assert.equal(p.data.events.length, DEMO_EXCHANGE_EVENTS + 1);
   assert.equal(p.data.detail.event._id, id);
   p.api = { createExchangeEvent: async () => { throw new Error('offline'); } };
   await p.onCreate();

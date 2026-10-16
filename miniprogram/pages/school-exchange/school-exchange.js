@@ -37,6 +37,17 @@ Page({
     bronzeLabel: constants.EVENT_BRONZE_MODE_LABEL[constants.DEFAULT_BRONZE_MODE],
     gfReset: constants.DEFAULT_GF_RESET,
     showGroupCount: false, showAdvance: false, showBronze: true, showGfReset: false,
+<<<<<<< HEAD
+=======
+    /**
+     * 当前是否本地模拟数据。只影响两处展示口径：
+     *   · 顶部那行「本地模拟体验」提示（云端不写，否则真实赛事被说成演示）；
+     *   · 「切换体验身份」下拉——云端没有演示身份这回事（getDemoActors 返回空数组），
+     *     留一个空下拉比不显示更糟。
+     * 进不进得去、能不能操作，一律由页面自身的权限与状态决定，不看这个字段。
+     */
+    isMock: identity.isMockNow(),
+>>>>>>> workbuddy/master-babf6080
   },
   onLoad() {
     const tomorrow = new Date(Date.now() + 86400000);
@@ -84,12 +95,14 @@ Page({
       this.api = api;
       const actors = identity.getDemoActors();
       // 当前演示身份未必在这份体验身份清单里（默认身份跟随 mock.js 的演示账号），
-      // 找不到就落到第一项，别让下拉 value 变成 -1。
+      // 找不到就落到第一项，别让下拉 value 变成 -1。云端 actors 为空数组，
+      // actorIndex/actorName 取到 0 / ''，配合模板上的 wx:if 整条下拉不渲染。
       const found = actors.findIndex(actor => actor.id === identity.getDemoActor());
       const actorIndex = found >= 0 ? found : 0;
       const schoolIndex = directory.schools.findIndex(school => school.schoolId === target.schoolId);
       this.update({ schools: directory.schools, schoolIndex, schoolName: directory.schools[schoolIndex].name,
         actors, actorIndex, actorName: (actors[actorIndex] && actors[actorIndex].label) || '',
+        isMock: identity.isMockNow(),
         canCreate: session.canManageAssociation, detail, scoreDraft: {},
         events: (result.events || []).map(event => ({ ...event, statusText: STATE[event.status],
           invitationText: INVITATION[event.invitations[target.schoolId]] })),

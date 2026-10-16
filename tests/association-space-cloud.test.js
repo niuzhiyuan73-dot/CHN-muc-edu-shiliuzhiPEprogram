@@ -60,7 +60,9 @@ test('成员名录只列本协会在册会员，字段脱敏', async () => {
   const asMember = await request(repo, 'listAssociationMembers', {}, 'mock_openid_muc_member');
   assert.equal(asMember.ok, true, asMember.message || '');
   const ids = asMember.data.members.map(row => row.userId).sort();
-  assert.deepEqual(ids, ['demo_muc_admin', 'demo_muc_member'], '只列本校会员，不含北航');
+  // 民大在匹克球协会的在册会员。2026-10-16 为跨校邀请赛补了「民大会员二」
+  // （四人签表要两校各两人），名录自然跟着多一位。
+  assert.deepEqual(ids, ['demo_muc_admin', 'demo_muc_member', 'demo_muc_member_2'], '只列本校会员，不含北航');
   for (const row of asMember.data.members) {
     assert.deepEqual(Object.keys(row).sort(),
       ['avatarUrl', 'collegeId', 'collegeName', 'nickName', 'permissionLabel', 'realName', 'userId']);
@@ -71,5 +73,5 @@ test('成员名录只列本协会在册会员，字段脱敏', async () => {
   assert.deepEqual(cross.data.members, []);
 
   const searched = await request(repo, 'listAssociationMembers', { keyword: '民大' }, 'mock_openid_muc_member');
-  assert.equal(searched.data.members.length, 2, '关键词命中本协会会员');
+  assert.equal(searched.data.members.length, 3, '关键词命中本协会会员');
 });

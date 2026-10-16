@@ -39,10 +39,17 @@ test('page supports Beihang application and local-admin approval without changin
   assert.deepEqual(p.data.applications, []);
   await switchActor(p, 'demo_buaa_admin');
   assert.equal(p.data.canReview, true);
-  assert.equal(p.data.applications.length, 1);
-  assert.equal(p.data.applications[0].nickName, '模拟申请人');
+  // 待审列表里有两条：本用例刚提交的那条，加上演示种子预置的「民大会员二 → 北航」
+  // 转校申请（2026-10-16 起，见 school-seed.demoTransferApplication）。两条同表，
+  // 所以这里按 userId 取自己那条，而不是按下标。
+  assert.equal(p.data.applications.length, 2);
+  const mine = p.data.applications.find(row => row.userId === 'demo_applicant');
+  assert.equal(mine.nickName, '模拟申请人');
+  assert.ok(p.data.applications.some(row => row.userId === 'demo_muc_member_2' && row.transfer === true),
+    '预置的转校待办也应出现在北航管理员的待审列表里');
   await p.onReview(reviewEvent('approve'));
-  assert.equal(p.data.applications.length, 0);
+  // 只审掉自己那条，预置的转校待办不受影响（各是各的申请）
+  assert.deepEqual(p.data.applications.map(row => row.userId), ['demo_muc_member_2']);
   await switchActor(p, 'demo_applicant');
   assert.equal(p.data.statusText, '已通过');
   assert.equal(p.data.canApply, false);

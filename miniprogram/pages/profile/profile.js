@@ -210,8 +210,13 @@ Page({
   onGoSchoolIdentity() {
     wx.navigateTo({ url: '/pages/school-identity/school-identity' });
   },
+  /**
+   * 跨校邀请赛。**不再只对模拟数据开放**（2026-10-16）：协议 2 已注册邀请赛的
+   * 全部动作，云端走得通；此处若再按 isMock 拦一道，真实环境就成了「点不动的
+   * 卡片」——比没有入口更糟。进不进得去由页面自己的权限与状态回答。
+   */
   onGoSchoolExchange() {
-    if (facade.isMockNow()) wx.navigateTo({ url: '/pages/school-exchange/school-exchange' });
+    wx.navigateTo({ url: '/pages/school-exchange/school-exchange' });
   },
 
   onGoLogin() {
