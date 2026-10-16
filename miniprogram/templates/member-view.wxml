@@ -367,32 +367,7 @@
   <block wx:else>
     <template is="memberHero" data="{{user: user, showSwitch: showSwitch, switchValue: switchValue}}" />
 
-    <!--
-      统一的「指定权限」入口。合此前并列的「任免协会负责人」与「任免学院负责人」
-      为一张卡：点开后按当前身份选择要授予 / 取消的档位。能选哪几档由 profile-view
-      算出的 associationLeader.visible / leader.visible 决定——全局管理员可任免协会
-      负责人，有学院管理权者可任免学院负责人；**权限不同，入口同一个**。
-      放在战绩之前：需要处理的事该排在浏览数据前面。
-    -->
-    <view wx:if="{{associationLeader.visible || leader.visible}}" class="card entry-card" bindtap="onGrantPermission">
-      <view class="entry-card-main">
-        <view class="entry-card-title">指定权限</view>
-        <view class="entry-card-hint">选择要授予或取消的身份</view>
-      </view>
-      <view class="entry-card-arrow">›</view>
-    </view>
-
-    <!--
-      更改当前等级分。有权限、且当前有可展示的项目时才出现
-      （currentElo.visible）。改的是当前项目对应的池——用于会员在外打完比赛、
-      对手不在本程序里时，直接把分数改成外部算好的值。
-    -->
-    <view wx:if="{{currentElo.visible}}" class="card entry-card" bindtap="onEditCurrentElo">
-      <view class="entry-card-main">
-        <view class="entry-card-title">更改等级分</view>
-      </view>
-      <view class="entry-card-arrow">›</view>
-    </view>
+    <!-- B8 收敛：任免 / 改分入口已移除，指定权限统一走学校身份页 -->
 
     <view wx:if="{{!hasProject}}" class="card">
       <template is="memberNoProjectNote" />

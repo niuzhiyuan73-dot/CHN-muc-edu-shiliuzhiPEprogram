@@ -7,6 +7,7 @@ const {
   buildChart,
   buildHistoryRow,
   loadMemberView,
+  loadSchoolMemberView,
   DEFAULT_HISTORY_LIMIT,
 } = require('../miniprogram/services/profile-view.js');
 const { PLACEHOLDER } = require('../miniprogram/utils/format.js');
@@ -566,4 +567,70 @@ test('loadMemberView —— 改分后入口显示新值', async () => {
     project: before.activeProject,
   });
   assert.strictEqual(after.currentElo.current, 1750);
+});
+
+/* ============================================================
+ * S2 装载器（B4-c）
+ * ============================================================ */
+
+/** 一份最小的 S2 个人资料 DTO（getSchoolMemberProfile 的返回形状） */
+function schoolProfileDto(overrides = {}) {
+  return {
+    ok: true,
+    found: true,
+    user: {
+      userId: 'u06', nickName: '明宇', realName: '赵明宇', avatarUrl: '', gender: 'M',
+      collegeId: 'c12', college: '法学院', studentId: '2023000006', points: 12,
+      permissionLabel: '会员', role: 0,
+    },
+    projects: [{
+      project: 'men_singles', pool: 1, label: '男单', elo: 1520, startElo: 1450,
+      delta: 70, matchCount: 3, wins: 2, losses: 1, rank: 2, total: 10, beatPercent: 80,
+    }],
+    active: 'men_singles',
+    ratingHistory: [{ eloAfter: 1490, eloDelta: 40, matchTime: '2026-10-01T09:00:00Z' }],
+    headToHead: [{ opponentId: 'u03', nickName: '思远', matchCount: 1, wins: 1, losses: 0, winRate: 1, eloDeltaSum: 8 }],
+    partners: [{ partnerId: 'u05', nickName: '子涵', matchCount: 1, wins: 1, losses: 0, winRate: 1 }],
+    history: [{
+      matchId: 'm1', matchTime: '2026-10-01T09:00:00Z', isWin: true, opponentNames: ['思远'],
+      partnerNames: [], score: { mine: [11], theirs: [8] }, eloDelta: 8, pointDelta: 0,
+      eventId: '', pool: 1, gamePoints: 11, bestOf: 3,
+    }],
+    form: { results: [true], wins: 1, losses: 0, streak: 1 },
+    honors: {
+      summary: { eventCount: 1, championCount: 0, topThreeCount: 1, bestPlacement: 3 },
+      records: [{ eventId: 'ev1', title: '春季杯', startTime: '2026-03-01T09:00:00Z', placement: 3, participantCount: 8 }],
+    },
+    message: '',
+    ...overrides,
+  };
+}
+
+test('loadSchoolMemberView —— 由 S2 资料 DTO 整形出与旧栈一致的视图', async () => {
+  const api = { getSchoolMemberProfile: async () => schoolProfileDto() };
+  const view = await loadSchoolMemberView(api, { userId: 'u06' });
+
+  assert.strictEqual(view.found, true);
+  assert.strictEqual(view.user.userId, 'u06');
+  assert.strictEqual(view.user.nickName, '明宇');
+  assert.strictEqual(view.user.roleLabel, '会员');
+  assert.strictEqual(view.activeProject, 'men_singles');
+  assert.strictEqual(view.summary.matchCount, 3);
+  assert.strictEqual(view.summary.rankText.includes('2'), true);
+  assert.strictEqual(view.chart.values.length, 2, '起点 + 一个走势点');
+  assert.strictEqual(view.headToHead[0].opponentId, 'u03');
+  assert.strictEqual(view.partners[0].partnerId, 'u05');
+  assert.strictEqual(view.history[0].matchId, 'm1');
+  assert.strictEqual(view.events.records[0].placement, 3);
+  assert.strictEqual(view.events.summary.topThreeCount, 1);
+  // S2 下任免 / 改分入口一律不出现（统一走学校身份页）
+  assert.strictEqual(view.leader.visible, false);
+  assert.strictEqual(view.associationLeader.visible, false);
+  assert.strictEqual(view.currentElo.visible, false);
+});
+
+test('loadSchoolMemberView —— 查无此人返回 found:false', async () => {
+  const api = { getSchoolMemberProfile: async () => ({ ok: false, found: false, message: '没有找到这位会员' }) };
+  const view = await loadSchoolMemberView(api, { userId: 'nobody' });
+  assert.deepStrictEqual(view, { found: false });
 });

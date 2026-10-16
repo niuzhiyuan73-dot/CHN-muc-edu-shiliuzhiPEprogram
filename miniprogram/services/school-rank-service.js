@@ -28,20 +28,27 @@
  */
 
 const { canReadAssociationSpace } = require('./association-space-permission.js');
-const { legacyActorOf, buildDirectory } = require('./school-actor.js');
+const { legacyActorOf, legacyRoleOf, buildDirectory } = require('./school-actor.js');
+const { permissionOf, permissionLabelOf } = require('./school-permission.js');
 const { replaySeason } = require('./replay.js');
 const { isEloEligibleMatch } = require('./college-tie.js');
 const { findCappedMatchIds } = require('./rating-cap.js');
-const { buildProjectLeaderboard } = require('../utils/leaderboard.js');
+const { buildProjectLeaderboard, percentileFromBoard } = require('../utils/leaderboard.js');
 const { getPoolRating } = require('../utils/rating.js');
 const { buildTrainingPointFacts } = require('./training-points.js');
+const {
+  buildEventRecord, summarizeEvents, buildRatingHistory, buildHeadToHead,
+  buildPartnerRecord, buildMatchHistory, summarizeForm,
+} = require('../utils/stats.js');
+const { isEventDoc } = require('./school-event-service.js');
 const { canResetSeason } = require('./season.js');
 const { formatElo, formatPercent } = require('../utils/format.js');
 const {
-  ALL_RATING_POOLS, ALL_RANK_PROJECTS, RANK_PROJECT_LABEL, USER_STATUS,
+  ALL_RATING_POOLS, ALL_RANK_PROJECTS, RANK_PROJECT_LABEL, RANK_PROJECT_CONFIG, USER_STATUS,
 } = require('../utils/constants.js');
 const {
   scopeKey, belongsToSchoolScope, SCHOOL_MEMBER_STATUS, PLATFORM_STATUS,
+  schoolMemberKey, schoolRoleKey, schoolMembershipKey,
 } = require('../utils/school.js');
 
 const ok = data => ({ ok: true, data });
@@ -171,14 +178,15 @@ async function trainingFactsOf(ctx) {
 }
 
 /**
- * 重放本范围的赛季，产出「回放后的会员」（含 ratings / points）。
+ * 重放本范围的赛季，产出「回放后的会员」（含 ratings / points）与
+ * 回放后的比赛流水（每场带 players 的赛前 / 赛后分数，供个人战绩构建器用）。
  *
  * 与旧栈一致：等级分不落库，每次由流水重放得出。返回的 members 已按
  * 本范围初始分与改分时间线重放——初始分 / 改分这些按范围存的字段，
  * 旧栈由 derive.withScopedInitialElo 摊平，S2 里本就按范围分桶，直接透传。
  *
  * @param {Object} ctx
- * @returns {Promise<{season:Object, members:Array<Object>}>}
+ * @returns {Promise<{season:Object, members:Array<Object>, matches:Array<Object>}>}
  */
 async function replayScope(ctx) {
   const season = await loadSeason(ctx);
@@ -199,7 +207,7 @@ async function replayScope(ctx) {
       trainingPointFacts,
     },
   });
-  return { season, members: replayed.users };
+  return { season, members: replayed.users, matches: replayed.matches };
 }
 
 /* ------------------------------------------------------------------ 排行榜 */
@@ -372,6 +380,133 @@ async function getSchoolMemberStats(payload = {}, ctx) {
   return ok({ ok: true, members: rows, message: '' });
 }
 
+/**
+ * 指定会员在本范围的赛事名次（「我的」页荣誉与个人详情页共用的读端，B4-c）。
+ * ============================================================
+ * 【为什么是独立读端】
+ * 赛事列表 DTO（eventSummary）刻意保持精简、不带 results；名次是另一类
+ * 展示需求（荣誉汇总 + 分组列表）。这里只读本范围已结束赛事的结果，复用
+ * 旧栈纯构建器 buildEventRecord / summarizeEvents（同一把尺子），只回
+ * 展示字段，不把报名、抽签、内部状态透出去。
+ *
+ * @param {Object} [payload] { userId } 看谁的名次；本协会成绩读权限持有者可用
+ * @param {Object} ctx
+ */
+async function getSchoolMemberHonors(payload = {}, ctx) {
+  if (!canReadAssociationSpace(ctx)) return ok(refused('没有读取本协会成绩的权限'));
+  const userId = typeof payload.userId === 'string' ? payload.userId : '';
+  if (!userId) return ok(refused('缺少会员编号'));
+  const events = (await ctx.repo.forScope(ctx).events.list()).filter(isEventDoc);
+  const records = buildEventRecord(events, userId).map((row) => ({
+    eventId: row.eventId,
+    title: row.title || '',
+    startTime: row.startTime || '',
+    placement: Number(row.placement),
+    participantCount: Number(row.participantCount),
+  }));
+  return ok({ ok: true, honors: { summary: summarizeEvents(records), records }, message: '' });
+}
+
+/* ------------------------------------------------------------------ 赛季 */
+
+/**
+ * 个人主页的全部数据（B4-c 的取数口）：卡片 + 项目 + 走势 / 交锋 / 搭档 /
+ * 逐场战绩 / 近期状态 + 本范围赛事荣誉。
+ * ============================================================
+ * 【为什么一次取齐】个人页的七个板块（走势、交锋、搭档、荣誉、逐场……）全部
+ * 依赖同一份「本范围回放后的流水」，客户端逐块取会重放七遍，还容易各拿一份
+ * 时点不一致的数据。这里回放一次，七个纯构建器（utils/stats.js，同一把尺子）
+ * 各取所需。
+ *
+ * 【口径】流水用计等级分的场次（与榜单一致：isEloEligibleMatch + 防刷分上限），
+ * 所以逐场战绩与等级分榜的走势严格一致；已撤销 / 待确认的比赛不进个人战绩。
+ * 项目 / 名次口径与旧栈 getMyProjects 一致（出场过的项目、分池、分性别）。
+ *
+ * @param {Object} [payload] { userId?, historyLimit? } 不传 userId 即本人
+ * @param {Object} ctx
+ */
+async function getSchoolMemberProfile(payload = {}, ctx) {
+  if (!canReadAssociationSpace(ctx)) return ok(refused('没有读取本协会成绩的权限'));
+  const userId = typeof payload.userId === 'string' && payload.userId ? payload.userId : ctx.actorId;
+  if (!userId) return ok(refused('缺少会员编号'));
+  const historyLimit = Number.isInteger(payload.historyLimit) && payload.historyLimit > 0
+    ? Math.min(payload.historyLimit, 200) : 20;
+
+  const { members, matches } = await replayScope(ctx);
+  const member = members.find(row => row._id === userId);
+  if (!member) return ok({ ok: false, found: false, message: '没有找到这位会员' });
+
+  const [memberDoc, role, membership, colleges, events] = await Promise.all([
+    ctx.repo.schoolMembers.getById(schoolMemberKey(userId, ctx.schoolId)),
+    ctx.repo.schoolRoles.getById(schoolRoleKey(userId, ctx.schoolId)),
+    ctx.repo.memberships.get(schoolMembershipKey(userId, ctx)),
+    ctx.repo.forScope(ctx).colleges.list(),
+    ctx.repo.forScope(ctx).events.list(),
+  ]);
+  const collegeName = id => (colleges.find(row => row.collegeId === id) || {}).name || '';
+  const nameOf = id => (members.find(row => row._id === id) || {}).nickName || id;
+
+  // 项目（与旧栈 getMyProjects 同口径）：出场过的、按性别过滤的单打 + 双打
+  const projects = [];
+  for (const project of ALL_RANK_PROJECTS) {
+    const { pool, gender } = RANK_PROJECT_CONFIG[project];
+    if (gender && member.gender !== gender) continue;
+    const bucket = getPoolRating(member, pool);
+    if (!bucket || bucket.matchCount === 0) continue;
+    const board = buildProjectLeaderboard(members, project);
+    const stats = percentileFromBoard(board, userId);
+    projects.push({
+      project, pool, label: RANK_PROJECT_LABEL[project],
+      elo: bucket.elo, startElo: bucket.startElo, delta: bucket.elo - bucket.startElo,
+      matchCount: bucket.matchCount, wins: bucket.wins, losses: bucket.losses,
+      rank: stats ? stats.rank : null, total: stats ? stats.total : board.length,
+      beatPercent: stats ? stats.beatPercent : 0,
+    });
+  }
+  projects.sort((a, b) => b.matchCount - a.matchCount);
+  const active = projects[0] || null;
+  const poolFilter = active ? active.pool : null;
+
+  const ratingHistory = active ? buildRatingHistory(matches, userId, active.pool) : [];
+  const headToHead = buildHeadToHead(matches, userId, { nameOf, pool: poolFilter });
+  const partners = buildPartnerRecord(matches, userId, { nameOf, pool: poolFilter });
+  const history = buildMatchHistory(matches, userId, { nameOf, pool: poolFilter, limit: historyLimit });
+  const form = summarizeForm(matches, userId, { limit: 5 });
+  const eventRecords = buildEventRecord(events.filter(isEventDoc), userId);
+
+  return ok({
+    ok: true, found: true, message: '',
+    // 本人账号 / 档案展示字段；权限档只作展示，服务端写路径另行判权。
+    user: {
+      userId,
+      nickName: member.nickName || '',
+      realName: member.realName || '',
+      avatarUrl: member.avatarUrl || '',
+      gender: member.gender || '',
+      collegeId: (memberDoc && memberDoc.collegeId) || '',
+      college: collegeName((memberDoc && memberDoc.collegeId) || ''),
+      studentId: (memberDoc && memberDoc.studentId) || '',
+      points: Number(member.points || 0),
+      permissionLabel: permissionLabelOf(role, membership),
+      role: legacyRoleOf({ schoolRole: role, membership, actor: member, isPlatformAdmin: member.platformRole === 'admin' }),
+    },
+    projects,
+    active: active ? active.project : null,
+    ratingHistory,
+    headToHead,
+    partners,
+    history,
+    form,
+    honors: {
+      summary: summarizeEvents(eventRecords),
+      records: eventRecords.map(row => ({
+        eventId: row.eventId, title: row.title || '', startTime: row.startTime || '',
+        placement: Number(row.placement), participantCount: Number(row.participantCount),
+      })),
+    },
+  });
+}
+
 /* ------------------------------------------------------------------ 赛季 */
 
 /**
@@ -453,6 +588,8 @@ module.exports = {
   buildRows,
   getSchoolRanking,
   getSchoolMemberStats,
+  getSchoolMemberHonors,
+  getSchoolMemberProfile,
   getSchoolSeason,
   resetSchoolSeason,
 };

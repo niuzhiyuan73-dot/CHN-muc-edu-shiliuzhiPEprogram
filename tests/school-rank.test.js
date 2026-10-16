@@ -285,3 +285,119 @@ test('赛季：开新赛季改的是积分归属，等级分照旧连续累计',
     '等级分不随赛季重置清零'
   );
 });
+
+/* ------------------------------------------------------------------ 荣誉 */
+
+/** 直接种一场已结束的赛事（带名次结果），供荣誉读端使用。 */
+async function seedEvent(repo, id, { results = [], startTime = at(-3 * 24 * HOUR) }) {
+  await repo.events.set(id, {
+    _id: id, schoolId: 'muc', association: 'pkb', title: `赛事 ${id}`,
+    status: 2, startTime, results, matchType: MATCH_TYPE.SINGLES, pool: 1,
+  });
+}
+
+test('荣誉：已结束赛事的名次汇总与记录，口径与旧栈构建器一致', async () => {
+  const repo = fixture();
+  await seedEvent(repo, 'ev1', {
+    startTime: at(-3 * 24 * HOUR),
+    results: [{ userId: 'demo_muc_member', placement: 1 }, { userId: 'rank_m2', placement: 2 }],
+  });
+  await seedEvent(repo, 'ev2', {
+    startTime: at(-1 * 24 * HOUR),
+    results: [{ userId: 'rank_m3', placement: 1 }, { userId: 'demo_muc_member', placement: 5 }],
+  });
+
+  const honors = await call(repo, 'getSchoolMemberHonors', { userId: 'demo_muc_member' });
+  assert.equal(honors.ok, true, honors.message);
+  assert.equal(honors.honors.summary.eventCount, 2);
+  assert.equal(honors.honors.summary.championCount, 1);
+  assert.equal(honors.honors.summary.topThreeCount, 1);
+  assert.equal(honors.honors.summary.bestPlacement, 1);
+  // 最近的排在最前（与 buildEventRecord 同口径）
+  assert.deepEqual(honors.honors.records.map(row => row.eventId), ['ev2', 'ev1']);
+  assert.equal(honors.honors.records[0].placement, 5);
+  assert.equal(honors.honors.records[0].participantCount, 2);
+  assert.equal(honors.honors.records[1].title, '赛事 ev1');
+});
+
+test('荣誉：没有名次记录的赛事不进荣誉；跨校读被拒', async () => {
+  const repo = fixture();
+  // 这场只有别人的名次，目标会员不在其中
+  await seedEvent(repo, 'ev3', { results: [{ userId: 'rank_m2', placement: 1 }] });
+
+  const none = await call(repo, 'getSchoolMemberHonors', { userId: 'demo_muc_member' });
+  assert.equal(none.ok, true);
+  assert.equal(none.honors.summary.eventCount, 0);
+  assert.equal(none.honors.summary.bestPlacement, null, '无名次时退回 null 而不是 NaN');
+
+  const remote = await call(repo, 'getSchoolMemberHonors', { userId: 'demo_muc_member' }, { schoolId: 'buaa' });
+  assert.equal(remote.ok, false);
+  assert.match(remote.message, /没有读取/);
+});
+
+/* ------------------------------------------------------------------ 个人资料 */
+
+test('个人资料：卡片、项目、走势、交锋、战绩与荣誉一次取齐', async () => {
+  const repo = fixture();
+  await seedMatch(repo, 'm1', { a: ['demo_muc_member'], b: ['rank_m2'], winner: 'A', time: at(-2 * HOUR) });
+  await seedMatch(repo, 'm2', { a: ['demo_muc_member'], b: ['rank_m2'], winner: 'B', time: at(-HOUR) });
+  await seedEvent(repo, 'ev1', {
+    startTime: at(-1 * 24 * HOUR),
+    results: [{ userId: 'demo_muc_member', placement: 1 }, { userId: 'rank_m2', placement: 2 }],
+  });
+
+  const profile = await call(repo, 'getSchoolMemberProfile', { userId: 'demo_muc_member' });
+  assert.equal(profile.ok, true, profile.message);
+  assert.equal(profile.found, true);
+  assert.equal(profile.user.userId, 'demo_muc_member');
+  assert.equal(profile.user.nickName, '民大会员');
+  assert.equal(profile.user.college, '中华民族共同体学院');
+  assert.equal(profile.user.permissionLabel, '会员');
+
+  // 项目：男单出场两场，名次按完整榜单算
+  assert.equal(profile.projects.length, 1);
+  assert.equal(profile.projects[0].project, 'men_singles');
+  assert.equal(profile.projects[0].matchCount, 2);
+  assert.equal(profile.projects[0].wins, 1);
+  assert.equal(profile.projects[0].losses, 1);
+  assert.equal(profile.projects[0].rank, 1);
+
+  // 走势：两场两个点；交锋：与 rank_m2 一胜一负
+  assert.equal(profile.ratingHistory.length, 2);
+  assert.equal(profile.headToHead.length, 1);
+  assert.equal(profile.headToHead[0].opponentId, 'rank_m2');
+  assert.equal(profile.headToHead[0].wins, 1);
+  assert.equal(profile.headToHead[0].losses, 1);
+
+  // 逐场战绩：两场，最近的在前；近期状态与战绩一致
+  assert.equal(profile.history.length, 2);
+  assert.equal(profile.history[0].matchId, 'm2');
+  assert.equal(profile.form.results.length, 2);
+
+  // 荣誉：一场冠军
+  assert.equal(profile.honors.summary.eventCount, 1);
+  assert.equal(profile.honors.summary.championCount, 1);
+  assert.equal(profile.honors.records[0].eventId, 'ev1');
+});
+
+test('个人资料：不出场的会员也有档案，找不到与跨校读被拒', async () => {
+  const repo = fixture();
+  // rank_m3 一场没打：回放名单里仍在（在册），只是没有项目
+  const idle = await call(repo, 'getSchoolMemberProfile', { userId: 'rank_m3' });
+  assert.equal(idle.found, true);
+  assert.deepEqual(idle.projects, []);
+  assert.deepEqual(idle.ratingHistory, []);
+  assert.equal(idle.active, null);
+
+  // 不存在 / 外校的人取不到
+  const missing = await call(repo, 'getSchoolMemberProfile', { userId: 'no_such_member' });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.found, false);
+  const foreign = await call(repo, 'getSchoolMemberProfile', { userId: 'demo_buaa_member' });
+  assert.equal(foreign.found, false, '外校的人在本范围取不到');
+
+  // 外校人来读本协会成绩：整份读端被权限挡下
+  const outsider = await call(repo, 'getSchoolMemberProfile', {}, { actor: 'demo_buaa_member' });
+  assert.equal(outsider.ok, false);
+  assert.match(outsider.message, /没有读取/);
+});

@@ -5,6 +5,10 @@
  * 「协会工作台」之后，这一页变成一个自定义组件，由工作台按当前协会挂载。
  * 数据来源不随形态改变：取数与整形仍全在 services/rank-view.js。
  *
+ * 【B4-a 起走学校维度】榜单改读 S2（association-space forScope →
+ * getSchoolRanking），范围 = 当前浏览学校 + 当前协会。外校静态演示榜单
+ * 不再作为真实查询成功的结果；无读取权限时清空旧榜单并展示服务端拒绝原因。
+ *
  * 【只剩一个榜单类型】
  * 界面精简后去掉了「进步榜」，只剩等级分榜。项目（男单 / 女单 / 双打）
  * 仍可切换——男单榜与女单榜取自同一个单打池，分数可比。
@@ -17,9 +21,12 @@
  * ============================================================
  */
 
-const { loadRankView, describeSearch } = require('../../services/rank-view.js');
-const { isMock, isMockNow } = require('../../services/index.js');
+const { loadSchoolRankView, describeSearch } = require('../../services/rank-view.js');
+const { isMock } = require('../../services/index.js');
 const { currentThemeClass } = require('../../services/branding.js');
+const space = require('../../services/association-space');
+const schoolSession = require('../../services/school-session');
+const associationScope = require('../../services/association-scope');
 
 Component({
   options: {
@@ -42,10 +49,6 @@ Component({
     view: {},
     /** 开发期在页脚标注数据来源 */
     isMock,
-    /** 当前是否在浏览外校（演示）榜单：为真时整体只读，榜单行不可点 */
-    demoSchool: false,
-    /** 演示学校简称，供只读提示条显示 */
-    demoSchoolName: '',
 
     // ---------- 按名字筛选 ----------
     // 完整榜单留在 this.view 里，面板上只渲染筛选后的结果。这样每敲一个字
@@ -102,43 +105,27 @@ Component({
       return this.refresh();
     },
 
+    /** 卸载后作废仍在途的请求，旧响应不得写回已离开的面板 */
+    onUnload() {
+      this.request = (this.request || 0) + 1;
+    },
+
     /** 下拉刷新：数据都在内存里，重算一遍很快 */
     onPullDownRefresh() {
       return this.refresh().then(() => wx.stopPullDownRefresh());
     },
 
     /**
-     * 重新装载整页数据。
+     * 重新装载整页数据。范围在开始时绑定：学校取当前浏览学校，协会取当前协会，
+     * 异步等待后不重新读全局 scope（B4 与指南 §9 同一纪律）。
      * @returns {Promise<void>}
      */
     async refresh() {
+      const request = this.request = (this.request || 0) + 1;
+      const scope = { schoolId: schoolSession.getSchoolId() || 'muc', association: associationScope.getAssociation() };
       try {
-        // 切到模拟学校（北航）时展示该校当前协会的演示榜单：整页只读，也没有「我」。
-        // 未开放学校维度的房间（云端数据源）回落到真实榜单。
-        const session = require('../../services/school-session.js');
-        const association = require('../../services/association-scope.js').getAssociation();
-        const demo = isMockNow()
-          ? require('../../services/school-demo.js').schoolRank(session.getSchoolId(), {
-              project: this.currentProject,
-              association,
-            })
-          : null;
-        if (demo) {
-          this.view = demo;
-          this.setData({
-            loading: false,
-            error: '',
-            switching: false,
-            view: demo,
-            demoSchool: true,
-            demoSchoolName: demo.schoolName,
-            themeClass: currentThemeClass(),
-          });
-          this.applyKeyword(this.data.keyword);
-          return;
-        }
-
-        const view = await loadRankView({ project: this.currentProject });
+        const view = await loadSchoolRankView(space.forScope(scope), { project: this.currentProject });
+        if (request !== this.request) return;
         // 完整榜单另存一份。它不参与渲染，只当筛选的数据源，
         // 所以不用塞进 data——省一次 setData 的开销。
         this.view = view;
@@ -147,22 +134,23 @@ Component({
           error: '',
           switching: false,
           view,
-          demoSchool: false,
-          demoSchoolName: '',
           themeClass: currentThemeClass(),
         });
         // 切项目/榜单时保留搜索词：搜姓「张」的人，切到女单榜也该还是「张」
         this.applyKeyword(this.data.keyword);
       } catch (err) {
+        if (request !== this.request) return;
         console.error('[rank] 加载失败', err);
+        // 读取拒绝 / 网络异常后清空旧榜单：切学校时不能把上一所学校的名单留在屏上
+        this.view = {};
         this.setData({
           loading: false,
           switching: false,
-          demoSchool: false,
-          demoSchoolName: '',
-          error: '排行榜加载失败，请下拉重试',
+          view: {},
+          error: err.message || '排行榜加载失败，请下拉重试',
           themeClass: currentThemeClass(),
         });
+        this.applyKeyword(this.data.keyword);
       } finally {
         // 失败也置真：让后续 onShow 还能再试一次，否则一次抖动就再也不刷新了
         this.loaded = true;
@@ -222,14 +210,13 @@ Component({
     /**
      * 点榜上的任何一行，去看这个人的完整战绩。
      * 这里不排除「我自己」——从榜单进自己主页看曲线，是很自然的动作。
+     * 榜单行是 S2 的本校会员，编号可直接进个人主页。
      */
     onOpenMember(event) {
-      // 外校演示榜单里的人没有本校账号，点进去只会是「查无此人」
-      if (this.data.demoSchool) return undefined;
       const userId = event.currentTarget.dataset.userId;
       if (!userId) return;
 
-      wx.navigateTo({ url: `/pages/member/member?userId=${userId}` });
+      wx.navigateTo({ url: `/pages/member/member?userId=${encodeURIComponent(userId)}` });
     },
   },
 });

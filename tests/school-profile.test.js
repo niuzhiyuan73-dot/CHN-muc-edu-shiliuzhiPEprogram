@@ -55,7 +55,8 @@ test('资料：只改白名单两样，其余字段被丢弃', async () => {
   assert.equal(stored.role, 0);
   assert.equal(stored.points, 100);
   assert.equal(stored.realName, '真名');
-  assert.equal(stored.gender, undefined);
+  // 演示种子现在自带性别（榜单分池要用），补丁里的 gender 仍不在白名单、不生效
+  assert.equal(stored.gender, 'M');
 
   // 只改头像也允许（部分补丁）。
   const avatarOnly = await call(repo, 'updateSchoolProfile', { patch: { avatarUrl: 'https://cdn.example/b.png' } });

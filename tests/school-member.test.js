@@ -100,12 +100,14 @@ test('跨校：外校会员读不到别校名录，平台管理员可跨校读',
   assert.equal(crossRead.ok, false);
   assert.match(crossRead.message, /没有读取本协会成员名录/);
 
-  // 会员读自己的学校：只看到本校的人。
+  // 会员读自己的学校：只看到本校的人（北航演示账号自 2026-10-16 起扩充为 6 位）。
   const ownView = await call(repo, 'listSchoolMembers', {}, { actor: 'demo_buaa_member', schoolId: 'buaa' });
   assert.equal(ownView.ok, true);
-  assert.deepEqual(ownView.members.map(row => row.userId).sort(), ['demo_buaa_admin', 'demo_buaa_member']);
+  assert.deepEqual(ownView.members.map(row => row.userId).sort(),
+    ['demo_buaa_admin', 'demo_buaa_college_leader', 'demo_buaa_leader',
+      'demo_buaa_member', 'demo_buaa_member_2', 'demo_buaa_member_3']);
 
-  // 平台管理员跨校可读（管理台账）。
+  // 平台管理员可跨校读（读的仍是「当前范围那一所学校」的名录）：民大 4 位在册启用会员
   const adminView = await call(repo, 'listSchoolMembers', {}, { actor: PLATFORM_ADMIN });
   assert.equal(adminView.ok, true);
   assert.equal(adminView.members.length, 4);

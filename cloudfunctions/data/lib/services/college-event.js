@@ -41,6 +41,7 @@ const {
 } = require('../utils/constants.js');
 const { formatDate, formatPlacement } = require('../utils/format.js');
 const { canManage } = require('./permission.js');
+const { readAudience } = require('./association-audience.js');
 
 /** 标题长度下限与上限，与个人赛同一口径 */
 const TITLE_MIN = 2;
@@ -475,6 +476,9 @@ function buildCollegeEventRow(event, ctx = {}) {
     courtCount: Number(source.courtCount) || 0,
     courtCountText: courtCountTextOf(source.courtCount),
     publisherName: source.publisherName || '',
+    // 小组限制（受众范围，B6）：旧赛事缺字段按「不限」兼容
+    audienceMode: readAudience(source).audienceMode,
+    audienceGroupIds: readAudience(source).audienceGroupIds,
     // 发布 / 审核 / 抽签 / 开始 / 结束 / 置顶都归管理员，一并用它
     canManage: canManageCollegeEvent(actor),
   };

@@ -2,18 +2,25 @@
  * 首页
  * ============================================================
  * 两块内容，自上而下：
- *   1. 公告——置顶在前，其余按时间倒序（**跨全部协会聚合**）
- *   2. 近期赛事——报名中 / 进行中的赛事，最近要打的在前（**跨全部协会聚合**）
+ *   1. 公告——置顶在前，其余按时间倒序（**当前学校内跨协会聚合**）
+ *   2. 近期赛事——报名中 / 进行中的赛事，最近要打的在前（**当前学校内跨协会聚合**）
  *
  * 【为什么首页是跨协会的】
- * 首页回答的是「最近俱乐部里有什么事」，不该被「我现在在哪个协会」框住。
- * 公告与近期赛事把全部协会的都摆出来，每条标注它属于哪个协会（见需求整理
- * §11.3）。因此首页套**中性品牌**，头图与导航标题都用中性名（§11.7）。
+ * 首页回答的是「最近学校里有什么事」，不该被「我现在在哪个协会」框住。
+ * 公告与近期赛事把该校全部协会的都摆出来，每条标注它属于哪个协会（见需求
+ * 整理 §11.3）。因此首页套**中性品牌**，头图与导航标题都用中性名（§11.7）。
+ *
+ * 【B4-b 起首页走学校维度】取数统一经 services/school-home-view.js：
+ * 按「当前浏览学校」逐协会聚合 S2 的公告 / 赛事 / 概况，跨校只读浏览得到
+ * 真实（空）数据而不是静态演示内容。
  *
  * 【切换按钮为什么只换全局协会、不重刷首页】
  * 首页上那个切换器改的是「全局当前协会」，作用域是**中间三个界面**
  * （排行榜 / 比赛 / 赛事），首页自身内容不随它变（§11.2）。所以点了只把
  * 全局与徽章同步一下，不必重取首页数据。
+ *
+ * 【切学校为什么重刷首页】
+ * 首页按学校聚合，切学校 = 换数据范围，必须重取；旧响应用请求序号作废。
  *
  * 【点某条为什么可能先切协会】
  * 点公告/赛事进详情时，若那一条属于别的协会，先把全局整体切过去再跳
@@ -27,7 +34,7 @@
  * ============================================================
  */
 
-const { loadHomeView } = require('../../services/home-view.js');
+const { loadSchoolHomeView } = require('../../services/school-home-view.js');
 const { resolveAuthState } = require('../../services/auth.js');
 const { resetBranding } = require('../../services/branding.js');
 const facade = require('../../services/index.js');
@@ -38,7 +45,7 @@ Page({
     loading: true,
     /** 加载失败时的提示 */
     error: '',
-    /** 视图模型，形状见 services/home-view.js。初值给空对象，WXML 展开才不会出错 */
+    /** 视图模型，形状见 services/school-home-view.js。初值给空对象，WXML 展开才不会出错 */
     view: {},
     /** 当前登录态（是否登录、状态标签、能否录成绩） */
     auth: { loggedIn: false },
@@ -55,8 +62,6 @@ Page({
     schoolList: [],
     /** 是否在浏览外校（只读）。true 时页头出只读提示 */
     readOnlySchool: false,
-    /** 当前展示的是「学校演示内容」而非跨协会聚合：为真时隐藏「看全部」等入口 */
-    schoolContent: false,
   },
 
   /**
@@ -109,16 +114,22 @@ Page({
   },
 
   /**
-   * 重新装载整页数据。
+   * 重新装载整页数据：先定「当前浏览学校」（学校切换器），再按它聚合首页内容。
    * @returns {Promise<void>}
    */
   async refresh() {
+    const seq = this.loadSeq = (this.loadSeq || 0) + 1;
     try {
       const user = this.currentUser();
-      const view = await loadHomeView(user);
-      // 聚合视图留一份底：切回本校时用它还原（见 applySchoolHome）
-      this.legacyView = view;
-
+      // 学校切换器单独加载；装载完按当前学校聚合首页内容。
+      // 失败只收起控件，不该拖垮首页内容。
+      await this.loadSchoolScope();
+      const schoolSession = require('../../services/school-session.js');
+      const view = await loadSchoolHomeView({
+        schoolId: schoolSession.getSchoolId() || 'muc',
+        viewerId: user ? user._id : '',
+      });
+      if (seq !== this.loadSeq) return;
       this.loaded = true;
       this.setData({
         loading: false,
@@ -127,11 +138,9 @@ Page({
         auth: resolveAuthState(user),
         associationId: this.currentAssociation(),
       });
-      // 学校切换器单独加载；装载完再按当前学校套上对应内容（外校为演示只读）。
-      // 失败只收起控件，不该拖垮首页内容。
-      await this.loadSchoolScope();
     } catch (err) {
       console.error('[index] 首页加载失败', err);
+      if (seq !== this.loadSeq) return;
       this.loaded = true;
       this.setData({
         loading: false,
@@ -179,7 +188,7 @@ Page({
   /**
    * 装载学校切换器：学校清单来自学校目录，当前浏览的学校来自会话作用域。
    * 只读与否由「当前浏览的学校 ≠ 我的学校」决定。整体包在 try/catch 里，
-   * 云端尚未开放学校维度或接口报错时，只是收起控件、回落到聚合内容。
+   * 云端尚未开放学校维度或接口报错时，只是收起控件、回落到默认校聚合。
    *
    * @returns {Promise<void>}
    */
@@ -188,7 +197,6 @@ Page({
       const service = require('../../services/school-identity.js');
       if (typeof service.isMockNow === 'function' && !service.isMockNow()) {
         this.setData({ schoolList: [], readOnlySchool: false });
-        this.applySchoolHome();
         return;
       }
       const schoolSession = require('../../services/school-session.js');
@@ -200,7 +208,6 @@ Page({
       ]);
       if (!directory || !directory.ok) {
         this.setData({ schoolList: [], readOnlySchool: false });
-        this.applySchoolHome();
         return;
       }
       const schools = (directory.schools || []).map((row) => ({ schoolId: row.schoolId, name: row.name }));
@@ -214,37 +221,16 @@ Page({
         schoolName: (schools.find((row) => row.schoolId === selected) || {}).name || '',
         readOnlySchool: schoolSession.isReadOnly(),
       });
-      this.applySchoolHome();
     } catch (err) {
       console.error('[index] 学校切换器加载失败', err);
       this.setData({ schoolList: [], readOnlySchool: false });
-      this.applySchoolHome();
     }
   },
 
   /**
-   * 按当前浏览的学校决定首页内容。模拟学校（北航）有演示内容，切过去就展示
-   * 它并整体只读；本校与未开放学校维度的情况回落到跨协会聚合视图。游客只看
-   * 公告——即便在演示内容里也不放赛事与概况。
+   * 切学校徽章的 change 事件：写会话作用域，并重取该校的首页聚合内容。
+   * 切学校 = 换数据范围，旧学校的公告 / 赛事不能留在屏上。
    */
-  applySchoolHome() {
-    const legacy = this.legacyView;
-    if (!legacy) return;
-    const { schoolHome } = require('../../services/school-demo.js');
-    const feed = this.data.schoolList.length > 1 ? schoolHome(this.data.schoolId) : null;
-    if (!feed) {
-      this.setData({ view: legacy, schoolContent: false });
-      return;
-    }
-    const loggedIn = Boolean(this.currentUser());
-    this.setData({
-      view: loggedIn ? { ...feed, loggedIn: true }
-        : { ...feed, loggedIn: false, upcomingEvents: [], summary: null },
-      schoolContent: true,
-    });
-  },
-
-  /** 切学校徽章的 change 事件：写会话作用域，并据结果刷新只读提示与首页内容 */
   onSchoolChange(event) {
     const id = event && event.detail ? event.detail.schoolId : '';
     if (!id) return;
@@ -256,7 +242,7 @@ Page({
       schoolName: found ? found.name : id,
       readOnlySchool: schoolSession.isReadOnly(),
     });
-    this.applySchoolHome();
+    return this.refresh();
   },
 
   /** 去登录/注册 */
@@ -269,29 +255,24 @@ Page({
    * 赛事页签；工作台按当前全局协会取数，所以不必再传协会。
    */
   onGoEvents() {
-    // 演示内容没有对应的列表页（那是外校的），别把用户引到本校赛事去
-    if (this.data.schoolContent) return undefined;
     return wx.navigateTo({ url: '/pages/association-home/association-home?tab=events' });
   },
 
   /** 看全部公告 */
   onGoAnnouncements() {
-    if (this.data.schoolContent) return undefined;
     return wx.navigateTo({ url: '/pages/announcements/announcements' });
   },
 
   /** 点近期赛事的一条：跨协会的先切过去，再进详情 */
   onOpenEvent(event) {
-    if (this.data.schoolContent) return undefined;
     const { eventId, association } = event.currentTarget.dataset;
     if (!eventId) return undefined;
     this.switchTo(association);
-    return wx.navigateTo({ url: `/pages/event-detail/event-detail?eventId=${eventId}` });
+    return wx.navigateTo({ url: `/pages/event-detail/event-detail?eventId=${encodeURIComponent(eventId)}` });
   },
 
   /** 点公告的一条：跨协会的先切过去，再看该协会的公告列表 */
   onOpenAnnouncement(event) {
-    if (this.data.schoolContent) return undefined;
     const association = event.currentTarget.dataset.association;
     this.switchTo(association);
     return wx.navigateTo({ url: '/pages/announcements/announcements' });
@@ -301,6 +282,6 @@ Page({
   onOpenMember(event) {
     const userId = event.currentTarget.dataset.userId;
     if (!userId) return;
-    wx.navigateTo({ url: `/pages/member/member?userId=${userId}` });
+    wx.navigateTo({ url: `/pages/member/member?userId=${encodeURIComponent(userId)}` });
   },
 });

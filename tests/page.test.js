@@ -408,14 +408,14 @@ test('首页 —— 近期赛事只列报名中/进行中，按开赛时间升�
   await page.onLoad();
 
   const rows = page.data.view.upcomingEvents;
-  assert.ok(rows.length > 0, '种子里有进行中的赛事');
+  assert.ok(rows.length > 0, '种子里有报名中/进行中的赛事');
   assert.ok(rows.length <= 3, '首屏只放得下三条');
 
   // 已结束的赛事不进「近期」，否则历史赛事会把还能报名的挤下去
   for (const row of rows) {
     assert.ok(
-      row.status === EVENT_STATUS.SIGNUP || row.status === EVENT_STATUS.ONGOING,
-      `不该出现状态为 ${row.status} 的赛事`
+      row.statusLabel === '报名中' || row.statusLabel === '进行中',
+      `不该出现状态为 ${row.statusLabel} 的赛事`
     );
   }
 
@@ -427,44 +427,43 @@ test('首页 —— 近期赛事只列报名中/进行中，按开赛时间升�
 test('首页 —— 一场近期赛事都没有时照常出卡，由模板写空态', async () => {
   resetSession();
   loginAs();
-  const original = mock.getEvents;
-  // 把赛事全换成已结束的：近期赛事应当筛成空数组，但字段仍在
-  mock.getEvents = async () => [
-    {
-      _id: 'e_x',
-      title: '往届赛事',
-      matchType: MATCH_TYPE.SINGLES,
-      status: EVENT_STATUS.FINISHED,
-      startTime: '2026-01-01T09:00:00',
-      quota: 8,
-    },
-  ];
+  // 干净台账（不挂演示内容）：没有报名中 / 进行中的赛事
+  const schoolMock = require('../miniprogram/services/school-mock');
+  const schoolSession = require('../miniprogram/services/school-session');
+  schoolMock.reset({ withDemoContent: false });
+  schoolSession.reset();
 
-  try {
-    const page = instantiate(indexConfig);
-    await page.onLoad();
-    assert.deepStrictEqual(page.data.view.upcomingEvents, [], '已结束的赛事不算近期');
-  } finally {
-    mock.getEvents = original;
-  }
+  const page = instantiate(indexConfig);
+  await page.onLoad();
+  assert.deepStrictEqual(page.data.view.upcomingEvents, [], '已结束/无赛事不算近期');
+
+  // 复位演示内容，别影响后续用例
+  schoolMock.reset();
+  schoolSession.reset();
 });
 
 test('首页 —— 登录后近期赛事标出自己报没报', async () => {
   resetSession();
-  const events = await facade.getEvents();
-  const upcoming = events.find((item) => item.status === EVENT_STATUS.ONGOING);
-  assert.ok(upcoming, '种子里有进行中的赛事');
+  const schoolMock = require('../miniprogram/services/school-mock');
+  const schoolSession = require('../miniprogram/services/school-session');
+  const space = require('../miniprogram/services/association-space.js');
+  schoolSession.reset();
+  schoolMock.reset();
+  schoolMock.setDemoActor('u06');
+  // u06 报名演示内容里「民大男单公开赛」（报名中）
+  const api = space.forScope({ schoolId: 'muc', association: 'pkb' });
+  const listed = await api.listSchoolEvents({});
+  const upcoming = listed.events.find((item) => item.isSignup);
+  assert.ok(upcoming, '演示内容里有报名中的赛事');
+  const signed = await api.signUpSchoolEvent({ eventId: upcoming.eventId });
+  assert.strictEqual(signed.ok, true, `报名失败：${signed.message}`);
 
-  // 名单里挑一个真实报名者来登录，免得断言依赖某个写死的账号
-  const signups = await facade.getEventSignups(upcoming._id);
-  assert.ok(signups.length > 0);
-  app.globalData.userInfo = fakeMember({ _id: signups[0].userId, nickName: '报名者' });
-
+  app.globalData.userInfo = fakeMember({ _id: 'u06' });
   const page = instantiate(indexConfig);
   await page.onLoad();
 
-  const mine = page.data.view.upcomingEvents.find((row) => row.id === upcoming._id);
-  assert.ok(mine, '进行中的赛事在近期列表里');
+  const mine = page.data.view.upcomingEvents.find((row) => row.id === upcoming.eventId);
+  assert.ok(mine, '报名中的赛事在近期列表里');
   assert.strictEqual(mine.signedUp, true);
 });
 
@@ -492,8 +491,8 @@ test('首页 —— 点近期赛事的一条会进详情', async () => {
   calls.navigations.length = 0;
   page.onOpenEvent({ currentTarget: { dataset: { eventId: target } } });
   assert.deepStrictEqual(calls.navigations, [
-    `/pages/event-detail/event-detail?eventId=${target}`,
-  ]);
+    `/pages/event-detail/event-detail?eventId=${encodeURIComponent(target)}`,
+  ], '赛事编号进 URL 前编码（编号含冒号等特殊字符）');
 
   // 没有编号的空白行不该乱跳
   calls.navigations.length = 0;
@@ -507,7 +506,8 @@ test('首页 —— 公告与概况都有内容，数据里没有 undefined 或 
   const page = instantiate(indexConfig);
   await page.onLoad();
 
-  assert.strictEqual(page.data.view.summary.memberCount, 24);
+  // S2 口径：民大在册会员 = 24 位旧演示账号 + 校管理员 + 会员 + 学院负责人演示身份
+  assert.strictEqual(page.data.view.summary.memberCount, 27);
   assert.ok(page.data.view.summary.matchCount > 0);
   assert.ok(page.data.view.announcements.rows.length > 0);
 
@@ -558,91 +558,80 @@ test('首页 —— 可切换浏览的学校，切到外校进入只读', async 
   }
 });
 
-test('首页 —— 切到北航显示北航自己的演示内容', async () => {
-  const schoolSession = require('../miniprogram/services/school-session');
-  const schoolMock = require('../miniprogram/services/school-mock');
-  schoolSession.reset();
-  schoolMock.setDemoActor('demo_muc_member');
+test('首页 —— 切到北航得到真实空聚合，不再展示静态演示内容', async () => {
+  const fx = spaceFixture();
   try {
+    fx.to('demo_muc_member');
     resetSession();
     loginAs();
     const page = instantiate(indexConfig);
     await page.onLoad();
 
-    // 本校（民大）展示应用本身的跨协会聚合内容，不是北航演示
-    assert.strictEqual(page.data.schoolContent, false);
-    assert.ok(!page.data.view.announcements.rows.every((row) => row.associationName === '北航'));
+    // 本校（民大）展示 S2 跨协会聚合内容
+    assert.ok(page.data.view.announcements.rows.length > 0, '民大有公告');
 
-    page.onSchoolChange({ detail: { schoolId: 'buaa' } });
+    // 切到北航：民大会员读不到北航协会空间，聚合为真实空态而不是演示内容
+    await page.onSchoolChange({ detail: { schoolId: 'buaa' } });
 
-    assert.strictEqual(page.data.schoolContent, true);
-    const rows = page.data.view.announcements.rows;
-    assert.ok(rows.length > 0, '北航有演示公告');
-    assert.ok(rows.every((row) => row.associationName.startsWith('北航')), '每条都标成北航的某个协会');
-    // 首页是跨协会聚合：三个协会各摆一条，切到北航就看得出它有哪些协会
-    assert.deepStrictEqual(
-      rows.map((row) => row.associationName),
-      ['北航匹克球', '北航乒乓球', '北航羽毛球']
-    );
-    assert.ok(page.data.view.upcomingEvents.length > 0, '北航有演示赛事');
-    assert.ok(page.data.view.summary.memberCount > 0);
-    assert.strictEqual(page.data.view.loggedIn, true);
+    assert.strictEqual(page.data.schoolId, 'buaa');
+    assert.deepStrictEqual(page.data.view.announcements.rows, [], '外校公告空态');
+    assert.deepStrictEqual(page.data.view.upcomingEvents, [], '外校近期赛事空态');
+    assert.strictEqual(page.data.view.summary, null, '读不到任何协会时不编概况数字');
+    assert.strictEqual(page.data.view.loggedIn, true, '登录态仍保持');
 
-    // 演示内容没有对应的列表页，点「看全部」不应跳走（入口本身也已隐藏）
-    calls.navigations.length = 0;
-    calls.tabSwitches.length = 0;
-    page.onGoAnnouncements();
-    page.onGoEvents();
-    assert.deepStrictEqual(calls.navigations, []);
-    assert.deepStrictEqual(calls.tabSwitches, []);
-
-    // 切回本校即还原聚合内容
-    page.onSchoolChange({ detail: { schoolId: 'muc' } });
-    assert.strictEqual(page.data.schoolContent, false);
-    assert.strictEqual(page.data.view.summary.memberCount, 24);
+    // 切回本校即还原民大聚合内容
+    await page.onSchoolChange({ detail: { schoolId: 'muc' } });
+    assert.ok(page.data.view.announcements.rows.length > 0, '切回本校公告回来');
+    assert.strictEqual(page.data.view.summary.memberCount, 27);
   } finally {
-    schoolMock.setDemoActor('demo_applicant');
-    schoolSession.reset();
+    fx.restore();
   }
 });
 
-test('排行榜 —— 切到北航显示北航的演示榜单且整页只读', async () => {
-  const schoolSession = require('../miniprogram/services/school-session');
-  const schoolMock = require('../miniprogram/services/school-mock');
-  schoolSession.reset();
-  schoolMock.setDemoActor('demo_muc_member');
+test('排行榜 —— 切到无权访问的外校被拒并清空旧榜单', async () => {
+  const fx = spaceFixture();
   try {
-    resetSession();
-    loginAs();
+    fx.to('demo_muc_member');
     const page = instantiate(rankConfig);
     await page.onLoad();
 
-    // 本校（民大）走真实榜单，不是演示
-    assert.strictEqual(page.data.demoSchool, false);
+    // 本校（民大）走 S2 真实榜单
+    assert.strictEqual(page.data.error, '');
     assert.ok(page.data.view.rows.length > 0);
 
-    // 切到北航：换成演示榜单，且没有「我」这一行
-    schoolSession.setSchoolId('buaa');
+    // 切到北航：民大会员没有北航排行榜读取权，被拒且不残留本校榜单
+    require('../miniprogram/services/school-session').setSchoolId('buaa');
     await page.refresh();
 
-    assert.strictEqual(page.data.demoSchool, true);
-    assert.strictEqual(page.data.demoSchoolName, '北航');
-    assert.ok(page.data.view.rows.length > 0, '北航有演示榜单');
-    assert.strictEqual(page.data.view.me, null);
-    assert.ok(page.data.view.rows.every((row) => row.isMe === false));
-
-    // 演示榜单里的人没有本校账号，点行不跳转
-    calls.navigations.length = 0;
-    page.onOpenMember({ currentTarget: { dataset: { userId: page.data.view.rows[0].userId } } });
-    assert.deepStrictEqual(calls.navigations, []);
-
-    // 切项目仍停在北航演示榜
-    await page.onSwitchProject({ currentTarget: { dataset: { project: 'doubles' } } });
-    assert.strictEqual(page.data.view.activeProject, 'doubles');
-    assert.strictEqual(page.data.demoSchool, true);
+    assert.match(page.data.error, /没有读取/);
+    assert.deepEqual(page.data.view, {}, '外校读取被拒后清除旧学校榜单');
+    assert.deepEqual(page.data.rows, []);
   } finally {
-    schoolMock.setDemoActor('demo_applicant');
-    schoolSession.reset();
+    fx.restore();
+  }
+});
+
+test('排行榜 —— 榜单读 S2 真实数据：北航有自己的流水，外校读不到', async () => {
+  const fx = spaceFixture();
+  try {
+    // 北航演示会员读本校：看到的是真实流水（2026-10-16 起北航也有演示比赛）
+    fx.to('demo_buaa_member');
+    require('../miniprogram/services/school-session').setSchoolId('buaa');
+    const page = instantiate(rankConfig);
+    await page.onLoad();
+
+    assert.strictEqual(page.data.error, '');
+    assert.ok(page.data.view.rows.length > 0, '北航演示内容里男单有流水');
+    assert.ok(page.data.view.rows.some(row => row.userId === 'demo_buaa_member'));
+    assert.ok(page.data.view.me && page.data.view.me.rank > 0, '「我」在北航榜上有名次');
+
+    // 换民大身份读北航：按范围隔离，读不到并清空旧榜单（不留上一份北航名单）
+    fx.to('demo_muc_member');
+    await page.refresh();
+    assert.deepEqual(page.data.view, {}, '外校读不到北航榜单');
+    assert.ok(page.data.error.length > 0, '给出读不到的原因');
+  } finally {
+    fx.restore();
   }
 });
 
@@ -677,36 +666,21 @@ test('赛事页 —— 切到无权访问的外校清除旧赛事与积分榜', 
 
 });
 
-test('外校演示 —— 按协会分开：切协会后榜单 / 比赛 / 赛事都换成该协会的内容', async () => {
-  const schoolSession = require('../miniprogram/services/school-session');
-  const schoolMock = require('../miniprogram/services/school-mock');
-  const scope = require('../miniprogram/services/association-scope.js');
-  schoolSession.reset();
-  scope.resetAssociation();
-  schoolMock.setDemoActor('demo_muc_member');
+test('外校访问 —— 已迁移面板按真实 S2 权限拒绝，不再展示静态演示内容', async () => {
+  const fx = spaceFixture();
   try {
-    resetSession();
-    loginAs();
-    schoolSession.setSchoolId('buaa');
+    fx.to('demo_muc_member');
+    require('../miniprogram/services/school-session').setSchoolId('buaa');
 
-    // 排行榜：匹克球与乒乓是两套不同的名单
-    scope.setAssociation('pkb');
+    // 排行榜已接 S2：外校访问被拒，不展示静态演示榜单
     const rankPage = instantiate(rankConfig);
     await rankPage.onLoad();
-    const pkbRankFirst = rankPage.data.view.rows[0].nickName;
-    assert.ok(rankPage.data.view.meHint.includes('匹克球'), '提示条点明是哪个协会');
-
-    scope.setAssociation('tt');
-    await rankPage.refresh();
-    assert.strictEqual(rankPage.data.demoSchool, true);
-    assert.notStrictEqual(rankPage.data.view.rows[0].nickName, pkbRankFirst, '切协会换了一套榜单');
+    assert.match(rankPage.data.error, /没有读取/);
+    assert.deepEqual(rankPage.data.view, {});
 
     // 比赛面板已接 S2，无外校有效身份时不返回内部台账。
     const matchPage = instantiate(matchConfig);
     await matchPage.onLoad();
-    assert.deepEqual(matchPage.data.view.records, []);
-    scope.setAssociation('bd');
-    await matchPage.refresh();
     assert.deepEqual(matchPage.data.view.records, []);
     assert.equal(matchPage.data.auth.canRecord, false);
 
@@ -716,9 +690,7 @@ test('外校演示 —— 按协会分开：切协会后榜单 / 比赛 / 赛事
     assert.match(eventsPage.data.error, /没有读取/);
     assert.deepEqual(eventsPage.data.view, {});
   } finally {
-    scope.resetAssociation();
-    schoolMock.setDemoActor('demo_applicant');
-    schoolSession.reset();
+    fx.restore();
   }
 });
 
@@ -861,41 +833,57 @@ test('我的页 —— 普通会员看不到任何管理入口', async () => {
 });
 
 test('我的页 —— 管理员看到审核入口，点进去跳转审核页', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember(ADMIN);
+  // S2 会话能力来自 getSchoolIdentitySession：校管理员 canReview 为真
+  const fx = spaceFixture();
+  try {
+    fx.to('demo_muc_admin');
+    app.globalData.userInfo = fakeMember({ _id: 'demo_muc_admin', role: 2 });
 
-  const page = instantiate(profileConfig);
-  await page.onLoad({});
+    const page = instantiate(profileConfig);
+    await page.onLoad({});
 
-  assert.strictEqual(page.data.reviewEntry.visible, true);
-  assert.ok(page.data.reviewEntry.hint, '入口卡上要写清楚点进去是干什么的');
+    assert.strictEqual(page.data.reviewEntry.visible, true);
+    assert.ok(page.data.reviewEntry.hint, '入口卡上要写清楚点进去是干什么的');
 
-  calls.navigations.length = 0;
-  page.onGoReview();
-  assert.deepStrictEqual(calls.navigations, ['/pages/member-review/member-review']);
+    calls.navigations.length = 0;
+    page.onGoReview();
+    assert.deepStrictEqual(calls.navigations, ['/pages/member-review/member-review']);
+  } finally {
+    fx.restore();
+  }
 });
 
 test('我的页 —— 学院负责人看不到审核入口：入会审核是俱乐部全局事务', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember(STAFF);
+  const fx = spaceFixture();
+  try {
+    fx.to('demo_muc_college_leader');
+    app.globalData.userInfo = fakeMember({ _id: 'demo_muc_college_leader', role: 1 });
 
-  const page = instantiate(profileConfig);
-  await page.onLoad({});
+    const page = instantiate(profileConfig);
+    await page.onLoad({});
 
-  assert.strictEqual(page.data.reviewEntry.visible, false);
+    assert.strictEqual(page.data.reviewEntry.visible, false);
+  } finally {
+    fx.restore();
+  }
 });
 
 test('我的页 —— 退出登录后 onShow 会把审核入口收回去', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember(ADMIN);
+  const fx = spaceFixture();
+  try {
+    fx.to('demo_muc_admin');
+    app.globalData.userInfo = fakeMember({ _id: 'demo_muc_admin', role: 2 });
 
-  const page = instantiate(profileConfig);
-  await page.onLoad({});
-  assert.strictEqual(page.data.reviewEntry.visible, true);
+    const page = instantiate(profileConfig);
+    await page.onLoad({});
+    assert.strictEqual(page.data.reviewEntry.visible, true);
 
-  app.globalData.userInfo = null;
-  page.onShow();
-  assert.strictEqual(page.data.reviewEntry.visible, false, '权限没了，入口不能还挂着');
+    app.globalData.userInfo = null;
+    await page.onShow();
+    assert.strictEqual(page.data.reviewEntry.visible, false, '权限没了，入口不能还挂着');
+  } finally {
+    fx.restore();
+  }
 });
 
 test('我的页 —— 访客看不到公告管理入口', async () => {
@@ -906,42 +894,58 @@ test('我的页 —— 访客看不到公告管理入口', async () => {
   assert.strictEqual(page.data.adminEntry.visible, false);
 });
 
-test('我的页 —— 管理员看到公告管理入口，点进去跳转公告管理页', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember(ADMIN);
+test('我的页 —— 平台管理员看到公告管理入口，点进去跳转公告管理页', async () => {
+  // 公告发布权已收归平台管理员（M3-a）；校管理员没有这个入口
+  const fx = spaceFixture();
+  try {
+    fx.to('demo_platform_admin');
+    app.globalData.userInfo = fakeMember({ _id: 'demo_platform_admin', role: 2 });
 
-  const page = instantiate(profileConfig);
-  await page.onLoad({});
+    const page = instantiate(profileConfig);
+    await page.onLoad({});
 
-  assert.strictEqual(page.data.adminEntry.visible, true);
-  assert.ok(page.data.adminEntry.hint, '入口卡上要写清楚点进去是干什么的');
+    assert.strictEqual(page.data.adminEntry.visible, true);
+    assert.ok(page.data.adminEntry.hint, '入口卡上要写清楚点进去是干什么的');
 
-  calls.navigations.length = 0;
-  page.onGoAnnouncementsAdmin();
-  assert.deepStrictEqual(calls.navigations, ['/pages/announcement-manage/announcement-manage']);
+    calls.navigations.length = 0;
+    page.onGoAnnouncementsAdmin();
+    assert.deepStrictEqual(calls.navigations, ['/pages/announcement-manage/announcement-manage']);
+  } finally {
+    fx.restore();
+  }
 });
 
-test('我的页 —— 学院负责人看不到公告管理入口：公告是发给全俱乐部的', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember(STAFF);
+test('我的页 —— 校管理员看不到公告管理入口：发布权在平台管理员', async () => {
+  const fx = spaceFixture();
+  try {
+    fx.to('demo_muc_admin');
+    app.globalData.userInfo = fakeMember({ _id: 'demo_muc_admin', role: 2 });
 
-  const page = instantiate(profileConfig);
-  await page.onLoad({});
+    const page = instantiate(profileConfig);
+    await page.onLoad({});
 
-  assert.strictEqual(page.data.adminEntry.visible, false);
+    assert.strictEqual(page.data.adminEntry.visible, false);
+  } finally {
+    fx.restore();
+  }
 });
 
 test('我的页 —— 退出登录后 onShow 会把公告管理入口一并收回去', async () => {
-  resetSession();
-  app.globalData.userInfo = fakeMember(ADMIN);
+  const fx = spaceFixture();
+  try {
+    fx.to('demo_platform_admin');
+    app.globalData.userInfo = fakeMember({ _id: 'demo_platform_admin', role: 2 });
 
-  const page = instantiate(profileConfig);
-  await page.onLoad({});
-  assert.strictEqual(page.data.adminEntry.visible, true);
+    const page = instantiate(profileConfig);
+    await page.onLoad({});
+    assert.strictEqual(page.data.adminEntry.visible, true);
 
-  app.globalData.userInfo = null;
-  page.onShow();
-  assert.strictEqual(page.data.adminEntry.visible, false, '权限没了，入口不能还挂着');
+    app.globalData.userInfo = null;
+    await page.onShow();
+    assert.strictEqual(page.data.adminEntry.visible, false, '权限没了，入口不能还挂着');
+  } finally {
+    fx.restore();
+  }
 });
 
 test('我的页 —— 赛季管理入口已移除，管理员也看不到', async () => {
@@ -1018,24 +1022,13 @@ test('我的页 —— 切回本页时登录态没变就不重复取数', async 
   resetSession();
   loginAs();
 
-  // 切 tab 很频繁，每次都白跑一趟云端没有意义
-  let queried = 0;
-  const originalGetCurrentUser = mock.getCurrentUser;
-  mock.getCurrentUser = async (...args) => {
-    queried += 1;
-    return originalGetCurrentUser.apply(mock, args);
-  };
+  // 切 tab 很频繁，每次都白跑一趟会话没有意义：指纹没变，视图对象就该原样
+  const page = instantiate(profileConfig);
+  await page.onLoad({});
+  const before = page.data.view;
 
-  try {
-    const page = instantiate(profileConfig);
-    await page.onLoad({});
-    assert.strictEqual(queried, 1, 'onLoad 取一次');
-
-    await page.onShow();
-    assert.strictEqual(queried, 1, '登录态没变，onShow 不该再取');
-  } finally {
-    mock.getCurrentUser = originalGetCurrentUser;
-  }
+  await page.onShow();
+  assert.strictEqual(page.data.view, before, '登录态没变，onShow 不该再取');
 });
 
 test('我的页 —— 退出后重新登录会重新取数，不把上一个人那份空视图留住', async () => {
@@ -1075,10 +1068,9 @@ test('我的页 —— 服务端查无此人时清掉登录态，不把人困在
   resetSession();
   app.globalData.userInfo = fakeMember();
 
-  // 本地缓存还留着登录态（比如账号刚在后台被删掉，或这台设备上的微信号
-  // 与服务端那个账号不是同一个），数据源却答不出这个人
-  const originalGetCurrentUser = mock.getCurrentUser;
-  mock.getCurrentUser = async () => undefined;
+  // 模拟「这台设备的微信号在服务端没有账号」：会话 user 为 null
+  const schoolIdentity = require('../miniprogram/services/school-identity.js');
+  schoolIdentity.simulateNewWechat('profile_ghost_1');
 
   try {
     calls.tabSwitches.length = 0;
@@ -1092,7 +1084,7 @@ test('我的页 —— 服务端查无此人时清掉登录态，不把人困在
     // 这一步不跳页：用户正站在「我的」上，原地换成登录引导即可
     assert.deepStrictEqual(calls.tabSwitches, [], '不要把人甩到别的页面去');
   } finally {
-    mock.getCurrentUser = originalGetCurrentUser;
+    schoolMock.reset();
   }
 });
 
@@ -1102,8 +1094,9 @@ test('我的页 —— 加载失败时留着登录态，只提示重试', async 
 
   // 抛错是网络/云函数故障，与「查无此人」不是一回事：这时把人的登录态
   // 清掉，等于让他白白重新登录一次
-  const originalGetCurrentUser = mock.getCurrentUser;
-  mock.getCurrentUser = async () => {
+  const schoolIdentity = require('../miniprogram/services/school-identity.js');
+  const original = schoolIdentity.forSchoolIdentity;
+  schoolIdentity.forSchoolIdentity = () => {
     throw new Error('云函数调用失败');
   };
 
@@ -1111,11 +1104,12 @@ test('我的页 —— 加载失败时留着登录态，只提示重试', async 
     const page = instantiate(profileConfig);
     await page.onLoad({});
 
-    assert.strictEqual(page.data.error, '数据加载失败，请下拉重试');
-    assert.strictEqual(page.data.loggedIn, true, '故障时不该把人踢下线');
-    assert.ok(app.globalData.userInfo);
+    assert.strictEqual(page.data.loading, false, '不能一直挂在加载态');
+    assert.strictEqual(page.data.error.length > 0, true, '失败要给重试提示');
+    assert.strictEqual(page.data.loggedIn, true, '登录态还留着');
+    assert.ok(app.globalData.userInfo, '全局登录态不清');
   } finally {
-    mock.getCurrentUser = originalGetCurrentUser;
+    schoolIdentity.forSchoolIdentity = original;
   }
 });
 
@@ -1333,21 +1327,29 @@ test('他人主页 —— 头卡是共用的，但点头像不会跳走', async 
   assert.deepStrictEqual(calls.navigations, []);
 });
 
-test('他人主页 —— 管理员看到任免入口，点一下把对方设为学院负责人', async () => {
-  // u01 是种子里的管理员；u06 是普通会员、学院确定
-  loginAs({ _id: 'u01', role: 2, college: '体育学院', status: 1 });
-  const page = instantiate(memberConfig);
-  await page.onLoad({ userId: 'u06' });
+test('他人主页 —— S2 个人主页不再提供任免 / 改分入口，权限统一走学校身份页', async () => {
+  // 指定权限（校/协会/学院三档）统一由学校身份页 grantSchoolPermission 入口处理，
+  // 个人主页读 S2，不再按旧栈 role 显示任免按钮（避免读 S2、写旧栈的混用）。
+  // B8 收敛：入口卡片与写路径一并移除，处理函数不再存在。
+  const fx = spaceFixture();
+  try {
+    fx.to('demo_muc_admin');
+    app.globalData.userInfo = fakeMember({ _id: 'demo_muc_admin', role: 2 });
+    const page = instantiate(memberConfig);
+    await page.onLoad({ userId: 'u06' });
 
-  assert.strictEqual(page.data.view.leader.visible, true);
-  assert.strictEqual(page.data.view.leader.label, '设为学院负责人');
+    assert.strictEqual(page.data.view.leader.visible, false);
+    assert.strictEqual(page.data.view.associationLeader.visible, false);
+    assert.strictEqual(page.data.view.currentElo.visible, false);
+    assert.strictEqual(typeof page.onGrantPermission, 'undefined', '统一入口随写路径一起移除');
+    assert.strictEqual(typeof page.onSetCollegeLeader, 'undefined');
+    assert.strictEqual(typeof page.onEditCurrentElo, 'undefined');
 
-  calls.toasts.length = 0;
-  await page.onSetCollegeLeader();
-
-  const after = await facade.getMember('u06');
-  assert.strictEqual(after.role, 1, '点击后应当真的写进数据源');
-  assert.ok(calls.toasts.includes('已设为学院负责人'));
+    const after = await fx.spaceApi().getSchoolMemberProfile({ userId: 'u06' });
+    assert.strictEqual(after.user.permissionLabel, '会员', 'u06 权限没被改动');
+  } finally {
+    fx.restore();
+  }
 });
 
 test('他人主页 —— 普通会员看不到任免入口，也没有可点的按钮', async () => {
@@ -1356,55 +1358,9 @@ test('他人主页 —— 普通会员看不到任免入口，也没有可点的
   await page.onLoad({ userId: 'u02' });
 
   assert.strictEqual(page.data.view.leader.visible, false);
-  // 即使误触发也没有副作用
-  await page.onSetCollegeLeader();
-  assert.strictEqual((await facade.getMember('u02')).role, 1, 'u02 种子里就是学院负责人，不该被改动');
-});
-
-test('他人主页 —— 协会负责人在本协会能看到并执行任免入口', async () => {
-  // 登录快照故意写成「普通会员」（role 0），模拟快照按别的协会读下、与本页
-  // 协会对不上的情形。u09 在匹克球协会（pkb）是协会负责人，入口是否出现应当
-  // 以**本页协会**解析出的身份为准，而不是拿快照里的旧 role 一刀切。
-  loginAs({ _id: 'u09', role: 0, status: 1 });
-  const page = instantiate(memberConfig);
-  await page.onLoad({ userId: 'u06' });
-  // 页内切到 pkb（u06 默认协会可能不是这个）：切换后按本协会重新解析身份
-  await page.onAssociationChange({ detail: { id: 'pkb' } });
-
-  assert.strictEqual(page.data.switchValue, 'pkb');
-  assert.strictEqual(page.data.view.leader.visible, true, '本协会负责人应当看到任免入口');
-
-  calls.toasts.length = 0;
-  await page.onSetCollegeLeader();
-  assert.strictEqual((await facade.getMember('u06')).role, 1, '点击后真的写进数据源');
-  assert.ok(calls.toasts.includes('已设为学院负责人'));
-});
-
-test('他人主页 —— 统一的指定权限入口按可授予档位分发', async () => {
-  // 全局管理员看别人主页时协会负责人与学院负责人两档都开；统一入口点开
-  // 取首项（协会负责人）执行，证明它复用了既有的任免处理。
-  loginAs({ _id: 'u01', role: 2, college: '体育学院', status: 1 });
-  const page = instantiate(memberConfig);
-  await page.onLoad({ userId: 'u06' });
-
-  assert.strictEqual(page.data.view.associationLeader.visible, true);
-  assert.strictEqual(page.data.view.leader.visible, true);
-
-  calls.toasts.length = 0;
-  await page.onGrantPermission();
-  assert.strictEqual((await facade.getMember('u06')).role, 2, '统一入口应当真的写入数据源');
-  assert.ok(calls.toasts.includes('已设为协会负责人'));
-});
-
-test('他人主页 —— 无任免资格时不出现指定权限入口', async () => {
-  loginAs({ _id: 'u06', role: 0 });
-  const page = instantiate(memberConfig);
-  await page.onLoad({ userId: 'u02' });
-
-  assert.strictEqual(page.data.view.leader.visible, false);
   assert.strictEqual(page.data.view.associationLeader.visible, false);
-  // 误触发也没有任何副作用
-  assert.strictEqual(page.onGrantPermission(), undefined);
+  // 入口与写路径整体移除：没有任何可误触发的按钮
+  assert.strictEqual(typeof page.onGrantPermission, 'undefined');
 });
 
 /* ============================================================
@@ -1557,22 +1513,28 @@ test('排行榜 —— 切换项目后搜索词保留，不悄悄回到全部', 
 });
 
 test('排行榜 —— 搜索范围是全量榜单，前十之外的人也能搜到', async () => {
-  const page = instantiate(rankConfig);
-  await page.onLoad();
+  const fx = rankBoardFixture();
+  try {
+    await fx.seedMenSingles();
+    const page = instantiate(rankConfig);
+    await page.onLoad();
 
-  const outside = page.data.view.allRows[10];
-  assert.ok(outside, '要有前十之外的会员才能验证全量搜索');
-  assert.ok(
-    !page.data.rows.some((row) => row.userId === outside.userId),
-    '默认榜单不该显示他'
-  );
+    const outside = page.data.view.allRows[10];
+    assert.ok(outside, '要有前十之外的会员才能验证全量搜索');
+    assert.ok(
+      !page.data.rows.some((row) => row.userId === outside.userId),
+      '默认榜单不该显示他'
+    );
 
-  page.onInputKeyword({ detail: { value: outside.nickName } });
+    page.onInputKeyword({ detail: { value: outside.nickName } });
 
-  const hit = page.data.rows.find((row) => row.userId === outside.userId);
-  assert.ok(hit, '前十之外的人必须能被搜到');
-  assert.strictEqual(hit.rank, outside.rank, '搜索只是定位，不改名次');
-  assert.ok(hit.rank > 10);
+    const hit = page.data.rows.find((row) => row.userId === outside.userId);
+    assert.ok(hit, '前十之外的人必须能被搜到');
+    assert.strictEqual(hit.rank, outside.rank, '搜索只是定位，不改名次');
+    assert.ok(hit.rank > 10);
+  } finally {
+    fx.restore();
+  }
 });
 
 test('排行榜 —— 用真实姓名也能搜到同一个人，展示的仍是昵称', async () => {
@@ -1593,6 +1555,84 @@ test('排行榜 —— 用真实姓名也能搜到同一个人，展示的仍是
   assert.strictEqual(hit.rank, target.rank, '按真名搜同样不改名次');
   // 真实姓名只作为搜索依据，榜面上显示的一律是昵称
   assert.strictEqual(hit.nickName, '明宇');
+});
+
+test('排行榜 —— S2：默认演示身份在榜上标「我」，名次卡来自完整榜单', async () => {
+  // 民大演示内容里 u06（默认演示身份）打了男单，榜上应有「我」标记与名次卡
+  const page = instantiate(rankConfig);
+  await page.onLoad();
+
+  const mine = page.data.view.allRows.find((row) => row.isMe);
+  assert.ok(mine, '默认身份 u06 应在男单榜上');
+  assert.strictEqual(mine.userId, 'u06');
+  assert.ok(page.data.view.me, '有「我」就该有名次卡');
+  assert.strictEqual(page.data.view.me.rank, mine.rank);
+  assert.strictEqual(page.data.view.me.total, page.data.view.total);
+});
+
+test('排行榜 —— S2：切协会后榜单按协会隔离，各读各的流水', async () => {
+  const fx = spaceFixture();
+  try {
+    fx.to('u06');
+    const page = instantiate(rankConfig);
+    await page.onLoad();
+    assert.strictEqual(page.data.error, '');
+    assert.ok(page.data.view.rows.length > 0, '匹克球协会（pkb）有演示流水');
+    const pkbIds = page.data.view.rows.map(row => row.userId);
+    assert.ok(pkbIds.includes('u03'));
+
+    // 乒乓协会：读的是乒乓自己的流水（2026-10-16 起各协会都有演示内容），
+    // 而不是沿用 pkb 的名单——u04 只在乒乓打球，u03 只在匹克球打球。
+    require('../miniprogram/services/association-scope.js').setAssociation('tt');
+    await page.refresh();
+
+    assert.strictEqual(page.data.error, '');
+    const ttIds = page.data.view.rows.map(row => row.userId);
+    assert.ok(ttIds.length > 0, '乒乓协会也有自己的榜单');
+    assert.ok(ttIds.includes('u04'), '乒乓负责人 u04 在乒乓榜上');
+    assert.ok(!ttIds.includes('u03'), 'u03 只在匹克球协会有流水');
+    assert.notDeepEqual(ttIds.slice().sort(), pkbIds.slice().sort(), '两张榜单不是同一份');
+
+    // 羽球协会：同样是自己的流水，与乒乓不是同一张榜
+    require('../miniprogram/services/association-scope.js').setAssociation('bd');
+    await page.refresh();
+    const bdIds = page.data.view.rows.map(row => row.userId);
+    assert.ok(bdIds.length > 0, '羽球协会也有自己的男单榜');
+    assert.notDeepEqual(bdIds.slice().sort(), ttIds.slice().sort(), '羽球与乒乓不是同一张榜');
+  } finally {
+    fx.restore();
+  }
+});
+
+test('排行榜 —— S2：读失败清空旧榜单，恢复后能重新取到', async () => {
+  const fx = spaceFixture();
+  try {
+    fx.to('u06');
+    const page = instantiate(rankConfig);
+    await page.onLoad();
+    assert.ok(page.data.view.rows.length > 0);
+
+    // 断一次读：面板给出明确错误并清空旧榜单
+    const original = require('../miniprogram/services/association-space.js').forScope;
+    require('../miniprogram/services/association-space.js').forScope = () => ({
+      getSchoolRanking: async () => { throw new Error('读取超时'); },
+    });
+    try {
+      await page.refresh();
+      assert.match(page.data.error, /读取超时/);
+      assert.deepEqual(page.data.view, {});
+      assert.deepEqual(page.data.rows, []);
+    } finally {
+      require('../miniprogram/services/association-space.js').forScope = original;
+    }
+
+    // 恢复后重新装载，旧数据不残留
+    await page.refresh();
+    assert.strictEqual(page.data.error, '');
+    assert.ok(page.data.view.rows.length > 0);
+  } finally {
+    fx.restore();
+  }
 });
 
 /* ============================================================
@@ -2201,6 +2241,59 @@ test('发布赛事 —— 填全后提交落库，并退回上一页', async () 
     assert.strictEqual(created.seedCount, 8, '种子数量默认 8');
     assert.strictEqual(created.drawn, false, '创建时还没抽签');
     assert.strictEqual(created.status, EVENT_STATUS.SIGNUP);
+  } finally {
+    fx.restore();
+  }
+});
+
+test('发布赛事 —— 勾选小组后发布，落库带报名资格限制（B6 选择器）', async () => {
+  const fx = eventEditFixture();
+  try {
+    fx.to('demo_muc_admin');
+    // 先建一个小组，供表单勾选
+    const createdGroup = await fx.api().createAssociationGroup({
+      requestId: 'page_group_1', name: '精英组', memberIds: ['demo_muc_member'],
+    });
+    assert.strictEqual(createdGroup.ok, true, createdGroup.message);
+
+    const page = instantiate(eventEditConfig);
+    await page.onLoad();
+    assert.ok(page.data.groups.length > 0, '表单加载小组清单');
+
+    page.onInputTitle({ detail: { value: '小组限定赛' } });
+    page.onPickLevel({ detail: { value: '0' } });
+    page.onPickBronzeMode({ detail: { value: '0' } });
+    page.onPickSeedMode({ detail: { value: '0' } });
+    page.onPickDate({ detail: { value: '2026-06-10' } });
+    page.onPickTime({ detail: { value: '09:00' } });
+    page.onInputCourtCount({ detail: { value: '2' } });
+
+    page.onPickAudience({ detail: { value: '1' } });
+    assert.strictEqual(page.data.audienceIndex, 1);
+    page.onToggleGroup({ currentTarget: { dataset: { groupId: createdGroup.group.groupId } } });
+    assert.deepStrictEqual(page.data.selectedGroupIds, [createdGroup.group.groupId]);
+
+    await page.onSubmit();
+
+    const events = (await fx.api().listSchoolEvents({})).events;
+    const created = events.find((item) => item.title === '小组限定赛');
+    assert.ok(created, '发布后赛事应在台账里');
+    assert.strictEqual(created.audienceMode, 'groups');
+    assert.deepStrictEqual(created.audienceGroupIds, [createdGroup.group.groupId]);
+
+    // 未勾选任何小组就选「仅限小组」：服务端拒绝（buildAudience 同一把尺子）
+    const page2 = instantiate(eventEditConfig);
+    await page2.onLoad();
+    page2.onInputTitle({ detail: { value: '空组赛事' } });
+    page2.onPickLevel({ detail: { value: '0' } });
+    page2.onPickBronzeMode({ detail: { value: '0' } });
+    page2.onPickSeedMode({ detail: { value: '0' } });
+    page2.onPickDate({ detail: { value: '2026-06-11' } });
+    page2.onPickTime({ detail: { value: '09:00' } });
+    page2.onInputCourtCount({ detail: { value: '2' } });
+    page2.onPickAudience({ detail: { value: '1' } });
+    await page2.onSubmit();
+    assert.match(page2.data.errorText, /至少选择一个小组/);
   } finally {
     fx.restore();
   }
@@ -4424,10 +4517,11 @@ test('编辑资料页 —— 已登录时填入当前昵称，学号只读展示
     assert.strictEqual(page.data.blockReason, '');
     assert.strictEqual(page.data.form.nickName, '民大模拟会员');
     assert.strictEqual(page.data.avatarText, '民');
-    // 自己的学号从学校身份取；姓名 / 性别演示身份没填，留空由模板兜底成「—」
+    // 自己的学号从学校身份取；姓名演示身份没填（留空由模板兜底成「—」），
+    // 性别自 2026-10-16 起写进演示种子（榜单分池要用），这里显示「男」
     assert.strictEqual(page.data.studentId, 'TEST002');
     assert.strictEqual(page.data.realName, '');
-    assert.strictEqual(page.data.genderText, '');
+    assert.strictEqual(page.data.genderText, '男');
   } finally {
     fx.restore();
   }
@@ -4564,21 +4658,26 @@ test('我的页 —— 未登录时不给个人数据，也不给编辑资料入
 test('我的页 —— 改完昵称返回后会重取数据，头卡显示新名字', async () => {
   resetSession();
   loginAs();
-  await facade.resetCache();
+  const fx = spaceFixture();
+  try {
+    const page = instantiate(profileConfig);
+    await page.onLoad({});
+    assert.strictEqual(page.data.view.user.nickName, '明宇');
 
-  const page = instantiate(profileConfig);
-  await page.onLoad({});
-  assert.strictEqual(page.data.view.user.nickName, '明宇');
+    // 模拟在编辑页里改了昵称：S2 资料接口更新，本地兼容登录态同步，再返回本页
+    await require('../miniprogram/services/school-identity.js')
+      .forSchoolIdentity({ schoolId: 'muc', association: 'pkb' })
+      .updateSchoolProfile({ patch: { nickName: '改过的名字' } });
+    app.globalData.userInfo = fakeMember({ nickName: '改过的名字' });
 
-  // 模拟在编辑页里改了昵称：数据源与本地登录态都更新，再返回本页
-  await facade.updateProfile({ nickName: '改过的名字' }, 'u06');
-  app.globalData.userInfo = fakeMember({ nickName: '改过的名字' });
+    await page.onShow();
 
-  await page.onShow();
-
-  // 只比编号就不会重取，这一页会一直挂着旧名字
-  assert.strictEqual(page.data.view.user.nickName, '改过的名字');
-  assert.strictEqual(page.data.view.user.realName, '赵明宇');
+    // 只比编号就不会重取，这一页会一直挂着旧名字
+    assert.strictEqual(page.data.view.user.nickName, '改过的名字');
+    assert.strictEqual(page.data.view.user.realName, '赵明宇');
+  } finally {
+    fx.restore();
+  }
 });
 
 /* ============================================================
@@ -6255,6 +6354,50 @@ function spaceFixture() {
     to: (actor) => schoolMock.setDemoActor(actor),
     spaceApi: () => require('../miniprogram/services/association-space.js')
       .forScope({ schoolId: 'muc', association: 'pkb' }),
+    restore() {
+      scope.setAssociation(before);
+      schoolMock.setDemoActor('demo_applicant');
+      schoolMock.reset();
+      schoolSession.reset();
+    },
+  };
+}
+
+/**
+ * 排行榜全量搜索夹具：干净台账 + 12 位男会员各打一场并确认，男单榜超过 10 人，
+ * 用于验证「默认只显示前 10，搜索覆盖完整榜单」。
+ */
+function rankBoardFixture() {
+  const schoolSession = require('../miniprogram/services/school-session');
+  const schoolMock = require('../miniprogram/services/school-mock');
+  const scope = require('../miniprogram/services/association-scope.js');
+  const space = require('../miniprogram/services/association-space.js');
+  schoolSession.reset();
+  schoolMock.reset({ withDemoContent: false });
+  schoolSession.setSchoolId('muc');
+  const before = scope.getAssociation();
+  scope.setAssociation('pkb');
+  const api = () => space.forScope({ schoolId: 'muc', association: 'pkb' });
+  let sequence = 0;
+  return {
+    to: (actor) => schoolMock.setDemoActor(actor),
+    /** 12 位男会员各与 u01 打一场并确认（mock 放宽为参与即可确认） */
+    async seedMenSingles() {
+      const men = ['u02', 'u03', 'u04', 'u05', 'u06', 'u07', 'u08', 'u09', 'u10', 'u11', 'u12', 'u13'];
+      for (const id of men) {
+        schoolMock.setDemoActor(id);
+        const submitted = await api().submitSchoolMatch({
+          requestId: `rank_fx_${++sequence}`,
+          matchType: MATCH_TYPE.SINGLES, teamA: [id], teamB: ['u01'],
+          scoreA: [11], scoreB: [9], gamePoints: 11, bestOf: 1,
+          matchTime: `2026-06-${String((sequence % 27) + 1).padStart(2, '0')}T19:00:00`,
+        });
+        assert.strictEqual(submitted.ok, true, `录入失败：${submitted.message}`);
+        schoolMock.setDemoActor('u01');
+        const confirmed = await api().confirmSchoolMatch({ matchId: submitted.match.matchId });
+        assert.strictEqual(confirmed.ok, true, `确认失败：${confirmed.message}`);
+      }
+    },
     restore() {
       scope.setAssociation(before);
       schoolMock.setDemoActor('demo_applicant');

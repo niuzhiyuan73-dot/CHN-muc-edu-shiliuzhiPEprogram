@@ -134,6 +134,21 @@ Page({
   },
 
   /**
+   * 把路由里的 matchId 解析成真实编号：先原值、再解码值（见 utils/route-query.js）。
+   * 全部未命中时返回原值，交由后续读取按「不存在」处理。
+   */
+  async resolveMatchId(raw, api) {
+    if (!raw) return '';
+    const { routeIdCandidates } = require('../../utils/route-query.js');
+    for (const id of routeIdCandidates(raw)) {
+      // eslint-disable-next-line no-await-in-loop —— 候选最多两个
+      const found = await api.getSchoolMatch({ matchId: id });
+      if (found && found.ok) return id;
+    }
+    return raw;
+  },
+
+  /**
    * 本次身份会话里的操作者编号，只用来把「去登录」与「没权限」分开。
    * 拿不到（没有账号，或身份接口报错）就按访客处理，绝不猜一个身份出来。
    */
@@ -170,6 +185,9 @@ Page({
 
     try {
       const api = this.api();
+      // 路由编号兼容（见 utils/route-query.js）：开发者工具把 query 原样透传，
+      // 未解码的 matchId 直接查会「这场比赛不存在」，这里先探测出真实编号
+      this.matchId = await this.resolveMatchId(this.matchId, api);
       const [roster, found] = await Promise.all([
         api.listSchoolMembers({}),
         api.getSchoolMatch({ matchId: this.matchId }),

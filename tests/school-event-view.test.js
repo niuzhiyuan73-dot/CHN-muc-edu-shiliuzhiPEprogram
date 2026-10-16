@@ -365,3 +365,44 @@ test('纯适配：DTO 形状翻译与权限注入', () => {
   const caps = view.capsForEvent({ canManage: true, capabilities: { canSignUp: false, canDraw: true } });
   assert.deepEqual(caps, { canSignUp: false, canDraw: true, canPin: true });
 });
+
+/* ============================================================
+ * 路由编号编码兼容（2026-10-16 实测：开发者工具把 query 原样透传）
+ * ============================================================ */
+
+test('路由编号兼容：未解码的 query（%3A 形式）也能打开详情，真不存在仍是 notFound', async () => {
+  const repo = fixture();
+  const admin = spaceClient(repo);
+  const eventId = await publish(admin, 'r_enc');
+  const encoded = encodeURIComponent(eventId);
+  assert.notStrictEqual(encoded, eventId, '前提：S2 编号含需要编码的字符（冒号）');
+
+  // 开发者工具 / 真机：query 原样透传（仍是编码串）
+  const viaEncoded = await asSpace(repo, { actor: 'demo_muc_admin' }, () =>
+    view.loadSchoolEventDetailView(encoded, { schoolId: 'muc', association: 'pkb', actorId: 'demo_muc_admin' }));
+  assert.equal(viaEncoded.found, true, '未解码的 query 也要查得到');
+  assert.equal(viaEncoded.event.id, eventId, '命中的是解码后的真实编号');
+
+  // 测试替身 / 已解码环境：原值照旧
+  const viaPlain = await asSpace(repo, { actor: 'demo_muc_admin' }, () =>
+    view.loadSchoolEventDetailView(eventId, { schoolId: 'muc', association: 'pkb', actorId: 'demo_muc_admin' }));
+  assert.equal(viaPlain.found, true, '已解码环境照旧');
+  assert.match(viaEncoded.notFoundText + viaPlain.notFoundText, /^$/);
+
+  // 真正不存在的编号：仍然是「不存在」，不会因为探测而变成别的话术
+  const missing = await asSpace(repo, { actor: 'demo_muc_admin' }, () =>
+    view.loadSchoolEventDetailView('sev%3Amuc%3Apkb%3Anope', { schoolId: 'muc', association: 'pkb', actorId: 'demo_muc_admin' }));
+  assert.equal(missing.found, false);
+  assert.match(missing.notFoundText, /不存在/);
+});
+
+test('名次录入页同样兼容未解码的编号', async () => {
+  const repo = fixture();
+  const admin = spaceClient(repo);
+  const eventId = await publish(admin, 'r_enc2');
+
+  const placement = await asSpace(repo, { actor: 'demo_muc_admin' }, () =>
+    view.loadSchoolEventPlacementView(encodeURIComponent(eventId),
+      { schoolId: 'muc', association: 'pkb', actorId: 'demo_muc_admin' }));
+  assert.equal(placement.found, true, '名次页也要认编码过的编号');
+});

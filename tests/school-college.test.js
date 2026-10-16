@@ -670,3 +670,78 @@ test('跨校：外校读不到排阵，也排不了阵 / 开不了大场', async
   assert.equal(start.ok, false);
   assert.match(start.message, /找不到/);
 });
+
+/* ------------------------------------------------------------------ 小组限制（B6-b） */
+
+const groupHandlers = require('../miniprogram/services/association-group-service');
+
+async function callGroup(repo, action, payload = {}, opts = {}) {
+  const { actor = 'demo_muc_admin', schoolId = 'muc', association = 'pkb', now = NOW } = opts;
+  const ctx = await buildSchoolContext({ repo, actorId: actor, scope: { schoolId, association }, now });
+  return (await groupHandlers[action](payload, ctx)).data;
+}
+
+async function makeGroup(repo, token, memberIds) {
+  const created = await callGroup(repo, 'createAssociationGroup',
+    { requestId: token, name: `院队组${token}`, memberIds });
+  assert.equal(created.ok, true, created.message);
+  return created.group.groupId;
+}
+
+test('B6-b 发布学院赛带小组限制：非法拒绝，合法落库并在 DTO 下发', async () => {
+  const repo = fixture();
+  const groupId = await makeGroup(repo, 'g1', ['demo_muc_member']);
+
+  const empty = await call(repo, 'publishCollegeEvent',
+    { requestId: 'r1', ...valid({ audienceMode: 'groups', audienceGroupIds: [] }) });
+  assert.equal(empty.ok, false);
+  assert.match(empty.message, /至少选择一个小组/);
+
+  const mixed = await call(repo, 'publishCollegeEvent',
+    { requestId: 'r2', ...valid({ audienceMode: 'all', audienceGroupIds: [groupId] }) });
+  assert.equal(mixed.ok, false);
+  assert.match(mixed.message, /不能指定小组/);
+
+  const event = await publish(repo, 'r3', { audienceMode: 'groups', audienceGroupIds: [groupId] });
+  assert.equal(event.audienceMode, 'groups');
+  assert.deepEqual(event.audienceGroupIds, [groupId]);
+
+  const plain = await publish(repo, 'r4');
+  assert.equal(plain.audienceMode, 'all');
+  assert.deepEqual(plain.audienceGroupIds, []);
+});
+
+test('B6-b G08：名单里仅一人不在限定小组 → 整份提交失败；负责人本人入组不能替代选手资格', async () => {
+  const repo = fixture();
+  // 组里有 demo_muc_member（c01）与 c02 负责人 demo_muc_member_3；
+  // c01 的 demo_muc_member_2 与 c02 的 demo_muc_member_4 不在组里。
+  const groupId = await makeGroup(repo, 'g1', ['demo_muc_member', 'demo_muc_member_3']);
+  const event = await publish(repo, 'r1', { audienceMode: 'groups', audienceGroupIds: [groupId] });
+
+  // c01 名单：仅 member_2 一人不符 → 整份失败（不是只把那一人剔除）
+  const c01 = await call(repo, 'submitCollegeEntry',
+    { eventId: event.eventId, collegeId: C01, memberIds: ['demo_muc_member', 'demo_muc_member_2'] },
+    { actor: 'demo_muc_admin' });
+  assert.equal(c01.ok, false);
+  assert.match(c01.message, /小组/);
+
+  // c02 负责人自己交：本人入组不能替代选手资格，member_4 不符 → 整份失败
+  const c02 = await call(repo, 'submitCollegeEntry',
+    { eventId: event.eventId, collegeId: C02, memberIds: ['demo_muc_member_3', 'demo_muc_member_4'] },
+    { actor: 'demo_muc_member_3' });
+  assert.equal(c02.ok, false);
+  assert.match(c02.message, /小组/);
+
+  // 全员在组（或名单只含组内成员）才能提交成功
+  const ok = await call(repo, 'submitCollegeEntry',
+    { eventId: event.eventId, collegeId: C01, memberIds: ['demo_muc_member'] },
+    { actor: 'demo_muc_admin' });
+  assert.equal(ok.ok, true, ok.message);
+  assert.equal(ok.entry.status, COLLEGE_ENTRY_STATUS.PENDING);
+
+  // 跨范围：外校同一名单提交不进去
+  const buaa = await call(repo, 'submitCollegeEntry',
+    { eventId: event.eventId, collegeId: C01, memberIds: ['demo_muc_member'] },
+    { actor: 'demo_buaa_admin', schoolId: 'buaa' });
+  assert.equal(buaa.ok, false);
+});

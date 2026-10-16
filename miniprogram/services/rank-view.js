@@ -279,6 +279,26 @@ async function loadRankView(options = {}) {
   };
 }
 
+/**
+ * 学校维度的榜单装载器（B4-a）。
+ *
+ * 取数走绑定范围的 S2 客户端（association-space forScope 的 getSchoolRanking）：
+ * 服务端返回的形状与 loadRankView 一致（多 schoolName），纯整形仍在
+ * school-rank-service 里完成，这里只做「调用 + 失败上抛」。无读取权限时
+ * 客户端抛错，由页面清空旧榜单并展示拒绝原因——不再用外校静态演示榜单
+ * 掩盖访问拒绝（指南 §8）。
+ *
+ * @param {Object} api 绑定学校 / 协会的协会空间客户端
+ * @param {Object} [options]
+ * @param {string} [options.project] 榜单项目，非法或未传时退回第一个项目
+ * @returns {Promise<Object>}
+ */
+async function loadSchoolRankView(api, options = {}) {
+  const result = await api.getSchoolRanking({ project: options.project });
+  if (!result.ok) throw new Error(result.message || '排行榜读取失败');
+  return result;
+}
+
 module.exports = {
   BOARD_LABEL,
   TOP_LIMIT,
@@ -290,4 +310,5 @@ module.exports = {
   filterRows,
   describeSearch,
   loadRankView,
+  loadSchoolRankView,
 };

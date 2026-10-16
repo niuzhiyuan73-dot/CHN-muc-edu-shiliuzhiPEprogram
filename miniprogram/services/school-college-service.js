@@ -39,8 +39,11 @@ const { canReadAssociationSpace } = require('./association-space-permission.js')
 const { buildCollegeDirectory, legacyActorOf } = require('./school-actor.js');
 const {
   schoolKey, schoolMemberKey, belongsToSchoolScope, collegeEventKey, collegeEntryKey,
-  collegeLineupKey, PLATFORM_STATUS, SCHOOL_MEMBER_STATUS,
+  collegeLineupKey, PLATFORM_STATUS, SCHOOL_MEMBER_STATUS, associationGroupMemberKey,
 } = require('../utils/school.js');
+// 小组限制（受众范围，B6）：与训练 / 个人赛事共用同一套纯规则。
+const { buildAudience, readAudience } = require('./association-audience.js');
+const { GROUP_MEMBER_STATUS } = require('./association-group-service.js');
 const {
   COLLEGE_EVENT_STATUS, COLLEGE_ENTRY_STATUS, TIE_STATUS,
   MATCH_STATUS, MATCH_OUTCOME, TEAM,
@@ -120,6 +123,7 @@ const fingerprintOf = record => JSON.stringify([
   record.title, record.description, record.legPlan, record.allowMultiEntry,
   record.rosterMin, record.rosterMax, record.tieAlgo, record.tieNetMode,
   record.location, record.courtCount, new Date(record.startTime).getTime(),
+  record.audienceMode || 'all', JSON.stringify(record.audienceGroupIds || []),
 ]);
 
 /** 把学院编号解析成本校的全名；同时回退接受直接提交的全名。 */
@@ -344,6 +348,11 @@ async function publishCollegeEvent(payload = {}, ctx) {
   const actor = legacyActorOf(ctx, dir);
   const built = buildCollegeEventRecord(payload, { actor, now: ctx.now });
   if (!built.ok) return ok(refused(built.firstError, { errors: built.errors }));
+  // 小组限制（B6）：与训练 / 个人赛事同一把尺子；非法即拒绝，不静默降级为不限。
+  const audience = buildAudience(payload);
+  if (!audience.ok) return ok(refused(audience.message));
+  built.record.audienceMode = audience.audienceMode;
+  built.record.audienceGroupIds = audience.audienceGroupIds;
 
   const result = await ctx.repo.transaction(async tx => {
     const fresh = await freshContext(tx, ctx);
@@ -386,6 +395,21 @@ async function submitCollegeEntry(payload = {}, ctx) {
       { ...payload, college },
       { event: doc, actor, members: dir.members, colleges: dir.collegeNames, now: ctx.now });
     if (!built.ok) return refused(built.message);
+
+    // 小组限制（B6-b / G08）：名单里**每一位**都须命中赛事限定的小组，
+    // 仅一人不符合即整份提交失败；学院负责人本人入组不能替代选手资格。
+    const audience = readAudience(doc);
+    if (audience.audienceMode === 'groups') {
+      for (const memberId of built.record.members) {
+        let hit = false;
+        for (const groupId of audience.audienceGroupIds) {
+          const rel = await tx.associationGroupMembers.getById(
+            associationGroupMemberKey(groupId, memberId, ctx));
+          if (rel && rel.status === GROUP_MEMBER_STATUS.ACTIVE) { hit = true; break; }
+        }
+        if (!hit) return refused('名单中有成员不在赛事限定的小组内，请调整名单');
+      }
+    }
 
     const key = collegeEntryKey(doc._id, collegeId, ctx);
     const existing = await tx.collegeEntries.getById(key);

@@ -46,7 +46,11 @@ const {
 const { buildDirectory, legacyActorOf } = require('./school-actor.js');
 const {
   schoolKey, belongsToSchoolScope, schoolEventKey, schoolEventSignupKey,
+  associationGroupMemberKey,
 } = require('../utils/school.js');
+// 小组限制（受众范围）与训练共用同一套纯规则（B6）。
+const { buildAudience, readAudience, audienceAllows } = require('./association-audience.js');
+const { GROUP_MEMBER_STATUS } = require('./association-group-service.js');
 const {
   EVENT_STATUS, EVENT_STATUS_LABEL, SIGNUP_STATUS, SIGNUP_STATUS_LABEL,
   MATCH_TYPE, MATCH_TYPE_LABEL, EVENT_LEVEL_LABEL, EVENT_FORMAT_LABEL,
@@ -173,6 +177,9 @@ function eventSummary(doc, mySignup = null) {
     isFinished: doc.status === EVENT_STATUS.FINISHED,
     pinned: Boolean(doc.pinned),
     drawn: Boolean(doc.draw),
+    // 小组限制（受众范围，B6）：旧赛事缺字段按「不限」兼容
+    audienceMode: readAudience(doc).audienceMode,
+    audienceGroupIds: readAudience(doc).audienceGroupIds,
     signupCount: count,
     publisherId: doc.publisherId || '',
     publisherName: doc.publisherName || '',
@@ -204,6 +211,7 @@ const fingerprintOf = record => JSON.stringify([
   record.format, record.level, record.bronzeMode, record.placementMode,
   record.seedMode, record.seedCount, record.location, record.quota, record.courtCount,
   new Date(record.startTime).getTime(),
+  record.audienceMode || 'all', JSON.stringify(record.audienceGroupIds || []),
 ]);
 
 /* ------------------------------------------------------------------ 读 */
@@ -277,17 +285,25 @@ async function getSchoolEvent(payload = {}, ctx) {
   const full = Number(doc.quota) > 0 && Number(doc.signupCount || 0) >= Number(doc.quota);
   const genderLimit = singleGenderOf(doc.discipline);
   const genderOk = !genderLimit || (ctx.actor && ctx.actor.gender === genderLimit);
+  // 小组限制（B6）：详情页也要算出「能不能报、为什么不能报」，与写入端同一把尺子
+  const groupRows = ctx.actorId
+    ? await ctx.repo.forScope(ctx).associationGroupMembers.list() : [];
+  const myGroupIds = groupRows
+    .filter((row) => row.userId === ctx.actorId && row.status === GROUP_MEMBER_STATUS.ACTIVE)
+    .map((row) => row.groupId);
+  const groupOk = audienceAllows(doc, myGroupIds);
 
   let signupNote = '';
   if (!canParticipate) signupNote = '只有本协会有效会员可以报名';
   else if (doc.status !== EVENT_STATUS.SIGNUP) signupNote = '报名已截止';
   else if (doc.draw) signupNote = '已抽签，报名名单已定';
   else if (!genderOk) signupNote = `本赛事为${disciplineLabelOf(doc.discipline)}，仅限${GENDER_LABEL[genderLimit]}会员报名`;
+  else if (!groupOk) signupNote = '本次赛事仅限指定小组成员报名';
   else if (state.signed) signupNote = '';
   else if (full) signupNote = '名额已满';
 
   const canSignUp = canParticipate && doc.status === EVENT_STATUS.SIGNUP && !doc.draw &&
-    genderOk && !state.signed && !full;
+    genderOk && groupOk && !state.signed && !full;
   const canCancelSignup = doc.status === EVENT_STATUS.SIGNUP && !doc.draw &&
     Boolean(mySignup && mySignup.status === SIGNUP_STATUS.SIGNED);
 
@@ -380,6 +396,11 @@ async function publishSchoolEvent(payload = {}, ctx) {
 
   const built = buildEventRecord(payload, { actor: ctx.actor, now: ctx.now });
   if (!built.ok) return ok(refused(built.firstError, { errors: built.errors }));
+  // 小组限制（B6）：与训练同一把尺子校验；非法即拒绝，不静默降级为不限。
+  const audience = buildAudience(payload);
+  if (!audience.ok) return ok(refused(audience.message));
+  built.record.audienceMode = audience.audienceMode;
+  built.record.audienceGroupIds = audience.audienceGroupIds;
 
   const result = await ctx.repo.transaction(async tx => {
     const fresh = await freshContext(tx, ctx);
@@ -426,6 +447,17 @@ async function signUpSchoolEvent(payload = {}, ctx) {
     }
     if (Number(doc.quota) > 0 && Number(doc.signupCount || 0) >= Number(doc.quota)) {
       return refused('名额已满');
+    }
+
+    // 小组限制（B6）：报名当下必须命中至少一个选中小组；已报上的不因事后退组失效（G05）
+    const audience = readAudience(doc);
+    if (audience.audienceMode === 'groups') {
+      const hits = [];
+      for (const groupId of audience.audienceGroupIds) {
+        const rel = await tx.associationGroupMembers.getById(associationGroupMemberKey(groupId, userId, fresh));
+        if (rel && rel.status === GROUP_MEMBER_STATUS.ACTIVE) hits.push(groupId);
+      }
+      if (hits.length === 0) return refused('本次赛事仅限指定小组成员报名');
     }
 
     const nowIso = iso(fresh.now);

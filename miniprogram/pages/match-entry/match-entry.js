@@ -175,6 +175,9 @@ Page({
     this.api = space.forScope(this.scope);
     this.requestId = 'match_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
     try {
+      // 路由编号兼容（见 utils/route-query.js）：开发者工具把 query 原样透传，
+      // 未解码的 matchId 直接查会「找不到这场比赛」，这里先探测出真实编号
+      if (this.matchId) this.matchId = await this.resolveMatchId(this.matchId);
       const context = await this.api.getSchoolMatchEntryContext({});
       if (!context.ok) throw new Error(context.message || '页面加载失败');
       this.context = context;
@@ -203,6 +206,20 @@ Page({
   nameOf(userId) {
     if (!userId) return '';
     return (this.nameById && this.nameById[userId]) || '';
+  },
+
+  /**
+   * 把路由里的 matchId 解析成真实编号：先原值、再解码值（见 utils/route-query.js）。
+   * 全部未命中时返回原值，交由后续读取按「找不到」处理。
+   */
+  async resolveMatchId(raw) {
+    const { routeIdCandidates } = require('../../utils/route-query.js');
+    for (const id of routeIdCandidates(raw)) {
+      // eslint-disable-next-line no-await-in-loop —— 候选最多两个
+      const result = await this.api.getSchoolMatch({ matchId: id });
+      if (result && result.ok) return id;
+    }
+    return raw;
   },
 
   /**

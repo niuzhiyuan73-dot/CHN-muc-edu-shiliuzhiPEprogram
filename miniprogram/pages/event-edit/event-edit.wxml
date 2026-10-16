@@ -215,6 +215,30 @@
       <view wx:if="{{errors.quota}}" class="field-error">{{errors.quota}}</view>
     </view>
 
+    <!-- ========== 报名资格（小组限制，B6） ========== -->
+    <view class="card">
+      <view class="card-title">报名资格</view>
+      <view class="card-subtitle">不限，或只限若干小组成员报名（命中任一即可）</view>
+
+      <picker mode="selector" range="{{audienceModes}}" value="{{audienceIndex}}" bindchange="onPickAudience">
+        <view class="field-input form-picker">{{audienceModes[audienceIndex]}}</view>
+      </picker>
+
+      <block wx:if="{{audienceIndex === 1}}">
+        <view
+          class="field-row"
+          wx:for="{{groups}}"
+          wx:key="groupId"
+          data-group-id="{{item.groupId}}"
+          bindtap="onToggleGroup"
+        >
+          <view class="field-label">{{item.name}}</view>
+          <view class="check-box {{item.checked ? 'is-checked' : ''}}">{{item.checked ? '✓' : ''}}</view>
+        </view>
+        <view wx:if="{{groups.length === 0}}" class="field-error">本协会还没有小组，请先在协会空间建立小组</view>
+      </block>
+    </view>
+
     <!-- ========== 说明 ========== -->
     <view class="card">
       <view class="card-title">赛事说明</view>

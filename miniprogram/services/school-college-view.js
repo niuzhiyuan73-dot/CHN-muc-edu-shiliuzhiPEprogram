@@ -42,6 +42,8 @@ const {
 } = require('../utils/constants.js');
 const { formatDate, formatDateTime, formatScore } = require('../utils/format.js');
 const { formatMatchFormat } = require('../utils/match-format.js');
+// 路由编号兼容（query 值在不同环境可能已解码 / 未解码，见 utils/route-query.js）
+const { routeIdCandidates } = require('../utils/route-query.js');
 const space = require('./association-space.js');
 const { entryStateOf, remainingMemberIds } = require('./college-entry.js');
 const { approvedCollegesOf } = require('./college-draw.js');
@@ -178,6 +180,22 @@ function firstRoundPairsTextOf(draw) {
  * ============================================================ */
 
 /**
+ * 路由编号兼容：先原值、再解码值地探测学院赛，返回命中的编号与 DTO。
+ * 未命中时回退到第一个候选与最后一次的失败 DTO（保留原有的「找不到」话术）。
+ */
+async function resolveCollegeEventId(api, eventId) {
+  const candidates = routeIdCandidates(eventId);
+  let last = null;
+  for (const id of candidates) {
+    // eslint-disable-next-line no-await-in-loop —— 候选最多两个
+    const dto = await api.getCollegeEvent({ eventId: id });
+    if (okOf(dto)) return { id, dto };
+    last = dto;
+  }
+  return { id: candidates[0] || '', dto: last || { ok: false, message: '找不到这场学院赛' } };
+}
+
+/**
  * 名单提交页视图（协议 2）。
  *
  * @param {string} eventId
@@ -191,10 +209,12 @@ function firstRoundPairsTextOf(draw) {
 async function loadCollegeEntryView(eventId, options = {}) {
   const { schoolId, association, actorId = null, collegeId = '' } = options;
   const api = space.forScope({ schoolId, association });
+  const resolved = await resolveCollegeEventId(api, eventId);
+  const resolvedId = resolved.id;
 
   const [eventDto, entriesDto, membersDto] = await Promise.all([
-    api.getCollegeEvent({ eventId }),
-    api.listCollegeEntries({ eventId }),
+    Promise.resolve(resolved.dto),
+    api.listCollegeEntries({ eventId: resolvedId }),
     api.listSchoolMembers({}),
   ]);
 
@@ -278,10 +298,11 @@ async function loadCollegeEntryView(eventId, options = {}) {
 async function loadCollegeEntryReviewView(eventId, options = {}) {
   const { schoolId, association, actorId = null } = options;
   const api = space.forScope({ schoolId, association });
+  const resolved = await resolveCollegeEventId(api, eventId);
 
   const [eventDto, entriesDto] = await Promise.all([
-    api.getCollegeEvent({ eventId }),
-    api.listCollegeEntries({ eventId }),
+    Promise.resolve(resolved.dto),
+    api.listCollegeEntries({ eventId: resolved.id }),
   ]);
 
   const found = okOf(eventDto);
@@ -328,8 +349,9 @@ async function loadCollegeEntryReviewView(eventId, options = {}) {
 async function loadCollegeEventDetailView(eventId, options = {}) {
   const { schoolId, association, actorId = null } = options;
   const api = space.forScope({ schoolId, association });
+  const resolved = await resolveCollegeEventId(api, eventId);
 
-  const eventDto = await api.getCollegeEvent({ eventId });
+  const eventDto = resolved.dto;
   const found = okOf(eventDto);
   const event = found ? eventDto.event : null;
 
@@ -355,8 +377,8 @@ async function loadCollegeEventDetailView(eventId, options = {}) {
   }
 
   const [entriesDto, tiesDto, membersDto] = await Promise.all([
-    api.listCollegeEntries({ eventId }),
-    api.listCollegeTies({ eventId }),
+    api.listCollegeEntries({ eventId: resolved.id }),
+    api.listCollegeTies({ eventId: resolved.id }),
     api.listSchoolMembers({}),
   ]);
 
@@ -491,7 +513,10 @@ async function loadCollegeLineupView(tieId, options = {}) {
   const api = space.forScope({ schoolId, association });
 
   const tiesDto = await api.listCollegeTies(eventId ? { eventId } : {});
-  const row = asArray(tiesDto && tiesDto.ties).find(item => item.tieId === tieId) || null;
+  // 路由编号兼容：未解码的 query 也要能对上大场
+  const tieCandidates = routeIdCandidates(tieId);
+  const row = asArray(tiesDto && tiesDto.ties).find(item => tieCandidates.includes(item.tieId)) || null;
+  const resolvedTieId = row ? row.tieId : (tieCandidates[0] || '');
   const resolvedEventId = row ? row.eventId : eventId;
 
   const [eventDto, entriesDto, lineupsDto, membersDto] = await Promise.all([
@@ -579,7 +604,7 @@ async function loadCollegeLineupView(tieId, options = {}) {
     found: Boolean(row),
     blockReason,
     canSubmit: !blockReason,
-    tieId: row ? row.tieId : tieId || '',
+    tieId: row ? row.tieId : resolvedTieId,
     eventId: resolvedEventId,
     title: event ? event.title || '' : '',
     roundText: row ? `第 ${row.round} 轮` : '',
@@ -617,7 +642,15 @@ async function loadCollegeMatchView(matchId, options = {}) {
   const { schoolId, association, actorId = null } = options;
   const api = space.forScope({ schoolId, association });
 
-  const matchDto = matchId ? await api.getSchoolMatch({ matchId }) : null;
+  // 路由编号兼容：先原值、再解码值地探测比赛（详见 utils/route-query.js）
+  let matchDto = null;
+  let resolvedMatchId = routeIdCandidates(matchId)[0] || '';
+  for (const candidate of routeIdCandidates(matchId)) {
+    // eslint-disable-next-line no-await-in-loop —— 候选最多两个
+    const dto = await api.getSchoolMatch({ matchId: candidate });
+    if (okOf(dto)) { matchDto = dto; resolvedMatchId = candidate; break; }
+    if (!matchDto) matchDto = dto;
+  }
   const record = okOf(matchDto) ? matchDto.match : null;
 
   if (!record) {
@@ -626,7 +659,7 @@ async function loadCollegeMatchView(matchId, options = {}) {
     return {
       found: false,
       blockReason: '找不到这场比赛',
-      matchId: matchId || '',
+      matchId: resolvedMatchId,
       teamARows: [], teamBRows: [], scoreA: [], scoreB: [],
       gamePoints: 11, bestOf: 1,
     };
@@ -756,8 +789,9 @@ async function loadCollegeMatchView(matchId, options = {}) {
 async function loadCollegePlacementView(eventId, options = {}) {
   const { schoolId, association, actorId = null } = options;
   const api = space.forScope({ schoolId, association });
+  const resolved = await resolveCollegeEventId(api, eventId);
 
-  const eventDto = await api.getCollegeEvent({ eventId });
+  const eventDto = resolved.dto;
   const found = okOf(eventDto);
   const event = found ? eventDto.event : null;
   const canManage = Boolean(eventDto && eventDto.canManage);

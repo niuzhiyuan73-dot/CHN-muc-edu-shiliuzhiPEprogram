@@ -34,6 +34,8 @@
  */
 
 const { RATING_POOL, SIGNUP_STATUS } = require('../utils/constants.js');
+// 路由编号兼容（query 值在不同环境可能已解码 / 未解码，见 utils/route-query.js）
+const { resolveRouteId } = require('../utils/route-query.js');
 const space = require('./association-space.js');
 const { buildEventRow } = require('./event.js');
 const { actualSeedCount, manualPlayersNeeded } = require('./draw.js');
@@ -476,11 +478,15 @@ async function loadSchoolEventListView(options = {}) {
 async function loadSchoolEventDetailView(eventId, options = {}) {
   const { schoolId, association, actorId = null } = options;
   const api = space.forScope({ schoolId, association });
-  const dto = await api.getSchoolEvent({ eventId });
-  if (!dto || !dto.ok) return notFoundDetailView();
+  // 路由编号兼容两种环境（详见 utils/route-query.js）：先原值、再解码值
+  const found = await resolveRouteId(eventId, async (id) => {
+    const dto = await api.getSchoolEvent({ eventId: id });
+    return dto && dto.ok ? dto : null;
+  });
+  if (!found.result) return notFoundDetailView();
 
-  const parts = await loadEventParts(api, eventId);
-  return buildDetailView({ dto, actorId, ...parts });
+  const parts = await loadEventParts(api, found.id);
+  return buildDetailView({ dto: found.result, actorId, ...parts });
 }
 
 /**
@@ -496,11 +502,16 @@ async function loadSchoolEventDetailView(eventId, options = {}) {
 async function loadSchoolEventPlacementView(eventId, options = {}) {
   const { schoolId, association, actorId = null } = options;
   const api = space.forScope({ schoolId, association });
-  const dto = await api.getSchoolEvent({ eventId });
+  // 路由编号兼容两种环境（详见 utils/route-query.js）
+  const found = await resolveRouteId(eventId, async (id) => {
+    const dto = await api.getSchoolEvent({ eventId: id });
+    return dto && dto.ok ? dto : null;
+  });
 
   // 读不到赛事：与旧栈同形——放行到底、只是 found 为假，页面据此显示「不存在」。
   // （放行而非挡住，是为了让「不存在」这句话由页面统一说，而不是混进权限话术。）
-  if (!dto || !dto.ok) return placementShell({ found: false });
+  if (!found.result) return placementShell({ found: false });
+  const dto = found.result;
   if (!dto.canManage) {
     return placementShell({
       allowed: false,
@@ -509,7 +520,7 @@ async function loadSchoolEventPlacementView(eventId, options = {}) {
     });
   }
 
-  const parts = await loadEventParts(api, eventId);
+  const parts = await loadEventParts(api, found.id);
   return buildPlacementView({ dto, actorId, ...parts });
 }
 

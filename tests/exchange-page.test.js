@@ -81,3 +81,48 @@ test('cloud-mode entry is gated rather than silently using demo data', async () 
   assert.equal(p.data.canCreate, false);
   assert.deepEqual(p.data.events, []);
 });
+
+test('B7 身份切换经 app 统一入口：兼容会话随演示身份一起刷新', async () => {
+  const identity = require('../miniprogram/services/school-identity');
+  const switched = [];
+  const priorGetApp = global.getApp;
+  global.getApp = () => ({
+    switchDemoActor: async (id) => {
+      switched.push(id);
+      identity.setDemoActor(id);
+      return null;
+    },
+  });
+  try {
+    const p = page();
+    await p.onLoad();
+    await p.onActorChange(select(1)); // 民大校管理员
+
+    assert.deepEqual(switched, ['demo_muc_admin'], '切换演示身份应经 app 统一入口（B3 链路）');
+    assert.equal(identity.getDemoActor(), 'demo_muc_admin');
+    assert.equal(p.data.canCreate, true, '页面按新身份重取能力');
+  } finally {
+    global.getApp = priorGetApp;
+  }
+});
+
+test('B7 普通会员不能处理邀请或锁定名单，误触发无副作用', async () => {
+  mock.setDemoActor('demo_muc_admin');
+  const p = page();
+  await p.onLoad();
+  await p.onCreate();
+  const id = p.data.detail.event._id;
+
+  await p.onActorChange(select(3)); // 民大会员
+  await p.onOpen({ currentTarget: { dataset: { id } } });
+
+  assert.equal(p.data.detail.canRespond, false, '会员不能处理邀请');
+  assert.equal(p.data.detail.canLock, false, '会员不能锁定名单');
+
+  // 误触发没有副作用：邀请状态原样
+  const before = JSON.stringify(p.data.detail.event.invitations);
+  await p.onRespond({ currentTarget: { dataset: { decision: 'accepted' } } });
+  await p.onLock();
+  assert.equal(JSON.stringify(p.data.detail.event.invitations), before, '邀请状态没被改动');
+  assert.equal(p.data.detail.statusText, '报名中', '名单仍未锁定');
+});

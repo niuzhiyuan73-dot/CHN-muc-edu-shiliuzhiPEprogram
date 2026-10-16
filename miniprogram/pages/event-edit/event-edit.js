@@ -213,6 +213,14 @@ Page({
     errors: {},
     /** 整体错误提示 */
     errorText: '',
+
+    // ---------- 报名资格（小组限制，B6） ----------
+    audienceModes: ['不限小组', '仅限所选小组'],
+    audienceIndex: 0,
+    /** 本协会小组清单（{ groupId, name, checked }） */
+    groups: [],
+    /** 已勾选的小组编号（发布时随单子提交） */
+    selectedGroupIds: [],
   },
 
   async onLoad() {
@@ -228,6 +236,17 @@ Page({
 
     const allowed = Boolean(session && session.canManageAssociation);
     this.setData({ blockReason: this.describeBlock(allowed, session), themeClass: currentThemeClass() });
+
+    // 小组清单：发布页用来勾选报名资格。读不到（未启用 / 无权限）就保持空清单，
+    // 只有选了「仅限小组」却没有任何小组可选时，提交端会据服务端校验给出提示。
+    try {
+      const result = await space.forScope(scope).listAssociationGroups({});
+      if (result && result.ok) {
+        this.setData({ groups: (result.groups || []).map((row) => ({ groupId: row.groupId, name: row.name, checked: false })) });
+      }
+    } catch (err) {
+      console.error('[event-edit] 读取小组清单失败', err);
+    }
   },
 
   /** 当前「学校 + 协会」范围。写操作复用它，避免异步期间全局范围被切走 */
@@ -406,6 +425,28 @@ Page({
     this.setField('time', event.detail.value);
   },
 
+  /* ---------- 报名资格（小组限制，B6） ---------- */
+
+  /** 不限 / 仅限所选小组 */
+  onPickAudience(event) {
+    const index = Number(event.detail.value);
+    if (index !== 0 && index !== 1) return;
+    this.setData({ audienceIndex: index });
+  },
+
+  /** 勾选 / 取消一个小组；并集命中任一即可报名 */
+  onToggleGroup(event) {
+    const groupId = event.currentTarget.dataset.groupId;
+    if (!groupId) return;
+    const selected = this.data.selectedGroupIds.includes(groupId)
+      ? this.data.selectedGroupIds.filter((id) => id !== groupId)
+      : [...this.data.selectedGroupIds, groupId];
+    this.setData({
+      selectedGroupIds: selected,
+      groups: this.data.groups.map((row) => (row.groupId === groupId ? { ...row, checked: !row.checked } : row)),
+    });
+  },
+
   /* ---------- 提交 ---------- */
 
   /** 把日期与时间两栏拼成 ISO 字符串，缺一不可 */
@@ -424,10 +465,14 @@ Page({
     if (this.data.blockReason) return undefined;
 
     const form = { ...this.data.form, startTime: this.buildStartTime() };
+    // 报名资格：不限小组，或勾选的小组（B6）
+    const audience = this.data.audienceIndex === 1
+      ? { audienceMode: 'groups', audienceGroupIds: this.data.selectedGroupIds }
+      : { audienceMode: 'all', audienceGroupIds: [] };
 
     this.setData({ submitting: true, errors: {}, errorText: '' });
     const result = await space.forScope(this.scope || this.currentScope())
-      .publishSchoolEvent({ ...form, requestId: nextRequestId() });
+      .publishSchoolEvent({ ...form, ...audience, requestId: nextRequestId() });
 
     if (!result.ok) {
       this.setData({

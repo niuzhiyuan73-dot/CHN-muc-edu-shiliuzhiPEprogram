@@ -14,7 +14,7 @@
  * ============================================================
  */
 
-const { loadMemberView, DEFAULT_HISTORY_LIMIT } = require('../services/profile-view.js');
+const { loadSchoolMemberView, DEFAULT_HISTORY_LIMIT } = require('../services/profile-view.js');
 const { applyBranding, themeClassOf } = require('../services/branding.js');
 const { activeAssociations } = require('../utils/associations.js');
 const scope = require('../services/association-scope.js');
@@ -83,16 +83,18 @@ function createMemberPage(options = {}) {
         }
         const association = localAssociation ? this.localAssociation : undefined;
 
-        const view = await loadMemberView(this.userId, {
+        // B4-c 起个人主页走学校维度：取数客户端一次绑定「浏览学校 + 页内协会」，
+        // 异步等待后不重新读全局 scope。任免 / 改分入口统一收进学校身份页，
+        // 本页不再按旧栈 role 判权限。
+        const schoolSession = require('../services/school-session.js');
+        const api = require('../services/association-space.js').forScope({
+          schoolId: schoolSession.getSchoolId() || 'muc',
+          association: association || scope.getAssociation(),
+        });
+        const view = await loadSchoolMemberView(api, {
+          userId: this.userId,
           project: this.currentProject,
           historyLimit: this.data.historyLimit,
-          // 登录态由页面明确传入：他人主页要靠「我是谁」才能判断能不能任免
-          // 学院负责人。与 loadMatchView 同一约定——问数据源「当前用户是谁」在
-          // mock 下永远答 u06，会让未登录的访客也拿到任免入口。身份按本页协会
-          // 解析（见 viewerFor），使协会负责人随页内协会变化。
-          viewer: await this.viewerFor(association),
-          // 页面局部的作用域：取数客户端固定绑定本页协会
-          association,
         });
 
         // 导航栏按当前页内协会套品牌（标题 + 主题色，见 §11.7）
@@ -214,250 +216,12 @@ function createMemberPage(options = {}) {
     },
 
     /**
-     * 取「看本页的人」身份，并把角色解析到**本页协会**之下。
-     *
-     * 【为什么不能直接用登录快照】登录快照（app.getUserInfo）只带一个 role，
-     * 是按某一个协会读下来的。而协会角色随协会各异：同一个人在本协会是协会
-     * 负责人（有效角色＝管理员），切到别的协会可能只是普通会员。本页允许页内
-     * 切换协会（§11.6），若还拿快照里的旧 role 判权限，协会负责人打开本协会
-     * 会员的主页时，按角色显示的「任免学院负责人」入口会整张不出现——写入端
-     * 本就有这个权限，界面却点不到。
-     *
-     * 【为什么按编号回查而不是问「当前用户是谁」】回查用的是已知编号（快照里
-     * 的 _id），既拿得到本协会下的有效角色，又不会在未登录时凭 mock 的默认
-     * 演示账号答出一个假身份——访客（无 _id）一律返回原值，不给任何入口。
-     * 查不到（本地注册、重启后不在名单）就沿用快照，行为与写入端一致。
-     *
-     * @param {string} [association] 本页协会；传了就在该协会作用域里回查
-     * @returns {Promise<Object|null>} 供 loadMemberView 判权限的 viewer
+     * B8 收敛：个人主页的「任免学院 / 协会负责人」「手工改分」入口已移除——
+     * 指定权限统一走学校身份页（grantSchoolPermission，能力来自服务器），
+     * 改分收尾属 B5 遗留、未在个人主页开放。这里不再保留旧门面的写路径
+     * （setCollegeLeader / setAssociationLeader / setMemberElo 走的是协议 1），
+     * 模板里对应的入口卡片也一并移除。
      */
-    async viewerFor(association) {
-      const user = this.currentUser();
-      if (!user || !user._id) return user || null;
-      const api = require('../services/index.js').forAssociation(association || scope.getAssociation());
-      return (await api.getMember(user._id)) || user;
-    },
-
-    /** 一句轻提示。Node 测试里没有 wx，静默跳过 */
-    showToast(title, icon = 'none') {
-      if (typeof wx === 'undefined' || typeof wx.showToast !== 'function') return;
-      wx.showToast({ title, icon });
-    },
-
-    /**
-     * 弹一句确认。与公告管理页同一套：Node 测试没有 wx.showModal，
-     * 直接放行，免得用例卡在一个永远等不到的回调上。
-     * @param {string} content
-     * @param {string} [title='任免学院负责人']
-     * @returns {Promise<boolean>}
-     */
-    confirm(content, title = '任免学院负责人') {
-      if (typeof wx === 'undefined' || typeof wx.showModal !== 'function') {
-        return Promise.resolve(true);
-      }
-      return new Promise((resolve) => {
-        wx.showModal({
-          title,
-          content,
-          success: (res) => resolve(Boolean(res.confirm)),
-          fail: () => resolve(false),
-        });
-      });
-    },
-
-    /**
-     * 在「本页所属协会」作用域里跑一次写操作（可异步）。
-     *
-     * 【为什么写也要按页内协会】个人详情页 / 他人主页允许页内切换协会查看。
-     * 页内协会若不带给写接口，服务端就会按**全局**当前协会判权限与盖章，
-     * 于是「在 B 协会的页面上」做的一次调整会被算到 A 协会头上。这里把绑定
-     * 页内协会的客户端交给回调，非局部分页则绑定调用时的全局协会。
-     *
-     * @param {Function} fn 接收绑定协会的 api，返回 Promise
-     * @returns {Promise<*>}
-     */
-    runInLocalAssociation(fn) {
-      const association = localAssociation && this.localAssociation || scope.getAssociation();
-      return scope.withAssociation(association, fn);
-    },
-
-    /**
-     * 把当前主页的会员设为 / 撤销为学院负责人。
-     *
-     * 【为什么目标编号取自 view 而不是页面参数】页面上渲染的那个人就是
-     * view.user，地址栏里的 userId 可能已被改写；以渲染出来的为准，所见即所改。
-     *
-     * 写入端会重新判一次权限（services/member-review.validateCollegeLeader），
-     * 这里的前置判断只为少弹一个必被拒绝的确认框。
-     *
-     * @returns {Promise<void>|undefined}
-     */
-    async onSetCollegeLeader() {
-      const view = this.data.view;
-      const target = view && view.user;
-      const leader = view && view.leader;
-      if (!target || !leader || !leader.visible) return undefined;
-
-      const user = this.currentUser();
-      if (!user) {
-        this.showToast('请先登录后再操作');
-        return undefined;
-      }
-
-      const confirmed = await this.confirm(
-        leader.makeLeader
-          ? `将 ${target.nickName} 设为学院负责人，他可代签、代录本学院的比赛`
-          : `撤销 ${target.nickName} 的学院负责人身份，他将失去本学院的管理权限`,
-        '任免学院负责人'
-      );
-      if (!confirmed) return undefined;
-
-      // 写也走本页协会作用域：否则服务端按全局协会判权，页内切到别的协会时
-      // 会改错协会（见 runInLocalAssociation）
-      const result = await this.runInLocalAssociation((api) =>
-        api.setCollegeLeader(target.userId, user._id, leader.makeLeader)
-      );
-      if (!result.ok) {
-        this.showToast(result.message || '操作失败');
-        return undefined;
-      }
-      this.showToast(leader.makeLeader ? '已设为学院负责人' : '已撤销学院负责人', 'success');
-      return this.refresh();
-    },
-
-    /**
-     * 把当前主页的会员设为 / 撤销为**本页所属协会**的协会负责人。
-     *
-     * 入口仅对全局管理员显示（profile-view 用 validateAssociationLeader 算出），
-     * 写入端仍会再判一次——有效角色是 ADMIN 的协会负责人不会被放行。
-     *
-     * @returns {Promise<void>|undefined}
-     */
-    async onSetAssociationLeader() {
-      const view = this.data.view;
-      const target = view && view.user;
-      const leader = view && view.associationLeader;
-      if (!target || !leader || !leader.visible) return undefined;
-
-      const user = this.currentUser();
-      if (!user) {
-        this.showToast('请先登录后再操作');
-        return undefined;
-      }
-
-      const confirmed = await this.confirm(
-        leader.makeLeader
-          ? `将 ${target.nickName} 设为本协会的协会负责人，他可管理本协会的赛事、会员与公告`
-          : `撤销 ${target.nickName} 的协会负责人身份，他将失去本协会的管理权限`,
-        '任免协会负责人'
-      );
-      if (!confirmed) return undefined;
-
-      const result = await this.runInLocalAssociation((api) =>
-        api.setAssociationLeader(target.userId, user._id, leader.makeLeader)
-      );
-      if (!result.ok) {
-        this.showToast(result.message || '操作失败');
-        return undefined;
-      }
-      this.showToast(leader.makeLeader ? '已设为协会负责人' : '已撤销协会负责人', 'success');
-      return this.refresh();
-    },
-
-    /**
-     * 统一的「指定权限」入口：点开后按当前身份**可授予**的档位给出选项，
-     * 再复用各自的处理完成写入。能选哪几档由 profile-view 的可见性决定——
-     * 全局管理员可任免协会负责人，有学院管理权者可任免学院负责人，
-     * 权限不同、入口同一个（§11）。
-     *
-     * @returns {Promise<void>|undefined}
-     */
-    onGrantPermission() {
-      const view = this.data.view || {};
-      const options = [];
-      if (view.associationLeader && view.associationLeader.visible) {
-        options.push({ key: 'associationLeader', label: view.associationLeader.label });
-      }
-      if (view.leader && view.leader.visible) {
-        options.push({ key: 'leader', label: view.leader.label });
-      }
-      if (!options.length) return undefined;
-      const run = (key) => key === 'associationLeader'
-        ? this.onSetAssociationLeader() : this.onSetCollegeLeader();
-      // 真机弹选择框；Node 测试没有 wx.showActionSheet，直接采用首项。
-      if (typeof wx === 'undefined' || typeof wx.showActionSheet !== 'function') {
-        return run(options[0].key);
-      }
-      return new Promise((resolve) => {
-        wx.showActionSheet({
-          itemList: options.map((option) => option.label),
-          success: (res) => {
-            const picked = options[res.tapIndex];
-            return picked ? resolve(run(picked.key)) : resolve(undefined);
-          },
-          fail: () => resolve(undefined),
-        });
-      });
-    },
-
-    /**
-     * 调整当前主页会员在**本协会当前项目**的当前等级分。用于「在外打完比赛、
-     * 对手不在本程序里」的同步：直接改成外部算好的分数。数值从弹层输入框取；
-     * Node 测试没有 wx.showModal，直接把当前值当作提交值（用例可改调
-     * submitCurrentElo 直接驱动）。
-     *
-     * @returns {Promise<void>|undefined}
-     */
-    onEditCurrentElo() {
-      const entry = this.data.view && this.data.view.currentElo;
-      if (!entry || !entry.visible) return undefined;
-
-      if (typeof wx === 'undefined' || typeof wx.showModal !== 'function') {
-        return this.submitCurrentElo(entry.current);
-      }
-      return new Promise((resolve) => {
-        wx.showModal({
-          title: `调整${entry.label}等级分`,
-          editable: true,
-          placeholderText: '0–3000 的整数',
-          content: entry.current === null ? '' : String(entry.current),
-          success: (res) => {
-            if (!res.confirm) return resolve(undefined);
-            resolve(this.submitCurrentElo(res.content));
-          },
-          fail: () => resolve(undefined),
-        });
-      });
-    },
-
-    /**
-     * 写入当前等级分。改的是当前显示项目对应的池（entry.pool），之后的比赛
-     * 会从这个新值继续累加。独立成方法，便于测试绕过 wx 弹层直接驱动。
-     *
-     * @param {*} value 输入框里的原始值
-     * @returns {Promise<void>|undefined}
-     */
-    async submitCurrentElo(value) {
-      const entry = this.data.view && this.data.view.currentElo;
-      const target = this.data.view && this.data.view.user;
-      if (!entry || !entry.visible || !target) return undefined;
-
-      const user = this.currentUser();
-      if (!user) {
-        this.showToast('请先登录后再操作');
-        return undefined;
-      }
-
-      const result = await this.runInLocalAssociation((api) =>
-        api.setMemberElo(target.userId, entry.pool, value, user._id)
-      );
-      if (!result.ok) {
-        this.showToast(result.message || '操作失败');
-        return undefined;
-      }
-      this.showToast('已更新等级分', 'success');
-      return this.refresh();
-    },
 
     /** 点交锋记录或搭档记录里的人，去看他的主页 */
     onOpenMember(event) {

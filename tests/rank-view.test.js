@@ -12,6 +12,7 @@ const {
   filterRows,
   describeSearch,
   loadRankView,
+  loadSchoolRankView,
 } = require('../miniprogram/services/rank-view.js');
 const {
   RANK_PROJECT,
@@ -442,4 +443,35 @@ test('排行榜 —— 搜索能查到前十之外的会员，名次仍是榜单
   assert.ok(hit, '前十之外的人必须能被搜到');
   assert.strictEqual(hit.rank, outside.rank);
   assert.ok(hit.rank > TOP_LIMIT);
+});
+
+/* ============================================================
+ * S2 装载器（B4-a）
+ * ============================================================ */
+
+test('loadSchoolRankView —— 透传 S2 榜单视图，并带上项目参数', async () => {
+  const calls = [];
+  const api = {
+    getSchoolRanking: async (payload) => {
+      calls.push(payload);
+      return { ok: true, schoolName: '民大', rows: [{ userId: 'u06' }] };
+    },
+  };
+
+  const view = await loadSchoolRankView(api, { project: RANK_PROJECT.DOUBLES });
+
+  assert.strictEqual(view.rows[0].userId, 'u06');
+  assert.strictEqual(view.schoolName, '民大');
+  assert.deepStrictEqual(calls, [{ project: RANK_PROJECT.DOUBLES }]);
+});
+
+test('loadSchoolRankView —— 无读取权限时上抛服务端原因，不吞成空榜单', async () => {
+  const api = {
+    getSchoolRanking: async () => ({ ok: false, message: '没有读取本协会排行榜的权限' }),
+  };
+
+  await assert.rejects(
+    loadSchoolRankView(api, {}),
+    /没有读取本协会排行榜的权限/
+  );
 });

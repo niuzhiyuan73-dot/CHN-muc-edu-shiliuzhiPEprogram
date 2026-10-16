@@ -38,6 +38,12 @@ const DEMO_ACTORS = Object.freeze([
   { id: 'demo_platform_admin', label: '平台管理员' },
   // 学院负责人（民大 c02）：演示「只替本学院交名单 / 排阵」的边界，同样追加在末尾。
   { id: 'demo_muc_college_leader', label: '民大学院负责人' },
+  // 北航扩充（2026-10-16）：跨校也要有差异性——会员二 / 三、学院负责人、协会负责人。
+  // 一律追加在末尾：页面与用例按**下标**选演示身份，重排会打乱既有演示。
+  { id: 'demo_buaa_member_2', label: '北航会员二' },
+  { id: 'demo_buaa_member_3', label: '北航会员三' },
+  { id: 'demo_buaa_college_leader', label: '北航学院负责人' },
+  { id: 'demo_buaa_leader', label: '北航协会负责人' },
 ]);
 
 /**

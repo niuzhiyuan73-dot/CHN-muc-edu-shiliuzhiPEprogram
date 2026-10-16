@@ -329,3 +329,94 @@ test('报名截止后不能再报；抽签冻结报名', async () => {
   assert.equal(afterDraw.ok, false);
   assert.match(afterDraw.message, /抽签/);
 });
+
+/* ------------------------------------------------------------------ 小组限制（B6） */
+
+const groupHandlers = require('../miniprogram/services/association-group-service');
+
+async function callGroup(repo, action, payload = {}, opts = {}) {
+  const { actor = 'demo_muc_admin', schoolId = 'muc', association = 'pkb', now = NOW } = opts;
+  const ctx = await buildSchoolContext({ repo, actorId: actor, scope: { schoolId, association }, now });
+  return (await groupHandlers[action](payload, ctx)).data;
+}
+
+/** 建一个小组并把若干会员放进去，返回 groupId。 */
+async function makeGroup(repo, token, memberIds) {
+  const created = await callGroup(repo, 'createAssociationGroup',
+    { requestId: token, name: `精英组${token}`, memberIds });
+  assert.equal(created.ok, true, created.message);
+  return created.group.groupId;
+}
+
+test('B6 发布赛事带小组限制：非法表单拒绝，合法落库并在 DTO 里下发', async () => {
+  const repo = fixture();
+  const groupId = await makeGroup(repo, 'g1', ['demo_muc_member']);
+
+  const emptyGroups = await call(repo, 'publishSchoolEvent',
+    { requestId: 'r1', ...valid({ audienceMode: 'groups', audienceGroupIds: [] }) });
+  assert.equal(emptyGroups.ok, false);
+  assert.match(emptyGroups.message, /至少选择一个小组/);
+
+  const allWithGroups = await call(repo, 'publishSchoolEvent',
+    { requestId: 'r2', ...valid({ audienceMode: 'all', audienceGroupIds: [groupId] }) });
+  assert.equal(allWithGroups.ok, false);
+  assert.match(allWithGroups.message, /不能指定小组/);
+
+  const ok = await call(repo, 'publishSchoolEvent',
+    { requestId: 'r3', ...valid({ audienceMode: 'groups', audienceGroupIds: [groupId] }) });
+  assert.equal(ok.ok, true, ok.message);
+  assert.equal(ok.event.audienceMode, 'groups');
+  assert.deepEqual(ok.event.audienceGroupIds, [groupId]);
+
+  // 旧赛事 / 未带限制的赛事按「不限」下发
+  const plain = await publish(repo, 'r4');
+  assert.equal(plain.audienceMode, 'all');
+  assert.deepEqual(plain.audienceGroupIds, []);
+});
+
+test('B6 报名资格：只限命中组成员，非组成员被拒，详情口径与写入一致', async () => {
+  const repo = fixture();
+  const groupId = await makeGroup(repo, 'g1', ['demo_muc_member']); // 只有 member 在组里
+  const event = await publish(repo, 'r1', { audienceMode: 'groups', audienceGroupIds: [groupId] });
+
+  // 非组成员（同为有效会员）报名被拒
+  const outsider = await call(repo, 'signUpSchoolEvent', { eventId: event.eventId },
+    { actor: 'demo_muc_member_2' });
+  assert.equal(outsider.ok, false);
+  assert.match(outsider.message, /指定小组成员/);
+
+  // 详情页对非组成员：不可报、原因一致
+  const detail = await call(repo, 'getSchoolEvent', { eventId: event.eventId },
+    { actor: 'demo_muc_member_2' });
+  assert.equal(detail.capabilities.canSignUp, false);
+  assert.match(detail.signupNote, /指定小组成员/);
+
+  // 组成员可报；详情页对本人：可报且已报
+  const signed = await call(repo, 'signUpSchoolEvent', { eventId: event.eventId },
+    { actor: 'demo_muc_member' });
+  assert.equal(signed.ok, true, signed.message);
+  const mine = await call(repo, 'getSchoolEvent', { eventId: event.eventId },
+    { actor: 'demo_muc_member' });
+  assert.equal(mine.mySignup.status, SIGNUP_STATUS.SIGNED);
+});
+
+test('B6 G05：报名后退组保留该报名；取消后重报失败', async () => {
+  const repo = fixture();
+  const groupId = await makeGroup(repo, 'g1', ['demo_muc_member']);
+  const event = await publish(repo, 'r1', { audienceMode: 'groups', audienceGroupIds: [groupId] });
+  await call(repo, 'signUpSchoolEvent', { eventId: event.eventId }, { actor: 'demo_muc_member' });
+
+  // 报名后退组：报名仍保留（事实不追溯否定）
+  await callGroup(repo, 'removeAssociationGroupMember', { groupId, userId: 'demo_muc_member' });
+  const kept = await call(repo, 'getSchoolEvent', { eventId: event.eventId }, { actor: 'demo_muc_member' });
+  assert.equal(kept.mySignup.status, SIGNUP_STATUS.SIGNED, '已报上的不因退组失效');
+
+  // 取消后再想重报：资格已按当前组员关系复核 → 拒绝
+  const canceled = await call(repo, 'cancelSchoolEventSignup', { eventId: event.eventId },
+    { actor: 'demo_muc_member' });
+  assert.equal(canceled.ok, true, canceled.message);
+  const retry = await call(repo, 'signUpSchoolEvent', { eventId: event.eventId },
+    { actor: 'demo_muc_member' });
+  assert.equal(retry.ok, false);
+  assert.match(retry.message, /指定小组成员/);
+});

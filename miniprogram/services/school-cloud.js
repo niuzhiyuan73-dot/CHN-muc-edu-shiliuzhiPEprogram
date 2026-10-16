@@ -107,6 +107,9 @@ function forAssociationSpace(input) {
     listSchoolMembers: payload => request('listSchoolMembers', payload),
     getSchoolMember: payload => request('getSchoolMember', payload),
     getSchoolRanking: payload => request('getSchoolRanking', payload),
+    getSchoolMemberStats: payload => request('getSchoolMemberStats', payload),
+    getSchoolMemberHonors: payload => request('getSchoolMemberHonors', payload),
+    getSchoolMemberProfile: payload => request('getSchoolMemberProfile', payload),
     getSchoolSeason: payload => request('getSchoolSeason', payload),
     resetSchoolSeason: payload => request('resetSchoolSeason', payload),
   });

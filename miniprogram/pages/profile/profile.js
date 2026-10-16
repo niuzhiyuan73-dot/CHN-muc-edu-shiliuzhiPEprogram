@@ -16,11 +16,9 @@
  * ============================================================
  */
 
-const { loadProfileSummary } = require('../../services/profile-view.js');
+const { loadSchoolProfileSummaryView } = require('../../services/profile-view.js');
 const { isMock } = require('../../services/index.js');
 const { resetBranding } = require('../../services/branding.js');
-const { canReview } = require('../../services/member-review.js');
-const { canPublish } = require('../../services/announcement.js');
 const facade = require('../../services/index.js');
 
 Page({
@@ -131,6 +129,10 @@ Page({
    * 云端接口认的是 OpenID（见 context.js），退出登录之后它照样答得出是谁——于是
    * 刚清掉的账号原地又长回来。所以先看本地有没有人，没有就什么都不查。
    *
+   * 【B4-c 起数据来源】头卡与荣誉走学校维度：本人会话来自 getSchoolIdentitySession
+   * （账号、能力布尔量），荣誉按当前浏览学校跨协会聚合（getSchoolMemberHonors）。
+   * 管理入口能力以会话返回为准，不再用旧栈 canReview / canPublish 判据。
+   *
    * 【服务端答「查无此人」是什么意思】本地还留着登录态，数据源却说没这个人，只有
    * 两种可能：账号在后台被删了，或这台设备的微信号与服务端账号不是同一个。两种
    * 情况下这份缓存都已对不上号，照常渲染就停在「没有找到这位会员」——一个既进不去
@@ -153,13 +155,21 @@ Page({
     if (!hadData) this.setData({ loading: true, error: '' });
 
     try {
-      const view = await loadProfileSummary();
+      const schoolSession = require('../../services/school-session.js');
+      const schoolId = schoolSession.getSchoolId() || 'muc';
+      const session = await require('../../services/school-identity.js')
+        .forSchoolIdentity({ schoolId, association: this.currentAssociation() })
+        .getSchoolIdentitySession();
+      this.session = session;
+      const view = await loadSchoolProfileSummaryView({ schoolId, session });
+
       this.setData({
         loading: false,
         error: '',
         view,
         associationId: this.currentAssociation(),
       });
+      this.syncEntries();
 
       // 加载报错时 view 还是空的，不能拿它当「查无此人」处理
       if (!view.found) {
@@ -209,13 +219,16 @@ Page({
   },
 
   /**
-   * 重算所有管理入口。判定一律复用各功能自己的规则（canReview / canPublish），
-   * 不在这里另写一套，免得某天规则改了这两处还各说各话。
+   * 重算所有管理入口。能力来自 S2 会话（getSchoolIdentitySession）：
+   * 会员审核入口看 canReview，公告管理入口看 isPlatformAdmin（发布权已收归
+   * 平台管理员）。会话尚未取到时一律不显示——不拿旧栈 role 当授权依据。
    */
   syncEntries() {
     const user = this.currentUser();
-    const canReviewNow = canReview(user, { isMock });
-    const canPublishNow = canPublish(user, { isMock });
+    // 会话能力只在已登录时有效：退出后即使 this.session 还留着旧值也不显示入口
+    const session = user ? this.session : null;
+    const canReviewNow = Boolean(session && session.canReview);
+    const canPublishNow = Boolean(session && session.isPlatformAdmin);
 
     this.setData({
       loggedIn: Boolean(user),

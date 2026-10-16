@@ -41,6 +41,7 @@ const {
   formatScore,
 } = require('../utils/format.js');
 const { sortProjectsForDisplay } = require('../utils/leaderboard.js');
+const { allAssociations } = require('../utils/associations.js');
 const { formatMatchFormat } = require('../utils/match-format.js');
 const { resolveNameDisplay } = require('./profile.js');
 const {
@@ -453,6 +454,231 @@ async function loadProfileSummary() {
   };
 }
 
+/**
+ * 学校维度的个人主页装载器（B4-c）。
+ *
+ * 取数走绑定范围的 S2 客户端（getSchoolMemberProfile：一次回放取齐卡片、
+ * 项目、走势、交锋、搭档、逐场战绩、近期状态与本范围荣誉），整形与旧栈
+ * loadMemberView 共用同一套纯函数（buildChart / buildHistoryRow / format*），
+ * 页面与模板因此不需要改形状。
+ *
+ * 【任免 / 改分入口为什么在这里关掉】S2 下「指定权限」统一走学校身份页的
+ * grantSchoolPermission（一个入口、权限不同），改分收尾属 B5；个人主页不再
+ * 提供旧栈写入口，避免读 S2、写旧栈的混用。
+ *
+ * @param {Object} api 绑定学校 / 协会的协会空间客户端
+ * @param {Object} [options]
+ * @param {string} [options.userId] 想看谁；不传即本人
+ * @param {string} [options.project] 初始选中的项目
+ * @param {number} [options.historyLimit] 逐场战绩取多少条
+ * @returns {Promise<Object>} 与 loadMemberView 同形状；查无此人时 { found: false }
+ */
+async function loadSchoolMemberView(api, options = {}) {
+  const { project, historyLimit = DEFAULT_HISTORY_LIMIT } = options;
+  const data = await api.getSchoolMemberProfile({
+    userId: options.userId || '',
+    historyLimit,
+  });
+  if (!data || !data.found) return { found: false };
+
+  const projects = sortProjectsForDisplay(data.projects);
+  const active = pickProject(projects, project);
+
+  const eventRecords = (data.honors.records || []).map((row) => ({
+    eventId: row.eventId,
+    title: row.title,
+    dateText: formatDate(row.startTime),
+    placement: row.placement,
+    placementText: formatPlacement(row.placement),
+    isTop: row.placement <= 3,
+    participantCount: row.participantCount,
+  }));
+
+  const nameDisplay = resolveNameDisplay(data.user);
+  const honorSummary = data.honors.summary || {};
+
+  return {
+    found: true,
+    user: {
+      userId: data.user.userId,
+      nickName: nameDisplay.nickName,
+      realName: nameDisplay.realName,
+      showRealName: nameDisplay.showRealName,
+      avatarText: (nameDisplay.nickName || '?').slice(0, 1),
+      avatarUrl: data.user.avatarUrl || '',
+      college: data.user.college || '',
+      studentId: data.user.studentId || '',
+      roleLabel: data.user.permissionLabel || '',
+      statusLabel: '正常',
+      joinDateText: '',
+      points: data.user.points || 0,
+      showPoints: true,
+    },
+    projectTabs: projects.map((item) => ({
+      project: item.project,
+      label: item.label,
+      elo: formatElo(item.elo),
+      active: Boolean(active) && item.project === active.project,
+    })),
+    activeProject: active ? active.project : null,
+    activeProjectLabel: active ? active.label : '',
+    hasProject: Boolean(active),
+    summary: active
+      ? {
+          elo: formatElo(active.elo),
+          startElo: formatElo(active.startElo),
+          delta: active.delta,
+          deltaText: formatSigned(active.delta),
+          deltaUp: active.delta >= 0,
+          matchCount: active.matchCount,
+          wins: active.wins,
+          losses: active.losses,
+          recordText: `${active.wins} 胜 ${active.losses} 负`,
+          winRateText: formatPercent(active.wins / Math.max(active.matchCount, 1)),
+          rank: active.rank,
+          total: active.total,
+          rankText: formatRank(active.rank, active.total),
+          beatText: `超过 ${formatPercent(active.beatPercent / 100)} 的会员`,
+        }
+      : null,
+    chart: buildChart(data.ratingHistory || [], active ? active.startElo : 0),
+    form: {
+      dots: (data.form.results || []).map((isWin) => (isWin ? 'W' : 'L')),
+      wins: data.form.wins,
+      losses: data.form.losses,
+      streakText: data.form.streak > 0 ? `${data.form.streak} 连胜` : '暂无连胜',
+    },
+    events: {
+      records: eventRecords,
+      summary: {
+        eventCount: honorSummary.eventCount || 0,
+        championCount: honorSummary.championCount || 0,
+        topThreeCount: honorSummary.topThreeCount || 0,
+        bestPlacementText: formatPlacement(honorSummary.bestPlacement),
+      },
+    },
+    headToHead: (data.headToHead || []).map((row) => ({
+      opponentId: row.opponentId,
+      nickName: row.nickName,
+      matchCount: row.matchCount,
+      recordText: `${row.wins} 胜 ${row.losses} 负`,
+      winRateText: formatPercent(row.winRate),
+      deltaText: formatSigned(row.eloDeltaSum),
+      deltaUp: row.eloDeltaSum >= 0,
+    })),
+    partners: (data.partners || []).map((row) => ({
+      partnerId: row.partnerId,
+      nickName: row.nickName,
+      matchCount: row.matchCount,
+      recordText: `${row.wins} 胜 ${row.losses} 负`,
+      winRateText: formatPercent(row.winRate),
+    })),
+    history: (data.history || []).map(buildHistoryRow),
+    // S2 下任免 / 改分统一走学校身份页，个人主页不再提供旧栈写入口（B4 边界）
+    leader: { visible: false },
+    associationLeader: { visible: false },
+    currentElo: { visible: false },
+  };
+}
+
+/**
+ * 学校维度的「我的」页装载器（B4-c）：头卡来自 S2 会话，荣誉跨该校协会聚合
+ * （与旧栈 loadProfileSummary 同形状）。
+ *
+ * @param {Object} options
+ * @param {string} options.schoolId 当前浏览学校
+ * @param {Object} options.session getSchoolIdentitySession 的返回（本人会话）
+ * @param {Object} [options.client] 协会空间门面（测试可注入替身）
+ * @returns {Promise<Object>} 未登录时 { found: false }
+ */
+async function loadSchoolProfileSummaryView({ schoolId, session, client }) {
+  if (!session || !session.user) return { found: false };
+  const user = session.user;
+  const space = client || require('./association-space.js');
+
+  // 会员档案（学院全名）：第一个读得到的协会里取；都读不到时降级为空。
+  let profile = null;
+  for (const assoc of allAssociations()) {
+    try {
+      const result = await space.forScope({ schoolId, association: assoc.id }).getSchoolMember({ userId: user.userId });
+      if (result && result.member) { profile = result.member; break; }
+    } catch (err) { /* 下一个协会 */ }
+  }
+
+  const groups = [];
+  let eventCount = 0;
+  let championCount = 0;
+  let topThreeCount = 0;
+  let bestPlacement = null;
+
+  await Promise.all(allAssociations().map(async (assoc) => {
+    try {
+      const api = space.forScope({ schoolId, association: assoc.id });
+      const result = await api.getSchoolMemberHonors({ userId: user.userId });
+      if (!result || !result.ok || !result.honors) return;
+      const records = (result.honors.records || []).map((row) => ({
+        eventId: row.eventId,
+        title: row.title,
+        dateText: formatDate(row.startTime),
+        placement: row.placement,
+        placementText: formatPlacement(row.placement),
+        isTop: row.placement <= 3,
+        participantCount: row.participantCount,
+      }));
+      if (records.length === 0) return;
+      const summary = result.honors.summary || {};
+      eventCount += summary.eventCount || 0;
+      championCount += summary.championCount || 0;
+      topThreeCount += summary.topThreeCount || 0;
+      if (summary.bestPlacement != null &&
+          (bestPlacement === null || summary.bestPlacement < bestPlacement)) {
+        bestPlacement = summary.bestPlacement;
+      }
+      groups.push({
+        associationId: assoc.id,
+        associationName: assoc.shortName,
+        associationGlyph: assoc.logoGlyph,
+        records,
+      });
+    } catch (err) {
+      // 该协会读不到（未启用 / 无权限）：跳过，不拖垮整页
+    }
+  }));
+
+  const nameDisplay = resolveNameDisplay(user);
+  const account = session.account || {};
+  const statusLabel = ({ pending: '待审核', active: '正常', rejected: '已驳回', left: '已离校', disabled: '已停用' })[account.status] || '未入会';
+
+  return {
+    found: true,
+    user: {
+      userId: user.userId,
+      nickName: nameDisplay.nickName,
+      realName: nameDisplay.realName,
+      showRealName: nameDisplay.showRealName,
+      avatarText: (nameDisplay.nickName || '?').slice(0, 1),
+      avatarUrl: user.avatarUrl || '',
+      college: (profile && profile.collegeName) || '',
+      studentId: (account && account.studentId) || '',
+      roleLabel: session.isPlatformAdmin ? '管理员' : (session.permissionLabel || '会员'),
+      statusLabel,
+      joinDateText: '',
+      points: 0,
+      showPoints: false,
+    },
+    honors: {
+      summary: {
+        eventCount,
+        championCount,
+        topThreeCount,
+        bestPlacementText: formatPlacement(bestPlacement),
+      },
+      groups,
+      total: eventCount,
+    },
+  };
+}
+
 module.exports = {
   DEFAULT_HISTORY_LIMIT,
   FORM_LIMIT,
@@ -460,5 +686,7 @@ module.exports = {
   buildChart,
   buildHistoryRow,
   loadMemberView,
+  loadSchoolMemberView,
   loadProfileSummary,
+  loadSchoolProfileSummaryView,
 };
