@@ -18,7 +18,7 @@
 
     <view class="card meet-head">
       <view class="meet-name">{{meet.name}}</view>
-      <view class="meet-status meet-status-{{meet.status}}">{{meet.statusLabel}}</view>
+      <view wx:if="{{canManage || !meet.isDraft}}" class="meet-status meet-status-{{meet.status}}">{{meet.statusLabel}}</view>
       <view class="meet-meta">{{meet.startDate}} 至 {{meet.endDate}}</view>
       <view wx:if="{{meet.location}}" class="meet-meta">地点：{{meet.location}}</view>
       <view class="meet-meta">项目组别：{{meet.eventCount}} 项</view>
@@ -39,13 +39,15 @@
         <view class="meet-event-tags">
           <text class="meet-tag">{{item.categoryLabel}}</text>
           <text class="meet-tag">{{item.group === 'male' ? '男子' : item.group === 'female' ? '女子' : '混合'}}</text>
-          <text class="meet-tag">{{item.rounds === 'heat_final' ? '预赛+决赛' : '直接决赛'}}</text>
+          <text class="meet-tag" wx:if="{{item.scoreType === 'versus'}}">{{item.formatLabel || '单败淘汰'}}</text>
+          <text class="meet-tag" wx:else>{{item.rounds === 'heat_final' ? '预赛+决赛' : '直接决赛'}}</text>
           <text class="meet-tag" wx:if="{{!item.scored}}">不计分</text>
         </view>
       </view>
       <view class="meet-event-side">
-        <view class="meet-event-limit">每院 {{item.perCollegeLimit}}{{item.entryForm === 'single' ? '人' : item.entryForm === 'team' ? '队' : '组'}}</view>
-        <view class="meet-event-members" wx:if="{{item.members > 1}}">每组 {{item.members}} 人</view>
+        <view class="meet-event-limit">每院 {{item.limitUnlimited ? '不限' : item.perCollegeLimit}}{{item.entryForm === 'single' ? '人' : item.entryForm === 'team' ? '队' : '组'}}</view>
+        <view class="meet-event-members" wx:if="{{item.membersUnlimited}}">每组人数不限</view>
+        <view class="meet-event-members" wx:elif="{{item.members > 1}}">每组 {{item.members}} 人</view>
         <!-- 学生报名：意向不占名额；已入选后不能再撤（D10／D19） -->
         <block wx:if="{{isRegistration}}">
           <view wx:if="{{item.myInterestStatus === 'selected'}}" class="meet-event-state">已在正式名单</view>

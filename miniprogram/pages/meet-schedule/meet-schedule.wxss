@@ -22,3 +22,8 @@
 .meet-round { display: inline-block; padding: 8rpx 20rpx; margin-right: 12rpx; border-radius: 999rpx; background: #f2f3f5; font-size: 22rpx; color: #555; }
 .meet-round.is-active { background: #b23a2e; color: #fff; }
 .meet-hint { font-size: 22rpx; color: #888; margin-bottom: 10rpx; }
+
+/* 时间选择：日期 + 时分 */
+.meet-time { display: flex; gap: 12rpx; }
+.meet-time-part { padding: 8rpx 20rpx; border-radius: 10rpx; background: #f5f6f8; font-size: 24rpx; color: #333; }
+.meet-search { height: 66rpx; padding: 0 20rpx; border-radius: 10rpx; background: #f5f6f8; font-size: 24rpx; margin: 10rpx 0; }

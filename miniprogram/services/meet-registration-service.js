@@ -29,7 +29,7 @@
 const {
   MEET_STATUS, MEET_INTEREST_STATUS, MEET_ENTRY_STATUS,
   meetEventKey, meetInterestKey, meetEntryKey, meetQuotaKey, meetClaimKey,
-  meetParticipantCounterKey, meetEntrySlot,
+  meetParticipantCounterKey, listAliveEvents, meetEntrySlot,
 } = require('../utils/meet-scope.js');
 const { schoolMemberKey, SCHOOL_MEMBER_STATUS } = require('../utils/school.js');
 const { buildMeetContext, freshMeetContext } = require('./meet-context.js');
@@ -206,7 +206,7 @@ async function getMyMeetParticipation(payload = {}, ctx) {
   const [interests, entries, events] = await Promise.all([
     ctx.repo.forMeet(scope).sportsMeetInterests.list(),
     ctx.repo.forMeet(scope).sportsMeetEntries.list(),
-    ctx.repo.forMeet(scope).sportsMeetEvents.list(),
+    listAliveEvents(ctx.repo.forMeet(scope).sportsMeetEvents),
   ]);
   const eventOf = new Map(events.map((doc) => [doc._id, doc]));
   const describe = (eventKey) => {
@@ -252,7 +252,7 @@ async function listMeetCollegeEvents(payload = {}, ctx) {
   const collegeId = resolved.collegeId;
 
   const [events, entries, interests] = await Promise.all([
-    ctx.repo.forMeet(scope).sportsMeetEvents.list(),
+    listAliveEvents(ctx.repo.forMeet(scope).sportsMeetEvents),
     ctx.repo.forMeet(scope).sportsMeetEntries.list(),
     ctx.repo.forMeet(scope).sportsMeetInterests.list(),
   ]);
@@ -300,7 +300,8 @@ async function getMeetApplicantPool(payload = {}, ctx) {
     const user = await ctx.repo.users.getById(doc.userId);
     return {
       userId: doc.userId,
-      name: (user && (user.name || user.nickName)) || '未命名',
+      // 账号姓名在 nickName / realName 上；只读 name 会让整张申请人池都是「未命名」
+      name: (user && (user.realName || user.nickName || user.name)) || '未命名',
       gender: (member && member.gender) || '',
     };
   }));
@@ -335,9 +336,10 @@ async function submitMeetCollegeEntry(payload = {}, ctx) {
     if (!resolved.ok) return refused(resolved.message);
     const collegeId = resolved.collegeId;
 
-    // 人数：单人 1 人；多人协作组/队伍必须与创建时设定的人数一致（D39，无替补 D40）
+    // 人数：单人 1 人；多人协作组/队伍必须与创建时设定的人数一致（D39，无替补 D40）。
+    // members = 0 表示「人数不限」（入场式展示这类项目），此时只要求至少 1 人。
     const expected = event.doc.entryForm === 'single' ? 1 : Number(event.doc.members || 0);
-    if (userIds.length !== expected) {
+    if (expected > 0 && userIds.length !== expected) {
       return refused(`该项目每组需 ${expected} 人，当前选了 ${userIds.length} 人`);
     }
 
@@ -356,9 +358,11 @@ async function submitMeetCollegeEntry(payload = {}, ctx) {
       if (!isPendingOrSelected(interest)) return refused('名单中有学生未提交参赛意向，不能直接选入');
     }
 
-    // 额度（D29／D32）：used + pending 不能达到上限
+    // 额度（D29／D32）：used + pending 不能达到上限。
+    // perCollegeLimit = 0 表示「不限」，跳过额度判断（展示类项目常常不限队数）。
     const quota = await quotaOf(tx, fresh.meetId, event.doc._id, collegeId);
-    if (quota.used + quota.pending >= Number(event.doc.perCollegeLimit || 0)) {
+    const cap = Number(event.doc.perCollegeLimit || 0);
+    if (cap > 0 && quota.used + quota.pending >= cap) {
       return refused('本院该项目名额已满');
     }
 
@@ -571,7 +575,7 @@ async function listMeetEntries(payload = {}, ctx) {
 
   const [entries, events] = await Promise.all([
     ctx.repo.forMeet(scope).sportsMeetEntries.list(),
-    ctx.repo.forMeet(scope).sportsMeetEvents.list(),
+    listAliveEvents(ctx.repo.forMeet(scope).sportsMeetEvents),
   ]);
   const eventOf = new Map(events.map((doc) => [doc._id, doc]));
 

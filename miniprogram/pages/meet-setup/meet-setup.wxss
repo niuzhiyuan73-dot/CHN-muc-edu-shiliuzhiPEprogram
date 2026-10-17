@@ -33,3 +33,17 @@
 .meet-chip.is-on { background: #b23a2e; border-color: #b23a2e; color: #fff; }
 .meet-advance { display: flex; align-items: center; gap: 8rpx; }
 .meet-advance-label { font-size: 22rpx; color: #888; }
+
+/* 已选项目的编辑行 */
+.meet-pick-saving { margin-left: 10rpx; font-size: 20rpx; color: #999; }
+.meet-pick-failed { margin-left: 10rpx; font-size: 20rpx; color: #b23a2e; }
+.meet-pick-error { margin-top: 6rpx; font-size: 20rpx; color: #b23a2e; }
+.meet-form-row { display: flex; align-items: center; gap: 12rpx; margin-top: 14rpx; flex-wrap: wrap; }
+.meet-form-label { width: 130rpx; font-size: 24rpx; color: #555; }
+.meet-form-unit { font-size: 22rpx; color: #888; }
+.meet-form-fixed { font-size: 24rpx; color: #333; }
+.meet-num { width: 120rpx; height: 60rpx; padding: 0 14rpx; border-radius: 10rpx; background: #f5f6f8; font-size: 26rpx; text-align: center; }
+.meet-seg { display: flex; border-radius: 12rpx; overflow: hidden; border: 1rpx solid #e2e4e8; }
+.meet-seg-item { padding: 10rpx 22rpx; font-size: 24rpx; color: #555; background: #fff; }
+.meet-seg-item + .meet-seg-item { border-left: 1rpx solid #e2e4e8; }
+.meet-seg-item.is-on { background: #b23a2e; color: #fff; border-color: #b23a2e; }

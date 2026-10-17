@@ -31,6 +31,7 @@
  */
 
 const { compareMeasure } = require('./meet-measure.js');
+const { bracketSizeOf, standardSeedOrder } = require('../utils/bracket.js');
 
 /** 晋级口径。 */
 const ADVANCE_MODE = Object.freeze({
@@ -43,11 +44,13 @@ const ADVANCE_MODE = Object.freeze({
 const MEET_FORMAT = Object.freeze({
   SINGLE_ELIM: 'single_elim',
   ROUND_ROBIN: 'round_robin',
+  GROUP_KNOCKOUT: 'group_knockout',
 });
 
 const FORMAT_LABEL = Object.freeze({
   [MEET_FORMAT.SINGLE_ELIM]: '单败淘汰',
   [MEET_FORMAT.ROUND_ROBIN]: '循环赛',
+  [MEET_FORMAT.GROUP_KNOCKOUT]: '小组+淘汰',
 });
 
 /** 有数值方向的项目（计时/距离/高度/次数/评分）。 */
@@ -317,6 +320,97 @@ function roundRobinStandings({ entries = [], matches = [] } = {}) {
   return { ok: true, rows, pending: [] };
 }
 
+/**
+ * 把参赛者分成 n 个容器：种子先一组一个，其余洗牌后补进人数最少的容器。
+ * 预赛分组与小组赛分组是同一件事，只是名字不同——共用一份实现。
+ */
+function distribute(entries, bucketCount, seeds, random) {
+  const buckets = Array.from({ length: bucketCount }, () => []);
+  const seedSet = new Set(seeds || []);
+  (seeds || []).forEach((key, index) => {
+    if (buckets[index % bucketCount]) buckets[index % bucketCount].push(key);
+  });
+  const rest = (entries || []).filter((key) => !seedSet.has(key));
+  // 洗牌用调用方传进来的随机源；没有就按原顺序（测试里需要可复现）
+  const pool = typeof random === 'function'
+    ? rest.map((key) => ({ key, r: random() })).sort((a, b) => a.r - b.r).map((row) => row.key)
+    : rest;
+  for (const key of pool) {
+    let target = 0;
+    for (let i = 1; i < bucketCount; i += 1) {
+      if (buckets[i].length < buckets[target].length) target = i;
+    }
+    buckets[target].push(key);
+  }
+  return buckets;
+}
+
+/**
+ * 小组赛阶段的名次：每组内部按循环赛口径排（胜场 → 相互战绩 → 并列）。
+ *
+ * @param {Object} params
+ * @param {number} params.groupCount 小组数
+ * @param {Object} params.groups `{ [index]: entryKey[] }` 各组参赛者
+ * @param {Array} params.matches 小组赛对阵（含 groupIndex）
+ */
+function groupStageStandings({ groups = {}, matches = [] } = {}) {
+  const pending = [];
+  const rows = [];
+  let complete = true;
+  for (const key of Object.keys(groups).sort((a, b) => Number(a) - Number(b))) {
+    const index = Number(key);
+    const entries = groups[key] || [];
+    const own = matches.filter((match) => Number(match.groupIndex) === index);
+    const result = roundRobinStandings({ entries, matches: own });
+    if (!result.ok) complete = false;
+    (result.rows || []).forEach((row) => rows.push({ ...row, groupIndex: index }));
+    if (!result.ok) pending.push(...(result.pending || []));
+  }
+  return { complete, rows, pending };
+}
+
+/**
+ * 小组+淘汰的最终名次。
+ *
+ * 出线队伍按淘汰赛名次；未出线队伍并列「淘汰赛签位 + 1」。
+ * 这样处理是因为未出线者之间没有再打过交叉赛，给出精确名次等于编数据；
+ * 并列一个名次既能表达「都止步小组赛」，也不会凭空把某队排在另一队前面。
+ */
+function groupKnockoutStandings({
+  entries = [], groupEntries = {}, advancePerGroup = 1,
+  groupMatches = [], knockoutMatches = [], totalRounds = 1,
+} = {}) {
+  const groupStage = groupStageStandings({ groups: groupEntries, matches: groupMatches });
+  if (!groupStage.complete) {
+    return { ok: false, message: groupStage.pending.length
+      ? `小组赛还有 ${groupStage.pending.length} 场没有决出胜负`
+      : '小组赛还没有打完', pending: groupStage.pending };
+  }
+
+  // 每组出线几名是**规则**，不是分组数据。早先把它和 groupEntries 混在一个
+  // 参数里，结果 advancePerGroup 永远是 undefined → 一个都出不了线。
+  const perGroup = Number(advancePerGroup) || 1;
+  const qualified = [];
+  for (const key of Object.keys(groupEntries).sort((a, b) => Number(a) - Number(b))) {
+    const index = Number(key);
+    groupStage.rows
+      .filter((row) => row.groupIndex === index && row.rank <= perGroup)
+      .forEach((row) => qualified.push(row.entryKey));
+  }
+  const bracket = bracketStandings({ entries: qualified, totalRounds, matches: knockoutMatches });
+  if (!bracket.ok) return bracket;
+
+  const size = bracketSizeOf(qualified.length);
+  const rows = bracket.rows.map((row) => ({ ...row, stage: 'knockout' }));
+  const ranked = new Set(rows.map((row) => row.entryKey));
+  for (const entryKey of entries) {
+    if (ranked.has(entryKey)) continue;
+    rows.push({ entryKey, rank: size + 1, stage: 'group' });
+  }
+  rows.sort((a, b) => a.rank - b.rank || String(a.entryKey).localeCompare(String(b.entryKey)));
+  return { ok: true, rows, champion: bracket.champion, qualified, pending: [] };
+}
+
 module.exports = {
   ADVANCE_MODE,
   MEET_FORMAT,
@@ -328,4 +422,7 @@ module.exports = {
   bracketStandings,
   roundRobinRounds,
   roundRobinStandings,
+  distribute,
+  groupStageStandings,
+  groupKnockoutStandings,
 };

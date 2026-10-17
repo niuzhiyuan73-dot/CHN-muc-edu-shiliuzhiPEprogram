@@ -34,12 +34,12 @@
 
 const {
   MEET_STATUS,
-  meetScoreKey, meetJudgeKey, meetPublicationKey, meetResultRowKey,
+  meetScoreKey, meetJudgeKey, meetPublicationKey, meetResultRowKey, listAliveEvents,
 } = require('../utils/meet-scope.js');
 const { MEET_SCORE_TYPE } = require('./meet-event-catalog.js');
 const { normalizeMeasure, formatMeasure } = require('./meet-measure.js');
 const {
-  MEET_FORMAT, rankByValue, bracketStandings, roundRobinStandings,
+  MEET_FORMAT, rankByValue, bracketStandings, roundRobinStandings, groupKnockoutStandings,
 } = require('./meet-advance.js');
 const { matchesOf, roundNoOf } = require('./meet-advance-service.js');
 const { buildMeetContext, freshMeetContext } = require('./meet-context.js');
@@ -57,6 +57,34 @@ const SCORE_STATE = Object.freeze({ DRAFT: 'draft', SUBMITTED: 'submitted' });
 const ROW_STATUS = Object.freeze({ RESULT: 'result', VOID: 'void' });
 
 const isAlive = (doc) => Boolean(doc && doc.status && doc.status !== MEET_STATUS.DELETED);
+
+/**
+ * 胜负项目的名次：按赛制分支。
+ *
+ * 单败只看淘汰赛；小组+淘汰要先算小组名次再算淘汰赛；循环赛整体一套。
+ * 抽成一个函数，是因为预览与发布必须给出**同一份**名次——两处各写一遍，
+ * 迟早出现「预览看到第 2、发布变成第 3」。
+ */
+function versusStandingsOf({ format, entryKeys, totalRounds, bracket, matches }) {
+  if (format === MEET_FORMAT.ROUND_ROBIN) {
+    return roundRobinStandings({ entries: entryKeys, matches });
+  }
+  if (format === MEET_FORMAT.GROUP_KNOCKOUT) {
+    return groupKnockoutStandings({
+      entries: entryKeys,
+      groupEntries: (bracket && bracket.groupEntries) || {},
+      advancePerGroup: (bracket && bracket.groups && bracket.groups.advancePerGroup) || 1,
+      groupMatches: matches.filter((match) => match.stage === 'group'),
+      knockoutMatches: matches.filter((match) => match.stage !== 'group'),
+      totalRounds,
+    });
+  }
+  return bracketStandings({
+    entries: entryKeys,
+    totalRounds,
+    matches: matches.filter((match) => match.stage !== 'group'),
+  });
+}
 const toIso = (now) => (now instanceof Date ? now.toISOString() : String(now));
 const scopeOf = (ctx) => ({ schoolId: ctx.schoolId, meetId: ctx.meetId });
 
@@ -120,7 +148,7 @@ async function getMeetSessionScores(payload = {}, ctx) {
     ctx.repo.forMeet(scope).sportsMeetJudgeAssignments.getById(
       meetJudgeKey(ctx.meetId, sessionKey, ctx.actorId || '-'),
     ),
-    ctx.repo.forMeet(scope).sportsMeetEvents.list(),
+    listAliveEvents(ctx.repo.forMeet(scope).sportsMeetEvents),
   ]);
   if (!session || session.meetId !== ctx.meetId) return refused('场次不存在或不属于本届运动会');
   const doc = event.find((row) => row._id === session.eventKey);
@@ -307,9 +335,10 @@ async function getMeetResultPreview(payload = {}, ctx) {
     const bracket = event.bracket || null;
     const format = (bracket && bracket.format) || event.format || MEET_FORMAT.SINGLE_ELIM;
     const totalRounds = bracket ? Number(bracket.totalRounds) || 1 : 1;
-    const standings = format === MEET_FORMAT.ROUND_ROBIN
-      ? roundRobinStandings({ entries: approved.map((doc) => doc._id), matches })
-      : bracketStandings({ entries: approved.map((doc) => doc._id), totalRounds, matches });
+    const entryKeys = approved.map((doc) => doc._id);
+    const standings = versusStandingsOf({
+      format, entryKeys, totalRounds, bracket, matches,
+    });
     return ok({
       event: { eventKey, name: event.name, group: event.group, scoreType: event.scoreType },
       sessionKey,
@@ -439,13 +468,13 @@ async function publishMeetResults(payload = {}, ctx) {
   if (isVersus) {
     const matches = matchesOf(sessions, eventKey);
     const entryKeys = approved.map((doc) => doc._id);
-    const standings = isRoundRobin
-      ? roundRobinStandings({ entries: entryKeys, matches })
-      : bracketStandings({
-        entries: entryKeys,
-        totalRounds: Number(bracket && bracket.totalRounds) || 1,
-        matches,
-      });
+    const standings = versusStandingsOf({
+      format,
+      entryKeys,
+      totalRounds: Number(bracket && bracket.totalRounds) || 1,
+      bracket,
+      matches,
+    });
     if (!standings.ok) {
       return refused(standings.message || '赛制还没有打完，不能发布', { pending: standings.pending });
     }

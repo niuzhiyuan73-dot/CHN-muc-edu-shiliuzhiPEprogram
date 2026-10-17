@@ -21,7 +21,7 @@
  */
 
 const {
-  MEET_STATUS, meetSessionKey, meetJudgeKey,
+  MEET_STATUS, meetSessionKey, meetJudgeKey, listAliveEvents,
 } = require('../utils/meet-scope.js');
 const { schoolMemberKey, SCHOOL_MEMBER_STATUS } = require('../utils/school.js');
 const { MEET_SCORE_TYPE } = require('./meet-event-catalog.js');
@@ -45,15 +45,22 @@ function textOf(value, max, label) {
   return { ok: true, value: text };
 }
 
-/** 时间：接受 `YYYY-MM-DDTHH:mm` 或带秒的写法，与报名窗口同一套格式 */
+/**
+ * 场次时间：必填，但**不校验格式，也不与任何东西比较**。
+ *
+ * 开始时间在这里只承担「告知学生什么时候比」的作用，不参与任何业务判定
+ * （不卡报名截止、不卡届次日期、不要求早于结束时间）。原先强制
+ * `YYYY-MM-DDTHH:mm` 并校验先后，导致管理员改个场地都要先算好格式，
+ * 属于没必要的门槛。这里只保留「不能为空、不能长到撑爆页面」两条。
+ *
+ * 能解析出时间就用于排序，解析不出就按主键排——时间填错不该让赛程页崩掉。
+ */
 function timeOf(value, label) {
   const text = String(value == null ? '' : value).trim();
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(text)) {
-    return { ok: false, message: `${label}格式应为 YYYY-MM-DDTHH:mm` };
-  }
-  const time = Date.parse(text.length === 16 ? `${text}:00Z` : `${text}Z`);
-  if (!Number.isFinite(time)) return { ok: false, message: `${label}不是有效时间` };
-  return { ok: true, value: text, time };
+  if (!text) return { ok: false, message: `请填写${label}` };
+  if (text.length > 40) return { ok: false, message: `${label}不超过 40 个字符` };
+  const parsed = Date.parse(text.replace(' ', 'T').replace(/(\d{2}:\d{2})$/, '$1:00').concat('Z'));
+  return { ok: true, value: text, time: Number.isFinite(parsed) ? parsed : null };
 }
 
 function sessionSummary(doc) {
@@ -82,8 +89,10 @@ async function listSessions(repo, ctx) {
   return docs
     .filter((doc) => doc.schoolId === ctx.schoolId && doc.meetId === ctx.meetId)
     .sort((a, b) => {
-      const ta = a.startAt ? Date.parse(a.startAt) : Number.MAX_SAFE_INTEGER;
-      const tb = b.startAt ? Date.parse(b.startAt) : Number.MAX_SAFE_INTEGER;
+      const ta = Number.isFinite(Date.parse(String(a.startAt || '').replace(' ', 'T')))
+        ? Date.parse(String(a.startAt).replace(' ', 'T')) : Number.MAX_SAFE_INTEGER;
+      const tb = Number.isFinite(Date.parse(String(b.startAt || '').replace(' ', 'T')))
+        ? Date.parse(String(b.startAt).replace(' ', 'T')) : Number.MAX_SAFE_INTEGER;
       return ta - tb || String(a._id).localeCompare(String(b._id));
     });
 }
@@ -107,9 +116,9 @@ async function saveMeetSession(payload = {}, ctx) {
 
   const start = timeOf(payload.startAt, '开始时间');
   if (!start.ok) return refused(start.message);
+  // 结束时间选填，也不与开始时间比较：它同样是给人看的信息
   const end = payload.endAt ? timeOf(payload.endAt, '结束时间') : { ok: true, value: '' };
   if (!end.ok) return refused(end.message);
-  if (end.value && end.time <= start.time) return refused('结束时间必须晚于开始时间');
 
   const venue = textOf(payload.venue, 40, '场地');
   if (!venue.ok) return refused(venue.message);
@@ -172,7 +181,7 @@ async function publishMeetSchedule(payload = {}, ctx) {
   if (!meetReadable(ctx) || !ctx.meetId) return refused('请先登录');
 
   const [events, sessions] = await Promise.all([
-    ctx.repo.forMeet(scopeOf(ctx)).sportsMeetEvents.list(),
+    listAliveEvents(ctx.repo.forMeet(scopeOf(ctx)).sportsMeetEvents),
     listSessions(ctx.repo, ctx),
   ]);
   if (events.length === 0) return refused('本届还没有项目，无法发布赛程');
@@ -187,8 +196,12 @@ async function publishMeetSchedule(payload = {}, ctx) {
   const notDrawn = [];
   for (const event of events) {
     const own = byEvent.get(event._id) || [];
+    // 赛制项目只要求「首轮」配齐：后续轮次要等上一轮出胜负才存在。
+    // 小组+淘汰的首轮是小组赛（g1、g2…），淘汰赛那几轮此刻还是空的。
     const required = event.scoreType === MEET_SCORE_TYPE.VERSUS
-      ? own.filter((doc) => doc.round === 'r1' || doc.round === 'rr')
+      ? own.filter((doc) => (event.format === 'group_knockout'
+        ? String(doc.round || '').startsWith('g')
+        : (doc.round === 'r1' || doc.round === 'rr')))
       : own;// 数值型：所有场次都要配齐
     if (required.length === 0 || required.some((doc) => !doc.startAt || !doc.venue)) {
       missing.push(event.name);
@@ -261,10 +274,14 @@ async function assignMeetJudge(payload = {}, ctx) {
       updatedAt: now,
     };
     await tx.sportsMeetJudgeAssignments.set(key, doc);
-    // 在场次上维护「有效裁判数」：开赛判断必须在事务内做，而事务内不能查指派表，
-    // 只能点读场次文档 —— 所以把计数压在它身上（与兼项计数同一手法）。
+    // 在场次文档上维护**裁判名单**（不是只维护一个计数）。
+    // 计数会漂移：两个人同时指派时都读到 0、都写 1，实际却有两个裁判；
+    // 反过来漏减一次就会出现「显示 2 人、实际没人」。名单去重后取长度，
+    // 开赛判断在事务内点读这一个字段即可。
+    const ids = Array.isArray(session.judgeIds) ? [...session.judgeIds] : [];
+    if (!ids.includes(judgeId)) ids.push(judgeId);
     await tx.sportsMeetSessions.set(sessionKey, {
-      ...session, judgeCount: Number(session.judgeCount || 0) + 1, updatedAt: now,
+      ...session, judgeIds: ids, judgeCount: ids.length, updatedAt: now,
     });
     return ok({ assignment: doc, created: true });
   });
@@ -290,8 +307,10 @@ async function removeMeetJudge(payload = {}, ctx) {
     });
     const session = await tx.sportsMeetSessions.getById(sessionKey);
     if (session) {
+      const ids = (Array.isArray(session.judgeIds) ? session.judgeIds : [])
+        .filter((id) => id !== judgeId);
       await tx.sportsMeetSessions.set(sessionKey, {
-        ...session, judgeCount: Math.max(0, Number(session.judgeCount || 0) - 1), updatedAt: now,
+        ...session, judgeIds: ids, judgeCount: ids.length, updatedAt: now,
       });
     }
     return ok({ sessionKey, judgeId });
@@ -314,8 +333,11 @@ async function startMeetEvent(payload = {}, ctx) {
     if (!session || session.meetId !== fresh.meetId) return refused('场次不存在或不属于本届运动会');
     if (!session.startAt || !session.venue) return refused('该场次还没配齐时间与场地');
 
-    // 判「有没有裁判」只能点读场次上的计数——事务内不能查指派表。
-    if (!(Number(session.judgeCount || 0) > 0)) return refused('该场次还没有指派裁判，不能开赛');
+    // 判「有没有裁判」只能点读场次文档——事务内不能查指派表。
+    // 优先看名单（准确），老数据没有名单时退回计数。
+    const judgeIds = Array.isArray(session.judgeIds) ? session.judgeIds : null;
+    const judgeCount = judgeIds ? judgeIds.length : Number(session.judgeCount || 0);
+    if (!(judgeCount > 0)) return refused('该场次还没有指派裁判，不能开赛');
 
     const now = toIso(fresh.now);
     await tx.sportsMeetSessions.set(sessionKey, {
@@ -339,7 +361,7 @@ async function getMeetSchedule(payload = {}, ctx) {
 
   const [meet, events, sessions, assignments] = await Promise.all([
     ctx.repo.sportsMeets.getById(ctx.meetId),
-    ctx.repo.forMeet(scope).sportsMeetEvents.list(),
+    listAliveEvents(ctx.repo.forMeet(scope).sportsMeetEvents),
     listSessions(ctx.repo, ctx),
     ctx.repo.forMeet(scope).sportsMeetJudgeAssignments.list(),
   ]);
@@ -392,7 +414,7 @@ async function getMyMeetJudgeTasks(payload = {}, ctx) {
   const [sessions, assignments, events] = await Promise.all([
     listSessions(ctx.repo, ctx),
     ctx.repo.forMeet(scope).sportsMeetJudgeAssignments.list(),
-    ctx.repo.forMeet(scope).sportsMeetEvents.list(),
+    listAliveEvents(ctx.repo.forMeet(scope).sportsMeetEvents),
   ]);
   const eventOf = new Map(events.map((doc) => [doc._id, doc]));
   const mine = new Set(assignments
@@ -423,16 +445,32 @@ async function listMeetJudgeCandidates(payload = {}, ctx) {
   if (!meetReadable(ctx) || !ctx.meetId) return refused('请先登录');
   if (!canManageMeet(ctx)) return refused('只有校级管理员及以上可以指派裁判');
 
+  const keyword = String(payload.keyword || '').trim();
   const members = await ctx.repo.schoolMembers.listBySchool(ctx.schoolId);
   const active = members.filter((doc) => doc.status === SCHOOL_MEMBER_STATUS.ACTIVE);
   const items = [];
   for (const member of active) {
     const user = await ctx.repo.users.getById(member.userId);
     if (!user || user.platformStatus !== 'active') continue;
-    items.push({ userId: member.userId, name: user.name || '未命名', collegeId: member.collegeId || '' });
+    // 账号上的姓名是 nickName / realName，不是 name。只读 name 会让所有人
+    // 都显示「未命名」——管理员根本无从挑选。
+    const realName = user.realName || '';
+    const nickName = user.nickName || '';
+    const name = realName || nickName || '未命名';
+    const collegeId = member.collegeId || '';
+    const college = collegeId ? await ctx.repo.colleges.getById(
+      require('../utils/school.js').collegeKey(ctx.schoolId, collegeId),
+    ) : null;
+    const haystack = `${name}${realName}${nickName}${collegeId}${(college && college.name) || ''}`;
+    if (keyword && !haystack.includes(keyword)) continue;
+    items.push({
+      userId: member.userId, name, realName, nickName,
+      collegeId, collegeName: (college && college.name) || '',
+    });
   }
-  items.sort((a, b) => String(a.name).localeCompare(String(b.name)));
-  return ok({ items });
+  items.sort((a, b) => String(a.collegeName).localeCompare(String(b.collegeName))
+    || String(a.name).localeCompare(String(b.name)));
+  return ok({ items: items.slice(0, 100), total: items.length });
 }
 
 module.exports = {

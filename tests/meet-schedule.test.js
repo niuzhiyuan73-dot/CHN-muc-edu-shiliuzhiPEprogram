@@ -84,13 +84,27 @@ test('保存场次：时间与场地落库', async () => {
   assert.equal(stored.startAt, '2026-10-24T09:00');
 });
 
-test('结束时间早于开始时间被拒绝', async () => {
+test('场次时间只作为告知信息：格式随意，也不比较先后', async () => {
   const { repo, meetId } = await makeWorld();
-  const result = await schedule.saveMeetSession({
-    eventKey: eventOf(meetId, 'sprint-100m'), ...SESSION, endAt: '2026-10-24T08:00',
+  const ctx = await ctxOf(repo, 'u_admin', meetId);
+  // 结束早于开始、用空格代替 T、只写 HH:mm —— 都接受
+  for (const patch of [
+    { ...SESSION, endAt: '2026-10-24T08:00' },
+    { ...SESSION, startAt: '2026-10-24 09:00' },
+    { ...SESSION, startAt: '下午三点' },
+  ]) {
+    const saved = await schedule.saveMeetSession({ eventKey: eventOf(meetId, 'sprint-100m'), ...patch }, ctx);
+    assert.equal(saved.ok, true, `${patch.startAt} 应被接受：${saved.message}`);
+  }
+});
+
+test('场次时间仍然必填', async () => {
+  const { repo, meetId } = await makeWorld();
+  const saved = await schedule.saveMeetSession({
+    eventKey: eventOf(meetId, 'sprint-100m'), ...SESSION, startAt: '',
   }, await ctxOf(repo, 'u_admin', meetId));
-  assert.equal(result.ok, false);
-  assert.match(result.message, /结束时间必须晚于开始时间/);
+  assert.equal(saved.ok, false);
+  assert.match(saved.message, /请填写开始时间/);
 });
 
 test('赛程没配齐时不能发布，并指出缺哪些项目（D53）', async () => {

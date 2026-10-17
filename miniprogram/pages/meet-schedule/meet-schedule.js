@@ -28,6 +28,8 @@ Page({
     canManage: false,
     items: [],
     judges: [],
+    filteredJudges: [],
+    judgeKeyword: '',
     // 展开的行与它正在编辑的场次
     activeEventKey: '',
     editStartAt: '',
@@ -35,6 +37,9 @@ Page({
     editRound: 'final',
     editIndex: 1,
     editSessionKey: '',
+    // 时间用两个 picker 拼（日期 + 时分）：手输格式太容易错，服务端也校验不出人话
+    editDate: '',
+    editTime: '',
     // 当前正在编辑的场次（含裁判名单）：预赛有多组，必须能分别排期并派裁判
     current: null,
   },
@@ -71,6 +76,7 @@ Page({
       }
       this.update({
         loading: false,
+        filteredJudges: judges,
         canManage: schedule.canManage,
         items: schedule.items.map((item) => ({
           ...item,
@@ -109,15 +115,46 @@ Page({
   },
 
   pickSession(eventKey, session) {
+    const startAt = (session && session.startAt) || '';
+    // 能解析成「日期 时:分」就回填到两个 picker；解析不了就只留在文本框里
+    const matched = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/.exec(startAt);
     this.update({
       activeEventKey: eventKey || '',
       editSessionKey: (session && session.sessionKey) || '',
-      editStartAt: (session && session.startAt) || '',
+      editStartAt: startAt,
+      editDate: matched ? matched[1] : '',
+      editTime: matched ? matched[2] : '',
       editVenue: (session && session.venue) || '',
       editRound: (session && session.round) || 'final',
       editIndex: (session && session.index) || 1,
       current: session || null,
     });
+  },
+
+  /** 日期 / 时分两个 picker 拼成「YYYY-MM-DD HH:mm」 */
+  onStartDateChange(event) {
+    this.update({ editDate: event.detail.value });
+    return this.composeStart();
+  },
+
+  onStartTimeChange(event) {
+    this.update({ editTime: event.detail.value });
+    return this.composeStart();
+  },
+
+  composeStart() {
+    const { editDate, editTime } = this.data;
+    if (!editDate || !editTime) return;
+    this.update({ editStartAt: `${editDate} ${editTime}` });
+  },
+
+  onJudgeKeyword(event) {
+    const judgeKeyword = event.detail.value;
+    const needle = String(judgeKeyword || '').trim();
+    const filteredJudges = needle
+      ? this.data.judges.filter((row) => `${row.name}${row.collegeName || ''}${row.collegeId || ''}`.includes(needle))
+      : this.data.judges;
+    this.update({ judgeKeyword, filteredJudges });
   },
 
   onStartInput(event) {

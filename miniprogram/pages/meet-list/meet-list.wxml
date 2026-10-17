@@ -48,7 +48,7 @@
     >
       <view class="meet-card-head">
         <view class="meet-card-name">{{item.name}}</view>
-        <view class="meet-status meet-status-{{item.status}}">{{item.statusLabel}}</view>
+        <view wx:if="{{canManage || !item.isDraft}}" class="meet-status meet-status-{{item.status}}">{{item.statusLabel}}</view>
       </view>
       <view class="meet-card-meta">{{item.startDate}} 至 {{item.endDate}}<text wx:if="{{item.location}}"> · {{item.location}}</text></view>
       <view class="meet-card-meta">共 {{item.eventCount}} 个项目组别</view>

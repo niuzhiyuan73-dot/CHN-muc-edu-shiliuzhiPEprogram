@@ -9,14 +9,39 @@
 
   <view class="meet-head">
     <view class="meet-college">
-      {{byAdmin ? '代报学院' : '本院'}}：{{collegeId || '未授权学院'}}
+      {{byAdmin ? '代报学院' : '本院'}}：{{collegeName || collegeId || '未选择学院'}}
     </view>
+    <view wx:if="{{byAdmin && collegeId && !needCollege}}" class="meet-link" bindtap="onChangeCollege">切换学院</view>
     <view class="meet-link" bindtap="onOpenDetail">查看运动会详情</view>
   </view>
 
+  <!-- 校管理员：先选要代报的学院（带搜索） -->
+  <block wx:if="{{needCollege}}">
+    <view class="meet-section-title">选择要代报的学院</view>
+    <input
+      class="meet-search"
+      placeholder="搜索学院名称或编号"
+      value="{{collegeKeyword}}"
+      bindinput="onCollegeKeyword"
+    />
+    <view wx:if="{{filteredColleges.length === 0}}" class="empty-state">
+      <view class="empty-state-text">没有匹配的学院</view>
+    </view>
+    <view
+      wx:for="{{filteredColleges}}"
+      wx:key="collegeId"
+      class="card meet-college-item"
+      data-college-id="{{item.collegeId}}"
+      bindtap="onPickCollege"
+    >
+      <text class="meet-college-name">{{item.name}}</text>
+      <text class="meet-college-id">{{item.collegeId}}</text>
+    </view>
+  </block>
+
   <view wx:if="{{loading}}" class="loading">正在加载…</view>
 
-  <block wx:else>
+  <block wx:elif="{{!needCollege}}">
     <view wx:if="{{rows.length === 0}}" class="empty-state">
       <view class="empty-state-icon">📋</view>
       <view class="empty-state-text">本届还没有项目</view>
@@ -28,7 +53,7 @@
           <view class="meet-row-name">{{item.name}}</view>
           <view class="meet-row-meta">
             {{item.group === 'male' ? '男子' : item.group === 'female' ? '女子' : '混合'}}
-            · 已报 {{item.used}}/{{item.limit}}
+            · 已报 {{item.used}}/{{item.limit === 0 ? '不限' : item.limit}}
             <text wx:if="{{item.pending > 0}}"> · 待审 {{item.pending}}</text>
             · 意向 {{item.applicants}}
           </view>
@@ -39,7 +64,7 @@
       <!-- 选人面板 -->
       <view wx:if="{{activeEventKey === item.eventKey}}" class="meet-pool">
         <view class="meet-pool-hint">
-          需 {{activeEvent.members}} 人，已选 {{picked.length}} 人（只列已提交意向的学生）
+          需 {{activeEvent.members > 0 ? activeEvent.members + ' 人' : '人数不限'}}，已选 {{picked.length}} 人（只列已提交意向的学生）
         </view>
         <view wx:if="{{applicants.length === 0}}" class="meet-pool-empty">还没有学生提交参赛意向</view>
         <view

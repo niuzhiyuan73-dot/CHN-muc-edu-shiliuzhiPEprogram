@@ -28,13 +28,14 @@
  * ============================================================
  */
 
-const { MEET_ENTRY_STATUS, meetSessionKey } = require('../utils/meet-scope.js');
+const { MEET_ENTRY_STATUS, meetSessionKey, listAliveEvents } = require('../utils/meet-scope.js');
 const { createSeededRandom, shuffle } = require('../utils/random.js');
-const { drawBracket } = require('../utils/bracket.js');
+const { drawBracket, bracketSizeOf, standardSeedOrder } = require('../utils/bracket.js');
 const { MEET_SCORE_TYPE } = require('./meet-event-catalog.js');
 const {
   ADVANCE_MODE, MEET_FORMAT, bracketTotalRounds, bracketRoundLabel,
   advanceFromHeats, bracketStandings, roundRobinRounds, roundRobinStandings,
+  distribute, groupStageStandings, groupKnockoutStandings,
 } = require('./meet-advance.js');
 const { freshMeetContext } = require('./meet-context.js');
 const { meetReadable, canManageMeet, canPublishMeetResult } = require('./meet-permission.js');
@@ -43,6 +44,11 @@ const ok = (data) => ({ ok: true, data });
 const refused = (message, extra = {}) => ({ ok: false, message, ...extra });
 
 const scopeOf = (ctx) => ({ schoolId: ctx.schoolId, meetId: ctx.meetId });
+
+/** 小组名称：1 → A 组。超过 26 组不可能出现（配置上限 8）。 */
+function groupLabel(index) {
+  return `${String.fromCharCode(64 + Number(index))} 组`;
+}
 const toIso = (now) => (now instanceof Date ? now.toISOString() : String(now));
 
 /** 预赛每组默认 8 人，最多 6 组——再多就不是「预赛」而是决赛分枪了。 */
@@ -302,10 +308,58 @@ async function advanceMeetEvent(payload = {}, ctx) {
  * 纯函数：入参是全部场次（含 entryKeys 与 winnerEntryKey），返回需要改写的场次。
  * 从第 1 轮往后扫，所以「某个胜者被换掉」会顺着链条一路清干净——这正是
  * 手工递归最容易漏的地方（改了第一轮，第三轮还挂着一个已被淘汰的人）。
+ *
+ * 小组+淘汰多一段：小组赛全部结束后，把各出线队按标准种子位填进淘汰赛首轮。
+ * 放在这里而不是另写一个动作，是为了让「判完最后一场小组赛」与「出线队就位」
+ * 在同一次写入里完成，不会出现「小组打完了但签表还空着」的中间态。
+ *
+ * @param {Array} matches 全部对阵（含 stage / roundNo / groupIndex）
+ * @param {Object|number} meta `{ totalRounds, format, groups, groupEntries }` 或直接给总轮数
  */
-function recomputeBracket(matches, totalRounds) {
+function recomputeBracket(matches, meta) {
+  const info = typeof meta === 'number' ? { totalRounds: meta } : (meta || {});
+  const totalRounds = Number(info.totalRounds) || 1;
+  const format = info.format || MEET_FORMAT.SINGLE_ELIM;
+  const groupsMeta = info.groups || null;
+  const groupEntries = info.groupEntries || null;
+
+  const groupMatches = matches.filter((match) => match.stage === 'group');
+  const knockout = matches.filter((match) => match.stage !== 'group');
+
+  // 小组+淘汰：出线队就位
+  if (format === MEET_FORMAT.GROUP_KNOCKOUT && groupsMeta && groupEntries
+    && groupMatches.length > 0) {
+    const stage = groupStageStandings({ groups: groupEntries, matches: groupMatches });
+    if (stage.complete) {
+      const qualifiers = [];
+      for (const key of Object.keys(groupEntries).sort((a, b) => Number(a) - Number(b))) {
+        const index = Number(key);
+        stage.rows
+          .filter((row) => row.groupIndex === index && row.rank <= groupsMeta.advancePerGroup)
+          .forEach((row) => qualifiers.push(row.entryKey));
+      }
+      const size = bracketSizeOf(qualifiers.length);
+      const order = standardSeedOrder(size);
+      const round1 = knockout
+        .filter((match) => match.roundNo === 1)
+        .sort((a, b) => a.index - b.index);
+      round1.forEach((match, position) => {
+        // 标准种子位：位置 0 放 1 号种子对最低种子，强队不会在首轮相遇
+        match.entryKeys[0] = qualifiers[order[position * 2] - 1] || null;
+        match.entryKeys[1] = qualifiers[order[position * 2 + 1] - 1] || null;
+        if (match.winnerEntryKey && !match.entryKeys.includes(match.winnerEntryKey)) {
+          match.winnerEntryKey = '';
+        }
+        // 出线队不足签位时，对面是空位 → 直接晋级，不需要打
+        const [a, b] = match.entryKeys;
+        if (a && !b) match.winnerEntryKey = a;
+        else if (b && !a) match.winnerEntryKey = b;
+      });
+    }
+  }
+
   const byRound = new Map();
-  for (const match of matches) {
+  for (const match of knockout) {
     if (!byRound.has(match.roundNo)) byRound.set(match.roundNo, new Map());
     byRound.get(match.roundNo).set(match.index, match);
   }
@@ -332,13 +386,28 @@ function roundNoOf(session) {
   return matched ? Number(matched[1]) : 0;
 }
 
-/** 把场次还原成纯函数要的对阵结构。 */
+/** 小组赛场次的组号：`g2` → 2；不是小组赛返回 0。 */
+function groupIndexOf(session) {
+  const matched = /^g([1-9])$/.exec(String((session && session.round) || ''));
+  return matched ? Number(matched[1]) : 0;
+}
+
+/** 场次属于哪一阶段：小组赛 / 淘汰赛（含循环赛）；其他返回空。 */
+function stageOf(session) {
+  if (groupIndexOf(session) > 0) return 'group';
+  if (roundNoOf(session) > 0) return 'knockout';
+  return '';
+}
+
+/** 把场次还原成纯函数要的对阵结构（小组赛与淘汰赛都在内）。 */
 function matchesOf(sessions, eventKey) {
   return sessions
-    .filter((doc) => doc.eventKey === eventKey && roundNoOf(doc) > 0)
+    .filter((doc) => doc.eventKey === eventKey && stageOf(doc))
     .map((doc) => ({
       sessionKey: doc._id,
+      stage: stageOf(doc),
       roundNo: roundNoOf(doc),
+      groupIndex: groupIndexOf(doc),
       index: Number(doc.index) || 1,
       roundLabel: doc.roundLabel || '',
       entryKeys: Array.isArray(doc.entryKeys) && doc.entryKeys.length === 2
@@ -346,7 +415,7 @@ function matchesOf(sessions, eventKey) {
         : [null, null],
       winnerEntryKey: doc.winnerEntryKey || '',
     }))
-    .sort((a, b) => a.roundNo - b.roundNo || a.index - b.index);
+    .sort((a, b) => a.roundNo - b.roundNo || a.groupIndex - b.groupIndex || a.index - b.index);
 }
 
 /**
@@ -388,6 +457,9 @@ async function drawMeetBracket(payload = {}, ctx) {
   let matches = [];
   let totalRounds = 1;
   let size = entryKeys.length;
+  // 小组+淘汰的分组结果要写进 event.bracket（供后续判胜负时重算），
+  // 所以声明在分支之外，不能只在分支里 const。
+  let groupEntries = null;
 
   if (format === MEET_FORMAT.ROUND_ROBIN) {
     const rounds = roundRobinRounds(entryKeys);
@@ -406,6 +478,55 @@ async function drawMeetBracket(payload = {}, ctx) {
         });
       }
     });
+  } else if (format === MEET_FORMAT.GROUP_KNOCKOUT) {
+    // 小组+淘汰：先分组打循环，每组前 N 出线，再打单败。
+    // 小组数与出线数在创建项目时就定好（event.groups），这里只负责落位。
+    const groupCount = Number((event.groups && event.groups.count) || 2);
+    const advancePerGroup = Number((event.groups && event.groups.advancePerGroup) || 2);
+    const buckets = distribute(entryKeys, groupCount, seeds, createSeededRandom(seed));
+    groupEntries = {};
+    buckets.forEach((keys, index) => { groupEntries[index + 1] = keys; });
+
+    let matchIndex = 0;
+    for (let group = 1; group <= groupCount; group += 1) {
+      const rounds = roundRobinRounds(groupEntries[group] || []);
+      rounds.forEach((pairs, roundIndex) => {
+        for (const [a, b] of pairs) {
+          matchIndex += 1;
+          matches.push({
+            roundNo: 1,
+            groupIndex: group,
+            stage: 'group',
+            index: matchIndex,
+            entryKeys: [a, b],
+            winnerEntryKey: '',
+            roundLabel: `${groupLabel(group)} 第 ${roundIndex + 1} 轮`,
+          });
+        }
+      });
+      matchIndex = 0; // 组内序号从 1 起，场次键用 g<组号> + 序号
+    }
+
+    // 淘汰赛签位按「小组数 × 每组出线数」准备，出线队由 recomputeBracket 填
+    const slots = groupCount * advancePerGroup;
+    size = bracketSizeOf(slots);
+    totalRounds = bracketTotalRounds(size);
+    for (let roundNo = 1; roundNo <= totalRounds; roundNo += 1) {
+      const count = size / Math.pow(2, roundNo);
+      for (let index = 1; index <= count; index += 1) {
+        matches.push({
+          roundNo,
+          stage: 'knockout',
+          index,
+          entryKeys: [null, null],
+          winnerEntryKey: '',
+          roundLabel: bracketRoundLabel(roundNo, totalRounds),
+        });
+      }
+    }
+    recomputeBracket(matches, {
+      totalRounds, format, groups: { count: groupCount, advancePerGroup }, groupEntries,
+    });
   } else {
     let draw;
     try {
@@ -422,6 +543,7 @@ async function drawMeetBracket(payload = {}, ctx) {
         const pair = roundNo === 1 ? draw.pairs[index - 1] : [null, null];
         matches.push({
           roundNo,
+          stage: 'knockout',
           index,
           entryKeys: [pair[0], pair[1]],
           winnerEntryKey: '',
@@ -444,7 +566,9 @@ async function drawMeetBracket(payload = {}, ctx) {
     const now = toIso(fresh.now);
 
     for (const match of matches) {
-      const round = format === MEET_FORMAT.ROUND_ROBIN ? 'rr' : `r${match.roundNo}`;
+      const round = match.stage === 'group'
+        ? `g${match.groupIndex}`
+        : (format === MEET_FORMAT.ROUND_ROBIN ? 'rr' : `r${match.roundNo}`);
       const key = meetSessionKey(fresh.meetId, eventKey, round, match.index);
       const current = await tx.sportsMeetSessions.getById(key);
       await tx.sportsMeetSessions.set(key, {
@@ -470,7 +594,18 @@ async function drawMeetBracket(payload = {}, ctx) {
     const currentEvent = await tx.sportsMeetEvents.getById(eventKey);
     await tx.sportsMeetEvents.set(eventKey, {
       ...currentEvent,
-      bracket: { format, size, totalRounds, seed, drawnAt: now },
+      bracket: {
+        format,
+        size,
+        totalRounds,
+        seed,
+        drawnAt: now,
+        groups: format === MEET_FORMAT.GROUP_KNOCKOUT
+          ? { count: Number((event.groups && event.groups.count) || 2),
+            advancePerGroup: Number((event.groups && event.groups.advancePerGroup) || 2) }
+          : null,
+        groupEntries: format === MEET_FORMAT.GROUP_KNOCKOUT ? groupEntries : null,
+      },
       updatedAt: now,
     });
     return ok({
@@ -504,7 +639,7 @@ async function setMeetMatchWinner(payload = {}, ctx) {
   const [session, sessions, events] = await Promise.all([
     ctx.repo.forMeet(scope).sportsMeetSessions.getById(sessionKey),
     ctx.repo.forMeet(scope).sportsMeetSessions.list(),
-    ctx.repo.forMeet(scope).sportsMeetEvents.list(),
+    listAliveEvents(ctx.repo.forMeet(scope).sportsMeetEvents),
   ]);
   if (!session || session.meetId !== ctx.meetId) return refused('场次不存在或不属于本届运动会');
   if (!canPublishMeetResult(ctx)) return refused('只有校级管理员及以上或本届总裁判可以判定胜负');
@@ -517,15 +652,19 @@ async function setMeetMatchWinner(payload = {}, ctx) {
   const event = events.find((row) => row._id === session.eventKey);
   if (!event || event.scoreType !== MEET_SCORE_TYPE.VERSUS) return refused('该场次不是胜负项目的对阵');
   const bracket = event.bracket || null;
-  const singleElim = !bracket || bracket.format !== MEET_FORMAT.ROUND_ROBIN;
+  const format = (bracket && bracket.format) || event.format || MEET_FORMAT.SINGLE_ELIM;
   const totalRounds = bracket ? Number(bracket.totalRounds) || 1 : 1;
 
   const matches = matchesOf(sessions, session.eventKey);
   const target = matches.find((match) => match.sessionKey === sessionKey);
   if (!target) return refused('该场次不属于任何签表轮次');
   target.winnerEntryKey = winner;
-  // 循环赛各场相互独立，没有「往上推」这回事
-  if (singleElim) recomputeBracket(matches, totalRounds);
+  // 循环赛各场相互独立，没有「往上推」这回事；单败与小组+淘汰都要重算
+  if (format !== MEET_FORMAT.ROUND_ROBIN) {
+    recomputeBracket(matches, {
+      totalRounds, format, groups: bracket && bracket.groups, groupEntries: bracket && bracket.groupEntries,
+    });
+  }
 
   const changed = [];
   for (const match of matches) {
@@ -549,10 +688,10 @@ async function setMeetMatchWinner(payload = {}, ctx) {
         updatedAt: now,
       });
     }
-    const champion = singleElim
-      ? (matches.find((match) => match.roundNo === totalRounds && match.winnerEntryKey)
-        || {}).winnerEntryKey || ''
-      : '';
+    const champion = format === MEET_FORMAT.ROUND_ROBIN
+      ? ''
+      : (matches.find((match) => match.stage !== 'group'
+        && match.roundNo === totalRounds && match.winnerEntryKey) || {}).winnerEntryKey || '';
     const currentEvent = await tx.sportsMeetEvents.getById(session.eventKey);
     await tx.sportsMeetEvents.set(session.eventKey, {
       ...currentEvent, championEntryKey: champion, updatedAt: now,
@@ -593,18 +732,52 @@ async function getMeetBracket(payload = {}, ctx) {
   const matches = matchesOf(sessions, eventKey);
 
   const collegeOf = new Map(approved.map((doc) => [doc._id, doc.collegeId]));
-  const rows = (format === MEET_FORMAT.ROUND_ROBIN
-    ? roundRobinStandings({ entries: entryKeys, matches })
-    : bracketStandings({ entries: entryKeys, totalRounds, matches }));
+  const groupMatches = matches.filter((match) => match.stage === 'group');
+  const knockoutMatches = matches.filter((match) => match.stage !== 'group');
+
+  let rows;
+  if (format === MEET_FORMAT.ROUND_ROBIN) {
+    rows = roundRobinStandings({ entries: entryKeys, matches });
+  } else if (format === MEET_FORMAT.GROUP_KNOCKOUT) {
+    rows = groupKnockoutStandings({
+      entries: entryKeys,
+      groupEntries: (bracket && bracket.groupEntries) || {},
+      advancePerGroup: (bracket && bracket.groups && bracket.groups.advancePerGroup) || 1,
+      groupMatches,
+      knockoutMatches,
+      totalRounds,
+    });
+  } else {
+    rows = bracketStandings({ entries: entryKeys, totalRounds, matches: knockoutMatches });
+  }
+
+  const groupStage = format === MEET_FORMAT.GROUP_KNOCKOUT && bracket
+    ? groupStageStandings({ groups: bracket.groupEntries || {}, matches: groupMatches })
+    : null;
 
   return ok({
     event: { eventKey, name: event.name, group: event.group, format, scored: event.scored },
     drawn: Boolean(bracket),
     totalRounds,
+    groupStage: groupStage ? {
+      complete: groupStage.complete,
+      groups: Object.keys(bracket.groupEntries || {})
+        .sort((a, b) => Number(a) - Number(b))
+        .map((key) => ({
+          index: Number(key),
+          label: `${String.fromCharCode(64 + Number(key))} 组`,
+          entries: bracket.groupEntries[key].map((entryKey) => ({
+            entryKey, collegeId: collegeOf.get(entryKey) || '',
+          })),
+          rows: groupStage.rows.filter((row) => row.groupIndex === Number(key)),
+        })),
+    } : null,
     championEntryKey: (bracket && event.championEntryKey) || '',
     matches: matches.map((match) => ({
       sessionKey: match.sessionKey,
+      stage: match.stage,
       roundNo: match.roundNo,
+      groupIndex: match.groupIndex,
       roundLabel: match.roundLabel || bracketRoundLabel(match.roundNo, totalRounds),
       index: match.index,
       entryKeys: match.entryKeys,

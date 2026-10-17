@@ -1,5 +1,5 @@
 /**
- * 学院部长工作台
+ * 学院部长工作台 / 校管理员代报
  * ============================================================
  * 一屏看本院每个项目组别的「已报 / 上限 / 待审 / 意向人数」，点开某个项目从
  * 申请人池里选人提交。三条约束直接来自裁决：
@@ -7,13 +7,22 @@
  *   · 提交按项目组别一条（D22），一次只提交一个项目，失败时只影响这一项；
  *   · 名额、兼项、人数、重复全部由服务端判，页面只负责把失败原因显示清楚。
  *
- * 这里不做「整院一次提交」：120 个项目组别不可能放进一个事务（单事务 200 写），
- * 假装能整批原子提交只会在失败时给出错误的安全感。
+ * 【校管理员要先选学院】
+ * 代报（D13）允许校级管理员替任一学院报名，但「替哪个学院」必须明确选，不能
+ * 猜。所以管理员进入本页时先出现学院选择（带搜索）；学院部长则直接落到本院，
+ * 不需要也不应该看到全院列表——服务端也会拒绝他调这个接口。
+ *
+ * 【人数不限的项目】
+ * members = 0 表示不限人数（入场式展示这类）。此时选人上限取一个宽松值，
+ * 只保证「至少 1 人」，不强行要求等于某个数。
  * ============================================================
  */
 
 const meet = require('../../services/meet.js');
 const session = require('../../services/school-session.js');
+
+/** 人数不限时选人面板的硬上限，纯前端保护，避免一次勾几百人 */
+const OPEN_MEMBER_CAP = 60;
 
 Page({
   data: {
@@ -24,14 +33,21 @@ Page({
     schoolId: '',
     meetId: '',
     collegeId: '',
+    collegeName: '',
     byAdmin: false,
     rows: [],
+    // 管理员：学院选择
+    colleges: [],
+    filteredColleges: [],
+    collegeKeyword: '',
+    needCollege: false,
     // 当前展开的项目与它的申请人池
     activeEventKey: '',
     activeEvent: null,
     applicants: [],
     picked: [],
     entries: [],
+    memberCap: 1,
   },
 
   onLoad(options = {}) {
@@ -55,23 +71,90 @@ Page({
     return meet.forScope({ schoolId: this.data.schoolId, meetId: this.data.meetId });
   },
 
+  /** 当前学院的过滤条件；管理员没选学院时不传，让服务端明确回报 */
+  scopePayload() {
+    return this.data.collegeId ? { collegeId: this.data.collegeId } : {};
+  },
+
   async reload() {
     this.update({ loading: true, error: '' });
     try {
       const [board, entries] = await Promise.all([
-        this.client().listMeetCollegeEvents({}),
+        this.client().listMeetCollegeEvents(this.scopePayload()),
         this.client().listMeetEntries({}),
       ]);
       this.update({
         loading: false,
+        needCollege: false,
         collegeId: board.collegeId,
+        collegeName: this.nameOfCollege(board.collegeId) || this.data.collegeName,
         byAdmin: Boolean(board.byAdmin),
         rows: board.items,
         entries: entries.items,
       });
     } catch (err) {
-      this.update({ loading: false, error: (err && err.message) || '加载失败' });
+      // 校管理员尚未指定学院时，服务端会要求先选学院；此时给出学院列表
+      const message = (err && err.message) || '加载失败';
+      const colleges = await this.loadColleges();
+      this.update({
+        loading: false,
+        colleges,
+        filteredColleges: this.filterColleges(colleges, this.data.collegeKeyword),
+        needCollege: colleges.length > 0,
+        error: colleges.length > 0 ? '' : message,
+      });
     }
+  },
+
+  async loadColleges() {
+    try {
+      const result = await this.client().listMeetColleges({});
+      return result.items || [];
+    } catch (err) {
+      // 不是校管理员：没有全院列表，也不需要
+      return [];
+    }
+  },
+
+  filterColleges(colleges, keyword) {
+    const needle = String(keyword || '').trim();
+    if (!needle) return colleges;
+    return colleges.filter((row) => String(row.name || '').includes(needle)
+      || String(row.collegeId || '').includes(needle));
+  },
+
+  nameOfCollege(collegeId) {
+    const found = (this.data.colleges || []).find((row) => row.collegeId === collegeId);
+    return found ? found.name : '';
+  },
+
+  onCollegeKeyword(event) {
+    const collegeKeyword = event.detail.value;
+    this.update({
+      collegeKeyword,
+      filteredColleges: this.filterColleges(this.data.colleges, collegeKeyword),
+    });
+  },
+
+  async onPickCollege(event) {
+    const { collegeId } = event.currentTarget.dataset;
+    if (!collegeId) return undefined;
+    this.update({
+      collegeId,
+      collegeName: this.nameOfCollege(collegeId),
+      needCollege: false,
+      collegeKeyword: '',
+      filteredColleges: this.data.colleges,
+      activeEventKey: '',
+      applicants: [],
+      picked: [],
+    });
+    return this.reload();
+  },
+
+  /** 已选学院后仍可换一个 */
+  onChangeCollege() {
+    this.update({ needCollege: true, collegeId: '', rows: [], entries: [] });
   },
 
   /** 展开某个项目的选人面板 */
@@ -84,12 +167,14 @@ Page({
     }
     this.update({ busy: true, error: '', notice: '' });
     try {
-      const pool = await this.client().getMeetApplicantPool({ eventKey });
-      const picked = pool.event.entryForm === 'single' && pool.items.length === 1 ? [pool.items[0].userId] : [];
+      const pool = await this.client().getMeetApplicantPool({ eventKey, ...this.scopePayload() });
+      const cap = this.capOf(pool.event);
+      const picked = [];
       this.update({
         busy: false,
         activeEventKey: eventKey,
         activeEvent: pool.event,
+        memberCap: cap,
         applicants: pool.items.map((row) => ({ ...row, checked: picked.includes(row.userId) })),
         picked,
       });
@@ -98,9 +183,16 @@ Page({
     }
   },
 
+  /** 可选人数上限：人数不限时给一个宽松上限 */
+  capOf(activeEvent) {
+    const members = Number((activeEvent && activeEvent.members) || 0);
+    if (members > 0) return members;
+    return OPEN_MEMBER_CAP;
+  },
+
   onToggleApplicant(event) {
     const userId = event.currentTarget.dataset.userId;
-    const need = Number((this.data.activeEvent && this.data.activeEvent.members) || 1);
+    const need = this.data.memberCap || 1;
     const picked = [...this.data.picked];
     const index = picked.indexOf(userId);
     if (index >= 0) picked.splice(index, 1);
@@ -115,10 +207,14 @@ Page({
 
   async onSubmitEntry() {
     if (this.data.busy) return undefined;
-    const { activeEventKey, picked } = this.data;
-    const need = Number((this.data.activeEvent && this.data.activeEvent.members) || 1);
-    if (picked.length !== need) {
-      this.update({ error: `该项目需要 ${need} 人，当前选了 ${picked.length} 人` });
+    const { activeEventKey, picked, activeEvent } = this.data;
+    const members = Number((activeEvent && activeEvent.members) || 0);
+    if (picked.length === 0) {
+      this.update({ error: '请至少选择 1 人' });
+      return undefined;
+    }
+    if (members > 0 && picked.length !== members) {
+      this.update({ error: `该项目每组需 ${members} 人，当前选了 ${picked.length} 人` });
       return undefined;
     }
     this.update({ busy: true, error: '', notice: '' });

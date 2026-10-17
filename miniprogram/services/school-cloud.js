@@ -182,6 +182,8 @@ function forMeet(input) {
     configureMeetEvent: payload => request('configureMeetEvent', payload),
     publishMeetRegistration: payload => request('publishMeetRegistration', payload),
     deleteSportsMeet: payload => request('deleteSportsMeet', payload),
+    removeMeetEvent: payload => request('removeMeetEvent', payload),
+    listMeetColleges: payload => request('listMeetColleges', payload),
     listSportsMeets: payload => request('listSportsMeets', payload),
     getSportsMeet: payload => request('getSportsMeet', payload),
     listSportsEventTemplates: payload => request('listSportsEventTemplates', payload),

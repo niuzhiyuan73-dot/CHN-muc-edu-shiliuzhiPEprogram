@@ -3,21 +3,28 @@
  * ============================================================
  * 两种进入方式：
  *   · 不带 meetId：新发起。第一步填基本信息并建草稿，第二步选项目。
- *   · 带 meetId：继续配置已有草稿，直接进第二步（详情页的「继续配置项目」走这条）。
+ *   · 带 meetId：继续配置已有草稿，直接进第二步，并**回填已配置的项目**。
  *
- * 【为什么组别是逐项勾选，不是自动生成】
- * N12 的裁决是「每届管理员逐项目勾选组别」。自动按男/女生成会把 110 米栏
- * 也生成女子组，把入场式生成男女组——这些在规则上都站不住。默认只勾模板
- * 推荐的组别，管理员可以再改。
+ * 【勾选即保存】
+ * 早先的写法是「先改一堆，最后点保存项目统一提交」。中途退出、切页面，或者
+ * 某一项被服务端拒绝，用户看到的就是「我明明选了，草稿里却没有」。
+ * 现在每次勾选/取消/改人数都立刻写库：勾上就 configureMeetEvent，取消就
+ * removeMeetEvent。草稿状态永远等于屏幕上的状态，不需要用户记得点保存。
  *
- * 【配置是一次一项提交的】
- * 服务端按「项目 + 组别」落库，每项一次 configureMeetEvent。整批提交时若某一项
- * 被拒（比如三人板鞋人数不是 3），会明确报出是哪一项，而不是整批静默失败。
+ * 【为什么人数与限额可以是 0（不限）】
+ * 入场式展示这类项目，各院上场人数与队数由学院自己定，系统只关心「有没有报」。
+ * 0 在服务端表示「不限」，页面显示成「不限」而不是「0 人」。
+ *
+ * 【赛制与轮次用分段选择，不是一个按钮】
+ * 原来单个 chip 显示「直接决赛」，点一下才知道是切换，也看不出还有别的选项。
+ * 现在明确列出全部可选值：数值型「直接决赛 / 预赛+决赛」，胜负型
+ * 「单败淘汰 / 循环赛 / 小组+淘汰」；选中项高亮，未选项一眼可见。
  * ============================================================
  */
 
 const meet = require('../../services/meet.js');
 const session = require('../../services/school-session.js');
+const { meetEventKey } = require('../../utils/meet-scope.js');
 
 const GROUP_LABEL = { male: '男子', female: '女子', mixed: '混合' };
 const GROUP_ORDER = ['male', 'female', 'mixed'];
@@ -74,6 +81,7 @@ Page({
     templates: [],
     picked: [],
     pickedCount: 0,
+    savingKey: '',
   },
 
   onLoad(options = {}) {
@@ -112,16 +120,56 @@ Page({
   async loadTemplates() {
     this.update({ loading: true, error: '' });
     try {
-      const result = await meet.forScope({ schoolId: this.data.schoolId })
-        .listSportsEventTemplates({ keyword: this.data.keyword, category: this.data.activeCategory });
+      const [result, existing] = await Promise.all([
+        meet.forScope({ schoolId: this.data.schoolId })
+          .listSportsEventTemplates({ keyword: this.data.keyword, category: this.data.activeCategory }),
+        // 继续配置必须回填：否则一进来「已选 0 项」，看起来像之前什么都没保存
+        // 只在首次进入时回填：之后每次切分类都重新拉会覆盖本地刚改的设置
+        this.data.meetId && !this.prefilled ? this.client().getSportsMeet({}) : Promise.resolve(null),
+      ]);
+      const byId = new Map(result.items.map((item) => [item.templateId, item]));
+      const picked = existing ? this.pickedFromEvents(existing.events, byId) : this.data.picked;
+      if (existing) this.prefilled = true;
       this.update({
         loading: false,
         categories: result.categories,
-        templates: decorateTemplates(result.items, this.data.picked),
+        templates: decorateTemplates(result.items, picked),
+        picked,
+        pickedCount: picked.length,
       });
     } catch (err) {
       this.update({ loading: false, error: (err && err.message) || '项目库加载失败' });
     }
+  },
+
+  /** 把服务端已配置的项目还原成编辑行（人数、限额、赛制、轮次一个不能丢） */
+  pickedFromEvents(events, templateById) {
+    return (events || []).map((ev) => {
+      const template = templateById.get(ev.templateId) || {};
+      return {
+        key: `${ev.templateId}|${ev.group}`,
+        eventKey: ev.eventKey,
+        templateId: ev.templateId,
+        name: ev.name,
+        group: ev.group,
+        groupLabel: GROUP_LABEL[ev.group],
+        entryForm: ev.entryForm,
+        scoreType: ev.scoreType,
+        members: Number(ev.members) || 0,
+        membersUnlimited: Number(ev.members) === 0,
+        limit: Number(ev.perCollegeLimit) || 0,
+        limitUnlimited: Number(ev.perCollegeLimit) === 0,
+        limitUnit: unitOf(ev.entryForm),
+        fixedMembers: template.fixedMembers || null,
+        isVersus: ev.scoreType === 'versus',
+        format: ev.format || 'single_elim',
+        groupCount: (ev.groups && ev.groups.count) || 2,
+        advancePerGroup: (ev.groups && ev.groups.advancePerGroup) || 2,
+        rounds: ev.rounds || 'final',
+        advanceCount: (ev.advance && ev.advance.count) || 3,
+        saved: true,
+      };
+    });
   },
 
   // ---------- 第一步：基本信息 ----------
@@ -153,7 +201,7 @@ Page({
         busy: false,
         step: 2,
         meetId: created.meet.meetId,
-        notice: '草稿已建立，请选择项目',
+        notice: '草稿已建立，选中的项目会立即保存',
       });
     } catch (err) {
       this.update({ busy: false, error: (err && err.message) || '创建失败' });
@@ -176,122 +224,232 @@ Page({
     return this.loadTemplates();
   },
 
-  /** 勾选/取消「项目 + 组别」。默认人数与限额取模板建议值，可再调。 */
-  onToggleGroup(event) {
+  /** 勾选 = 立即写入草稿；取消 = 立即从草稿移除 */
+  async onToggleGroup(event) {
     const { templateId, group } = event.currentTarget.dataset;
     const key = `${templateId}|${group}`;
     const picked = [...this.data.picked];
     const index = picked.findIndex((row) => row.key === key);
+
     if (index >= 0) {
+      const row = picked[index];
+      this.update({ savingKey: key, error: '' });
+      try {
+        await this.client().removeMeetEvent({ eventKey: row.eventKey });
+      } catch (err) {
+        this.update({ savingKey: '', error: (err && err.message) || '移除失败' });
+        return;
+      }
       picked.splice(index, 1);
       this.update({
+        savingKey: '',
         picked,
         pickedCount: picked.length,
         templates: decorateTemplates(this.data.templates, picked),
       });
       return;
     }
+
     const template = this.data.templates.find((item) => item.templateId === templateId);
     if (!template) return;
-    picked.push({
+    const row = {
       key,
+      eventKey: meetEventKey(this.data.meetId, templateId, group),
       templateId,
       name: template.name,
       group,
       groupLabel: GROUP_LABEL[group],
       entryForm: template.entryForm,
+      scoreType: template.scoreType,
       members: template.fixedMembers || template.defaultMembers || 1,
+      membersUnlimited: false,
       limit: defaultLimit(template),
+      limitUnlimited: false,
       limitUnit: unitOf(template.entryForm),
       fixedMembers: template.fixedMembers || null,
-      // 赛制与轮次：胜负项目选赛制，数值项目选是否预赛+决赛。
-      // 默认「直接决赛／单败淘汰」——这是学校运动会里绝大多数项目的形态，
-      // 不把「预赛+决赛」设成默认，否则每个项目都要多排一场、多派一组裁判。
       isVersus: template.scoreType === 'versus',
-      format: template.scoreType === 'versus' ? 'single_elim' : '',
+      format: 'single_elim',
+      groupCount: 2,
+      advancePerGroup: 2,
       rounds: 'final',
       advanceCount: 3,
-    });
+      saved: false,
+    };
+    picked.push(row);
     this.update({
       picked,
       pickedCount: picked.length,
       templates: decorateTemplates(this.data.templates, picked),
     });
+    await this.persist(row);
   },
 
-  /** 数值项目：直接决赛 ↔ 预赛+决赛 */
-  onToggleRounds(event) {
-    const index = Number(event.currentTarget.dataset.index);
-    const picked = [...this.data.picked];
-    const row = picked[index];
-    if (!row || row.isVersus) return;
-    row.rounds = row.rounds === 'heat_final' ? 'final' : 'heat_final';
+  /** 把一行的当前设置写进草稿；失败时明确报出来，不吞掉 */
+  async persist(row) {
+    const payload = {
+      templateId: row.templateId,
+      group: row.group,
+      members: row.entryForm === 'single'
+        ? 1
+        : (row.membersUnlimited ? 0 : Number(row.members) || 0),
+      perCollegeLimit: row.limitUnlimited ? 0 : Number(row.limit) || 0,
+    };
+    if (row.isVersus) {
+      payload.format = row.format;
+      if (row.format === 'group_knockout') {
+        payload.groups = {
+          count: Number(row.groupCount) || 2,
+          advancePerGroup: Number(row.advancePerGroup) || 2,
+        };
+      }
+    } else if (row.rounds === 'heat_final') {
+      payload.rounds = 'heat_final';
+      payload.advance = { mode: 'per_heat', count: Number(row.advanceCount) || 3 };
+    }
+
+    this.update({ savingKey: row.key, error: '' });
+    try {
+      await this.client().configureMeetEvent(payload);
+      this.markSaved(row.key, true);
+      this.update({ savingKey: '' });
+      return true;
+    } catch (err) {
+      const message = (err && err.message) || '保存失败';
+      this.markSaved(row.key, false, message);
+      this.update({ savingKey: '', error: `${row.name}（${row.groupLabel}）：${message}` });
+      return false;
+    }
+  },
+
+  markSaved(key, saved, message = '') {
+    const picked = this.data.picked.map((row) => (row.key === key
+      ? { ...row, saved, saveError: message } : row));
     this.update({ picked });
   },
 
-  /** 胜负项目：单败淘汰 ↔ 循环赛（双败与小组赛本期未实现，不给选项） */
-  onToggleFormat(event) {
-    const index = Number(event.currentTarget.dataset.index);
+  /** 改了一行之后：先写库，再刷新界面 */
+  async applyChange(index, patch) {
     const picked = [...this.data.picked];
-    const row = picked[index];
-    if (!row || !row.isVersus) return;
-    row.format = row.format === 'round_robin' ? 'single_elim' : 'round_robin';
+    const row = { ...picked[index], ...patch };
+    picked[index] = row;
     this.update({ picked });
+    await this.persist(row);
+    return row;
+  },
+
+  /** 人数与限额：允许直接输入，不再只能点加减 */
+  onMembersInput(event) {
+    const index = Number(event.currentTarget.dataset.index);
+    const value = Number(event.detail.value);
+    const row = this.data.picked[index];
+    if (!row || !Number.isFinite(value) || row.fixedMembers) return;
+    const members = Math.max(0, Math.min(200, Math.trunc(value)));
+    this.applyChange(index, { members, membersUnlimited: members === 0 });
+  },
+
+  onLimitInput(event) {
+    const index = Number(event.currentTarget.dataset.index);
+    const value = Number(event.detail.value);
+    const row = this.data.picked[index];
+    if (!row || !Number.isFinite(value)) return;
+    const limit = Math.max(0, Math.min(20, Math.trunc(value)));
+    this.applyChange(index, { limit, limitUnlimited: limit === 0 });
+  },
+
+  onToggleMembersUnlimited(event) {
+    const index = Number(event.currentTarget.dataset.index);
+    const row = this.data.picked[index];
+    if (!row || row.fixedMembers) return;
+    // 取消「不限」时给一个合理默认值，避免人数停在 0 让报名端无从校验
+    const next = row.membersUnlimited ? (row.entryForm === 'single' ? 1 : 10) : 0;
+    this.applyChange(index, { membersUnlimited: !row.membersUnlimited, members: next });
+  },
+
+  onToggleLimitUnlimited(event) {
+    const index = Number(event.currentTarget.dataset.index);
+    const row = this.data.picked[index];
+    if (!row) return;
+    this.applyChange(index, {
+      limitUnlimited: !row.limitUnlimited,
+      limit: row.limitUnlimited ? 1 : 0,
+    });
+  },
+
+  /** 轮次：直接决赛 / 预赛+决赛 */
+  onPickRounds(event) {
+    const index = Number(event.currentTarget.dataset.index);
+    const rounds = String(event.currentTarget.dataset.rounds || 'final');
+    const row = this.data.picked[index];
+    if (!row || row.isVersus || row.rounds === rounds) return;
+    this.applyChange(index, { rounds });
+  },
+
+  /** 赛制：单败 / 循环 / 小组+淘汰 */
+  onPickFormat(event) {
+    const index = Number(event.currentTarget.dataset.index);
+    const format = String(event.currentTarget.dataset.format || 'single_elim');
+    const row = this.data.picked[index];
+    if (!row || !row.isVersus || row.format === format) return;
+    this.applyChange(index, { format });
+  },
+
+  onAdvanceCountInput(event) {
+    const index = Number(event.currentTarget.dataset.index);
+    const value = Number(event.detail.value);
+    const row = this.data.picked[index];
+    if (!row || !Number.isFinite(value)) return;
+    this.applyChange(index, { advanceCount: Math.max(1, Math.min(50, Math.trunc(value))) });
+  },
+
+  onGroupCountInput(event) {
+    const index = Number(event.currentTarget.dataset.index);
+    const value = Number(event.detail.value);
+    const row = this.data.picked[index];
+    if (!row || !Number.isFinite(value)) return;
+    this.applyChange(index, { groupCount: Math.max(2, Math.min(8, Math.trunc(value))) });
+  },
+
+  onAdvancePerGroupInput(event) {
+    const index = Number(event.currentTarget.dataset.index);
+    const value = Number(event.detail.value);
+    const row = this.data.picked[index];
+    if (!row || !Number.isFinite(value)) return;
+    this.applyChange(index, { advancePerGroup: Math.max(1, Math.min(4, Math.trunc(value))) });
   },
 
   onStep(event) {
     const { index, field, delta } = event.currentTarget.dataset;
-    const picked = [...this.data.picked];
-    const row = picked[Number(index)];
+    const row = this.data.picked[Number(index)];
     if (!row) return;
     const next = Number(row[field]) + Number(delta);
     if (field === 'members') {
       if (row.fixedMembers || row.entryForm === 'single') return;
-      if (next < 2 || next > 30) return;
+      if (next < 0 || next > 200) return;
     }
-    if (field === 'limit' && (next < 1 || next > 20)) return;
+    if (field === 'limit' && (next < 0 || next > 20)) return;
     if (field === 'advanceCount' && (next < 1 || next > 50)) return;
-    row[field] = next;
-    this.update({ picked });
+    this.applyChange(Number(index), { [field]: next });
   },
 
-  /** 批量写入：逐项配置，失败时明确指出是哪一项 */
+  /** 收尾：项目在勾选时就已写库，这里只校验有没有保存失败的 */
   async onSubmit() {
     if (this.data.busy) return undefined;
     if (this.data.picked.length === 0) {
       this.update({ error: '请至少选择一个项目再继续' });
       return undefined;
     }
-    this.update({ busy: true, error: '', notice: '' });
-
-    const scoped = this.client();
-    try {
-      for (const row of this.data.picked) {
-        try {
-          const payload = {
-            templateId: row.templateId,
-            group: row.group,
-            members: row.members,
-            perCollegeLimit: row.limit,
-          };
-          if (row.isVersus) {
-            payload.format = row.format || 'single_elim';
-          } else if (row.rounds === 'heat_final') {
-            payload.rounds = 'heat_final';
-            // 默认「每组前 N」：学校运动会最常见，且分组人数不均时也不会偏袒
-            payload.advance = { mode: 'per_heat', count: row.advanceCount };
-          }
-          await scoped.configureMeetEvent(payload);
-        } catch (err) {
-          throw new Error(`${row.name}（${row.groupLabel}）：${(err && err.message) || '配置失败'}`);
-        }
+    const failed = this.data.picked.filter((row) => !row.saved);
+    if (failed.length > 0) {
+      // 逐项重试一次：多数是网络抖动，重试就能过
+      for (const row of failed) await this.persist(row);
+      const stillFailed = this.data.picked.filter((row) => !row.saved);
+      if (stillFailed.length > 0) {
+        this.update({ error: `还有 ${stillFailed.length} 项没有保存成功，请检查后重试` });
+        return undefined;
       }
-      this.update({ busy: false });
-      return wx.redirectTo({ url: `/pages/meet-detail/meet-detail?meetId=${this.data.meetId}` });
-    } catch (err) {
-      this.update({ busy: false, error: (err && err.message) || '配置失败' });
-      return undefined;
     }
+    this.update({ busy: false });
+    return wx.redirectTo({ url: `/pages/meet-detail/meet-detail?meetId=${this.data.meetId}` });
   },
 
   onBackToBasic() {

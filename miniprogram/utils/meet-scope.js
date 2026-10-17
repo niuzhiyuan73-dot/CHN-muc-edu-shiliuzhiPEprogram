@@ -67,6 +67,29 @@ const MEET_ENTRY_STATUS = Object.freeze({
   WITHDRAWN: 'withdrawn',
 });
 
+/** 项目组别状态：删除用软删除，因为报名/成绩都可能已经指过来。 */
+const MEET_EVENT_STATUS = Object.freeze({
+  ACTIVE: 'active',
+  DELETED: 'deleted',
+});
+
+/**
+ * 项目组别是否还在。
+ *
+ * 为什么不用物理删除：报名、成绩、场次都按 eventKey 指过来，删文档会留下
+ * 悬空引用；而且仓储接口本身没有 remove。所以置 status='deleted'，
+ * 读取处一律用 listAliveEvents 过滤——漏掉一处，被删的项目就会在报名页
+ * 里「复活」，所以这里只留一个入口，不要在调用处自己写 filter。
+ */
+function isEventAlive(doc) {
+  return Boolean(doc) && doc.status !== MEET_EVENT_STATUS.DELETED;
+}
+
+/** 读一个项目集合，并滤掉已删除的条目。 */
+async function listAliveEvents(collection) {
+  return (await collection.list()).filter(isEventAlive);
+}
+
 /** 单段合法性：非空、不含分隔符。 */
 function part(value, label) {
   const text = String(value == null ? '' : value).trim();
@@ -250,6 +273,9 @@ module.exports = {
   MEET_INTEREST_STATUS,
   MEET_ENTRY_STATUS,
   MEET_COLLEGE_LEAD_STATUS,
+  MEET_EVENT_STATUS,
+  isEventAlive,
+  listAliveEvents,
   meetScope,
   meetRequestScope,
   newMeetId,

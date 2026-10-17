@@ -109,6 +109,7 @@ const SCHOOL_WRITE_ACTIONS = [
   // （读动作 listSportsMeets、getSportsMeet、searchSportsEventTemplates 不在此列）
   'createSportsMeet',
   'updateMeetDraft',
+  'removeMeetEvent',
   'configureMeetEvent',
   'publishMeetRegistration',
   'deleteSportsMeet',

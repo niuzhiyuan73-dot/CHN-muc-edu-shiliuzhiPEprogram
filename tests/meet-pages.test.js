@@ -101,7 +101,9 @@ test('详情页与向导页的关键动作存在', () => {
   }
   const setup = loadPage('meet-setup');
   for (const method of ['loadTemplates', 'onNext', 'onToggleGroup', 'onStep', 'onSubmit', 'onCategoryTap',
-    'onToggleRounds', 'onToggleFormat']) {
+    'onPickRounds', 'onPickFormat', 'onMembersInput', 'onLimitInput',
+    'onToggleMembersUnlimited', 'onToggleLimitUnlimited',
+    'onGroupCountInput', 'onAdvancePerGroupInput', 'pickedFromEvents']) {
     assert.equal(typeof setup[method], 'function', `向导页缺少 ${method}`);
   }
   // 带 meetId 进入时应直接落在第二步（继续配置）

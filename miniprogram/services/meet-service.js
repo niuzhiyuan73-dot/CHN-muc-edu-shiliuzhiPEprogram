@@ -25,11 +25,8 @@
  */
 
 const {
-  MEET_STATUS,
-  meetEventKey,
-  meetCollegeKey,
-  newMeetId,
-  meetRequestScope,
+  MEET_STATUS, MEET_EVENT_STATUS,
+  meetEventKey, meetCollegeKey, newMeetId, meetRequestScope, listAliveEvents,
 } = require('../utils/meet-scope.js');
 const { TEMPLATES, getTemplate, searchTemplates, CATEGORY_LABEL, CATEGORY_ORDER, MEET_SCORE_TYPE } = require('./meet-event-catalog.js');
 const { ADVANCE_MODE, MEET_FORMAT, FORMAT_LABEL } = require('./meet-advance.js');
@@ -110,6 +107,9 @@ function meetSummary(doc) {
     location: doc.location || '',
     status: doc.status,
     statusLabel: STATUS_LABEL[doc.status] || doc.status,
+    // 「筹备中」只给管理员看：草稿对其他人根本不可见，但页面仍按角色收口，
+    // 避免任何分享/截图把未发布的届次当成对外信息。
+    isDraft: doc.status === MEET_STATUS.DRAFT,
     registration: doc.registration || null,
     eventCount: doc.eventCount || 0,
     createdAt: doc.createdAt || '',
@@ -131,11 +131,15 @@ function eventSummary(doc) {
     unit: doc.unit,
     entryForm: doc.entryForm,
     members: doc.members,
+    // 0 = 不限（页面据此显示「不限」而不是「0 人」）
+    membersUnlimited: Number(doc.members) === 0,
     perCollegeLimit: doc.perCollegeLimit,
+    limitUnlimited: Number(doc.perCollegeLimit) === 0,
     rounds: doc.rounds,
     // 赛制（仅胜负项目）：single_elim 单败淘汰 / round_robin 循环赛。空表示不适用。
     format: doc.format || '',
     formatLabel: FORMAT_LABEL[doc.format] || '',
+    groups: doc.groups || null,
     // 晋级口径（仅预赛+决赛）：{ mode, count }。空表示不适用。
     advance: doc.advance || null,
     scored: doc.scored,
@@ -149,7 +153,7 @@ const isAlive = (doc) => isMeetDoc(doc) && doc.status !== 'deleted';
 /** 本届项目清单（按项目库顺序，便于页面稳定展示）。 */
 async function listEventsOf(repo, ctx) {
   if (!ctx.meetId) return [];
-  const docs = await repo.forMeet({ schoolId: ctx.schoolId, meetId: ctx.meetId }).sportsMeetEvents.list();
+  const docs = await listAliveEvents(repo.forMeet({ schoolId: ctx.schoolId, meetId: ctx.meetId }).sportsMeetEvents);
   const orderOf = new Map(TEMPLATES.map((item, index) => [item.id, index]));
   const groupWeight = { male: 0, female: 1, mixed: 2 };
   return docs
@@ -210,6 +214,61 @@ async function createSportsMeet(payload = {}, ctx) {
   });
 }
 
+/**
+ * 移除一个项目组别（仅草稿期）。
+ *
+ * 为什么不物理删除：报名、场次、成绩都按 eventKey 指过来，删文档会留下悬空引用。
+ * 这里置 status='deleted'，并把 eventCount 减一；读取处统一走 listAliveEvents。
+ * 草稿期还没有报名，所以不存在「删了却有人已报名」的情况——发布之后再删属于
+ * 撤销发布流程（B8），不在本动作范围内。
+ */
+async function removeMeetEvent(payload = {}, ctx) {
+  if (!ctx.meetId) return refused('请指定运动会');
+  const eventKey = String(payload.eventKey || '').trim();
+  if (!eventKey) return refused('请指定项目组别');
+
+  return ctx.repo.transaction(async (tx) => {
+    const fresh = await freshMeetContext(tx, ctx);
+    if (!canManageMeet(fresh)) return refused('只有校级管理员及以上可以删除项目');
+    const meet = await tx.sportsMeets.getById(fresh.meetId);
+    if (!isAlive(meet) || meet.schoolId !== fresh.schoolId) return refused('运动会不存在或已删除');
+    if (meet.status !== MEET_STATUS.DRAFT) return refused('已发布报名，不能再删除项目');
+
+    const event = await tx.sportsMeetEvents.getById(eventKey);
+    if (!event || event.meetId !== fresh.meetId) return refused('项目组别不存在或不属于本届运动会');
+    if (event.status === MEET_EVENT_STATUS.DELETED) return ok({ eventKey, removed: false });
+
+    const now = fresh.now instanceof Date ? fresh.now.toISOString() : String(fresh.now);
+    await tx.sportsMeetEvents.set(eventKey, {
+      ...event, status: MEET_EVENT_STATUS.DELETED, deletedAt: now, updatedAt: now,
+    });
+    const count = Math.max(0, Number(meet.eventCount || 0) - 1);
+    await tx.sportsMeets.set(fresh.meetId, {
+      ...meet, eventCount: count, updatedAt: now, version: (meet.version || 1) + 1,
+    });
+    return ok({ eventKey, removed: true, eventCount: count });
+  });
+}
+
+/**
+ * 代报时可选的学院（校管理员在学院报名工作台里选学院用）。
+ *
+ * 只给校级管理员及以上：学院部长只能报自己学院，不需要也不应该看到全院列表。
+ */
+async function listMeetColleges(payload = {}, ctx) {
+  if (!meetReadable(ctx)) return refused('请先登录');
+  if (!canManageMeet(ctx)) return refused('只有校级管理员及以上可以代报其他学院');
+
+  const keyword = String(payload.keyword || '').trim();
+  const docs = await ctx.repo.colleges.listBySchool(ctx.schoolId);
+  const items = docs
+    .filter((doc) => doc.schoolId === ctx.schoolId && doc.status !== 'inactive')
+    .filter((doc) => (keyword ? String(doc.name || '').includes(keyword) : true))
+    .map((doc) => ({ collegeId: doc.collegeId || doc._id, name: doc.name || '' }))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  return ok({ items: items.slice(0, 50), total: items.length });
+}
+
 /** 改草稿基本资料；只有草稿可改（发布后改需规则版本，本批不做）。 */
 async function updateMeetDraft(payload = {}, ctx) {
   if (!ctx.meetId) return refused('请指定运动会');
@@ -262,16 +321,20 @@ async function configureMeetEvent(payload = {}, ctx) {
   if (!['male', 'female', 'mixed'].includes(group)) return refused('请选择男子/女子/混合组别');
 
   const isMulti = template.entryForm === 'group' || template.entryForm === 'team';
+  // members = 0 表示「人数不限」：入场式展示、团体操这类项目，各院上场人数由学院自定，
+  // 系统只关心「有没有报」，不关心报了几个人（用户明确要这个口径）。
   const members = isMulti
-    ? intOf(payload.members === undefined ? template.defaultMembers : payload.members, 2, 30, '每队（组）人数')
+    ? intOf(payload.members === undefined ? template.defaultMembers : payload.members, 0, 200, '每队（组）人数')
     : { ok: true, value: 1 };
   if (!members.ok) return refused(members.message);
   // 固定人数的项目不接受改人数（两人三足 2 人、三人板鞋 3 人）
-  if (template.fixedMembers && Number(payload.members) !== template.fixedMembers) {
+  if (template.fixedMembers && payload.members !== undefined
+    && Number(payload.members) !== template.fixedMembers) {
     return refused(`${template.name}必须 ${template.fixedMembers} 人一组`);
   }
 
-  const limit = intOf(payload.perCollegeLimit === undefined ? 1 : payload.perCollegeLimit, 1, 20, '每学院上限');
+  // perCollegeLimit = 0 表示「不限」：展示类项目常常不限每院队数
+  const limit = intOf(payload.perCollegeLimit === undefined ? 1 : payload.perCollegeLimit, 0, 20, '每学院上限');
   if (!limit.ok) return refused(limit.message);
   // 单人项目默认上限 3（4.2），团体/接力 1 队，多人协作 3 组；显式传值优先。
   if (payload.perCollegeLimit === undefined && template.entryForm === 'single') {
@@ -294,7 +357,19 @@ async function configureMeetEvent(payload = {}, ctx) {
   const isVersus = template.scoreType === MEET_SCORE_TYPE.VERSUS;
   const format = isVersus ? String(payload.format || MEET_FORMAT.SINGLE_ELIM) : '';
   if (isVersus && !FORMAT_LABEL[format]) {
-    return refused('胜负项目只支持单败淘汰或循环赛；双败与小组赛本期未实现');
+    return refused('胜负项目只支持单败淘汰、循环赛或小组+淘汰；双败本期未实现');
+  }
+
+  // 小组+淘汰：小组赛打循环，每组前 N 出线后再打单败。
+  let groups = null;
+  if (format === MEET_FORMAT.GROUP_KNOCKOUT) {
+    const count = Number((payload.groups && payload.groups.count) || 2);
+    const advancePerGroup = Number((payload.groups && payload.groups.advancePerGroup) || 2);
+    if (!Number.isInteger(count) || count < 2 || count > 8) return refused('小组数应为 2–8');
+    if (!Number.isInteger(advancePerGroup) || advancePerGroup < 1 || advancePerGroup > 4) {
+      return refused('每组出线数应为 1–4');
+    }
+    groups = { count, advancePerGroup };
   }
 
   // 晋级口径（D47）：三种都支持，逐项目选。只有预赛+决赛才有意义。
@@ -337,6 +412,7 @@ async function configureMeetEvent(payload = {}, ctx) {
       perCollegeLimit: limit.value,
       rounds,
       format,
+      groups,
       advance,
       scored,
       createdAt: existing ? (existing.createdAt || now) : now,
@@ -514,6 +590,8 @@ async function deleteSportsMeet(payload = {}, ctx) {
 
 module.exports = {
   createSportsMeet,
+  removeMeetEvent,
+  listMeetColleges,
   updateMeetDraft,
   configureMeetEvent,
   publishMeetRegistration,

@@ -88,7 +88,8 @@ const SCHOOL_MEET_ACTIONS = Object.freeze([
   // 草稿与配置（B4）
   'createSportsMeet',            'updateMeetDraft',            'listSportsMeets',
   'getSportsMeet',               'listSportsEventTemplates', 'configureMeetEvent',
-  'publishMeetRegistration',     'deleteSportsMeet',
+  'publishMeetRegistration',     'deleteSportsMeet',            'removeMeetEvent',
+  'listMeetColleges',
   // 学院部长授权（B3）
   'grantMeetCollegeLead',        'revokeMeetCollegeLead',
   'listMeetCollegeLeads',        'getMyMeetCollegeLead',
