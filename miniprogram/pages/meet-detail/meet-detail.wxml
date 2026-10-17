@@ -98,6 +98,12 @@
       <view class="meet-college-link" bindtap="onOpenCollege">进入学院报名工作台 ›</view>
     </block>
 
+    <!-- 管理员：赛程编排与录分发布 -->
+    <block wx:if="{{canManage && !isDraft}}">
+      <view class="meet-college-link" bindtap="onOpenSchedule">赛程编排与裁判指派 ›</view>
+      <view class="meet-college-link" bindtap="onOpenScore">录分与成绩发布 ›</view>
+    </block>
+
     <block wx:if="{{canManage && isDraft}}">
       <view class="meet-section-title">发布报名</view>
       <view class="card meet-publish">

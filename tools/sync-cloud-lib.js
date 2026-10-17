@@ -135,6 +135,10 @@ const MANIFEST = [
   'services/meet-service.js',
   // 运动会 B5：报名主链（意向 / 正式名单 / 审核 / 补报窗口）。
   'services/meet-registration-service.js',
+  // 运动会 B6：赛程与裁判指派。
+  'services/meet-schedule-service.js',
+  // 运动会 B7：录分、汇总、名次与发布。
+  'services/meet-score-service.js',
 ];
 
 /**

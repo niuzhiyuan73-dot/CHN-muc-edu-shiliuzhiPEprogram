@@ -163,6 +163,16 @@ Page({
     }
   },
 
+  /** 赛程编排（管理员） */
+  onOpenSchedule() {
+    return wx.navigateTo({ url: `/pages/meet-schedule/meet-schedule?meetId=${this.data.meetId}` });
+  },
+
+  /** 录分与发布（管理员/裁判） */
+  onOpenScore() {
+    return wx.navigateTo({ url: `/pages/meet-score/meet-score?meetId=${this.data.meetId}` });
+  },
+
   /** 学院部长入口 */
   onOpenCollege() {
     return wx.navigateTo({ url: `/pages/meet-college/meet-college?meetId=${this.data.meetId}` });

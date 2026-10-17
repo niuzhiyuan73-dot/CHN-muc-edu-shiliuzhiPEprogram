@@ -1,0 +1,18 @@
+.meet-row { padding: 20rpx 24rpx; margin-bottom: 12rpx; }
+.meet-row-head { display: flex; justify-content: space-between; align-items: center; }
+.meet-row-name { font-size: 28rpx; font-weight: 500; }
+.meet-row-meta { margin-top: 6rpx; font-size: 22rpx; color: #888; }
+.meet-row-tag { font-size: 22rpx; padding: 4rpx 14rpx; border-radius: 999rpx; background: #f2f2f2; color: #777; }
+.meet-row-tag.is-ok { background: #e8f5ec; color: #1f7a3d; }
+.meet-editor { margin-top: 16rpx; padding-top: 16rpx; border-top: 1rpx solid #f0f0f0; }
+.meet-field { display: flex; align-items: center; justify-content: space-between; padding: 12rpx 0; }
+.meet-label { font-size: 26rpx; color: #555; width: 100rpx; }
+.meet-input { flex: 1; text-align: right; font-size: 26rpx; }
+.meet-judges { margin-top: 16rpx; }
+.meet-judges-title { font-size: 24rpx; color: #666; margin-bottom: 10rpx; }
+.meet-judge { display: flex; justify-content: space-between; padding: 10rpx 16rpx; background: #f7f8fa; border-radius: 10rpx; margin-bottom: 8rpx; font-size: 24rpx; }
+.meet-judge-remove { color: #b23a2e; }
+.meet-judge-add { padding: 14rpx 16rpx; border: 1rpx dashed #ddd; border-radius: 10rpx; font-size: 24rpx; color: #666; text-align: center; margin: 10rpx 0; }
+.meet-notice { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: #e8f5ec; color: #1f7a3d; font-size: 24rpx; }
+.meet-error { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: #fdece9; color: #b23a2e; font-size: 24rpx; }
+.meet-college-link { margin: 20rpx 0 4rpx; text-align: center; font-size: 24rpx; color: #b23a2e; }

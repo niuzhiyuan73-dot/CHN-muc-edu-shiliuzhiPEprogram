@@ -121,6 +121,16 @@ const SCHOOL_WRITE_ACTIONS = [
   'withdrawMeetCollegeEntry',
   'reviewMeetEntry',
   'openMeetLateWindow',
+  // 运动会赛程与裁判（B6）
+  'saveMeetSession',
+  'publishMeetSchedule',
+  'assignMeetJudge',
+  'removeMeetJudge',
+  'startMeetEvent',
+  // 运动会录分与发布（B7）
+  'saveMeetJudgeScore',
+  'submitMeetJudgeScore',
+  'publishMeetResults',
 ];
 
 const SCHOOL_WRITE_ACTION_SET = new Set(SCHOOL_WRITE_ACTIONS);

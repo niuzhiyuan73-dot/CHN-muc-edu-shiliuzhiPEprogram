@@ -97,6 +97,13 @@ const SCHOOL_MEET_ACTIONS = Object.freeze([
   'listMeetCollegeEvents',       'getMeetApplicantPool',
   'submitMeetCollegeEntry',          'withdrawMeetCollegeEntry',
   'reviewMeetEntry',             'openMeetLateWindow',          'listMeetEntries',
+  // 赛程与裁判（B6）
+  'saveMeetSession',             'publishMeetSchedule',
+  'assignMeetJudge',             'removeMeetJudge',             'startMeetEvent',
+  'getMeetSchedule',             'getMyMeetJudgeTasks',         'listMeetJudgeCandidates',
+  // 录分与发布（B7）
+  'getMeetSessionScores',        'saveMeetJudgeScore',          'submitMeetJudgeScore',
+  'getMeetResultPreview',          'publishMeetResults',          'getPublishedResults',
 ]);
 
 /**

@@ -1,0 +1,78 @@
+<!--
+  录分与成绩发布：裁判看「我的任务」逐条录分；管理员看汇总预览并发布。
+  无成绩由管理员在预览时勾选，发布时作为 void 传，不写 0。
+-->
+<view class="page-container">
+
+  <view wx:if="{{notice}}" class="meet-notice">{{notice}}</view>
+  <view wx:if="{{error}}" class="meet-error">{{error}}</view>
+
+  <view wx:if="{{loading}}" class="loading">正在加载…</view>
+
+  <block wx:else>
+    <!-- 裁判任务 -->
+    <view class="meet-section-title">我的裁判任务</view>
+    <view wx:if="{{tasks.length === 0}}" class="empty-state">
+      <view class="empty-state-text">还没有指派给你的场次</view>
+    </view>
+    <view wx:for="{{tasks}}" wx:key="sessionKey" class="card meet-row">
+      <view class="meet-row-head" data-session-key="{{item.sessionKey}}" bindtap="onOpenSession">
+        <view class="meet-row-main">
+          <view class="meet-row-name">{{item.name}} · {{item.group === 'male' ? '男子' : item.group === 'female' ? '女子' : '混合'}}</view>
+          <view class="meet-row-meta">{{item.startAt}} · {{item.venue}} · {{item.roundLabel}}</view>
+        </view>
+        <view class="meet-row-tag">{{item.status === 'running' ? '进行中' : '待开始'}}</view>
+      </view>
+
+      <view wx:if="{{activeSessionKey === item.sessionKey}}" class="meet-editor">
+        <view wx:if="{{scoreItems.length === 0}}" class="meet-hint">该场次还没有通过审核的参赛记录</view>
+        <view wx:for="{{scoreItems}}" wx:for-item="row" wx:key="entryKey" class="meet-score-row">
+          <view class="meet-score-college">{{row.collegeId}}</view>
+          <input
+            class="meet-score-input"
+            type="digit"
+            placeholder="成绩"
+            value="{{drafts[row.entryKey] || (row.myScore ? row.myScore.text : '')}}"
+            data-entry-key="{{row.entryKey}}"
+            bindinput="onScoreInput"
+          />
+          <view class="meet-score-state">{{row.myScore ? (row.myScore.state === 'submitted' ? '已提交' : '草稿') : '未录'}}</view>
+          <view class="meet-score-submit" data-entry-key="{{row.entryKey}}" bindtap="onSubmitScore">提交</view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 管理员：汇总与发布 -->
+    <block wx:if="{{canManage}}">
+      <view class="meet-section-title">汇总与发布</view>
+      <view wx:for="{{events}}" wx:key="eventKey" class="card meet-row">
+        <view class="meet-row-head" data-event-key="{{item.eventKey}}" bindtap="onOpenEvent">
+          <view class="meet-row-main">
+            <view class="meet-row-name">{{item.name}} · {{item.group === 'male' ? '男子' : item.group === 'female' ? '女子' : '混合'}}</view>
+            <view class="meet-row-meta">{{item.sessions.length > 0 ? item.sessions[0].judgeCount : 0}} 名裁判 · {{item.ready ? '已配齐' : '未配齐'}}</view>
+          </view>
+          <view class="meet-row-tag">预览</view>
+        </view>
+
+        <view wx:if="{{activeEventKey === item.eventKey && preview}}" class="meet-editor">
+          <view wx:if="{{preview.versus}}" class="meet-hint">胜负项目不录数值成绩，名次由赛制产生（本批未开放录入）。</view>
+          <block wx:else>
+            <view wx:if="{{preview.missing.length > 0}}" class="meet-warn">
+              还有 {{preview.missing.length}} 条没有收齐裁判成绩
+            </view>
+            <view wx:for="{{preview.items}}" wx:for-item="row" wx:key="entryKey" class="meet-preview-row">
+              <view class="meet-preview-college" data-entry-key="{{row.entryKey}}" bindtap="onToggleVoid">
+                {{row.collegeId}}{{row.text === '未收齐' ? '（未收齐）' : ''}}
+              </view>
+              <view class="meet-preview-value">{{row.text}}</view>
+              <view class="meet-preview-void {{voidKeys.indexOf(row.entryKey) >= 0 ? 'is-void' : ''}}">
+                {{voidKeys.indexOf(row.entryKey) >= 0 ? '记无成绩' : '标无成绩'}}
+              </view>
+            </view>
+            <button class="btn btn-primary" bindtap="onPublish" disabled="{{busy}}">发布正式结果</button>
+          </block>
+        </view>
+      </view>
+    </block>
+  </block>
+</view>

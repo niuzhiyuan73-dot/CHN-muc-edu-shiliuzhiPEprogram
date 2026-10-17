@@ -201,6 +201,22 @@ function forMeet(input) {
     reviewMeetEntry: payload => request('reviewMeetEntry', payload),
     openMeetLateWindow: payload => request('openMeetLateWindow', payload),
     listMeetEntries: payload => request('listMeetEntries', payload),
+    // 赛程与裁判（B6）
+    saveMeetSession: payload => request('saveMeetSession', payload),
+    publishMeetSchedule: payload => request('publishMeetSchedule', payload),
+    assignMeetJudge: payload => request('assignMeetJudge', payload),
+    removeMeetJudge: payload => request('removeMeetJudge', payload),
+    startMeetEvent: payload => request('startMeetEvent', payload),
+    getMeetSchedule: payload => request('getMeetSchedule', payload),
+    getMyMeetJudgeTasks: payload => request('getMyMeetJudgeTasks', payload),
+    listMeetJudgeCandidates: payload => request('listMeetJudgeCandidates', payload),
+    // 录分与发布（B7）
+    getMeetSessionScores: payload => request('getMeetSessionScores', payload),
+    saveMeetJudgeScore: payload => request('saveMeetJudgeScore', payload),
+    submitMeetJudgeScore: payload => request('submitMeetJudgeScore', payload),
+    getMeetResultPreview: payload => request('getMeetResultPreview', payload),
+    publishMeetResults: payload => request('publishMeetResults', payload),
+    getPublishedResults: payload => request('getPublishedResults', payload),
   });
 }
 
