@@ -1296,9 +1296,10 @@ test('他人主页 —— 查无此人时给出明确提示', async () => {
 });
 
 test('他人主页 —— 导航栏按页内协会套品牌（标题 = 协会简称）', async () => {
-  // u01 的比赛多在乒乓协会，页内默认落在 tt，标题随之是它的简称（§11.7）
+  // u08 在学校维度只在乒乓球协会打过球（P10 后默认协会按 S2 台账算，
+  // 见 tests/association-usage.test.js），页内默认落在 tt，标题随之是它的简称（§11.7）
   const page = instantiate(memberConfig);
-  await page.onLoad({ userId: 'u01' });
+  await page.onLoad({ userId: 'u08' });
 
   assert.strictEqual(page.data.switchValue, 'tt');
   assert.strictEqual(calls.titles[calls.titles.length - 1], '民大乒乓');
@@ -1306,7 +1307,7 @@ test('他人主页 —— 导航栏按页内协会套品牌（标题 = 协会简
 
 test('他人主页 —— 页内切换协会整页重取，但不写回全局', async () => {
   const page = instantiate(memberConfig);
-  await page.onLoad({ userId: 'u01' }); // 默认 tt
+  await page.onLoad({ userId: 'u08' }); // 默认 tt
   const globalBefore = facade.getAssociation();
 
   try {

@@ -141,29 +141,27 @@ test('cancellation releases exactly one quota slot and permits rejoining', async
   assert.equal((await call(repo, 'signUpEvent', { id: 'quota' }, 'openid-u02')).data.ok, false);
 });
 
-test('bound clients survive awaits and do not undo a user association switch', async () => {
-  const facade = require('../miniprogram/services/index');
+test('S2 空间客户端跨 await 保持绑定，不被中途的协会切换劫走（旧 withAssociation 用例的 S2 对应）', async () => {
+  // 旧栈守的是 withAssociation(id, fn)：回调里的 api 绑定协会、回调中途全局
+  // 切协会不影响它。withAssociation 已随 P10 下线；S2 的绑定是结构性的
+  // （school-cloud 客户端创建时冻结 scope），本用例把它在云客户端上重新钉住。
   const scope = require('../miniprogram/services/association-scope');
-  facade.setDataSource(C.DATA_SOURCE.CLOUD);
+  const { forAssociationSpace } = require('../miniprogram/services/school-cloud');
   scope.setAssociation('pkb');
   const associations = [];
   global.wx = { cloud: { callFunction: async ({ data }) => {
     associations.push(data.association);
-    return { result: { ok: true, data: [] } };
+    return { result: { ok: true, data: { ok: true } } };
   } } };
   try {
-    await assert.rejects(scope.withAssociation('tt', async api => {
-      await api.getMembers();
-      scope.setAssociation('bd');
-      await scope.withAssociation('pkb', nested => nested.getMembers());
-      await api.getMembers();
-      throw new Error('callback failure');
-    }), /callback failure/);
-    assert.deepEqual(associations, ['tt', 'pkb', 'tt']);
+    const api = forAssociationSpace({ schoolId: 'muc', association: 'tt' });
+    await api.listSchoolMembers({});
+    scope.setAssociation('bd');
+    await api.listSchoolMembers({});
+    assert.deepEqual(associations, ['tt', 'tt'], '客户端绑定的 tt 不随全局切到 bd 而漂移');
     assert.equal(scope.getAssociation(), 'bd');
   } finally {
     delete global.wx;
-    facade.setDataSource(C.DATA_SOURCE.MOCK);
     scope.resetAssociation();
   }
 });

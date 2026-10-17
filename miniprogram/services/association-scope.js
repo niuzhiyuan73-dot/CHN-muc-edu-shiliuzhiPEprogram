@@ -21,7 +21,6 @@
 const {
   defaultAssociationId,
   isKnownAssociation,
-  activeAssociations,
 } = require('../utils/associations.js');
 
 /** 当前协会 id；空串表示尚未设定 */
@@ -80,26 +79,6 @@ function perAssociation(init) {
   };
 }
 
-/**
- * 把绑定指定协会的 API 交给回调。回调跨 await 仍使用同一客户端，
- * 不修改全局选择，也不会覆盖用户在等待期间切换到的新协会。
- *
- * @param {string} id 目标协会
- * @param {Function} fn (api) => result，可返回 Promise
- * @returns {Promise<*>} fn 的返回值
- */
-async function withAssociation(id, fn) {
-  return fn(require('./index.js').forAssociation(id));
-}
-
-async function mapActiveAssociations(fn) {
-  const results = [];
-  for (const assoc of activeAssociations()) {
-    results.push(await withAssociation(assoc.id, (api) => fn(assoc, api)));
-  }
-  return results;
-}
-
 function validateAssociation(id) {
   if (!isKnownAssociation(id)) throw new Error(`未知的协会 id：${id}`);
 }
@@ -120,6 +99,4 @@ module.exports = {
   setAssociation,
   resetAssociation,
   perAssociation,
-  withAssociation,
-  mapActiveAssociations,
 };
