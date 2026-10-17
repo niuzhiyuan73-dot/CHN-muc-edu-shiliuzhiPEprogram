@@ -10,7 +10,7 @@
  * 【为什么「通过」还可以指定初始分】
  * 老队员、外校交流生这类人，水平早有定论，让他从初始分起步再靠前五场
  * 慢慢定级纯属折腾。管理员在通过时可以填一个数值，填了就跳过定级、
- * 直接以该分起步（回放引擎见 replay.js 的 settleInitial）。
+ * 直接以该分起步（首次建档冻结 startElo，见 school-rating-service）。
  *
  * 【为什么单独成模块】
  * 与 match-record.js 同一套路数：这三件事都是纯判断，不碰 wx、不碰数据源。
@@ -286,79 +286,11 @@ function buildInitialEloByAssoc(member, association, value) {
   return map;
 }
 
-/**
- * 能不能调整某位会员的**当前**等级分（与具体数值无关的前置条件）。
- *
- * 不设「打过比赛就不能改」那道闸——这个功能就是给已经出过场的人用的（成员
- * 出外打完比赛、对手不在系统里，只能外部算好一个分数直接写进来）。边界为
- * 管理员 / 本协会负责人、目标在册。
- *
- * @param {Object|null} actor 操作者
- * @param {Object|null} target 被调整的会员
- * @param {Object} [options] 透传给 permission.canManage
- * @returns {{ok:boolean, message:string}}
+/* 【「改当前分」孤儿链已删除（canEditCurrentElo / validateCurrentEloEdit /
+ * buildCurrentEloByAssoc）】它们是协议 1「管理员改当前分」的纯构建器，随旧协议
+ * 一起失去调用方；逐场结算改造下，出场后的评级调整属「当前评级调整」——
+ * 若产品需要，将来以 §5.3 的 adjustment 记录接续，不复用这条旧链。
  */
-function canEditCurrentElo(actor, target, options = {}) {
-  if (!canManage(actor, { ...options, minRole: ROLE.ADMIN })) {
-    return { ok: false, message: '只有管理员或本协会负责人可以调整等级分' };
-  }
-  if (!target) {
-    return { ok: false, message: '找不到这位会员' };
-  }
-  if (target.status !== USER_STATUS.ACTIVE) {
-    return { ok: false, message: '只有在册会员才能调整等级分' };
-  }
-  return { ok: true, message: '' };
-}
-
-/**
- * 校验并归一化「把某会员某项目的当前等级分改成 value」。
- *
- * 先过 canEditCurrentElo 的两条前置，再校验项目名与数值。数值不接受空值
- * （当前分没有「不指定」）。
- *
- * @param {Object|null} actor
- * @param {Object|null} target
- * @param {string} pool 等级分池（singles / doubles）
- * @param {*} value 输入框里的原始值
- * @param {Object} [options] 透传给 permission.canManage
- * @returns {{ok:boolean, message:string, value:number|null}}
- */
-function validateCurrentEloEdit(actor, target, pool, value, options = {}) {
-  const allowed = canEditCurrentElo(actor, target, options);
-  if (!allowed.ok) return { ok: false, message: allowed.message, value: null };
-
-  if (!ALL_RATING_POOLS.includes(pool)) {
-    return { ok: false, message: '项目不正确', value: null };
-  }
-
-  const parsed = validateEloValue(value);
-  if (!parsed.ok) return { ok: false, message: parsed.message, value: null };
-
-  return { ok: true, message: '', value: parsed.value };
-}
-
-/**
- * 生成「把某会员在某协会某项目的当前等级分设为 value」之后的新映射。
- *
- * 结构 `currentEloByAssoc = { 协会: { 池: [{value, at}] } }`：保留全部改分事件。
- * 兼容旧版单条记录，首次追加时转为数组。与 rating.js
- * 同一纪律——产出新对象，不就地改。
- *
- * @param {Object} member 会员记录
- * @param {string} association 协会 id
- * @param {string} pool 等级分池
- * @param {number} value 归一化后的等级分
- * @param {number} at 生效时刻的时间戳
- * @returns {Object} 新的 currentEloByAssoc 映射
- */
-function buildCurrentEloByAssoc(member, association, pool, value, at) {
-  const map = { ...((member && member.currentEloByAssoc) || {}) };
-  const previous = map[association] && map[association][pool];
-  const history = Array.isArray(previous) ? previous : previous ? [previous] : [];
-  map[association] = { ...(map[association] || {}), [pool]: [...history, { value, at }] };
-  return map;
-}
 
 /**
  * 校验并归一化「管理员手工指定的初始等级分」。
@@ -370,7 +302,7 @@ function buildCurrentEloByAssoc(member, association, pool, value, at) {
  *
  * 【三个空值的含义相同】
  * null / undefined / 纯空白串都表示「不指定」，此时返回 value: null，
- * 由回放引擎退回「按前五场自动定级」。空值不是错误，所以 ok 为 true。
+ * 由评级建档退回按性别的固定起点（男 1450 / 女 1300）。空值不是错误，所以 ok 为 true。
  *
  * @param {*} value 输入框里的原始值
  * @returns {{ok:boolean, value:number|null, message:string}}
@@ -514,9 +446,6 @@ module.exports = {
   isGlobalAdminMember,
   resolvedInitialElo,
   buildInitialEloByAssoc,
-  canEditCurrentElo,
-  validateCurrentEloEdit,
-  buildCurrentEloByAssoc,
   validateReview,
   buildApplicationRow,
 };

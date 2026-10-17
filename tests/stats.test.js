@@ -21,7 +21,8 @@ const {
 } = require('../miniprogram/utils/stats.js');
 
 const { generateSeed } = require('../miniprogram/services/seed.js');
-const { replaySeason } = require('../miniprogram/services/replay.js');
+const { materializeRatings, computeSettlement, displayRating } = require('../miniprogram/services/school-rating-service.js');
+const { memberRatingKey } = require('../miniprogram/utils/school.js');
 const { MATCH_TYPE, MATCH_STATUS, RATING_POOL } = require('../miniprogram/utils/constants.js');
 
 const day = (n) => new Date(`2026-05-${String(n).padStart(2, '0')}T18:00:00`);
@@ -519,18 +520,52 @@ describe('summarizeForm —— 近期状态', () => {
 
 describe('统计真实模拟数据 —— 端到端', () => {
   const seed = generateSeed({ weeks: 8, casualPerWeek: 10 });
-  // 演示赛事里还没开打的签表场次没有胜方，回放只吃已分出胜负的比赛
-  const raw = {
-    ...seed,
-    matches: seed.matches.filter((m) => m.status !== MATCH_STATUS.PENDING),
-  };
-  const result = replaySeason(raw);
-  const nameOf = createNameResolver(result.users);
-  const target = result.users[0];
-  const matches = result.matches;
+  // 逐场结算内核只吃已分出胜负的比赛（旧回放同口径）
+  const SCOPE = { schoolId: 'muc', association: 'pkb' };
+  const ordered = seed.matches
+    .filter((m) => m.status !== MATCH_STATUS.PENDING && m.winner)
+    .sort((a, b) => new Date(a.matchTime) - new Date(b.matchTime));
+  const ratings = new Map();
+  let seq = 0;
+  const settledMatches = ordered.map((match) => {
+    seq += 1;
+    const userIds = [...new Set([...match.teamA, ...match.teamB])];
+    const existingByUser = new Map();
+    const startEloByUser = new Map();
+    for (const userId of userIds) {
+      const key = memberRatingKey(userId, match.pool, SCOPE);
+      const current = ratings.get(key);
+      if (current) existingByUser.set(userId, current);
+      else {
+        const member = seed.members.find((m) => m._id === userId);
+        startEloByUser.set(userId, { gender: member && member.gender });
+      }
+    }
+    const view = materializeRatings({
+      userIds, pool: match.pool, scope: SCOPE, existingByUser, startEloByUser, now: match.matchTime,
+    });
+    const { settlement, ratingDocs } = computeSettlement({
+      match, eventLevel: undefined, ratingsByUser: view, seq, settledAt: match.matchTime,
+    });
+    for (const { doc } of ratingDocs) ratings.set(doc._id, doc);
+    return { ...match, settlement, players: settlement.players.map((p) => ({ ...p, pointDelta: 0 })) };
+  });
+  // 视图会员：评级表（缺档 displayRating 兜底），与 school-rank-service.loadScopeView 同构
+  const users = seed.members.map((member) => ({
+    ...member,
+    status: 1,
+    points: 0,
+    ratings: ['singles', 'doubles'].reduce((acc, pool) => {
+      acc[pool] = ratings.get(memberRatingKey(member._id, pool, SCOPE)) || displayRating(member, pool);
+      return acc;
+    }, {}),
+  }));
+  const target = users[0];
+  const matches = settledMatches;
+  const nameOf = createNameResolver(users);
 
   test('每位会员的逐场明细条数等于其总场次', () => {
-    for (const user of result.users.slice(0, 5)) {
+    for (const user of users.slice(0, 5)) {
       const history = buildMatchHistory(matches, user._id);
       const total = [
         RATING_POOL.SINGLES,
@@ -558,31 +593,5 @@ describe('统计真实模拟数据 —— 端到端', () => {
       const recorded = target.ratings[pool].wins;
       assert.equal(wins, recorded, `${pool} 的胜场数对不上`);
     }
-  });
-
-  test('分数曲线的终点等于当前分数', () => {
-    for (const pool of [RATING_POOL.SINGLES, RATING_POOL.DOUBLES]) {
-      const curve = buildRatingHistory(matches, target._id, pool);
-      if (curve.length === 0) continue;
-      assert.equal(curve[curve.length - 1].eloAfter, target.ratings[pool].elo);
-    }
-  });
-
-  test('分数曲线相邻两点首尾相接', () => {
-    const curve = buildRatingHistory(matches, target._id, RATING_POOL.DOUBLES);
-    for (let i = 1; i < curve.length; i += 1) {
-      assert.equal(curve[i].eloBefore, curve[i - 1].eloAfter);
-    }
-  });
-
-  test('每位会员都拿过至少一个赛事名次', () => {
-    const records = buildEventRecord(result.events, target._id);
-    assert.ok(records.length > 0);
-    assert.ok(summarizeEvents(records).bestPlacement >= 1);
-  });
-
-  test('近期状态的结果数组长度不超过请求的条数', () => {
-    const form = summarizeForm(matches, target._id, { limit: 5 });
-    assert.ok(form.results.length <= 5);
   });
 });

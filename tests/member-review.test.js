@@ -33,9 +33,6 @@ const {
   isGlobalAdminMember,
   resolvedInitialElo,
   buildInitialEloByAssoc,
-  canEditCurrentElo,
-  validateCurrentEloEdit,
-  buildCurrentEloByAssoc,
   validateReview,
   buildApplicationRow,
 } = require('../miniprogram/services/member-review.js');
@@ -528,77 +525,5 @@ const PLAYED = {
   ratings: { singles: { matchCount: 3, wins: 2, losses: 1 } },
 };
 
-test('canEditCurrentElo —— 与初始分同一套权限，但打过比赛也能改', () => {
-  assert.strictEqual(canEditCurrentElo(GLOBAL_ADMIN, FRESH).ok, true);
-  assert.strictEqual(canEditCurrentElo(ASSOC_LEADER, FRESH).ok, true);
-  // 关键差异：出过场的人也能改（初始分那套会挡住 PLAYED）
-  assert.strictEqual(canEditCurrentElo(GLOBAL_ADMIN, PLAYED).ok, true);
-  assert.strictEqual(canEditCurrentElo(MEMBER, PLAYED).ok, false);
-  assert.strictEqual(canEditCurrentElo(null, PLAYED).ok, false);
-  assert.match(canEditCurrentElo(GLOBAL_ADMIN, null).message, /找不到/);
-  const pending = { ...PLAYED, status: USER_STATUS.PENDING };
-  assert.match(canEditCurrentElo(GLOBAL_ADMIN, pending).message, /在册/);
-});
 
-test('validateCurrentEloEdit —— 校验项目与数值，空值也当错误（当前分没有「不指定」）', () => {
-  assert.deepStrictEqual(
-    validateCurrentEloEdit(GLOBAL_ADMIN, PLAYED, RATING_POOL.SINGLES, '1600'),
-    { ok: true, message: '', value: 1600 }
-  );
-  // 项目不对直接挡下
-  assert.match(
-    validateCurrentEloEdit(GLOBAL_ADMIN, PLAYED, 'mixed', 1600).message,
-    /项目/
-  );
-  // 空值不是「清除」，而是错误——当前分必须是一个数
-  assert.match(
-    validateCurrentEloEdit(GLOBAL_ADMIN, PLAYED, RATING_POOL.SINGLES, '').message,
-    /请输入/
-  );
-  // 越界被挡
-  assert.match(
-    validateCurrentEloEdit(GLOBAL_ADMIN, PLAYED, RATING_POOL.SINGLES, 99999).message,
-    /之间/
-  );
-  // 没权限时先报权限，不落到数值校验
-  assert.match(
-    validateCurrentEloEdit(MEMBER, PLAYED, RATING_POOL.SINGLES, 1600).message,
-    /管理员/
-  );
-});
 
-test('buildCurrentEloByAssoc —— 追加改分历史，兼容旧记录，不改其他池或入参', () => {
-  const member = {
-    currentEloByAssoc: { pkb: { singles: { value: 1500, at: 100 } } },
-  };
-
-  const next = buildCurrentEloByAssoc(member, 'pkb', RATING_POOL.DOUBLES, 1620, 200);
-  assert.deepStrictEqual(next, {
-    pkb: { singles: { value: 1500, at: 100 }, doubles: [{ value: 1620, at: 200 }] },
-  });
-  // 不可变：入参没被改
-  assert.deepStrictEqual(member.currentEloByAssoc, {
-    pkb: { singles: { value: 1500, at: 100 } },
-  });
-
-  // 同一（人、协会、池）重复设置不能删除历史改分
-  const again = buildCurrentEloByAssoc(
-    { currentEloByAssoc: next },
-    'pkb',
-    RATING_POOL.DOUBLES,
-    1700,
-    300
-  );
-  assert.deepStrictEqual(again.pkb.doubles, [{ value: 1620, at: 200 }, { value: 1700, at: 300 }]);
-
-  // 另一个协会各存一份，互不影响
-  const other = buildCurrentEloByAssoc(
-    { currentEloByAssoc: next },
-    'tt',
-    RATING_POOL.SINGLES,
-    1400,
-    400
-  );
-  assert.deepStrictEqual(other.pkb, next.pkb);
-  assert.deepStrictEqual(other.tt.singles, [{ value: 1400, at: 400 }]);
-});

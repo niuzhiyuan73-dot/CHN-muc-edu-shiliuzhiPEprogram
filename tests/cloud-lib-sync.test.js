@@ -55,45 +55,44 @@ test('镜像模块都能独立加载，不依赖清单以外的文件', () => {
   }
 });
 
-test('镜像里的回放引擎与源文件算出的结果完全一致', () => {
+test('镜像里的结算内核与源文件算出的结果完全一致', () => {
   // 镜像在磁盘上是一份独立文件，必然是独立的模块实例——这是设计使然。
-  // 真正要守住的是「同一份输入得到同一份输出」，所以这里跑一遍比对结果。
-  const source = require('../miniprogram/services/replay.js');
-  const mirror = require(path.join(DEST_ROOT, 'services', 'replay.js'));
+  // 真正要守住的是「同一份输入得到同一份输出」，所以这里跑一遍比对结果
+  // （旧回放引擎已删除，改用逐场结算内核）。
+  const source = require('../miniprogram/services/school-rating-service.js');
+  const mirror = require(path.join(DEST_ROOT, 'services', 'school-rating-service.js'));
 
-  const members = [
-    { _id: 'u01', gender: 'M', joinDate: '2026-04-01T00:00:00' },
-    { _id: 'u02', gender: 'F', joinDate: '2026-04-01T00:00:00' },
-    { _id: 'u03', gender: 'M', joinDate: '2026-05-01T00:00:00' },
-  ];
-  const matches = [
-    {
-      _id: 'm1',
-      matchType: 1,
-      teamA: ['u01'],
-      teamB: ['u02'],
-      scoreA: [11],
-      scoreB: [7],
-      winner: 'A',
-      matchTime: '2026-04-08T18:00:00',
-      eventId: null,
-    },
-    {
-      _id: 'm2',
-      matchType: 1,
-      teamA: ['u03'],
-      teamB: ['u01'],
-      scoreA: [11],
-      scoreB: [9],
-      winner: 'A',
-      matchTime: '2026-05-10T18:00:00',
-      eventId: null,
-    },
-  ];
+  const SCOPE = { schoolId: 'muc', association: 'pkb' };
+  const now = '2026-04-08T10:00:00Z';
+  const match = {
+    _id: 'm1', ...SCOPE, matchType: 1, pool: 'singles',
+    teamA: ['u01'], teamB: ['u02'],
+    scoreA: [11], scoreB: [7], winner: 'A',
+    matchTime: '2026-04-08T18:00:00Z',
+  };
 
-  const a = source.replaySeason({ members, matches });
-  const b = mirror.replaySeason({ members, matches });
+  async function run(mod) {
+    const created = [];
+    const store = new Map();
+    const ratingOf = (userId) => store.get(`${userId}|singles`) || null;
+    const tx = {
+      users: { getById: async (id) => ({ _id: id, gender: id === 'u02' ? 'F' : 'M' }) },
+      memberRatings: {
+        getById: async (id) => ratingOf(id),
+        set: async (id, doc) => { store.set(id, doc); },
+      },
+      ratingCounters: {
+        getById: async () => null,
+        set: async () => {},
+      },
+    };
+    const result = await mod.settleMatchInTransaction(tx, { ...SCOPE, now }, match, {});
+    created.push(...store.values());
+    return { settlement: result.settlement, ratings: created };
+  }
 
-  assert.deepEqual(b.users, a.users, '镜像与源文件的等级分结果必须一致');
-  assert.deepEqual(b.meta.placements, a.meta.placements, '镜像与源文件的定级结果必须一致');
+  return Promise.all([run(source), run(mirror)]).then(([a, b]) => {
+    assert.deepEqual(b.settlement, a.settlement, '镜像与源文件的结算快照必须一致');
+    assert.deepEqual(b.ratings, a.ratings, '镜像与源文件的评级结果必须一致');
+  });
 });

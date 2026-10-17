@@ -55,9 +55,9 @@ const MANIFEST = [
   'utils/leaderboard.js',
   'utils/stats.js',
   'utils/standings.js',
-  // 纯逻辑服务
-  'services/replay.js',
-  // 训练积分事实归一（replay 依赖它把训练事实叠加到积分上）
+  // 纯逻辑服务（旧回放引擎 replay.js 已随逐场结算改造删除）
+  'services/match-order.js',
+  // 训练积分事实归一（积分独立聚合把训练事实叠加到积分上）
   'services/training-points.js',
   'services/school-permission.js',
   'services/school-member.js',

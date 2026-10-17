@@ -18,7 +18,7 @@ const {
   TRAINING_POINT_AMOUNT,
   ATTENDANCE_STATUS,
 } = require('../miniprogram/services/training-points.js');
-const { replaySeason } = require('../miniprogram/services/replay.js');
+const { aggregatePoints } = require('../miniprogram/services/school-points-service.js');
 const { getPoolRating } = require('../miniprogram/utils/rating.js');
 const { DEFAULT_CONFIG } = require('../miniprogram/utils/elo.js');
 const { RATING_POOL, MATCH_TYPE } = require('../miniprogram/utils/constants.js');
@@ -161,74 +161,47 @@ describe('applyTrainingPointFacts —— 只动积分', () => {
   });
 });
 
-describe('replaySeason 叠加训练积分', () => {
+describe('aggregatePoints 叠加训练积分（Elo 逐场结算改造：积分独立聚合）', () => {
   const members = [
     { _id: 'a', nickName: '甲' },
     { _id: 'b', nickName: '乙' },
   ];
 
-  test('T23：无任何比赛但有一次确认训练 → 积分为 1，等级分保持初始值', () => {
-    const facts = buildTrainingPointFacts({
+  test('T23：无任何比赛但有一次确认训练 → 积分为 1，且评级与积分互不相干', () => {
+    const result = aggregatePoints({
       trainings: [training('t1', at(0))],
-      registrations: [reg('t1', 'a')],
+      trainingRegistrations: [reg('t1', 'a')],
     });
-    const result = replaySeason({ members, matches: [], options: { trainingPointFacts: facts } });
-
-    const a = userOf(result, 'a');
-    assert.equal(a.points, 1);
-    assert.equal(ELO(a).elo, MALE_START, '训练不改变等级分');
-    assert.equal(ELO(a).matchCount, 0);
-    assert.equal(userOf(result, 'b').points, 0);
+    assert.equal(result.get('a'), 1);
+    assert.equal(result.get('b') || 0, 0);
+    // 积分与 Elo 彻底解耦：聚合不产出任何评级事实
+    assert.equal(typeof result.elo, 'undefined');
   });
 
   test('T19：同一用户不同训练各确认一次 → 每个训练各 +1', () => {
-    const facts = buildTrainingPointFacts({
+    const result = aggregatePoints({
       trainings: [training('t1', at(0)), training('t2', at(DAY))],
-      registrations: [reg('t1', 'a'), reg('t2', 'a')],
+      trainingRegistrations: [reg('t1', 'a'), reg('t2', 'a')],
     });
-    const result = replaySeason({ members, matches: [], options: { trainingPointFacts: facts } });
-    assert.equal(userOf(result, 'a').points, 2);
+    assert.equal(result.get('a'), 2);
   });
 
-  test('T18：完整重算不丢不重复，且 ELO / 胜率 / 场数不受训练影响', () => {
-    const matches = [
-      { _id: 'm1', matchType: MATCH_TYPE.SINGLES, teamA: ['a'], teamB: ['b'], winner: 'A',
-        matchTime: new Date(T0 - 2 * DAY), status: 'active' },
-      { _id: 'm2', matchType: MATCH_TYPE.SINGLES, teamA: ['a'], teamB: ['b'], winner: 'B',
-        matchTime: new Date(T0 - DAY), status: 'active' },
-    ];
-    const facts = buildTrainingPointFacts({
+  test('T18：重复聚合不丢不重复（幂等）', () => {
+    const input = {
       trainings: [training('t1', at(0)), training('t2', at(DAY))],
-      registrations: [reg('t1', 'a'), reg('t2', 'a')],
-    });
-
-    const without = replaySeason({ members, matches });
-    const first = replaySeason({ members, matches, options: { trainingPointFacts: facts } });
-    const second = replaySeason({ members, matches, options: { trainingPointFacts: facts } });
-
-    for (const id of ['a', 'b']) {
-      const clean = userOf(without, id);
-      const scored = userOf(first, id);
-      assert.deepEqual(ELO(scored).elo, ELO(clean).elo, `${id} 等级分不受训练影响`);
-      assert.equal(ELO(scored).matchCount, ELO(clean).matchCount);
-      assert.equal(ELO(scored).wins, ELO(clean).wins);
-      assert.equal(ELO(scored).losses, ELO(clean).losses);
-      assert.deepEqual({ ...scored.ratings }, { ...clean.ratings });
-    }
-    assert.equal(userOf(first, 'a').points, userOf(without, 'a').points + 2);
-    assert.deepEqual(first.users, second.users, '同一批输入重算结果一致（不重复累加）');
+      trainingRegistrations: [reg('t1', 'a'), reg('t2', 'a')],
+    };
+    const first = aggregatePoints(input);
+    const second = aggregatePoints(input);
+    assert.deepEqual([...second.entries()], [...first.entries()], '同一批输入重算结果一致（不重复累加）');
   });
 
   test('赛季边界：训练发生在 resetTime 之前不计入本赛季（T16）', () => {
-    const facts = buildTrainingPointFacts({
+    const result = aggregatePoints({
       trainings: [training('old', at(-DAY)), training('new', at(0))],
-      registrations: [reg('old', 'a'), reg('new', 'a')],
+      trainingRegistrations: [reg('old', 'a'), reg('new', 'a')],
+      resetTime: at(0),
     });
-    const result = replaySeason({
-      members,
-      matches: [],
-      options: { trainingPointFacts: facts, resetTime: at(0) },
-    });
-    assert.equal(userOf(result, 'a').points, 1, '只有边界当刻及之后的那次训练计分');
+    assert.equal(result.get('a'), 1, '只有边界当刻及之后的那次训练计分');
   });
 });

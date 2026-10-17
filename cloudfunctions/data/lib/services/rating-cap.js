@@ -43,7 +43,8 @@
  */
 
 const { MATCH_STATUS, RATED_PAIR_LIMIT } = require('../utils/constants.js');
-const { compareForReplay } = require('./replay.js');
+// 链序比较器独立成模块：旧回放引擎已删除，不得为了一个 comparator 保留整套回放（交接文档 §9.2）
+const { compareMatchOrder } = require('./match-order.js');
 
 /**
  * 一场比赛是不是「自行录入的」（日常约球）。
@@ -135,7 +136,7 @@ function countedMatches(matches, seasonStart) {
       if (hasSeasonStart && timeMs < startMs) return false;
       return crossPairs(match).length > 0;
     })
-    .sort(compareForReplay);
+    .sort(compareMatchOrder);
 }
 
 /**

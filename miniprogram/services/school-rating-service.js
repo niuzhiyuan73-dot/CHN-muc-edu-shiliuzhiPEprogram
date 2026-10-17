@@ -175,7 +175,7 @@ function decideSettlement(match) {
 
 /**
  * 赛事等级的取值优先级：match.level > event.level > 无（日常 K）。
- * 与旧回放（replay.js 的 eventLevel 解析）同一优先级，并写进快照留痕；
+ * 与旧回放引擎（已删除）的 eventLevel 解析同一优先级，并写进快照留痕；
  * 不信任客户端提交的 level——event 必须是调用方在事务内点读到的赛事文档。
  *
  * @param {Object} match

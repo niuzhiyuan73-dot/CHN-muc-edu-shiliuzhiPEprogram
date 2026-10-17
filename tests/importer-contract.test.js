@@ -32,7 +32,9 @@ process.env.TZ = 'Asia/Shanghai';
 const { buildMatchRecord } = require('../miniprogram/services/match-record.js');
 const { matchNaturalKey } = require('../cloudfunctions/data/src/core/idempotency.js');
 const { validateMatchScore } = require('../miniprogram/utils/match-format.js');
-const { replaySeason } = require('../miniprogram/services/replay.js');
+const { materializeRatings, computeSettlement, displayRating } = require('../miniprogram/services/school-rating-service.js');
+const { initialRatingFor } = require('../miniprogram/utils/elo.js');
+const { memberRatingKey } = require('../miniprogram/utils/school.js');
 const { generateSeed } = require('../miniprogram/services/seed.js');
 const {
   MATCH_STATUS,
@@ -160,32 +162,80 @@ test('历史成绩一律记为已生效', () => {
   }
 });
 
-test('样例流水能直接喂给回放引擎算出四个人的分数', () => {
-  // 前面几条都是「形状对不对」。这一条是真跑一遍：只要有一场比赛的
-  // 队伍、比分或时间有问题，回放要么抛错，要么算不出这四个人的分数。
-  const result = replaySeason({ members: MEMBERS, matches: documents });
+/**
+ * 把样例流水按发生时间升序喂给**同一个纯结算内核**（导入工具的受控路径：
+ * 导入的 ACTIVE 文档必须自带评级与结算快照，不许绕过结算，交接文档 §9.2）。
+ */
+function settleImportedMatches() {
+  const SCOPE = { schoolId: 'muc', association: 'pkb' };
+  const ordered = [...documents].sort((a, b) => new Date(a.matchTime) - new Date(b.matchTime));
+  const ratings = new Map();
+  let seq = 0;
+  const settled = [];
+  for (const doc of ordered) {
+    seq += 1;
+    const match = { ...doc, ...SCOPE };
+    const userIds = [...new Set([...doc.teamA, ...doc.teamB])];
+    const existingByUser = new Map();
+    const startEloByUser = new Map();
+    for (const userId of userIds) {
+      const key = memberRatingKey(userId, doc.pool, SCOPE);
+      const current = ratings.get(key);
+      if (current) existingByUser.set(userId, current);
+      else {
+        const member = MEMBERS.find((m) => m._id === userId);
+        startEloByUser.set(userId, { gender: member && member.gender });
+      }
+    }
+    const view = materializeRatings({
+      userIds, pool: doc.pool, scope: SCOPE, existingByUser, startEloByUser, now: doc.matchTime,
+    });
+    const { settlement, ratingDocs } = computeSettlement({
+      match, eventLevel: undefined, ratingsByUser: view, seq, settledAt: NOW,
+    });
+    settled.push(settlement);
+    for (const { doc: ratingDoc } of ratingDocs) ratings.set(ratingDoc._id, ratingDoc);
+  }
+  return { settled, ratings, SCOPE };
+}
 
-  assert.equal(result.matches.length, documents.length, '回放丢掉了比赛');
+test('样例流水能直接喂给结算内核算出四个人的分数', () => {
+  // 前面几条都是「形状对不对」。这一条是真跑一遍：只要有一场比赛的
+  // 队伍、比分或时间有问题，结算内核要么抛错，要么算不出这四个人的分数。
+  const { settled, ratings, SCOPE } = settleImportedMatches();
+
+  assert.equal(settled.length, documents.length, '结算丢掉了比赛');
 
   for (const member of MEMBERS) {
-    const user = result.users.find((item) => item._id === member._id);
-    assert.ok(user, `${member.nickName} 没进回放结果`);
-
     for (const pool of [RATING_POOL.SINGLES, RATING_POOL.DOUBLES]) {
-      const rating = user.ratings[pool];
-      assert.ok(Number.isFinite(rating.elo), `${member.nickName} 的 ${pool} 分数不是数字`);
-      assert.ok(rating.elo > 0, `${member.nickName} 的 ${pool} 分数成了非正数`);
+      // 没打过该池的会员不建档，展示端按 displayRating 兜底，同样是正数
+      const doc = ratings.get(memberRatingKey(member._id, pool, SCOPE))
+        || displayRating(member, pool);
+      assert.ok(Number.isFinite(doc.elo), `${member.nickName} 的 ${pool} 分数不是数字`);
+      assert.ok(doc.elo > 0, `${member.nickName} 的 ${pool} 分数成了非正数`);
     }
   }
 
   // 四个人都上过场，单打池的分数就不该还停在初始值
-  const singles = result.users.map((user) => user.ratings[RATING_POOL.SINGLES].elo);
-  assert.ok(new Set(singles).size > 1, '打完比赛后大家的分数还是一模一样，回放没算分');
+  const singles = MEMBERS.map((member) => {
+    const doc = ratings.get(memberRatingKey(member._id, RATING_POOL.SINGLES, SCOPE));
+    return doc ? doc.elo : null;
+  }).filter((value) => value !== null);
+  assert.ok(new Set(singles).size > 1, '打完比赛后大家的分数还是一模一样，结算没算分');
 });
 
-test('回放结果里没有中途入会者 —— 样例的四人都是创始会员', () => {
-  const result = replaySeason({ members: MEMBERS, matches: documents });
-
-  const placed = Object.keys(result.meta.placements || {});
-  assert.deepEqual(placed, [], '四人入会都早于赛季首场，不该有人被按前五场对手定级');
+test('固定起点定级已删除 —— 首场快照的赛前分就是性别起点，没有人被按对手反推', () => {
+  const { settled, ratings, SCOPE } = settleImportedMatches();
+  // 逐场结算改造：新人不再「按前几场对手反推起评分」，首建档即冻结性别起点。
+  // 因此每个人的评级文档 startElo 必须等于 initialRatingFor(gender)。
+  for (const member of MEMBERS) {
+    for (const pool of [RATING_POOL.SINGLES, RATING_POOL.DOUBLES]) {
+      const doc = ratings.get(memberRatingKey(member._id, pool, SCOPE));
+      if (!doc) continue;
+      assert.equal(doc.startSource, 'gender');
+      assert.equal(doc.startElo, initialRatingFor(member.gender),
+        `${member.nickName} 的 ${pool} 起点分不是性别起点（对手推导定级应已删除）`);
+    }
+  }
+  assert.ok(settled.every((item) => item.status === 'rated'), '样例比赛全部按计分结算');
 });

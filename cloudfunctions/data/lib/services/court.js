@@ -72,7 +72,7 @@ function poolKeyOf(match) {
  * 池键已经含 round（部分池还含 stage / group），所以池内这几项其实是常量，
  * 排序实际由 slot 决定。仍然把它们全写进比较式，是为了让这个函数在任何
  * 输入下都是**全序**：即使将来有人拿它去排跨池的列表，结果也稳定可复现。
- * 末位用 `_id` 兜底，与 replay.compareForReplay 同一手法——比较式必须能
+ * 末位用 `_id` 兜底，与 match-order.compareMatchOrder 同一手法——比较式必须能
  * 分出胜负，否则排序结果取决于输入顺序，分配就不可重入了。
  *
  * `_id` 用 `<` 比较而不是 localeCompare：后者受运行时语言环境影响，同一份

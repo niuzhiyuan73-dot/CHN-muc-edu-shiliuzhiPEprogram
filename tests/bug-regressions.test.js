@@ -43,15 +43,5 @@ test('S2 空间客户端跨 await 保持绑定，不被中途的协会切换劫�
   }
 });
 
-test('mock adjustment ledger preserves every historical adjustment', () => {
-  const store = require('../miniprogram/services/elo-store');
-  store.reset();
-  try {
-    store.setValue('u01', 'singles', 2000, '2026-04-09');
-    store.setValue('u01', 'singles', 1800, '2026-04-12');
-    assert.deepEqual(store.list().map(item => item.value), [2000, 1800]);
-    assert.equal(store.valueOf('u01', 'singles').value, 1800);
-  } finally {
-    store.reset();
-  }
-});
+// （已删除）mock 改分台账用例：elo-store 台账与 eloOverrides 时间线已随逐场结算改造移除，
+// 当前评级的唯一事实来源是 member_ratings + 结算快照。
