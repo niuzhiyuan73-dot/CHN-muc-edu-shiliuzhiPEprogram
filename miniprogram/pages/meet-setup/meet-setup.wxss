@@ -26,3 +26,10 @@
 .meet-step-value { min-width: 48rpx; text-align: center; font-size: 24rpx; }
 .meet-notice { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: #e8f5ec; color: #1f7a3d; font-size: 24rpx; }
 .meet-error { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: #fdece9; color: #b23a2e; font-size: 24rpx; }
+
+/* 赛制 / 轮次切换 */
+.meet-pick-opts { margin-top: 12rpx; display: flex; align-items: center; gap: 12rpx; flex-wrap: wrap; }
+.meet-chip { padding: 6rpx 20rpx; border-radius: 999rpx; border: 1rpx solid #ddd; font-size: 22rpx; color: #555; }
+.meet-chip.is-on { background: #b23a2e; border-color: #b23a2e; color: #fff; }
+.meet-advance { display: flex; align-items: center; gap: 8rpx; }
+.meet-advance-label { font-size: 22rpx; color: #888; }

@@ -217,6 +217,12 @@ function forMeet(input) {
     getMeetResultPreview: payload => request('getMeetResultPreview', payload),
     publishMeetResults: payload => request('publishMeetResults', payload),
     getPublishedResults: payload => request('getPublishedResults', payload),
+    // 预赛晋级与赛制名次（B8a）
+    drawMeetHeats: payload => request('drawMeetHeats', payload),
+    advanceMeetEvent: payload => request('advanceMeetEvent', payload),
+    drawMeetBracket: payload => request('drawMeetBracket', payload),
+    setMeetMatchWinner: payload => request('setMeetMatchWinner', payload),
+    getMeetBracket: payload => request('getMeetBracket', payload),
   });
 }
 

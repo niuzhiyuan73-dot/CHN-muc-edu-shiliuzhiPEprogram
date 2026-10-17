@@ -189,9 +189,18 @@ function meetScoreKey(entryKey, sessionKey, judgeId) {
   return `mtx:${rawPart(entryKey, '参赛记录')}:${rawPart(sessionKey, '场次')}:${part(judgeId, '裁判')}`;
 }
 
-/** 结果发布：一项目组别一条，保存当前生效版本与生效标记（幂等靠它）。 */
-function meetPublicationKey(meetId, eventKey) {
-  return `mtp:${part(meetId, '运动会')}:${rawPart(eventKey, '项目组别')}`;
+/**
+ * 结果发布：**一场次一条**（预赛第 1 组、决赛各一条），保存当前生效版本。
+ *
+ * 为什么不是「一项目组别一条」：有预赛的项目，预赛各组的成绩要分别发布
+ * （各组比赛时间不同），决赛再单独发布。若共用一条发布文档，第二组发布就会
+ * 覆盖第一组的名字与版本号，晋级判定随即读不到第一组的结果。
+ *
+ * sessionKey 必填。缺了它会退回「一项目一条」的老形状，而那种形状在多轮项目上
+ * 是错的——所以这里不做兼容，直接抛错，让调用方当场暴露。
+ */
+function meetPublicationKey(meetId, eventKey, sessionKey) {
+  return `mtp:${part(meetId, '运动会')}:${rawPart(eventKey, '项目组别')}:${rawPart(sessionKey, '场次')}`;
 }
 
 /** 结果行：一次发布下的一条参赛记录，一行一个名次与学院积分贡献。 */

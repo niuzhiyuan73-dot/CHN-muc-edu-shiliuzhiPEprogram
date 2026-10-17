@@ -73,7 +73,7 @@ test('主键各自加前缀，不同实体不会撞键', () => {
     meetSessionKey('mt1', 'e1', 'heat', '1'),
     meetJudgeKey('mt1', 's1', 'u9'),
     meetScoreKey('r1', 's1', 'u9'),
-    meetPublicationKey('mt1', 'e1'),
+    meetPublicationKey('mt1', 'e1', 's1'),
     meetResultRowKey('p1', 'r1'),
     meetStandingKey('mt1', 'c01'),
   ];

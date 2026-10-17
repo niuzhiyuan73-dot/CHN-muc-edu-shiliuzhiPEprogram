@@ -16,3 +16,9 @@
 .meet-notice { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: #e8f5ec; color: #1f7a3d; font-size: 24rpx; }
 .meet-error { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: #fdece9; color: #b23a2e; font-size: 24rpx; }
 .meet-college-link { margin: 20rpx 0 4rpx; text-align: center; font-size: 24rpx; color: #b23a2e; }
+
+/* 场次切换：预赛各组与决赛 */
+.meet-rounds { white-space: nowrap; margin-bottom: 12rpx; }
+.meet-round { display: inline-block; padding: 8rpx 20rpx; margin-right: 12rpx; border-radius: 999rpx; background: #f2f3f5; font-size: 22rpx; color: #555; }
+.meet-round.is-active { background: #b23a2e; color: #fff; }
+.meet-hint { font-size: 22rpx; color: #888; margin-bottom: 10rpx; }

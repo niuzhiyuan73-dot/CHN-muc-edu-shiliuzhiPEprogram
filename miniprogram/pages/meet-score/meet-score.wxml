@@ -48,28 +48,101 @@
       <view wx:for="{{events}}" wx:key="eventKey" class="card meet-row">
         <view class="meet-row-head" data-event-key="{{item.eventKey}}" bindtap="onOpenEvent">
           <view class="meet-row-main">
-            <view class="meet-row-name">{{item.name}} · {{item.group === 'male' ? '男子' : item.group === 'female' ? '女子' : '混合'}}</view>
-            <view class="meet-row-meta">{{item.sessions.length > 0 ? item.sessions[0].judgeCount : 0}} 名裁判 · {{item.ready ? '已配齐' : '未配齐'}}</view>
+            <view class="meet-row-name">{{item.name}} · {{item.groupLabel}}</view>
+            <view class="meet-row-meta">
+              <block wx:if="{{item.scoreType === 'versus'}}">
+                {{item.format === 'round_robin' ? '循环赛' : '单败淘汰'}} · {{item.sessions.length}} 场
+              </block>
+              <block wx:else>
+                {{item.sessions.length}} 个场次 · {{item.rounds === 'heat_final' ? '预赛+决赛' : '直接决赛'}}
+              </block>
+            </view>
           </view>
-          <view class="meet-row-tag">预览</view>
+          <view class="meet-row-tag">{{item.scoreType === 'versus' ? '赛制' : '预览'}}</view>
         </view>
 
-        <view wx:if="{{activeEventKey === item.eventKey && preview}}" class="meet-editor">
-          <view wx:if="{{preview.versus}}" class="meet-hint">胜负项目不录数值成绩，名次由赛制产生（本批未开放录入）。</view>
+        <view wx:if="{{activeEventKey === item.eventKey}}" class="meet-editor">
+
+          <!-- 胜负项目：签表 -->
+          <block wx:if="{{item.scoreType === 'versus'}}">
+            <view wx:if="{{bracket && bracket.drawn}}">
+              <view wx:if="{{bracket.complete}}" class="meet-ok">名次已出，可以发布</view>
+              <view wx:else class="meet-hint">{{bracket.message}}（点队伍名判胜）</view>
+              <view wx:for="{{bracket.matches}}" wx:for-item="match" wx:key="sessionKey" class="meet-match">
+                <view class="meet-match-head">{{match.roundLabel}} · 第 {{match.index}} 场</view>
+                <view
+                  wx:for="{{match.sides}}"
+                  wx:for-item="side"
+                  wx:key="entryKey"
+                  class="meet-side {{side.winner ? 'is-winner' : ''}} {{side.entryKey ? '' : 'is-empty'}}"
+                  data-session-key="{{match.sessionKey}}"
+                  data-entry-key="{{side.entryKey}}"
+                  bindtap="onSetWinner"
+                >{{side.label}}<text wx:if="{{side.winner}}"> ✓</text></view>
+              </view>
+              <button class="btn btn-primary" bindtap="onPublish" disabled="{{busy || !bracket.complete}}">发布正式名次</button>
+              <button class="btn btn-ghost" data-event-key="{{item.eventKey}}" bindtap="onDrawBracket" disabled="{{busy}}">重新编排</button>
+            </view>
+            <view wx:else>
+              <view class="meet-hint">还没有编排签表。编排后按场次判定胜负，名次自动产生。</view>
+              <button class="btn btn-primary" data-event-key="{{item.eventKey}}" bindtap="onDrawBracket" disabled="{{busy}}">编排签表</button>
+            </view>
+          </block>
+
+          <!-- 数值型项目：预赛抽签 / 晋级 / 逐场次发布 -->
           <block wx:else>
-            <view wx:if="{{preview.missing.length > 0}}" class="meet-warn">
-              还有 {{preview.missing.length}} 条没有收齐裁判成绩
-            </view>
-            <view wx:for="{{preview.items}}" wx:for-item="row" wx:key="entryKey" class="meet-preview-row">
-              <view class="meet-preview-college" data-entry-key="{{row.entryKey}}" bindtap="onToggleVoid">
-                {{row.collegeId}}{{row.text === '未收齐' ? '（未收齐）' : ''}}
+            <block wx:if="{{item.rounds === 'heat_final'}}">
+              <view class="meet-hint">
+                <block wx:if="{{item.heatDrawn}}">
+                  预赛 {{item.heatCount}} 组 · {{item.advanceLabel}} {{item.advance.count}} 人 · 决赛已定 {{item.finalCount}} 人
+                </block>
+                <block wx:else>该项目配置了预赛，还没有抽签分组</block>
               </view>
-              <view class="meet-preview-value">{{row.text}}</view>
-              <view class="meet-preview-void {{voidKeys.indexOf(row.entryKey) >= 0 ? 'is-void' : ''}}">
-                {{voidKeys.indexOf(row.entryKey) >= 0 ? '记无成绩' : '标无成绩'}}
+              <button
+                wx:if="{{!item.heatDrawn}}"
+                class="btn btn-ghost"
+                data-event-key="{{item.eventKey}}"
+                bindtap="onDrawHeats"
+                disabled="{{busy}}"
+              >抽签分预赛</button>
+              <button
+                wx:else
+                class="btn btn-ghost"
+                data-event-key="{{item.eventKey}}"
+                bindtap="onAdvance"
+                disabled="{{busy}}"
+              >按预赛成绩晋级</button>
+            </block>
+
+            <!-- 场次切换：预赛各组与决赛分别发布 -->
+            <scroll-view wx:if="{{item.sessions.length > 1}}" scroll-x class="meet-rounds">
+              <view
+                wx:for="{{item.sessions}}"
+                wx:for-item="rnd"
+                wx:key="sessionKey"
+                class="meet-round {{activeRoundKey === rnd.sessionKey ? 'is-active' : ''}}"
+                data-event-key="{{item.eventKey}}"
+                data-session-key="{{rnd.sessionKey}}"
+                bindtap="onPickRound"
+              >{{rnd.roundLabel}} {{rnd.index}}</view>
+            </scroll-view>
+
+            <block wx:if="{{preview}}">
+              <view wx:if="{{preview.official === false}}" class="meet-hint">预赛只排名次，不计学院分</view>
+              <view wx:if="{{preview.missing.length > 0}}" class="meet-warn">
+                还有 {{preview.missing.length}} 条没有收齐裁判成绩
               </view>
-            </view>
-            <button class="btn btn-primary" bindtap="onPublish" disabled="{{busy}}">发布正式结果</button>
+              <view wx:for="{{preview.items}}" wx:for-item="row" wx:key="entryKey" class="meet-preview-row">
+                <view class="meet-preview-college" data-entry-key="{{row.entryKey}}" bindtap="onToggleVoid">
+                  {{row.collegeId}}{{row.text === '未收齐' ? '（未收齐）' : ''}}
+                </view>
+                <view class="meet-preview-value">{{row.text}}</view>
+                <view class="meet-preview-void {{voidKeys.indexOf(row.entryKey) >= 0 ? 'is-void' : ''}}">
+                  {{voidKeys.indexOf(row.entryKey) >= 0 ? '记无成绩' : '标无成绩'}}
+                </view>
+              </view>
+              <button class="btn btn-primary" bindtap="onPublish" disabled="{{busy}}">发布本场成绩</button>
+            </block>
           </block>
         </view>
       </view>

@@ -31,7 +31,8 @@ const {
   newMeetId,
   meetRequestScope,
 } = require('../utils/meet-scope.js');
-const { TEMPLATES, getTemplate, searchTemplates, CATEGORY_LABEL, CATEGORY_ORDER } = require('./meet-event-catalog.js');
+const { TEMPLATES, getTemplate, searchTemplates, CATEGORY_LABEL, CATEGORY_ORDER, MEET_SCORE_TYPE } = require('./meet-event-catalog.js');
+const { ADVANCE_MODE, MEET_FORMAT, FORMAT_LABEL } = require('./meet-advance.js');
 const { buildMeetContext, freshMeetContext } = require('./meet-context.js');
 const { meetReadable, canManageMeet, isActiveMeetLead } = require('./meet-permission.js');
 const { meetCollegeLeadKey } = require('../utils/meet-scope.js');
@@ -132,6 +133,11 @@ function eventSummary(doc) {
     members: doc.members,
     perCollegeLimit: doc.perCollegeLimit,
     rounds: doc.rounds,
+    // 赛制（仅胜负项目）：single_elim 单败淘汰 / round_robin 循环赛。空表示不适用。
+    format: doc.format || '',
+    formatLabel: FORMAT_LABEL[doc.format] || '',
+    // 晋级口径（仅预赛+决赛）：{ mode, count }。空表示不适用。
+    advance: doc.advance || null,
     scored: doc.scored,
     allowFinalOnly: doc.rounds === 'final',
   };
@@ -278,8 +284,31 @@ async function configureMeetEvent(payload = {}, ctx) {
 
   const rounds = payload.rounds === undefined ? 'final' : String(payload.rounds);
   if (!['final', 'heat_final'].includes(rounds)) return refused('轮次只能是直接决赛或预赛+决赛');
-  if (rounds === 'heat_final' && template.scoreType === 'versus') {
-    return refused('胜负项目不支持预赛+决赛，请用赛制名次');
+  if (rounds === 'heat_final' && template.scoreType === MEET_SCORE_TYPE.VERSUS) {
+    return refused('胜负项目不支持预赛+决赛，请改用淘汰赛或循环赛');
+  }
+
+  // 赛制：只有胜负项目有。默认单败淘汰——拔河、团体对抗绝大多数是这个赛制。
+  // 双败与小组赛本期未实现，这里当场拒绝：宁可配置失败，也不能按单败跑出一个
+  // 看起来合理、实际错误的名次（双败的第二名可能输过两场）。
+  const isVersus = template.scoreType === MEET_SCORE_TYPE.VERSUS;
+  const format = isVersus ? String(payload.format || MEET_FORMAT.SINGLE_ELIM) : '';
+  if (isVersus && !FORMAT_LABEL[format]) {
+    return refused('胜负项目只支持单败淘汰或循环赛；双败与小组赛本期未实现');
+  }
+
+  // 晋级口径（D47）：三种都支持，逐项目选。只有预赛+决赛才有意义。
+  let advance = null;
+  if (rounds === 'heat_final') {
+    const mode = String((payload.advance && payload.advance.mode) || ADVANCE_MODE.PER_HEAT);
+    const count = Number((payload.advance && payload.advance.count) || 3);
+    if (!Object.values(ADVANCE_MODE).includes(mode)) {
+      return refused('晋级口径只能是每组前 N、总成绩前 N 或混合晋级');
+    }
+    if (!Number.isInteger(count) || count < 1 || count > 50) {
+      return refused('晋级人数应为 1–50 的整数');
+    }
+    advance = { mode, count };
   }
   const scored = payload.scored === undefined ? template.defaultScored : Boolean(payload.scored);
 
@@ -307,6 +336,8 @@ async function configureMeetEvent(payload = {}, ctx) {
       members: members.value,
       perCollegeLimit: limit.value,
       rounds,
+      format,
+      advance,
       scored,
       createdAt: existing ? (existing.createdAt || now) : now,
       updatedAt: now,

@@ -30,6 +30,23 @@
         </view>
 
         <view wx:if="{{activeEventKey === item.eventKey}}" class="meet-editor">
+          <!-- 多场次切换：预赛各组与决赛分别排期、分别派裁判 -->
+          <scroll-view wx:if="{{item.sessions.length > 1}}" scroll-x class="meet-rounds">
+            <view
+              wx:for="{{item.sessions}}"
+              wx:for-item="rnd"
+              wx:key="sessionKey"
+              class="meet-round {{editSessionKey === rnd.sessionKey ? 'is-active' : ''}}"
+              data-event-key="{{item.eventKey}}"
+              data-session-key="{{rnd.sessionKey}}"
+              bindtap="onPickSession"
+            >{{rnd.roundLabel}} {{rnd.index}}</view>
+          </scroll-view>
+
+          <view wx:if="{{current && current.entryKeys.length > 0}}" class="meet-hint">
+            本场 {{current.entryKeys.length}} 条参赛记录{{current.round === 'heat' ? '（预赛分组）' : ''}}
+          </view>
+
           <view class="meet-field">
             <text class="meet-label">开始</text>
             <input class="meet-input" placeholder="2026-10-24T09:00" value="{{editStartAt}}" bindinput="onStartInput" />
@@ -40,16 +57,16 @@
           </view>
           <button class="btn btn-primary" bindtap="onSaveSession" disabled="{{busy}}">保存场次</button>
 
-          <view wx:if="{{item.sessions.length > 0}}" class="meet-judges">
-            <view class="meet-judges-title">裁判（{{item.sessions[0].judgeCount}} 人）</view>
-            <view wx:for="{{item.sessions[0].judgeIds}}" wx:for-item="judgeId" wx:key="*this" class="meet-judge">
+          <view wx:if="{{current}}" class="meet-judges">
+            <view class="meet-judges-title">裁判（{{current.judgeCount}} 人）</view>
+            <view wx:for="{{current.judgeIds}}" wx:for-item="judgeId" wx:key="*this" class="meet-judge">
               <text>{{judgeId}}</text>
-              <text class="meet-judge-remove" data-session-key="{{item.sessions[0].sessionKey}}" data-judge-id="{{judgeId}}" bindtap="onRemoveJudge">撤销</text>
+              <text class="meet-judge-remove" data-session-key="{{current.sessionKey}}" data-judge-id="{{judgeId}}" bindtap="onRemoveJudge">撤销</text>
             </view>
             <picker range="{{judges}}" range-key="name" bindchange="onAssignJudge">
               <view class="meet-judge-add">+ 从本校成员里指派</view>
             </picker>
-            <button class="btn btn-ghost" data-session-key="{{item.sessions[0].sessionKey}}" bindtap="onStartSession" disabled="{{busy || item.sessions[0].judgeCount === 0}}">开赛</button>
+            <button class="btn btn-ghost" data-session-key="{{current.sessionKey}}" bindtap="onStartSession" disabled="{{busy || current.judgeCount === 0}}">开赛</button>
           </view>
         </view>
       </view>

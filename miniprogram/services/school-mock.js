@@ -31,6 +31,7 @@ const meetLeadService = require('./meet-college-lead-service.js');
 const meetRegistrationService = require('./meet-registration-service.js');
 const meetScheduleService = require('./meet-schedule-service.js');
 const meetScoreService = require('./meet-score-service.js');
+const meetAdvanceService = require('./meet-advance-service.js');
 
 /**
  * 协会空间处理器集合。
@@ -54,6 +55,7 @@ const exchangeHandlers = Object.freeze(pickActions([exchange], SCHOOL_EXCHANGE_A
 const meetHandlers = Object.freeze(
   pickActions([
     meetService, meetLeadService, meetRegistrationService, meetScheduleService, meetScoreService,
+    meetAdvanceService,
   ], SCHOOL_MEET_ACTIONS),
 );
 

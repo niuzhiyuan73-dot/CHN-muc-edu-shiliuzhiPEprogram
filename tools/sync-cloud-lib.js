@@ -139,6 +139,10 @@ const MANIFEST = [
   'services/meet-schedule-service.js',
   // 运动会 B7：录分、汇总、名次与发布。
   'services/meet-score-service.js',
+  // 运动会 B8a：晋级与赛制名次。纯算式与编排分成两个模块：前者零依赖，
+  // 后者要读写场次。两端必须同一份，否则晋级口径会在云端与本地给出不同的人。
+  'services/meet-advance.js',
+  'services/meet-advance-service.js',
 ];
 
 /**

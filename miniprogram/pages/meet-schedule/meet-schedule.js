@@ -15,7 +15,7 @@
 const meet = require('../../services/meet.js');
 const session = require('../../services/school-session.js');
 
-const ROUND_LABEL = { final: '决赛', heat: '预赛' };
+const ROUND_LABEL = { final: '决赛', heat: '预赛', rr: '循环赛' };
 
 Page({
   data: {
@@ -34,6 +34,9 @@ Page({
     editVenue: '',
     editRound: 'final',
     editIndex: 1,
+    editSessionKey: '',
+    // 当前正在编辑的场次（含裁判名单）：预赛有多组，必须能分别排期并派裁判
+    current: null,
   },
 
   onLoad(options = {}) {
@@ -72,7 +75,10 @@ Page({
         items: schedule.items.map((item) => ({
           ...item,
           readyLabel: item.ready ? '已配齐' : '未配齐',
-          sessions: item.sessions.map((row) => ({ ...row, roundLabel: ROUND_LABEL[row.round] || row.round })),
+          sessions: item.sessions.map((row) => ({
+            ...row,
+            roundLabel: row.roundLabel || ROUND_LABEL[row.round] || row.round,
+          })),
         })),
         judges,
       });
@@ -91,12 +97,26 @@ Page({
     }
     const item = this.data.items.find((row) => row.eventKey === eventKey);
     const first = item && item.sessions[0];
+    this.pickSession(eventKey, first);
+  },
+
+  /** 切换要排期的场次（预赛第 1/2 组、决赛各自独立） */
+  onPickSession(event) {
+    const sessionKey = event.currentTarget.dataset.sessionKey;
+    const item = this.data.items.find((row) => row.eventKey === this.data.activeEventKey);
+    const target = item && item.sessions.find((row) => row.sessionKey === sessionKey);
+    if (target) this.pickSession(this.data.activeEventKey, target);
+  },
+
+  pickSession(eventKey, session) {
     this.update({
-      activeEventKey: eventKey,
-      editStartAt: (first && first.startAt) || '',
-      editVenue: (first && first.venue) || '',
-      editRound: (first && first.round) || 'final',
-      editIndex: (first && first.index) || 1,
+      activeEventKey: eventKey || '',
+      editSessionKey: (session && session.sessionKey) || '',
+      editStartAt: (session && session.startAt) || '',
+      editVenue: (session && session.venue) || '',
+      editRound: (session && session.round) || 'final',
+      editIndex: (session && session.index) || 1,
+      current: session || null,
     });
   },
 
@@ -141,8 +161,7 @@ Page({
     if (this.data.busy) return;
     const index = Number(event.detail.value);
     const judge = this.data.judges[index];
-    const item = this.data.items.find((row) => row.eventKey === this.data.activeEventKey);
-    const target = item && item.sessions[0];
+    const target = this.data.current;
     if (!judge || !target) {
       this.update({ error: '请先保存场次，再指派裁判' });
       return;

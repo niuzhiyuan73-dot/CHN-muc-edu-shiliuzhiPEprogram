@@ -24,13 +24,16 @@ const {
   MEET_STATUS, meetSessionKey, meetJudgeKey,
 } = require('../utils/meet-scope.js');
 const { schoolMemberKey, SCHOOL_MEMBER_STATUS } = require('../utils/school.js');
+const { MEET_SCORE_TYPE } = require('./meet-event-catalog.js');
 const { buildMeetContext, freshMeetContext } = require('./meet-context.js');
 const { meetReadable, canManageMeet } = require('./meet-permission.js');
 
 const ok = (data) => ({ ok: true, data });
 const refused = (message, extra = {}) => ({ ok: false, message, ...extra });
 
-const ROUND_LABEL = Object.freeze({ final: '决赛', heat: '预赛' });
+const ROUND_LABEL = Object.freeze({ final: '决赛', heat: '预赛', rr: '循环赛' });
+/** 赛制轮次用 `r1`、`r2`… 表示；`rf` 不单独存在，最后一轮仍记作 `r<总轮数>`。 */
+const BRACKET_ROUND = /^r[1-9]$/;
 const SESSION_STATUS = Object.freeze({ SCHEDULED: 'scheduled', RUNNING: 'running', FINISHED: 'finished' });
 
 const isAliveMeet = (doc) => Boolean(doc && doc.status && doc.status !== MEET_STATUS.DELETED);
@@ -58,13 +61,16 @@ function sessionSummary(doc) {
     sessionKey: doc._id,
     eventKey: doc.eventKey,
     round: doc.round,
-    roundLabel: ROUND_LABEL[doc.round] || doc.round,
+    roundLabel: doc.roundLabel || ROUND_LABEL[doc.round] || doc.round,
     index: doc.index,
     startAt: doc.startAt,
     endAt: doc.endAt || '',
     venue: doc.venue || '',
     note: doc.note || '',
     status: doc.status,
+    // 参赛人：预赛是分到本组的人，赛制项目是本场对阵双方。空数组表示「全项目」。
+    entryKeys: Array.isArray(doc.entryKeys) ? doc.entryKeys : [],
+    winnerEntryKey: doc.winnerEntryKey || '',
   };
 }
 
@@ -90,7 +96,12 @@ async function listSessions(repo, ctx) {
 async function saveMeetSession(payload = {}, ctx) {
   if (!meetReadable(ctx) || !ctx.meetId) return refused('请先登录');
   const round = String(payload.round || 'final');
-  if (!ROUND_LABEL[round]) return refused('轮次只能是预赛或决赛');
+  // 轮次三类：预赛 / 决赛（数值型项目的多轮），循环赛，以及淘汰赛的 r1…r9。
+  // 淘汰赛轮次由编排自动生成，这里允许手工保存是为了改时间、场地与裁判，不是
+  // 让管理员手工造对阵——对阵只能由签表算法落位。
+  if (!ROUND_LABEL[round] && !BRACKET_ROUND.test(round)) {
+    return refused('轮次只能是预赛、决赛、循环赛或淘汰赛轮次（r1–r9）');
+  }
   const index = Number(payload.index === undefined ? 1 : payload.index);
   if (!Number.isInteger(index) || index < 1 || index > 99) return refused('组次应为 1–99 的整数');
 
@@ -118,7 +129,11 @@ async function saveMeetSession(payload = {}, ctx) {
     const key = meetSessionKey(fresh.meetId, eventKey, round, index);
     const current = await tx.sportsMeetSessions.getById(key);
     const now = toIso(fresh.now);
+    // 先铺原文档再覆盖排期字段：裁判数与参赛人不是本动作的数据，
+    // 若整份重写就会把 judgeCount 归零（开赛随即被判「没有裁判」），
+    // 也会把抽签分好的对阵抹掉。改时间不该有这两种副作用。
     const doc = {
+      ...(current || {}),
       schoolId: fresh.schoolId,
       meetId: fresh.meetId,
       eventKey,
@@ -129,6 +144,8 @@ async function saveMeetSession(payload = {}, ctx) {
       venue: venue.value,
       note: note.value,
       status: current ? current.status : SESSION_STATUS.SCHEDULED,
+      entryKeys: Array.isArray(current && current.entryKeys) ? current.entryKeys : [],
+      roundLabel: (current && current.roundLabel) || ROUND_LABEL[round] || '',
       createdAt: current ? (current.createdAt || now) : now,
       updatedAt: now,
     };
@@ -140,6 +157,14 @@ async function saveMeetSession(payload = {}, ctx) {
 /**
  * 发布赛程：每个项目组别都要有「带了时间与场地」的场次，缺一项就拒绝并列出。
  *
+ * 【什么算「配齐」要按项目类型分开判】
+ * 数值型直接决赛：那一场配齐即可。数值型预赛+决赛：**每一组预赛与决赛**都要配齐，
+ * 只配第一组就发布，等于让后面几组没有时间场地。赛制项目：只需首轮（r1／循环赛）
+ * 配齐——后面几轮要等上一轮出了胜负才存在，要求它们提前配齐是不可能的。
+ *
+ * 预赛还有一条前置：分组必须已经抽签（每个预赛场次都有参赛人）。没抽签就发布，
+ * 首页会显示一排「预赛第 N 组 · 0 人」的空场次。
+ *
  * 校验在事务外读一次（事务内不能查询），事务内只重读运动会状态再落库。
  * 赛程发布不是名额类操作，不存在「并发超卖」，这里接受一次读快照。
  */
@@ -150,15 +175,35 @@ async function publishMeetSchedule(payload = {}, ctx) {
     ctx.repo.forMeet(scopeOf(ctx)).sportsMeetEvents.list(),
     listSessions(ctx.repo, ctx),
   ]);
-  const ready = new Set(sessions
-    .filter((doc) => doc.startAt && doc.venue)
-    .map((doc) => doc.eventKey));
-  const missing = events
-    .filter((event) => !ready.has(event._id))
-    .map((event) => event.name);
   if (events.length === 0) return refused('本届还没有项目，无法发布赛程');
+
+  const byEvent = new Map();
+  for (const doc of sessions) {
+    if (!byEvent.has(doc.eventKey)) byEvent.set(doc.eventKey, []);
+    byEvent.get(doc.eventKey).push(doc);
+  }
+
+  const missing = [];
+  const notDrawn = [];
+  for (const event of events) {
+    const own = byEvent.get(event._id) || [];
+    const required = event.scoreType === MEET_SCORE_TYPE.VERSUS
+      ? own.filter((doc) => doc.round === 'r1' || doc.round === 'rr')
+      : own;// 数值型：所有场次都要配齐
+    if (required.length === 0 || required.some((doc) => !doc.startAt || !doc.venue)) {
+      missing.push(event.name);
+      continue;
+    }
+    if (event.rounds === 'heat_final' && own.some((doc) => doc.round === 'heat'
+      && !(Array.isArray(doc.entryKeys) && doc.entryKeys.length > 0))) {
+      notDrawn.push(event.name);
+    }
+  }
   if (missing.length > 0) {
     return refused(`以下项目还没配齐时间与场地：${missing.slice(0, 8).join('、')}${missing.length > 8 ? ' 等' : ''}`, { missing });
+  }
+  if (notDrawn.length > 0) {
+    return refused(`以下项目的预赛还没抽签分组：${notDrawn.slice(0, 8).join('、')}`, { missing: notDrawn });
   }
 
   return ctx.repo.transaction(async (tx) => {
@@ -314,6 +359,13 @@ async function getMeetSchedule(payload = {}, ctx) {
       eventKey: event._id,
       name: event.name,
       group: event.group,
+      // 录分页要据此决定显示「场次切换」「抽签分预赛」还是「签表」，
+      // 所以把成绩类型与赛制一起带出来，页面不用再猜。
+      scoreType: event.scoreType,
+      rounds: event.rounds,
+      format: event.format || '',
+      advance: event.advance || null,
+      scored: event.scored,
       ready: own.some((doc) => doc.startAt && doc.venue),
       sessions: own.map((doc) => ({
         ...sessionSummary(doc),

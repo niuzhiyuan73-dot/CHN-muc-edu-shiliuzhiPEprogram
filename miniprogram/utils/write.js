@@ -131,6 +131,11 @@ const SCHOOL_WRITE_ACTIONS = [
   'saveMeetJudgeScore',
   'submitMeetJudgeScore',
   'publishMeetResults',
+  // 运动会晋级与赛制（B8a）：抽签、推进、判定胜负都是写动作
+  'drawMeetHeats',
+  'advanceMeetEvent',
+  'drawMeetBracket',
+  'setMeetMatchWinner',
 ];
 
 const SCHOOL_WRITE_ACTION_SET = new Set(SCHOOL_WRITE_ACTIONS);

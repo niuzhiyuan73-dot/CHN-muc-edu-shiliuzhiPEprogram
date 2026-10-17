@@ -204,12 +204,39 @@ Page({
       limit: defaultLimit(template),
       limitUnit: unitOf(template.entryForm),
       fixedMembers: template.fixedMembers || null,
+      // 赛制与轮次：胜负项目选赛制，数值项目选是否预赛+决赛。
+      // 默认「直接决赛／单败淘汰」——这是学校运动会里绝大多数项目的形态，
+      // 不把「预赛+决赛」设成默认，否则每个项目都要多排一场、多派一组裁判。
+      isVersus: template.scoreType === 'versus',
+      format: template.scoreType === 'versus' ? 'single_elim' : '',
+      rounds: 'final',
+      advanceCount: 3,
     });
     this.update({
       picked,
       pickedCount: picked.length,
       templates: decorateTemplates(this.data.templates, picked),
     });
+  },
+
+  /** 数值项目：直接决赛 ↔ 预赛+决赛 */
+  onToggleRounds(event) {
+    const index = Number(event.currentTarget.dataset.index);
+    const picked = [...this.data.picked];
+    const row = picked[index];
+    if (!row || row.isVersus) return;
+    row.rounds = row.rounds === 'heat_final' ? 'final' : 'heat_final';
+    this.update({ picked });
+  },
+
+  /** 胜负项目：单败淘汰 ↔ 循环赛（双败与小组赛本期未实现，不给选项） */
+  onToggleFormat(event) {
+    const index = Number(event.currentTarget.dataset.index);
+    const picked = [...this.data.picked];
+    const row = picked[index];
+    if (!row || !row.isVersus) return;
+    row.format = row.format === 'round_robin' ? 'single_elim' : 'round_robin';
+    this.update({ picked });
   },
 
   onStep(event) {
@@ -223,6 +250,7 @@ Page({
       if (next < 2 || next > 30) return;
     }
     if (field === 'limit' && (next < 1 || next > 20)) return;
+    if (field === 'advanceCount' && (next < 1 || next > 50)) return;
     row[field] = next;
     this.update({ picked });
   },
@@ -240,12 +268,20 @@ Page({
     try {
       for (const row of this.data.picked) {
         try {
-          await scoped.configureMeetEvent({
+          const payload = {
             templateId: row.templateId,
             group: row.group,
             members: row.members,
             perCollegeLimit: row.limit,
-          });
+          };
+          if (row.isVersus) {
+            payload.format = row.format || 'single_elim';
+          } else if (row.rounds === 'heat_final') {
+            payload.rounds = 'heat_final';
+            // 默认「每组前 N」：学校运动会最常见，且分组人数不均时也不会偏袒
+            payload.advance = { mode: 'per_heat', count: row.advanceCount };
+          }
+          await scoped.configureMeetEvent(payload);
         } catch (err) {
           throw new Error(`${row.name}（${row.groupLabel}）：${(err && err.message) || '配置失败'}`);
         }

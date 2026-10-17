@@ -25,10 +25,10 @@
  * 因此不要在这里加 version 到行主键上：那会把「无痕」变成「可追」，
  * 与已确认的裁决相反。
  *
- * 【本批不做】
- * · 预赛晋级（多轮推进）：一个项目组别当前只支持一个发布场次；
- * · 胜负项目（拔河）的赛制名次由发布人直接录入，不自动跑赛制。
- * 两处都在各自入口给出明确提示，不假装支持。
+ * 【多轮与赛制（B8a）】
+ * 预赛各组与决赛各自发布（发布键按场次拆开），预赛只排名次、不计学院分；
+ * 胜负项目不再手填名次，由签表/循环赛推出来（见 meet-advance.js）。
+ * 本模块只负责「取数 → 排名 → 落库」，晋级与赛制的判定全在纯函数里。
  * ============================================================
  */
 
@@ -37,7 +37,11 @@ const {
   meetScoreKey, meetJudgeKey, meetPublicationKey, meetResultRowKey,
 } = require('../utils/meet-scope.js');
 const { MEET_SCORE_TYPE } = require('./meet-event-catalog.js');
-const { MEASURE_RULES, normalizeMeasure, formatMeasure, compareMeasure } = require('./meet-measure.js');
+const { normalizeMeasure, formatMeasure } = require('./meet-measure.js');
+const {
+  MEET_FORMAT, rankByValue, bracketStandings, roundRobinStandings,
+} = require('./meet-advance.js');
+const { matchesOf, roundNoOf } = require('./meet-advance-service.js');
 const { buildMeetContext, freshMeetContext } = require('./meet-context.js');
 const { meetReadable, canManageMeet, canPublishMeetResult } = require('./meet-permission.js');
 
@@ -79,26 +83,12 @@ function averageOf(values) {
   return Math.round(sum / trimmed.length);
 }
 
-/** 竞赛排名 1,2,2,4（D73）：同值同名次，后续跳号 */
-function rankRows(rows, order) {
-  const sorted = [...rows].sort((a, b) => {
-    const compared = compareMeasure(a.value, b.value, order);
-    if (compared === null || compared === 0) return 0;
-    return compared;
-  });
-  let lastValue = null;
-  let lastRank = 0;
-  sorted.forEach((row, index) => {
-    if (lastValue !== null && compareMeasure(row.value, lastValue, order) === 0) {
-      row.rank = lastRank;
-    } else {
-      row.rank = index + 1;
-      lastValue = row.value;
-      lastRank = row.rank;
-    }
-  });
-  return sorted;
-}
+/**
+ * 竞赛排名 1,2,2,4（D73）：同值同名次，后续跳号。
+ * 实现放在 meet-advance.js 里由这里与晋级判定共用——两处各写一份，
+ * 迟早会在「并列算不算晋级」这种边界上分叉。
+ */
+const rankRows = rankByValue;
 
 /** 汇总某个场次的有效分数：要求全部有效裁判都已提交 */
 function summarizeScores(entries, scores, judgeIds, eventKey, sessionKey) {
@@ -123,19 +113,43 @@ async function getMeetSessionScores(payload = {}, ctx) {
   const sessionKey = String(payload.sessionKey || '').trim();
   if (!sessionKey) return refused('请指定场次');
 
-  const [session, entries, scores, assignment] = await Promise.all([
+  const [session, entries, scores, assignment, event] = await Promise.all([
     ctx.repo.forMeet(scope).sportsMeetSessions.getById(sessionKey),
     ctx.repo.forMeet(scope).sportsMeetEntries.list(),
     ctx.repo.forMeet(scope).sportsMeetScores.list(),
     ctx.repo.forMeet(scope).sportsMeetJudgeAssignments.getById(
       meetJudgeKey(ctx.meetId, sessionKey, ctx.actorId || '-'),
     ),
+    ctx.repo.forMeet(scope).sportsMeetEvents.list(),
   ]);
   if (!session || session.meetId !== ctx.meetId) return refused('场次不存在或不属于本届运动会');
+  const doc = event.find((row) => row._id === session.eventKey);
+  // 胜负项目没有分数可录：让裁判看到「这场由谁判胜」，而不是把他带到录分框前再报错
+  if (doc && doc.scoreType === MEET_SCORE_TYPE.VERSUS) {
+    return ok({
+      session: {
+        sessionKey, eventKey: session.eventKey, round: session.round,
+        startAt: session.startAt, venue: session.venue, judgeCount: session.judgeCount || 0,
+        winnerEntryKey: session.winnerEntryKey || '',
+      },
+      versus: true,
+      items: (session.entryKeys || []).filter(Boolean).map((entryKey) => {
+        const entry = entries.find((row) => row._id === entryKey) || {};
+        return { entryKey, collegeId: entry.collegeId || '', userIds: entry.userIds || [], myScore: null };
+      }),
+      canEnter: false,
+    });
+  }
 
   const isAdmin = canManageMeet(ctx);
+  // 预赛分组的场次只列本组的人：把全项目的人都摆到「预赛第 2 组」的录分页上，
+  // 裁判必然会录错行。没有 entryKeys 的场次（直接决赛）才是全项目。
+  const assigned = Array.isArray(session.entryKeys) && session.entryKeys.length > 0
+    ? new Set(session.entryKeys)
+    : null;
   const own = entries
-    .filter((doc) => doc.eventKey === session.eventKey && doc.status === 'approved')
+    .filter((doc) => doc.eventKey === session.eventKey && doc.status === 'approved'
+      && (!assigned || assigned.has(doc._id)))
     .map((doc) => {
       const mine = scores.find((row) => row.entryKey === doc._id
         && row.sessionKey === sessionKey && row.judgeId === ctx.actorId);
@@ -172,7 +186,7 @@ async function saveMeetJudgeScore(payload = {}, ctx) {
     const event = await tx.sportsMeetEvents.getById(session.eventKey);
     if (!event) return refused('项目组别不存在');
     if (event.scoreType === MEET_SCORE_TYPE.VERSUS) {
-      return refused('胜负项目不录入数值成绩，由发布人直接录入赛制名次');
+      return refused('胜负项目不录入数值成绩，名次由签表自动产生');
     }
     const entry = await tx.sportsMeetEntries.getById(entryKey);
     if (!entry || entry.eventKey !== session.eventKey || entry.status !== 'approved') {
@@ -254,18 +268,59 @@ async function getMeetResultPreview(payload = {}, ctx) {
   ]);
   if (!event || event.meetId !== ctx.meetId) return refused('项目组别不存在或不属于本届运动会');
 
-  const own = sessions.filter((doc) => doc.eventKey === eventKey);
+  const own = sessions
+    .filter((doc) => doc.eventKey === eventKey)
+    .sort((a, b) => Number(a.index) - Number(b.index));
   if (own.length === 0) return refused('该项目组别还没有场次');
-  const sessionKey = String(payload.sessionKey || own[0]._id);
+
+  // 场次选择：显式指定 > 唯一场次 > 拒绝。多轮项目绝不默认第一场——
+  // 管理员想预览决赛，系统却给他预赛第 1 组，接着就会把决赛发成预赛。
+  let session = null;
+  if (payload.sessionKey) {
+    session = own.find((doc) => doc._id === String(payload.sessionKey));
+    if (!session) return refused('场次不存在或不属于该项目');
+  } else if (own.length === 1) {
+    session = own[0];
+  } else {
+    return refused('该项目有多个场次，请指定要预览哪一场', {
+      sessions: own.map((doc) => ({
+        sessionKey: doc._id,
+        round: doc.round,
+        roundLabel: doc.roundLabel || doc.round,
+        index: doc.index,
+      })),
+    });
+  }
+  const sessionKey = session._id;
   const judgeIds = assignments
     .filter((doc) => doc.status === 'active' && doc.sessionKey === sessionKey)
     .map((doc) => doc.judgeId);
 
-  const approved = entries.filter((doc) => doc.eventKey === eventKey && doc.status === 'approved');
+  const assigned = Array.isArray(session.entryKeys) && session.entryKeys.length > 0
+    ? new Set(session.entryKeys) : null;
+  const approved = entries.filter((doc) => doc.eventKey === eventKey
+    && doc.status === 'approved' && (!assigned || assigned.has(doc._id)));
+
   if (event.scoreType === MEET_SCORE_TYPE.VERSUS) {
+    // 胜负项目不再手填名次：预览直接给「签表打完了没有、当前名次如何」
+    const matches = matchesOf(sessions, eventKey);
+    const bracket = event.bracket || null;
+    const format = (bracket && bracket.format) || event.format || MEET_FORMAT.SINGLE_ELIM;
+    const totalRounds = bracket ? Number(bracket.totalRounds) || 1 : 1;
+    const standings = format === MEET_FORMAT.ROUND_ROBIN
+      ? roundRobinStandings({ entries: approved.map((doc) => doc._id), matches })
+      : bracketStandings({ entries: approved.map((doc) => doc._id), totalRounds, matches });
     return ok({
       event: { eventKey, name: event.name, group: event.group, scoreType: event.scoreType },
-      sessionKey, judgeIds, versus: true, items: [], missing: [],
+      sessionKey,
+      judgeIds,
+      versus: true,
+      format,
+      complete: Boolean(standings.ok),
+      message: standings.ok ? '' : standings.message,
+      standings: standings.ok ? standings.rows : [],
+      items: [],
+      missing: [],
     });
   }
 
@@ -273,6 +328,10 @@ async function getMeetResultPreview(payload = {}, ctx) {
   return ok({
     event: { eventKey, name: event.name, group: event.group, scoreType: event.scoreType, order: event.order },
     sessionKey,
+    round: session.round,
+    roundLabel: session.roundLabel || session.round,
+    // 预赛只排名次不计分：页面据此把「学院分」列藏起来
+    official: session.round === 'final',
     judgeIds,
     versus: false,
     missing: missing.map((doc) => ({ entryKey: doc._id, collegeId: doc.collegeId })),
@@ -291,7 +350,19 @@ async function getMeetResultPreview(payload = {}, ctx) {
 /**
  * 发布正式结果（D84／D85）。
  *
- * @param {Object} payload { eventKey, sessionKey?, voidEntryKeys?: string[], rankings?: [{entryKey,rank}] }
+ * 【每个场次单独发布】
+ * 有预赛的项目，各组比完的时间不同，必须能分别发布。所以发布键按场次拆开
+ * （见 meetPublicationKey），预赛的行与决赛的行互不覆盖。
+ *
+ * 【预赛发布不计分】
+ * 预赛只决定谁进决赛。若预赛也给学院分，一个项目就会被计两次分，学院总榜
+ * 直接失真。所以 `official` 只在决赛（或胜负项目）为真，其余一律 0 分。
+ *
+ * 【胜负项目不再手填名次（D51）】
+ * 名次由签表/循环赛推出来。签表没打完就发布会被拒绝，并告诉管理员还差几场——
+ * 半程名次没有意义，硬发只会让学院总榜在中途反复变动。
+ *
+ * @param {Object} payload { eventKey, sessionKey?, voidEntryKeys?: string[], reason? }
  */
 async function publishMeetResults(payload = {}, ctx) {
   if (!meetReadable(ctx) || !ctx.meetId) return refused('请先登录');
@@ -312,39 +383,92 @@ async function publishMeetResults(payload = {}, ctx) {
   if (!event || event.meetId !== ctx.meetId) return refused('项目组别不存在或不属于本届运动会');
   if (!canPublishMeetResult(ctx)) return refused('只有校级管理员及以上或本届总裁判可以发布成绩');
 
-  const ownSessions = sessions.filter((doc) => doc.eventKey === eventKey);
+  const ownSessions = sessions
+    .filter((doc) => doc.eventKey === eventKey)
+    .sort((a, b) => Number(a.index) - Number(b.index));
   if (ownSessions.length === 0) return refused('该项目组别还没有场次');
-  if (ownSessions.length > 1 && !payload.sessionKey) {
-    return refused('该项目组别有多个场次（预赛/决赛），本批还不支持自动推进，请指定场次');
-  }
-  const sessionKey = String(payload.sessionKey || ownSessions[0]._id);
 
-  const approved = entries.filter((doc) => doc.eventKey === eventKey && doc.status === 'approved');
+  const isVersus = event.scoreType === MEET_SCORE_TYPE.VERSUS;
+  const bracket = event.bracket || null;
+  const format = (bracket && bracket.format) || event.format || MEET_FORMAT.SINGLE_ELIM;
+  const isRoundRobin = isVersus && format === MEET_FORMAT.ROUND_ROBIN;
+
+  let session = null;
+  if (isVersus && !isRoundRobin) {
+    if (!bracket) return refused('请先编排签表');
+    const totalRounds = Number(bracket.totalRounds) || 1;
+    session = ownSessions.find((doc) => roundNoOf(doc) === totalRounds) || null;
+    if (!session) return refused('签表还没有决赛场次');
+  } else if (!isVersus) {
+    const wanted = String(payload.sessionKey || '').trim();
+    if (wanted) {
+      session = ownSessions.find((doc) => doc._id === wanted);
+      if (!session) return refused('场次不存在或不属于该项目');
+    } else if (ownSessions.length === 1) {
+      session = ownSessions[0];
+    } else {
+      return refused('该项目有多个场次（预赛/决赛），请指定要发布哪一场', {
+        sessions: ownSessions.map((doc) => ({
+          sessionKey: doc._id, round: doc.round, roundLabel: doc.roundLabel || doc.round, index: doc.index,
+        })),
+      });
+    }
+  }
+
+  // `all` 是循环赛的发布键段：整届只有一条成绩，不分场次
+  const sessionKey = session ? session._id : 'all';
+  const official = isVersus ? true : session.round === 'final';
+
+  let approved;
+  if (isVersus) {
+    approved = entries.filter((doc) => doc.eventKey === eventKey && doc.status === 'approved');
+  } else {
+    const assigned = Array.isArray(session.entryKeys) && session.entryKeys.length > 0
+      ? new Set(session.entryKeys) : null;
+    if (!assigned && event.rounds === 'heat_final' && session.round === 'final') {
+      return refused('决赛参赛名单还没产生，请先完成晋级');
+    }
+    approved = entries.filter((doc) => doc.eventKey === eventKey && doc.status === 'approved'
+      && (!assigned || assigned.has(doc._id)));
+  }
   if (approved.length === 0) return refused('该项目还没有通过审核的参赛名单');
 
   const voidKeys = new Set(Array.isArray(payload.voidEntryKeys) ? payload.voidEntryKeys : []);
   const rows = [];
 
-  if (event.scoreType === MEET_SCORE_TYPE.VERSUS) {
-    // 胜负项目：名次由赛制产生，本批由发布人直接录入（A5）
-    const rankings = Array.isArray(payload.rankings) ? payload.rankings : [];
-    if (rankings.length !== approved.length) {
-      return refused('请为每条参赛记录录入赛制名次');
+  if (isVersus) {
+    const matches = matchesOf(sessions, eventKey);
+    const entryKeys = approved.map((doc) => doc._id);
+    const standings = isRoundRobin
+      ? roundRobinStandings({ entries: entryKeys, matches })
+      : bracketStandings({
+        entries: entryKeys,
+        totalRounds: Number(bracket && bracket.totalRounds) || 1,
+        matches,
+      });
+    if (!standings.ok) {
+      return refused(standings.message || '赛制还没有打完，不能发布', { pending: standings.pending });
     }
-    const seen = new Set();
-    for (const item of rankings) {
-      const rank = Number(item.rank);
-      if (!Number.isInteger(rank) || rank < 1 || rank > approved.length) return refused('名次超出范围');
-      if (seen.has(rank)) return refused('名次不能重复');
-      seen.add(rank);
-      const entry = approved.find((doc) => doc._id === item.entryKey);
-      if (!entry) return refused('名次里有不属于本项目的参赛记录');
+    const byKey = new Map(approved.map((doc) => [doc._id, doc]));
+    const ranked = new Set();
+    for (const row of standings.rows) {
+      const entry = byKey.get(row.entryKey);
+      if (!entry) continue;
+      ranked.add(entry._id);
       const isVoid = voidKeys.has(entry._id);
       rows.push({
         entryKey: entry._id, collegeId: entry.collegeId, userIds: entry.userIds,
-        value: null, rank: isVoid ? null : rank,
+        value: null, rank: isVoid ? null : row.rank,
         status: isVoid ? ROW_STATUS.VOID : ROW_STATUS.RESULT,
-        points: isVoid ? 0 : pointsOf(rank, event.scored, event.entryForm),
+        points: isVoid ? 0 : pointsOf(row.rank, event.scored, event.entryForm),
+      });
+    }
+    // 编排之后才通过审核、没进签表的记录：不给名次，避免「没比赛却有分」
+    for (const entry of approved) {
+      if (ranked.has(entry._id)) continue;
+      rows.push({
+        entryKey: entry._id, collegeId: entry.collegeId, userIds: entry.userIds,
+        value: null, rank: null, status: ROW_STATUS.VOID, points: 0,
       });
     }
   } else {
@@ -376,12 +500,13 @@ async function publishMeetResults(payload = {}, ctx) {
       }
     }
     for (const row of rankRows(live, event.order)) {
-      row.points = pointsOf(row.rank, event.scored, event.entryForm);
+      // 预赛只排名次、不计学院分：决赛才产生积分
+      row.points = official ? pointsOf(row.rank, event.scored, event.entryForm) : 0;
       rows.push(row);
     }
   }
 
-  const publicationKey = meetPublicationKey(ctx.meetId, eventKey);
+  const publicationKey = meetPublicationKey(ctx.meetId, eventKey, sessionKey);
   const current = publications.find((doc) => doc._id === publicationKey);
 
   return ctx.repo.transaction(async (tx) => {
@@ -398,11 +523,17 @@ async function publishMeetResults(payload = {}, ctx) {
       teamMultiplier: TEAM_MULTIPLIER,
       tieRanking: 'competition',
       average: 'trim-extremes',
+      official,
+      ...(isVersus ? { format } : {}),
+      ...(official ? {} : { advance: event.advance || null }),
     };
     await tx.sportsMeetPublications.set(publicationKey, {
       schoolId: fresh.schoolId, meetId: fresh.meetId, eventKey,
       version, status: 'published', rules,
       sessionKey,
+      round: isVersus ? 'versus' : session.round,
+      roundLabel: isVersus ? '赛制' : (session.roundLabel || session.round),
+      official,
       rowCount: rows.length,
       voidCount: rows.filter((row) => row.status === ROW_STATUS.VOID).length,
       publishedBy: fresh.actorId, publishedAt: now,
@@ -418,7 +549,7 @@ async function publishMeetResults(payload = {}, ctx) {
     }
     return ok({
       publication: {
-        eventKey, version, sessionKey,
+        eventKey, version, sessionKey, official,
         rows: rows.map((row) => ({
           entryKey: row.entryKey, collegeId: row.collegeId,
           rank: row.rank, points: row.points, status: row.status,
@@ -428,38 +559,61 @@ async function publishMeetResults(payload = {}, ctx) {
   });
 }
 
-/** 已发布结果：读当前版本的行（旧版本留在库里但不返回） */
+/**
+ * 已发布结果：读该项目所有场次的当前版本。
+ *
+ * `items` 只返回**正式成绩**（决赛／赛制）的行——学院总榜、个人荣誉都按它算。
+ * 预赛各行放在 `rounds` 里：它们是过程数据，既不该进荣誉，也不该进总榜。
+ */
 async function getPublishedResults(payload = {}, ctx) {
   if (!meetReadable(ctx) || !ctx.meetId) return refused('请先登录');
   const scope = scopeOf(ctx);
   const eventKey = String(payload.eventKey || '').trim();
   if (!eventKey) return refused('请指定项目组别');
 
-  const [publication, rows, event] = await Promise.all([
-    ctx.repo.forMeet(scope).sportsMeetPublications.getById(meetPublicationKey(ctx.meetId, eventKey)),
+  const [publications, rows, event, sessions] = await Promise.all([
+    ctx.repo.forMeet(scope).sportsMeetPublications.list(),
     ctx.repo.forMeet(scope).sportsMeetResultRows.list(),
     ctx.repo.forMeet(scope).sportsMeetEvents.getById(eventKey),
+    ctx.repo.forMeet(scope).sportsMeetSessions.list(),
   ]);
-  if (!publication) return ok({ published: false, eventKey });
+  const mine = publications.filter((doc) => doc.eventKey === eventKey);
+  if (mine.length === 0) return ok({ published: false, eventKey, rounds: [] });
 
-  const current = rows.filter((row) => row.publicationKey === publication._id
-    && row.version === publication.version);
+  const labelOf = new Map(sessions.map((doc) => [doc._id, doc.roundLabel || doc.round]));
+  const rounds = mine
+    .sort((a, b) => Number(a.official ? 1 : 0) - Number(b.official ? 1 : 0)
+      || String(a.sessionKey).localeCompare(String(b.sessionKey)))
+    .map((doc) => ({
+      sessionKey: doc.sessionKey,
+      round: doc.round,
+      roundLabel: doc.roundLabel || labelOf.get(doc.sessionKey) || '',
+      official: Boolean(doc.official),
+      version: doc.version,
+      publishedAt: doc.publishedAt,
+      reason: doc.reason || '',
+      items: rows
+        .filter((row) => row.publicationKey === doc._id && row.version === doc.version)
+        .map((row) => ({
+          entryKey: row.entryKey, collegeId: row.collegeId, userIds: row.userIds,
+          rank: row.rank, points: row.points, status: row.status,
+        })),
+    }));
 
+  const official = rounds.find((row) => row.official) || null;
   return ok({
-    published: true,
+    published: Boolean(official),
     eventKey,
     event: event ? { name: event.name, group: event.group, scored: event.scored } : null,
-    publication: {
-      version: publication.version,
-      publishedAt: publication.publishedAt,
-      rowCount: publication.rowCount,
-      voidCount: publication.voidCount,
-      reason: publication.reason || '',
-    },
-    items: current.map((row) => ({
-      entryKey: row.entryKey, collegeId: row.collegeId, userIds: row.userIds,
-      rank: row.rank, points: row.points, status: row.status,
-    })),
+    publication: official ? {
+      version: official.version,
+      publishedAt: official.publishedAt,
+      rowCount: official.items.length,
+      voidCount: official.items.filter((row) => row.status === ROW_STATUS.VOID).length,
+      reason: official.reason,
+    } : null,
+    items: official ? official.items : [],
+    rounds,
   });
 }
 
