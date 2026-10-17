@@ -162,11 +162,6 @@ Page({
         limitUnit: unitOf(ev.entryForm),
         fixedMembers: template.fixedMembers || null,
         isVersus: ev.scoreType === 'versus',
-        format: ev.format || 'single_elim',
-        groupCount: (ev.groups && ev.groups.count) || 2,
-        advancePerGroup: (ev.groups && ev.groups.advancePerGroup) || 2,
-        rounds: ev.rounds || 'final',
-        advanceCount: (ev.advance && ev.advance.count) || 3,
         saved: true,
       };
     });
@@ -268,11 +263,6 @@ Page({
       limitUnit: unitOf(template.entryForm),
       fixedMembers: template.fixedMembers || null,
       isVersus: template.scoreType === 'versus',
-      format: 'single_elim',
-      groupCount: 2,
-      advancePerGroup: 2,
-      rounds: 'final',
-      advanceCount: 3,
       saved: false,
     };
     picked.push(row);
@@ -286,6 +276,8 @@ Page({
 
   /** 把一行的当前设置写进草稿；失败时明确报出来，不吞掉 */
   async persist(row) {
+    // 这一步只写「项目怎么参加」：人数与限额。赛制（轮次/分组/签表）留到
+    // 报名截止后的编排阶段——那时候才知道有多少人报名、要分几组。
     const payload = {
       templateId: row.templateId,
       group: row.group,
@@ -294,18 +286,6 @@ Page({
         : (row.membersUnlimited ? 0 : Number(row.members) || 0),
       perCollegeLimit: row.limitUnlimited ? 0 : Number(row.limit) || 0,
     };
-    if (row.isVersus) {
-      payload.format = row.format;
-      if (row.format === 'group_knockout') {
-        payload.groups = {
-          count: Number(row.groupCount) || 2,
-          advancePerGroup: Number(row.advancePerGroup) || 2,
-        };
-      }
-    } else if (row.rounds === 'heat_final') {
-      payload.rounds = 'heat_final';
-      payload.advance = { mode: 'per_heat', count: Number(row.advanceCount) || 3 };
-    }
 
     this.update({ savingKey: row.key, error: '' });
     try {
@@ -373,48 +353,6 @@ Page({
       limitUnlimited: !row.limitUnlimited,
       limit: row.limitUnlimited ? 1 : 0,
     });
-  },
-
-  /** 轮次：直接决赛 / 预赛+决赛 */
-  onPickRounds(event) {
-    const index = Number(event.currentTarget.dataset.index);
-    const rounds = String(event.currentTarget.dataset.rounds || 'final');
-    const row = this.data.picked[index];
-    if (!row || row.isVersus || row.rounds === rounds) return;
-    this.applyChange(index, { rounds });
-  },
-
-  /** 赛制：单败 / 循环 / 小组+淘汰 */
-  onPickFormat(event) {
-    const index = Number(event.currentTarget.dataset.index);
-    const format = String(event.currentTarget.dataset.format || 'single_elim');
-    const row = this.data.picked[index];
-    if (!row || !row.isVersus || row.format === format) return;
-    this.applyChange(index, { format });
-  },
-
-  onAdvanceCountInput(event) {
-    const index = Number(event.currentTarget.dataset.index);
-    const value = Number(event.detail.value);
-    const row = this.data.picked[index];
-    if (!row || !Number.isFinite(value)) return;
-    this.applyChange(index, { advanceCount: Math.max(1, Math.min(50, Math.trunc(value))) });
-  },
-
-  onGroupCountInput(event) {
-    const index = Number(event.currentTarget.dataset.index);
-    const value = Number(event.detail.value);
-    const row = this.data.picked[index];
-    if (!row || !Number.isFinite(value)) return;
-    this.applyChange(index, { groupCount: Math.max(2, Math.min(8, Math.trunc(value))) });
-  },
-
-  onAdvancePerGroupInput(event) {
-    const index = Number(event.currentTarget.dataset.index);
-    const value = Number(event.detail.value);
-    const row = this.data.picked[index];
-    if (!row || !Number.isFinite(value)) return;
-    this.applyChange(index, { advancePerGroup: Math.max(1, Math.min(4, Math.trunc(value))) });
   },
 
   onStep(event) {

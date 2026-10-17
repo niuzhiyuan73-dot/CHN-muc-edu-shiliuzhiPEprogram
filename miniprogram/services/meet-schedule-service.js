@@ -386,6 +386,8 @@ async function getMeetSchedule(payload = {}, ctx) {
       scoreType: event.scoreType,
       rounds: event.rounds,
       format: event.format || '',
+      groups: event.groups || null,
+      laneCount: Number(event.laneCount) || 0,
       advance: event.advance || null,
       scored: event.scored,
       ready: own.some((doc) => doc.startAt && doc.venue),

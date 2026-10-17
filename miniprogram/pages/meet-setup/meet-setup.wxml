@@ -133,55 +133,10 @@
         >不限</view>
       </view>
 
-      <!-- 胜负项目：赛制三选一 -->
-      <block wx:if="{{item.isVersus}}">
-        <view class="meet-form-row">
-          <text class="meet-form-label">赛制</text>
-          <view class="meet-seg">
-            <view
-              class="meet-seg-item {{item.format === 'single_elim' ? 'is-on' : ''}}"
-              data-index="{{index}}" data-format="single_elim" bindtap="onPickFormat"
-            >单败淘汰</view>
-            <view
-              class="meet-seg-item {{item.format === 'round_robin' ? 'is-on' : ''}}"
-              data-index="{{index}}" data-format="round_robin" bindtap="onPickFormat"
-            >循环赛</view>
-            <view
-              class="meet-seg-item {{item.format === 'group_knockout' ? 'is-on' : ''}}"
-              data-index="{{index}}" data-format="group_knockout" bindtap="onPickFormat"
-            >小组+淘汰</view>
-          </view>
-        </view>
-        <view wx:if="{{item.format === 'group_knockout'}}" class="meet-form-row">
-          <text class="meet-form-label">小组设置</text>
-          <input class="meet-num" type="number" value="{{item.groupCount}}" data-index="{{index}}" bindinput="onGroupCountInput" />
-          <text class="meet-form-unit">组，每组出线</text>
-          <input class="meet-num" type="number" value="{{item.advancePerGroup}}" data-index="{{index}}" bindinput="onAdvancePerGroupInput" />
-          <text class="meet-form-unit">队</text>
-        </view>
-      </block>
-
-      <!-- 数值项目：轮次二选一 -->
-      <block wx:else>
-        <view class="meet-form-row">
-          <text class="meet-form-label">轮次</text>
-          <view class="meet-seg">
-            <view
-              class="meet-seg-item {{item.rounds === 'final' ? 'is-on' : ''}}"
-              data-index="{{index}}" data-rounds="final" bindtap="onPickRounds"
-            >直接决赛</view>
-            <view
-              class="meet-seg-item {{item.rounds === 'heat_final' ? 'is-on' : ''}}"
-              data-index="{{index}}" data-rounds="heat_final" bindtap="onPickRounds"
-            >预赛+决赛</view>
-          </view>
-        </view>
-        <view wx:if="{{item.rounds === 'heat_final'}}" class="meet-form-row">
-          <text class="meet-form-label">每组晋级</text>
-          <input class="meet-num" type="number" value="{{item.advanceCount}}" data-index="{{index}}" bindinput="onAdvanceCountInput" />
-          <text class="meet-form-unit">人</text>
-        </view>
-      </block>
+      <!-- 赛制（轮次/分组/签表）不在这里定：它取决于报名人数，放到报名截止后的编排页 -->
+      <view class="meet-form-row">
+        <text class="meet-form-hint">轮次与赛制在报名截止后、赛程编排页设置</text>
+      </view>
     </view>
 
     <button class="btn btn-primary" bindtap="onSubmit" disabled="{{busy}}">完成</button>

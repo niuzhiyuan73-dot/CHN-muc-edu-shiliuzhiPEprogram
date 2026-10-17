@@ -47,3 +47,5 @@
 .meet-seg-item { padding: 10rpx 22rpx; font-size: 24rpx; color: #555; background: #fff; }
 .meet-seg-item + .meet-seg-item { border-left: 1rpx solid #e2e4e8; }
 .meet-seg-item.is-on { background: #b23a2e; color: #fff; border-color: #b23a2e; }
+
+.meet-form-hint { font-size: 22rpx; color: #999; }

@@ -33,7 +33,7 @@ const { createSeededRandom, shuffle } = require('../utils/random.js');
 const { drawBracket, bracketSizeOf, standardSeedOrder } = require('../utils/bracket.js');
 const { MEET_SCORE_TYPE } = require('./meet-event-catalog.js');
 const {
-  ADVANCE_MODE, MEET_FORMAT, bracketTotalRounds, bracketRoundLabel,
+  ADVANCE_MODE, DEFAULT_LANE_COUNT, MEET_FORMAT, bracketTotalRounds, bracketRoundLabel,
   advanceFromHeats, bracketStandings, roundRobinRounds, roundRobinStandings,
   distribute, groupStageStandings, groupKnockoutStandings,
 } = require('./meet-advance.js');
@@ -93,7 +93,17 @@ function splitIntoHeats(entryKeys, heatCount, seeds, random) {
 }
 
 /**
- * 抽签分预赛组（D48：预赛随机）。
+ * 抽签分组：把报名的人按「每组人数＝跑道数」分到若干组／若干枪。
+ *
+ * 两种形态共用这一个动作：
+ *   · rounds = 'heat_final'：分成 N 个预赛组，另建一个空的决赛场次等着晋级；
+ *   · rounds = 'final'：所有人在预赛？不——分成 N **枪**决赛，各枪成绩合并排名，
+ *     不晋级、不淘汰。学生运动会里 100 米报名 40 人，就是 7 枪跑完再总排名。
+ *
+ * 【组数为什么由报名人数算】
+ * 管理员不该猜「分几组」：一组最多站几条跑道是场地决定的，报名人数是报名结束后
+ * 才知道的。所以这里用 `ceil(人数 / 每组人数)` 直接算，管理员仍可用 heatCount
+ * 显式覆盖（比如想少跑一枪、多站两个人）。
  *
  * @param {Object} payload { eventKey, heatCount?, seeds?, seed? }
  */
@@ -109,23 +119,25 @@ async function drawMeetHeats(payload = {}, ctx) {
     ctx.repo.forMeet(scope).sportsMeetPublications.list(),
   ]);
   if (!event || event.meetId !== ctx.meetId) return refused('项目组别不存在或不属于本届运动会');
-  if (!canManageMeet(ctx)) return refused('只有校级管理员及以上可以抽签分预赛');
+  if (!canManageMeet(ctx)) return refused('只有校级管理员及以上可以抽签分组');
   if (event.scoreType === MEET_SCORE_TYPE.VERSUS) {
-    return refused('胜负项目不做预赛分组，请用签表编排');
+    return refused('胜负项目不做分组，请用签表编排');
   }
-  if (event.rounds !== 'heat_final') return refused('该项目没有配置预赛，不需要抽签分组');
+  if (!['heat_final', 'final'].includes(event.rounds)) {
+    return refused('请先设置该项目的轮次');
+  }
 
   const approved = approvedOf(entries, eventKey);
-  if (approved.length < 2) return refused('参赛记录不足 2 条，无法分预赛');
+  if (approved.length < 2) return refused('参赛记录不足 2 条，无法分组');
   if (publications.some((doc) => doc.eventKey === eventKey)) {
-    return refused('该项目已有成绩发布，不能再重新抽签');
+    return refused('该项目已有成绩发布，不能再重新分组');
   }
 
-  const heatCount = Number(payload.heatCount === undefined
-    ? Math.min(MAX_HEATS, Math.max(1, Math.ceil(approved.length / DEFAULT_HEAT_SIZE)))
-    : payload.heatCount);
+  const laneCount = Number(event.laneCount) || DEFAULT_LANE_COUNT;
+  const needed = Math.max(1, Math.ceil(approved.length / laneCount));
+  const heatCount = Number(payload.heatCount === undefined ? needed : payload.heatCount);
   if (!Number.isInteger(heatCount) || heatCount < 1 || heatCount > MAX_HEATS) {
-    return refused(`预赛组数应为 1–${MAX_HEATS} 的整数`);
+    return refused(`组（枪）数应为 1–${MAX_HEATS} 的整数`);
   }
 
   const entryKeys = approved.map((doc) => doc._id);
@@ -140,22 +152,28 @@ async function drawMeetHeats(payload = {}, ctx) {
     return refused((err && err.message) || '分组失败');
   }
 
+  const isHeatFinal = event.rounds === 'heat_final';
+  // 单枪决赛不叫「第 1 枪」，就叫决赛；多枪才需要区分
+  const labelOf = (index) => (isHeatFinal
+    ? '预赛'
+    : (heatCount > 1 ? `决赛 第 ${index} 枪` : '决赛'));
+
   return ctx.repo.transaction(async (tx) => {
     const fresh = await freshMeetContext(tx, ctx);
-    if (!canManageMeet(fresh)) return refused('只有校级管理员及以上可以抽签分预赛');
+    if (!canManageMeet(fresh)) return refused('只有校级管理员及以上可以抽签分组');
     const now = toIso(fresh.now);
 
     for (let i = 1; i <= heatCount; i += 1) {
-      const key = meetSessionKey(fresh.meetId, eventKey, 'heat', i);
+      const key = meetSessionKey(fresh.meetId, eventKey, isHeatFinal ? 'heat' : 'final', i);
       const current = await tx.sportsMeetSessions.getById(key);
       await tx.sportsMeetSessions.set(key, {
         ...(current || {}),
         schoolId: fresh.schoolId,
         meetId: fresh.meetId,
         eventKey,
-        round: 'heat',
+        round: isHeatFinal ? 'heat' : 'final',
         index: i,
-        roundLabel: '预赛',
+        roundLabel: labelOf(i),
         entryKeys: buckets[i - 1],
         startAt: (current && current.startAt) || '',
         endAt: (current && current.endAt) || '',
@@ -166,27 +184,33 @@ async function drawMeetHeats(payload = {}, ctx) {
         updatedAt: now,
       });
     }
-    // 决赛先建出来（还没定人），赛程才能一起排；参赛人由晋级动作填。
-    const finalKey = meetSessionKey(fresh.meetId, eventKey, 'final', 1);
-    const finalDoc = await tx.sportsMeetSessions.getById(finalKey);
-    if (!finalDoc) {
-      await tx.sportsMeetSessions.set(finalKey, {
-        schoolId: fresh.schoolId, meetId: fresh.meetId, eventKey,
-        round: 'final', index: 1, roundLabel: '决赛', entryKeys: [],
-        startAt: '', endAt: '', venue: '', note: '', status: 'scheduled',
-        createdAt: now, updatedAt: now,
-      });
+
+    // 预赛+决赛：决赛先建出来（还没定人），赛程才能一起排；参赛人由晋级动作填
+    if (isHeatFinal) {
+      const finalKey = meetSessionKey(fresh.meetId, eventKey, 'final', 1);
+      const finalDoc = await tx.sportsMeetSessions.getById(finalKey);
+      if (!finalDoc) {
+        await tx.sportsMeetSessions.set(finalKey, {
+          schoolId: fresh.schoolId, meetId: fresh.meetId, eventKey,
+          round: 'final', index: 1, roundLabel: '决赛', entryKeys: [],
+          startAt: '', endAt: '', venue: '', note: '', status: 'scheduled',
+          createdAt: now, updatedAt: now,
+        });
+      }
     }
+
     const currentEvent = await tx.sportsMeetEvents.getById(eventKey);
     await tx.sportsMeetEvents.set(eventKey, {
       ...currentEvent,
-      heatDraw: { seed, heatCount, at: now },
+      heatDraw: { seed, heatCount, laneCount, at: now },
       updatedAt: now,
     });
     return ok({
       eventKey,
       seed,
       heatCount,
+      laneCount,
+      rounds: event.rounds,
       heats: buckets.map((keys, index) => ({ index: index + 1, entryKeys: keys })),
     });
   });

@@ -101,9 +101,8 @@ test('详情页与向导页的关键动作存在', () => {
   }
   const setup = loadPage('meet-setup');
   for (const method of ['loadTemplates', 'onNext', 'onToggleGroup', 'onStep', 'onSubmit', 'onCategoryTap',
-    'onPickRounds', 'onPickFormat', 'onMembersInput', 'onLimitInput',
-    'onToggleMembersUnlimited', 'onToggleLimitUnlimited',
-    'onGroupCountInput', 'onAdvancePerGroupInput', 'pickedFromEvents']) {
+    'onMembersInput', 'onLimitInput', 'onToggleMembersUnlimited', 'onToggleLimitUnlimited',
+    'pickedFromEvents', 'persist']) {
     assert.equal(typeof setup[method], 'function', `向导页缺少 ${method}`);
   }
   // 带 meetId 进入时应直接落在第二步（继续配置）
@@ -116,15 +115,16 @@ test('详情页与向导页的关键动作存在', () => {
 
   const schedulePage = loadPage('meet-schedule');
   for (const method of ['reload', 'onSaveSession', 'onAssignJudge', 'onRemoveJudge', 'onStartSession',
-    'onPublishSchedule', 'onPickSession']) {
+    'onPublishSchedule', 'onPickSession', 'onOpenProcedure', 'onSaveProcedure', 'onDraw',
+    'onProcPickRounds', 'onProcPickFormat', 'onProcInput', 'onJudgeKeyword',
+    'onStartDateChange', 'onStartTimeChange']) {
     assert.equal(typeof schedulePage[method], 'function', `赛程编排页缺少 ${method}`);
   }
 
   const scorePage = loadPage('meet-score');
   for (const method of ['reload', 'onOpenSession', 'onSubmitScore', 'onOpenEvent', 'onToggleVoid', 'onPublish',
-    // B8a：预赛抽签、晋级、签表编排与判胜
-    'onPickRound', 'onDrawHeats', 'onAdvance', 'onDrawBracket', 'onSetWinner',
-    'decorateEvent', 'decorateBracket']) {
+    // 晋级与判胜留在录分页；分组与签表在赛程编排页
+    'onPickRound', 'onAdvance', 'onSetWinner', 'decorateEvent', 'decorateBracket']) {
     assert.equal(typeof scorePage[method], 'function', `录分页缺少 ${method}`);
   }
 });

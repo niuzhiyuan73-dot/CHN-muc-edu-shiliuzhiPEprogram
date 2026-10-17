@@ -27,3 +27,25 @@
 .meet-time { display: flex; gap: 12rpx; }
 .meet-time-part { padding: 8rpx 20rpx; border-radius: 10rpx; background: #f5f6f8; font-size: 24rpx; color: #333; }
 .meet-search { height: 66rpx; padding: 0 20rpx; border-radius: 10rpx; background: #f5f6f8; font-size: 24rpx; margin: 10rpx 0; }
+
+/* 赛制与编排按钮 */
+.meet-actions { display: flex; gap: 12rpx; margin-top: 14rpx; }
+.meet-btn { flex: 1; padding: 14rpx 0; text-align: center; border-radius: 10rpx; background: #f2f3f5; font-size: 24rpx; color: #444; }
+.meet-btn.is-primary { background: #b23a2e; color: #fff; }
+
+/* 赛制编辑行 */
+.meet-form-row { display: flex; align-items: center; gap: 12rpx; margin-top: 14rpx; flex-wrap: wrap; }
+.meet-form-label { width: 130rpx; font-size: 24rpx; color: #555; }
+.meet-form-unit { font-size: 22rpx; color: #888; }
+.meet-num { width: 120rpx; height: 60rpx; padding: 0 14rpx; border-radius: 10rpx; background: #f5f6f8; font-size: 26rpx; text-align: center; }
+.meet-seg { display: flex; border-radius: 12rpx; overflow: hidden; border: 1rpx solid #e2e4e8; }
+.meet-seg-item { padding: 10rpx 20rpx; font-size: 23rpx; color: #555; background: #fff; }
+.meet-seg-item + .meet-seg-item { border-left: 1rpx solid #e2e4e8; }
+.meet-seg-item.is-on { background: #b23a2e; color: #fff; border-color: #b23a2e; }
+
+/* 裁判候选人：搜索后直接点人 */
+.meet-judge-list { max-height: 420rpx; margin-bottom: 12rpx; }
+.meet-judge-pick { display: flex; align-items: center; gap: 12rpx; padding: 14rpx 16rpx; border-radius: 10rpx; background: #f7f8fa; margin-bottom: 8rpx; }
+.meet-judge-name { flex: 1; font-size: 25rpx; color: #222; }
+.meet-judge-college { font-size: 21rpx; color: #999; }
+.meet-judge-add-btn { padding: 6rpx 16rpx; border-radius: 999rpx; background: #b23a2e; color: #fff; font-size: 21rpx; }

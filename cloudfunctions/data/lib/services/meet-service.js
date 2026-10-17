@@ -29,7 +29,9 @@ const {
   meetEventKey, meetCollegeKey, newMeetId, meetRequestScope, listAliveEvents,
 } = require('../utils/meet-scope.js');
 const { TEMPLATES, getTemplate, searchTemplates, CATEGORY_LABEL, CATEGORY_ORDER, MEET_SCORE_TYPE } = require('./meet-event-catalog.js');
-const { ADVANCE_MODE, MEET_FORMAT, FORMAT_LABEL } = require('./meet-advance.js');
+const {
+  ADVANCE_MODE, MEET_FORMAT, FORMAT_LABEL, DEFAULT_LANE_COUNT,
+} = require('./meet-advance.js');
 const { buildMeetContext, freshMeetContext } = require('./meet-context.js');
 const { meetReadable, canManageMeet, isActiveMeetLead } = require('./meet-permission.js');
 const { meetCollegeLeadKey } = require('../utils/meet-scope.js');
@@ -140,6 +142,7 @@ function eventSummary(doc) {
     format: doc.format || '',
     formatLabel: FORMAT_LABEL[doc.format] || '',
     groups: doc.groups || null,
+    laneCount: Number(doc.laneCount) || 0,
     // 晋级口径（仅预赛+决赛）：{ mode, count }。空表示不适用。
     advance: doc.advance || null,
     scored: doc.scored,
@@ -211,6 +214,69 @@ async function createSportsMeet(payload = {}, ctx) {
     };
     await tx.sportsMeets.set(meetId, doc);
     return ok({ meet: meetSummary(doc), created: true });
+  });
+}
+
+/**
+ * 设置某个项目的赛制与轮次（报名截止后的「编排」环节）。
+ *
+ * 【为什么不在创建时定】
+ * 分几组、分几枪不是拍脑袋决定的：径赛一组最多 6 人（跑道数），有多少人报名
+ * 才知道要跑几组。项目创建时报名还没开始，那时候让管理员选「预赛+决赛」只能
+ * 靠猜。所以赛制推迟到报名截止后再定，此时人数已定，系统也能据此算出组数。
+ *
+ * 【允许改到什么时候】
+ * 只要这个项目还没有场次、也没有发布过成绩就能改。一旦排了场次（抽签/分枪/
+ * 签表），改赛制就会让已排的赛程与已录入的成绩对不上，所以此时拒绝。
+ *
+ * @param {Object} payload { eventKey, rounds, laneCount, advance, format, groups }
+ */
+async function setMeetEventProcedure(payload = {}, ctx) {
+  if (!ctx.meetId) return refused('请指定运动会');
+  const eventKey = String(payload.eventKey || '').trim();
+  if (!eventKey) return refused('请指定项目组别');
+  const scope = { schoolId: ctx.schoolId, meetId: ctx.meetId };
+
+  const [event, sessions, publications] = await Promise.all([
+    ctx.repo.forMeet(scope).sportsMeetEvents.getById(eventKey),
+    ctx.repo.forMeet(scope).sportsMeetSessions.list(),
+    ctx.repo.forMeet(scope).sportsMeetPublications.list(),
+  ]);
+  if (!event || event.meetId !== ctx.meetId) return refused('项目组别不存在或不属于本届运动会');
+  const template = getTemplate(event.templateId);
+  if (!template) return refused('项目模板不存在');
+
+  const procedure = procedureOf(template, payload);
+  if (!procedure.ok) return refused(procedure.message);
+
+  if (sessions.some((doc) => doc.eventKey === eventKey)) {
+    return refused('该项目已经排了场次，不能再改赛制；如需重排请先删除场次');
+  }
+  if (publications.some((doc) => doc.eventKey === eventKey)) {
+    return refused('该项目已经发布过成绩，不能再改赛制');
+  }
+
+  return ctx.repo.transaction(async (tx) => {
+    const fresh = await freshMeetContext(tx, ctx);
+    if (!canManageMeet(fresh)) return refused('只有校级管理员及以上可以设置赛制');
+    const meet = await tx.sportsMeets.getById(fresh.meetId);
+    if (!isAlive(meet) || meet.schoolId !== fresh.schoolId) return refused('运动会不存在或已删除');
+    const current = await tx.sportsMeetEvents.getById(eventKey);
+    if (!current || current.meetId !== fresh.meetId) return refused('项目组别不存在或不属于本届运动会');
+
+    const now = fresh.now instanceof Date ? fresh.now.toISOString() : String(fresh.now);
+    const next = {
+      ...current,
+      rounds: procedure.rounds,
+      laneCount: procedure.laneCount,
+      format: procedure.format,
+      groups: procedure.groups,
+      advance: procedure.advance,
+      procedureSetAt: now,
+      updatedAt: now,
+    };
+    await tx.sportsMeetEvents.set(eventKey, next);
+    return ok({ event: eventSummary(next) });
   });
 }
 
@@ -309,6 +375,73 @@ async function updateMeetDraft(payload = {}, ctx) {
 }
 
 /**
+ * 赛制相关的校验：轮次、赛制、小组设置、晋级口径、每组人数。
+ *
+ * 抽出来是因为它有两个调用点：草稿期的 configureMeetEvent，以及报名截止后的
+ * setMeetEventProcedure。两处必须用同一把尺子——否则同一个赛制在草稿期被拒、
+ * 在编排期却能过，或者反过来。
+ *
+ * @returns {{ok:boolean, message?:string, rounds?:string, laneCount?:number,
+ *   format?:string, groups?:object|null, advance?:object|null}}
+ */
+function procedureOf(template, payload = {}) {
+  const isVersus = template.scoreType === MEET_SCORE_TYPE.VERSUS;
+  const rounds = payload.rounds === undefined ? 'final' : String(payload.rounds);
+  if (!['final', 'heat_final'].includes(rounds)) {
+    return { ok: false, message: '轮次只能是直接决赛或预赛+决赛' };
+  }
+  if (rounds === 'heat_final' && isVersus) {
+    return { ok: false, message: '胜负项目不支持预赛+决赛，请改用淘汰赛或循环赛' };
+  }
+
+  // 赛制：只有胜负项目有。默认单败淘汰——拔河、团体对抗绝大多数是这个赛制。
+  // 双败本期未实现，这里当场拒绝：宁可配置失败，也不能按单败跑出一个看似合理、
+  // 实际错误的名次（双败的第二名可能输过两场）。
+  const format = isVersus ? String(payload.format || MEET_FORMAT.SINGLE_ELIM) : '';
+  if (isVersus && !FORMAT_LABEL[format]) {
+    return { ok: false, message: '胜负项目只支持单败淘汰、循环赛或小组+淘汰；双败本期未实现' };
+  }
+
+  // 小组+淘汰：小组赛打循环，每组前 N 出线后再打单败。
+  let groups = null;
+  if (format === MEET_FORMAT.GROUP_KNOCKOUT) {
+    const count = Number((payload.groups && payload.groups.count) || 2);
+    const advancePerGroup = Number((payload.groups && payload.groups.advancePerGroup) || 2);
+    if (!Number.isInteger(count) || count < 2 || count > 8) return { ok: false, message: '小组数应为 2–8' };
+    if (!Number.isInteger(advancePerGroup) || advancePerGroup < 1 || advancePerGroup > 4) {
+      return { ok: false, message: '每组出线数应为 1–4' };
+    }
+    groups = { count, advancePerGroup };
+  }
+
+  // 晋级口径（D47）：三种都支持，逐项目选。只有预赛+决赛才有意义。
+  let advance = null;
+  if (rounds === 'heat_final') {
+    const mode = String((payload.advance && payload.advance.mode) || ADVANCE_MODE.PER_HEAT);
+    const count = Number((payload.advance && payload.advance.count) || 3);
+    if (!Object.values(ADVANCE_MODE).includes(mode)) {
+      return { ok: false, message: '晋级口径只能是每组前 N、总成绩前 N 或混合晋级' };
+    }
+    if (!Number.isInteger(count) || count < 1 || count > 50) {
+      return { ok: false, message: '晋级人数应为 1–50 的整数' };
+    }
+    advance = { mode, count };
+  }
+
+  // 每组人数＝跑道数（径赛）。它决定的不是「一组几个人」这个描述，而是
+  // 「报名人数除以几」：分几组/几枪由它算出来。所以它是赛制的一部分，
+  // 和轮次一起在编排阶段定。胜负项目用不到，记 0。
+  const laneCount = isVersus
+    ? 0
+    : Number(payload.laneCount === undefined ? DEFAULT_LANE_COUNT : payload.laneCount);
+  if (!isVersus && (!Number.isInteger(laneCount) || laneCount < 2 || laneCount > 20)) {
+    return { ok: false, message: '每组人数（跑道数）应为 2–20 的整数' };
+  }
+
+  return { ok: true, rounds, laneCount, format, groups, advance };
+}
+
+/**
  * 逐项目配置（N11／N12：组别、是否预决赛、每队人数、限额、是否计分都由这里定）。
  *
  * @param {Object} payload { templateId, group, members, perCollegeLimit, rounds, scored }
@@ -345,46 +478,8 @@ async function configureMeetEvent(payload = {}, ctx) {
     limit.value = 1;
   }
 
-  const rounds = payload.rounds === undefined ? 'final' : String(payload.rounds);
-  if (!['final', 'heat_final'].includes(rounds)) return refused('轮次只能是直接决赛或预赛+决赛');
-  if (rounds === 'heat_final' && template.scoreType === MEET_SCORE_TYPE.VERSUS) {
-    return refused('胜负项目不支持预赛+决赛，请改用淘汰赛或循环赛');
-  }
-
-  // 赛制：只有胜负项目有。默认单败淘汰——拔河、团体对抗绝大多数是这个赛制。
-  // 双败与小组赛本期未实现，这里当场拒绝：宁可配置失败，也不能按单败跑出一个
-  // 看起来合理、实际错误的名次（双败的第二名可能输过两场）。
-  const isVersus = template.scoreType === MEET_SCORE_TYPE.VERSUS;
-  const format = isVersus ? String(payload.format || MEET_FORMAT.SINGLE_ELIM) : '';
-  if (isVersus && !FORMAT_LABEL[format]) {
-    return refused('胜负项目只支持单败淘汰、循环赛或小组+淘汰；双败本期未实现');
-  }
-
-  // 小组+淘汰：小组赛打循环，每组前 N 出线后再打单败。
-  let groups = null;
-  if (format === MEET_FORMAT.GROUP_KNOCKOUT) {
-    const count = Number((payload.groups && payload.groups.count) || 2);
-    const advancePerGroup = Number((payload.groups && payload.groups.advancePerGroup) || 2);
-    if (!Number.isInteger(count) || count < 2 || count > 8) return refused('小组数应为 2–8');
-    if (!Number.isInteger(advancePerGroup) || advancePerGroup < 1 || advancePerGroup > 4) {
-      return refused('每组出线数应为 1–4');
-    }
-    groups = { count, advancePerGroup };
-  }
-
-  // 晋级口径（D47）：三种都支持，逐项目选。只有预赛+决赛才有意义。
-  let advance = null;
-  if (rounds === 'heat_final') {
-    const mode = String((payload.advance && payload.advance.mode) || ADVANCE_MODE.PER_HEAT);
-    const count = Number((payload.advance && payload.advance.count) || 3);
-    if (!Object.values(ADVANCE_MODE).includes(mode)) {
-      return refused('晋级口径只能是每组前 N、总成绩前 N 或混合晋级');
-    }
-    if (!Number.isInteger(count) || count < 1 || count > 50) {
-      return refused('晋级人数应为 1–50 的整数');
-    }
-    advance = { mode, count };
-  }
+  const procedure = procedureOf(template, payload);
+  if (!procedure.ok) return refused(procedure.message);
   const scored = payload.scored === undefined ? template.defaultScored : Boolean(payload.scored);
 
   return ctx.repo.transaction(async (tx) => {
@@ -410,10 +505,11 @@ async function configureMeetEvent(payload = {}, ctx) {
       entryForm: template.entryForm,
       members: members.value,
       perCollegeLimit: limit.value,
-      rounds,
-      format,
-      groups,
-      advance,
+      rounds: procedure.rounds,
+      laneCount: procedure.laneCount,
+      format: procedure.format,
+      groups: procedure.groups,
+      advance: procedure.advance,
       scored,
       createdAt: existing ? (existing.createdAt || now) : now,
       updatedAt: now,
@@ -590,6 +686,7 @@ async function deleteSportsMeet(payload = {}, ctx) {
 
 module.exports = {
   createSportsMeet,
+  setMeetEventProcedure,
   removeMeetEvent,
   listMeetColleges,
   updateMeetDraft,

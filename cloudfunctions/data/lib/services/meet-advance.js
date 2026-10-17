@@ -33,6 +33,9 @@
 const { compareMeasure } = require('./meet-measure.js');
 const { bracketSizeOf, standardSeedOrder } = require('../utils/bracket.js');
 
+/** 每组人数＝径赛跑道数。场地决定一组最多站几个人，默认 6 条道。 */
+const DEFAULT_LANE_COUNT = 6;
+
 /** 晋级口径。 */
 const ADVANCE_MODE = Object.freeze({
   PER_HEAT: 'per_heat',
@@ -413,6 +416,7 @@ function groupKnockoutStandings({
 
 module.exports = {
   ADVANCE_MODE,
+  DEFAULT_LANE_COUNT,
   MEET_FORMAT,
   FORMAT_LABEL,
   rankByValue,

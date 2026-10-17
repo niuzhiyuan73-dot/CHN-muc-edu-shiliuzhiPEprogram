@@ -301,10 +301,16 @@ async function getMeetResultPreview(payload = {}, ctx) {
     .sort((a, b) => Number(a.index) - Number(b.index));
   if (own.length === 0) return refused('该项目组别还没有场次');
 
+  const isVersus = event.scoreType === MEET_SCORE_TYPE.VERSUS;
+  // 多枪决赛：全部场次合成一份预览，与发布口径保持一致
+  const aggregateFinal = !isVersus && event.rounds === 'final';
+
   // 场次选择：显式指定 > 唯一场次 > 拒绝。多轮项目绝不默认第一场——
   // 管理员想预览决赛，系统却给他预赛第 1 组，接着就会把决赛发成预赛。
   let session = null;
-  if (payload.sessionKey) {
+  if (aggregateFinal) {
+    session = null;
+  } else if (payload.sessionKey) {
     session = own.find((doc) => doc._id === String(payload.sessionKey));
     if (!session) return refused('场次不存在或不属于该项目');
   } else if (own.length === 1) {
@@ -319,17 +325,19 @@ async function getMeetResultPreview(payload = {}, ctx) {
       })),
     });
   }
-  const sessionKey = session._id;
-  const judgeIds = assignments
-    .filter((doc) => doc.status === 'active' && doc.sessionKey === sessionKey)
-    .map((doc) => doc.judgeId);
+  const sessionKey = session ? session._id : 'all';
+  const judgeIds = session
+    ? assignments
+      .filter((doc) => doc.status === 'active' && doc.sessionKey === sessionKey)
+      .map((doc) => doc.judgeId)
+    : [];
 
-  const assigned = Array.isArray(session.entryKeys) && session.entryKeys.length > 0
+  const assigned = session && Array.isArray(session.entryKeys) && session.entryKeys.length > 0
     ? new Set(session.entryKeys) : null;
   const approved = entries.filter((doc) => doc.eventKey === eventKey
     && doc.status === 'approved' && (!assigned || assigned.has(doc._id)));
 
-  if (event.scoreType === MEET_SCORE_TYPE.VERSUS) {
+  if (isVersus) {
     // 胜负项目不再手填名次：预览直接给「签表打完了没有、当前名次如何」
     const matches = matchesOf(sessions, eventKey);
     const bracket = event.bracket || null;
@@ -353,14 +361,37 @@ async function getMeetResultPreview(payload = {}, ctx) {
     });
   }
 
-  const { values, missing } = summarizeScores(approved, scores, judgeIds, eventKey, sessionKey);
+  let values;
+  let missing;
+  if (aggregateFinal) {
+    values = new Map();
+    missing = [];
+    for (const row of own) {
+      const rowJudges = assignments
+        .filter((doc) => doc.status === 'active' && doc.sessionKey === row._id)
+        .map((doc) => doc.judgeId);
+      const scoped = Array.isArray(row.entryKeys) && row.entryKeys.length > 0
+        ? approved.filter((doc) => row.entryKeys.includes(doc._id))
+        : approved;
+      const summary = summarizeScores(scoped, scores, rowJudges, eventKey, row._id);
+      for (const [key, value] of summary.values) values.set(key, value);
+      missing.push(...summary.missing);
+    }
+  } else {
+    const summary = summarizeScores(approved, scores, judgeIds, eventKey, sessionKey);
+    values = summary.values;
+    missing = summary.missing;
+  }
+
   return ok({
     event: { eventKey, name: event.name, group: event.group, scoreType: event.scoreType, order: event.order },
     sessionKey,
-    round: session.round,
-    roundLabel: session.roundLabel || session.round,
-    // 预赛只排名次不计分：页面据此把「学院分」列藏起来
-    official: session.round === 'final',
+    round: session ? session.round : 'final',
+    roundLabel: session ? (session.roundLabel || session.round) : '决赛（合并排名）',
+    // 多枪决赛合成一份正式成绩；预赛只排名次不计分
+    official: aggregateFinal ? true : session.round === 'final',
+    multiSession: aggregateFinal && own.length > 1,
+    sessionCount: own.length,
     judgeIds,
     versus: false,
     missing: missing.map((doc) => ({ entryKey: doc._id, collegeId: doc.collegeId })),
@@ -422,13 +453,18 @@ async function publishMeetResults(payload = {}, ctx) {
   const format = (bracket && bracket.format) || event.format || MEET_FORMAT.SINGLE_ELIM;
   const isRoundRobin = isVersus && format === MEET_FORMAT.ROUND_ROBIN;
 
+  // rounds='final' 的数值项目可能分多枪：各枪只跑一次、成绩合并排名，不晋级。
+  // 这类项目必须「一次性发布全部场次」，不能按场次各发各的——否则每条枪都会
+  // 产生一份 1..N 的名次与学院分，同一项目被算好几次。
+  const aggregateFinal = !isVersus && event.rounds === 'final';
+
   let session = null;
   if (isVersus && !isRoundRobin) {
     if (!bracket) return refused('请先编排签表');
     const totalRounds = Number(bracket.totalRounds) || 1;
     session = ownSessions.find((doc) => roundNoOf(doc) === totalRounds) || null;
     if (!session) return refused('签表还没有决赛场次');
-  } else if (!isVersus) {
+  } else if (!isVersus && !aggregateFinal) {
     const wanted = String(payload.sessionKey || '').trim();
     if (wanted) {
       session = ownSessions.find((doc) => doc._id === wanted);
@@ -444,12 +480,12 @@ async function publishMeetResults(payload = {}, ctx) {
     }
   }
 
-  // `all` 是循环赛的发布键段：整届只有一条成绩，不分场次
+  // `all` 是「整项目一条成绩」的发布键段：循环赛与多枪决赛都用它
   const sessionKey = session ? session._id : 'all';
-  const official = isVersus ? true : session.round === 'final';
+  const official = isVersus ? true : (aggregateFinal ? true : session.round === 'final');
 
   let approved;
-  if (isVersus) {
+  if (isVersus || aggregateFinal) {
     approved = entries.filter((doc) => doc.eventKey === eventKey && doc.status === 'approved');
   } else {
     const assigned = Array.isArray(session.entryKeys) && session.entryKeys.length > 0
@@ -501,16 +537,53 @@ async function publishMeetResults(payload = {}, ctx) {
       });
     }
   } else {
-    const judgeIds = assignments
-      .filter((doc) => doc.status === 'active' && doc.sessionKey === sessionKey)
-      .map((doc) => doc.judgeId);
-    if (judgeIds.length === 0) return refused('该场次还没有指派裁判');
+    let values;
+    if (aggregateFinal) {
+      // 多枪：逐枪汇总后合并。任何一枪没有裁判或没录齐，整项目都不能发布——
+      // 只发一部分会让总排名缺人，名次与学院分全错。
+      values = new Map();
+      const missing = [];
+      const noJudge = [];
+      for (const row of ownSessions) {
+        const judgeIds = assignments
+          .filter((doc) => doc.status === 'active' && doc.sessionKey === row._id)
+          .map((doc) => doc.judgeId);
+        if (judgeIds.length === 0) {
+          noJudge.push(row.roundLabel || row.round);
+          continue;
+        }
+        const scoped = Array.isArray(row.entryKeys) && row.entryKeys.length > 0
+          ? approved.filter((doc) => row.entryKeys.includes(doc._id))
+          : approved;
+        const summary = summarizeScores(scoped, scores, judgeIds, eventKey, row._id);
+        for (const [key, value] of summary.values) values.set(key, value);
+        missing.push(...summary.missing);
+      }
+      if (noJudge.length > 0) {
+        return refused(`以下场次还没有指派裁判：${noJudge.join('、')}`);
+      }
+      const unassigned = approved.filter((doc) => !values.has(doc._id));
+      if (unassigned.length > 0) {
+        return refused(`还有 ${unassigned.length} 条参赛记录没有编入任何一枪，请先分组`);
+      }
+      if (missing.length > 0) {
+        return refused(`还有 ${missing.length} 条参赛记录没有收齐裁判成绩`, {
+          missing: missing.map((doc) => doc._id),
+        });
+      }
+    } else {
+      const judgeIds = assignments
+        .filter((doc) => doc.status === 'active' && doc.sessionKey === sessionKey)
+        .map((doc) => doc.judgeId);
+      if (judgeIds.length === 0) return refused('该场次还没有指派裁判');
 
-    const { values, missing } = summarizeScores(approved, scores, judgeIds, eventKey, sessionKey);
-    if (missing.length > 0) {
-      return refused(`还有 ${missing.length} 条参赛记录没有收齐裁判成绩`, {
-        missing: missing.map((doc) => doc._id),
-      });
+      const summary = summarizeScores(approved, scores, judgeIds, eventKey, sessionKey);
+      if (summary.missing.length > 0) {
+        return refused(`还有 ${summary.missing.length} 条参赛记录没有收齐裁判成绩`, {
+          missing: summary.missing.map((doc) => doc._id),
+        });
+      }
+      values = summary.values;
     }
 
     const live = [];
@@ -560,8 +633,11 @@ async function publishMeetResults(payload = {}, ctx) {
       schoolId: fresh.schoolId, meetId: fresh.meetId, eventKey,
       version, status: 'published', rules,
       sessionKey,
-      round: isVersus ? 'versus' : session.round,
-      roundLabel: isVersus ? '赛制' : (session.roundLabel || session.round),
+      round: isVersus ? 'versus' : (aggregateFinal ? 'final' : session.round),
+      roundLabel: isVersus
+        ? '赛制'
+        : (aggregateFinal ? (ownSessions.length > 1 ? '决赛（多枪合并）' : '决赛')
+          : (session.roundLabel || session.round)),
       official,
       rowCount: rows.length,
       voidCount: rows.filter((row) => row.status === ROW_STATUS.VOID).length,

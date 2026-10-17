@@ -89,6 +89,8 @@ Page({
       groupLabel: item.group === 'male' ? '男子' : item.group === 'female' ? '女子' : '混合',
       heatCount: heats.length,
       heatDrawn: heats.length > 0 && heats.every((row) => (row.entryKeys || []).length > 0),
+      // 直接决赛但分了多枪：成绩合并成一份，不需要按枪切换
+      aggregated: item.scoreType !== 'versus' && item.rounds === 'final' && sessions.length > 1,
       finalCount: finalSession ? (finalSession.entryKeys || []).length : 0,
       advanceLabel: item.advance ? (ADVANCE_LABEL[item.advance.mode] || '') : '',
     };
@@ -287,22 +289,7 @@ Page({
     }
   },
 
-  // ---------- 管理员：预赛抽签与晋级 ----------
-
-  async onDrawHeats(event) {
-    if (this.data.busy) return;
-    const eventKey = event.currentTarget.dataset.eventKey;
-    if (!eventKey) return;
-    this.update({ busy: true, error: '', notice: '' });
-    try {
-      const result = await this.client().drawMeetHeats({ eventKey });
-      await this.refreshEvents();
-      const sizes = result.heats.map((row) => row.entryKeys.length).join(' / ');
-      this.update({ busy: false, notice: `已抽签分 ${result.heats.length} 组（人数 ${sizes}）` });
-    } catch (err) {
-      this.update({ busy: false, error: (err && err.message) || '抽签失败' });
-    }
-  },
+  // ---------- 管理员：晋级（分组/签表在赛程编排页完成） ----------
 
   async onAdvance(event) {
     if (this.data.busy) return;
@@ -315,30 +302,6 @@ Page({
       this.update({ busy: false, notice: `${result.entryKeys.length} 人晋级决赛` });
     } catch (err) {
       this.update({ busy: false, error: (err && err.message) || '晋级失败' });
-    }
-  },
-
-  // ---------- 管理员：赛制 ----------
-
-  async onDrawBracket(event) {
-    if (this.data.busy) return;
-    const eventKey = event.currentTarget.dataset.eventKey;
-    if (!eventKey) return;
-    this.update({ busy: true, error: '', notice: '' });
-    try {
-      const result = await this.client().drawMeetBracket({ eventKey });
-      await this.refreshEvents();
-      const bracket = await this.client().getMeetBracket({ eventKey });
-      this.update({
-        busy: false,
-        activeEventKey: eventKey,
-        bracket: this.decorateBracket(bracket),
-        notice: result.format === 'round_robin'
-          ? `已生成 ${result.matches.length} 场循环赛`
-          : `已生成 ${result.matches.length} 场对阵（共 ${result.totalRounds} 轮）`,
-      });
-    } catch (err) {
-      this.update({ busy: false, error: (err && err.message) || '编排失败' });
     }
   },
 

@@ -1,6 +1,7 @@
 <!--
-  赛程编排：项目组别 × 场次（开始时间 / 场地 / 裁判），最后发布赛程。
-  没有时间或场地的项目会标「未配齐」，发布时服务端会指出是哪几项。
+  赛程编排：定赛制 → 分组/编排 → 排时间场地 → 指派裁判 → 发布赛程。
+  顺序不能颠倒：分几组、分几枪由报名人数与跑道数算出来，所以赛制放在这个阶段，
+  而不是项目刚建好、报名还没开始的时候。
 -->
 <view class="page-container">
 
@@ -19,36 +20,88 @@
         <view class="meet-row-head" data-event-key="{{item.eventKey}}" bindtap="onOpenEvent">
           <view class="meet-row-main">
             <view class="meet-row-name">{{item.name}} · {{item.group === 'male' ? '男子' : item.group === 'female' ? '女子' : '混合'}}</view>
+            <view class="meet-row-meta">{{item.procedureLabel}}</view>
             <view class="meet-row-meta">
               <block wx:if="{{item.sessions.length > 0}}">
-                {{item.sessions[0].startAt}} · {{item.sessions[0].venue}} · 裁判 {{item.sessions[0].judgeCount}} 人
+                {{item.sessions.length}} 个场次 · {{item.sessions[0].startAt || '未排期'}}
               </block>
               <block wx:else>还没有场次</block>
             </view>
           </view>
-          <view class="meet-row-tag {{item.ready ? 'is-ok' : ''}}">{{item.readyLabel}}</view>
+          <view class="meet-row-tag {{item.ready ? 'is-ok' : ''}}">{{item.ready ? '已配齐' : '未配齐'}}</view>
         </view>
 
+        <!-- 赛制与编排：报名截止后在这里定 -->
+        <view class="meet-actions">
+          <view class="meet-btn" data-event-key="{{item.eventKey}}" bindtap="onOpenProcedure">设置赛制</view>
+          <view
+            class="meet-btn is-primary"
+            data-event-key="{{item.eventKey}}"
+            data-versus="{{item.scoreType === 'versus' ? 1 : 0}}"
+            bindtap="onDraw"
+          >{{item.scoreType === 'versus' ? '编排签表' : '抽签分组'}}</view>
+        </view>
+
+        <!-- 赛制编辑面板 -->
+        <view wx:if="{{procedureEventKey === item.eventKey}}" class="meet-editor">
+          <block wx:if="{{proc.isVersus}}">
+            <view class="meet-form-row">
+              <text class="meet-form-label">赛制</text>
+              <view class="meet-seg">
+                <view class="meet-seg-item {{proc.format === 'single_elim' ? 'is-on' : ''}}" data-format="single_elim" bindtap="onProcPickFormat">单败淘汰</view>
+                <view class="meet-seg-item {{proc.format === 'round_robin' ? 'is-on' : ''}}" data-format="round_robin" bindtap="onProcPickFormat">循环赛</view>
+                <view class="meet-seg-item {{proc.format === 'group_knockout' ? 'is-on' : ''}}" data-format="group_knockout" bindtap="onProcPickFormat">小组+淘汰</view>
+              </view>
+            </view>
+            <view wx:if="{{proc.format === 'group_knockout'}}" class="meet-form-row">
+              <text class="meet-form-label">小组设置</text>
+              <input class="meet-num" type="number" value="{{proc.groupCount}}" data-field="groupCount" bindinput="onProcInput" />
+              <text class="meet-form-unit">组，每组出线</text>
+              <input class="meet-num" type="number" value="{{proc.advancePerGroup}}" data-field="advancePerGroup" bindinput="onProcInput" />
+              <text class="meet-form-unit">队</text>
+            </view>
+          </block>
+
+          <block wx:else>
+            <view class="meet-form-row">
+              <text class="meet-form-label">轮次</text>
+              <view class="meet-seg">
+                <view class="meet-seg-item {{proc.rounds === 'final' ? 'is-on' : ''}}" data-rounds="final" bindtap="onProcPickRounds">直接决赛</view>
+                <view class="meet-seg-item {{proc.rounds === 'heat_final' ? 'is-on' : ''}}" data-rounds="heat_final" bindtap="onProcPickRounds">预赛+决赛</view>
+              </view>
+            </view>
+            <view class="meet-form-row">
+              <text class="meet-form-label">每组人数</text>
+              <input class="meet-num" type="number" value="{{proc.laneCount}}" data-field="laneCount" bindinput="onProcInput" />
+              <text class="meet-form-unit">人（=跑道数，组数按报名人数自动算）</text>
+            </view>
+            <view wx:if="{{proc.rounds === 'heat_final'}}" class="meet-form-row">
+              <text class="meet-form-label">每组晋级</text>
+              <input class="meet-num" type="number" value="{{proc.advanceCount}}" data-field="advanceCount" bindinput="onProcInput" />
+              <text class="meet-form-unit">人</text>
+            </view>
+          </block>
+
+          <button class="btn btn-primary" bindtap="onSaveProcedure" disabled="{{busy}}">保存赛制</button>
+        </view>
+
+        <!-- 场次排期与裁判 -->
         <view wx:if="{{activeEventKey === item.eventKey}}" class="meet-editor">
-          <!-- 多场次切换：预赛各组与决赛分别排期、分别派裁判 -->
           <scroll-view wx:if="{{item.sessions.length > 1}}" scroll-x class="meet-rounds">
             <view
               wx:for="{{item.sessions}}"
               wx:for-item="rnd"
               wx:key="sessionKey"
               class="meet-round {{editSessionKey === rnd.sessionKey ? 'is-active' : ''}}"
-              data-event-key="{{item.eventKey}}"
               data-session-key="{{rnd.sessionKey}}"
               bindtap="onPickSession"
-            >{{rnd.roundLabel}} {{rnd.index}}</view>
+            >{{rnd.displayLabel}}</view>
           </scroll-view>
 
           <view wx:if="{{current && current.entryKeys.length > 0}}" class="meet-hint">
-            本场 {{current.entryKeys.length}} 条参赛记录{{current.round === 'heat' ? '（预赛分组）' : ''}}
+            本场 {{current.entryKeys.length}} 条参赛记录
           </view>
 
-          <!-- 开始时间：日期 + 时分两个 picker，也可以直接改文本。
-               它只用于告知学生什么时候比，不参与任何业务校验。 -->
           <view class="meet-field">
             <text class="meet-label">开始</text>
             <view class="meet-time">
@@ -76,12 +129,24 @@
               <text>{{judgeId}}</text>
               <text class="meet-judge-remove" data-session-key="{{current.sessionKey}}" data-judge-id="{{judgeId}}" bindtap="onRemoveJudge">撤销</text>
             </view>
-            <!-- 本院成员可能上百人，没有搜索根本找不到人 -->
+
+            <!-- 搜索 + 直接点人指派：不再用 picker，避免「搜完还要再点一次」 -->
             <input class="meet-search" placeholder="搜索姓名或学院" value="{{judgeKeyword}}" bindinput="onJudgeKeyword" />
-            <view wx:if="{{filteredJudges.length === 0}}" class="meet-hint">没有匹配的本校成员</view>
-            <picker range="{{filteredJudges}}" range-key="name" bindchange="onAssignJudge">
-              <view class="meet-judge-add">+ 从本校成员里指派</view>
-            </picker>
+            <scroll-view scroll-y class="meet-judge-list">
+              <view wx:if="{{filteredJudges.length === 0}}" class="meet-hint">没有匹配的本校成员</view>
+              <view
+                wx:for="{{filteredJudges}}"
+                wx:key="userId"
+                class="meet-judge-pick"
+                data-judge-id="{{item.userId}}"
+                bindtap="onAssignJudge"
+              >
+                <text class="meet-judge-name">{{item.name}}</text>
+                <text class="meet-judge-college">{{item.collegeName}}</text>
+                <text class="meet-judge-add-btn">指派</text>
+              </view>
+            </scroll-view>
+
             <button class="btn btn-ghost" data-session-key="{{current.sessionKey}}" bindtap="onStartSession" disabled="{{busy || current.judgeIds.length === 0}}">开赛</button>
           </view>
         </view>

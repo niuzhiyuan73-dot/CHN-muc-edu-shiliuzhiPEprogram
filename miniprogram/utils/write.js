@@ -110,6 +110,7 @@ const SCHOOL_WRITE_ACTIONS = [
   'createSportsMeet',
   'updateMeetDraft',
   'removeMeetEvent',
+  'setMeetEventProcedure',
   'configureMeetEvent',
   'publishMeetRegistration',
   'deleteSportsMeet',

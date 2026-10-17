@@ -81,11 +81,9 @@
                 >{{side.label}}<text wx:if="{{side.winner}}"> ✓</text></view>
               </view>
               <button class="btn btn-primary" bindtap="onPublish" disabled="{{busy || !bracket.complete}}">发布正式名次</button>
-              <button class="btn btn-ghost" data-event-key="{{item.eventKey}}" bindtap="onDrawBracket" disabled="{{busy}}">重新编排</button>
             </view>
             <view wx:else>
-              <view class="meet-hint">还没有编排签表。编排后按场次判定胜负，名次自动产生。</view>
-              <button class="btn btn-primary" data-event-key="{{item.eventKey}}" bindtap="onDrawBracket" disabled="{{busy}}">编排签表</button>
+              <view class="meet-hint">还没有编排签表，请到「赛程编排」页设置赛制并生成对阵。</view>
             </view>
           </block>
 
@@ -98,13 +96,7 @@
                 </block>
                 <block wx:else>该项目配置了预赛，还没有抽签分组</block>
               </view>
-              <button
-                wx:if="{{!item.heatDrawn}}"
-                class="btn btn-ghost"
-                data-event-key="{{item.eventKey}}"
-                bindtap="onDrawHeats"
-                disabled="{{busy}}"
-              >抽签分预赛</button>
+              <view wx:if="{{!item.heatDrawn}}" class="meet-hint">还没有抽签分组，请到「赛程编排」页设置赛制并分组。</view>
               <button
                 wx:else
                 class="btn btn-ghost"
@@ -114,8 +106,13 @@
               >按预赛成绩晋级</button>
             </block>
 
+            <!-- 多枪决赛：成绩合并排名，不按枪切换 -->
+            <view wx:if="{{item.aggregated}}" class="meet-hint">
+              分 {{item.sessions.length}} 枪进行，成绩合并排名，一次发布
+            </view>
+
             <!-- 场次切换：预赛各组与决赛分别发布 -->
-            <scroll-view wx:if="{{item.sessions.length > 1}}" scroll-x class="meet-rounds">
+            <scroll-view wx:if="{{item.sessions.length > 1 && !item.aggregated}}" scroll-x class="meet-rounds">
               <view
                 wx:for="{{item.sessions}}"
                 wx:for-item="rnd"
