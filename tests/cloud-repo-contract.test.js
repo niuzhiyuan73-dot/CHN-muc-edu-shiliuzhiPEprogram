@@ -166,18 +166,6 @@ test('学校维度服务调用到的仓储方法，两套适配器（含事务�
   assert.deepEqual(missingOn(mockTxRepo, calls), [], '本地模拟仓储（事务内）缺业务调用的方法');
 });
 
-test('旧协议处理器的仓储调用，云端适配器同样提供', async () => {
-  // src/core/** 是协议 1 的处理器，只跑在云端、不会跑在内存仓储上，
-  // 因此这里只要求**云端**提供（mock 不参与判据）。
-  const cloud = createRepo(database());
-  const txRepo = await cloud.transaction(async (tx) => tx);
-  const calls = repositoryCalls([CORE_DIR], collectionKeysOf(createSchoolMemoryRepo()));
-
-  assert.ok(calls.size >= 20, `静态扫描只认出 ${calls.size} 个仓储调用，扫描逻辑可能失效`);
-  assert.deepEqual(missingOn(cloud, calls), [], '云端仓储（顶层）缺旧协议调用的方法');
-  assert.deepEqual(missingOn(txRepo, calls), [], '云端仓储（事务内）缺旧协议调用的方法');
-});
-
 test('事务内 tx.X.set 在云端真的能写进去（审计里挂掉的那条路径）', async () => {
   const db = database();
   const cloud = createRepo(db);

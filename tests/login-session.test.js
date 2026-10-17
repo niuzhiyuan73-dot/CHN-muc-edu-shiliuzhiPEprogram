@@ -14,7 +14,7 @@
 const { test, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 
-const facade = require('../miniprogram/services/index.js');
+const runtime = require('../miniprogram/services/runtime-mode.js');
 const appSession = require('../miniprogram/services/app-session.js');
 const schoolSession = require('../miniprogram/services/school-session.js');
 const schoolMock = require('../miniprogram/services/school-mock.js');
@@ -110,7 +110,7 @@ function gateSessionCall(identityModule, callIndex) {
 
 beforeEach(() => {
   storage = {};
-  facade.setDataSource('mock');
+  runtime.setDataSource('mock');
   appSession.clear();
   schoolSession.reset();
   schoolMock.reset();
@@ -213,10 +213,9 @@ test('切换演示身份后兼容视图与 S2 写接口是同一个人', async (
   assert.strictEqual(appSession.get().session.user.userId, 'demo_muc_admin', '统一会话一致');
 });
 
-test('注册闭环：新微信号开户 + 申请，兼容登录态是待审核且无旧栈污染', async () => {
+test('注册闭环：新微信号开户 + 申请，兼容登录态是待审核', async () => {
   const app = makeApp();
   schoolIdentity.simulateNewWechat('e2e_new_1');
-  const legacyBefore = await facade.getMemberApplications();
 
   const page = instantiate(loginConfig);
   await page.onLoad();
@@ -230,10 +229,6 @@ test('注册闭环：新微信号开户 + 申请，兼容登录态是待审核�
   assert.strictEqual(app.globalData.userInfo._id, appSession.get().session.user.userId, '登录态=统一会话');
   assert.strictEqual(app.globalData.userInfo.status, USER_STATUS.PENDING);
   assert.strictEqual(app.globalData.userInfo.role, ROLE.MEMBER);
-
-  // 旧栈申请台账原封不动：不再向旧 registerMember 写账号
-  const legacyAfter = await facade.getMemberApplications();
-  assert.strictEqual(legacyAfter.length, legacyBefore.length, '旧栈台账不应被 S2 注册污染');
 
   // 审核通过后，重新进入登录页就能看到「正常」
   const applicantId = appSession.get().session.user.userId;

@@ -22,7 +22,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const facade = require('../miniprogram/services/index.js');
+const runtime = require('../miniprogram/services/runtime-mode.js');
 const schoolSession = require('../miniprogram/services/school-session.js');
 
 /* ============================================================
@@ -56,7 +56,7 @@ function tagOf(wxml, handler) {
 }
 
 beforeEach(() => {
-  facade.setDataSource('mock');
+  runtime.setDataSource('mock');
   schoolSession.reset();
   navigations.length = 0;
 });
@@ -66,7 +66,7 @@ beforeEach(() => {
  * ============================================================ */
 
 test('云数据源下「我的」页仍能进跨校邀请赛页', () => {
-  facade.setDataSource('cloud');
+  runtime.setDataSource('cloud');
   const page = loadPage('../miniprogram/pages/profile/profile.js');
   // isMock 只剩「页脚标注数据来源」一个用途，不该同时兼作入口开关
   assert.equal(page.data.isMock, false);
@@ -116,10 +116,10 @@ test('邀请赛页：只有「切换体验身份」按数据源显隐，学校�
 test('邀请赛页：data.isMock 跟着数据源走，用于两处展示口径', () => {
   const mockPage = loadPage('../miniprogram/pages/school-exchange/school-exchange.js');
   assert.equal(mockPage.data.isMock, true, '默认（mock）时是模拟环境');
-  facade.setDataSource('cloud');
+  runtime.setDataSource('cloud');
   const cloudPage = loadPage('../miniprogram/pages/school-exchange/school-exchange.js');
   assert.equal(cloudPage.data.isMock, false, '云端不是模拟环境');
-  facade.setDataSource('mock');
+  runtime.setDataSource('mock');
   const backToMock = loadPage('../miniprogram/pages/school-exchange/school-exchange.js');
   assert.equal(backToMock.data.isMock, true, '切回模拟数据源要跟着变');
 });
@@ -141,7 +141,7 @@ test('云数据源下首页仍装载学校切换器（浏览外校是转校与�
       getSchoolIdentitySession: async () => ({ ok: true, user: { primarySchoolId: 'muc' } }),
     };
   };
-  facade.setDataSource('cloud');
+  runtime.setDataSource('cloud');
   try {
     const page = loadPage('../miniprogram/pages/index/index.js');
     await page.loadSchoolScope();
@@ -152,7 +152,7 @@ test('云数据源下首页仍装载学校切换器（浏览外校是转校与�
     assert.equal(page.data.readOnlySchool, false, '看自己的学校不是只读');
   } finally {
     identity.forSchoolIdentity = original;
-    facade.setDataSource('mock');
+    runtime.setDataSource('mock');
   }
 });
 
@@ -163,7 +163,7 @@ test('云数据源下目录取不到时，切换器照旧收起而不是打白�
     getSchoolDirectory: async () => { throw new Error('云开发尚未初始化'); },
     getSchoolIdentitySession: async () => ({ ok: true, user: null }),
   });
-  facade.setDataSource('cloud');
+  runtime.setDataSource('cloud');
   try {
     const page = loadPage('../miniprogram/pages/index/index.js');
     await page.loadSchoolScope();
@@ -171,6 +171,6 @@ test('云数据源下目录取不到时，切换器照旧收起而不是打白�
     assert.equal(page.data.readOnlySchool, false);
   } finally {
     identity.forSchoolIdentity = original;
-    facade.setDataSource('mock');
+    runtime.setDataSource('mock');
   }
 });

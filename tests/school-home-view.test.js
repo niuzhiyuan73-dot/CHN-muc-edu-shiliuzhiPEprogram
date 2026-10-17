@@ -10,7 +10,7 @@
 const { test, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 
-const facade = require('../miniprogram/services/index.js');
+const runtime = require('../miniprogram/services/runtime-mode.js');
 const schoolMock = require('../miniprogram/services/school-mock.js');
 const schoolSession = require('../miniprogram/services/school-session.js');
 const {
@@ -18,7 +18,7 @@ const {
 } = require('../miniprogram/services/school-home-view.js');
 
 beforeEach(() => {
-  facade.setDataSource('mock');
+  runtime.setDataSource('mock');
   schoolMock.reset();
   schoolSession.reset();
 });

@@ -16,10 +16,8 @@ const assert = require('node:assert');
 const { beforeEach } = require('node:test');
 
 /** 数据源门面。写接口会改内存，用例之间必须把缓存清干净 */
-const facade = require('../miniprogram/services/index.js');
 // 直接拿实现模块，是为了在个别用例里临时把某个接口换掉。
 // 门面是「调用时才解析实现」，所以改这里的导出真的会作用到上面那层
-const mock = require('../miniprogram/services/mock.js');
 const {
   ROLE,
   MATCH_STATUS,
@@ -136,6 +134,7 @@ global.wx = {
  * 演示身份切换（switchDemoActor）的最小实现。
  */
 const appSession = require('../miniprogram/services/app-session.js');
+const associationScope = require('../miniprogram/services/association-scope.js');
 const schoolSession = require('../miniprogram/services/school-session.js');
 const schoolMock = require('../miniprogram/services/school-mock.js');
 const schoolIdentity = require('../miniprogram/services/school-identity.js');
@@ -153,7 +152,7 @@ const app = {
     appSession.clear();
   },
   getAssociation() {
-    return facade.getAssociation();
+    return associationScope.getAssociation();
   },
   isLoggedIn() {
     return Boolean(this.globalData.userInfo);
@@ -326,7 +325,6 @@ const spacePanelConfig = registered[28];
 // 否则上一条确认过的比赛会让下一条拿到的榜单与台账都不一样
 // B3 之后登录页 / 首页还要读统一会话、学校范围与 S2 演示身份，一并复位。
 beforeEach(() => {
-  facade.resetCache();
   calls.modals.length = 0;
   calls.modalConfirmed = true;
   appSession.clear();
@@ -756,7 +754,7 @@ test('我的页 —— 切换协会只改全局，本页内容不重取', async 
   await page.onLoad({});
 
   const before = page.data.view;
-  const globalBefore = facade.getAssociation();
+  const globalBefore = associationScope.getAssociation();
   const target = globalBefore === 'tt' ? 'pkb' : 'tt';
 
   try {
@@ -764,17 +762,17 @@ test('我的页 —— 切换协会只改全局，本页内容不重取', async 
     // 内容对象没被整体替换，说明没有重新取数——「我的」是跨协会聚合的，不随切换变
     assert.strictEqual(page.data.view, before, '切协会不该重取本页内容');
     // 但全局当前协会确实改掉了（作用在中间三个界面）
-    assert.strictEqual(facade.getAssociation(), target);
+    assert.strictEqual(associationScope.getAssociation(), target);
   } finally {
     // 全局协会是模块级单例，别把改动漏给后面的用例
-    facade.setAssociation(globalBefore);
+    associationScope.setAssociation(globalBefore);
   }
 });
 
 test('我的页 —— 首页切了协会再回来，徽章跟着全局走（不再两张皮）', async () => {
   loginAs();
-  const globalBefore = facade.getAssociation();
-  facade.setAssociation('pkb');
+  const globalBefore = associationScope.getAssociation();
+  associationScope.setAssociation('pkb');
   try {
     const page = instantiate(profileConfig);
     await page.onLoad({});
@@ -784,13 +782,13 @@ test('我的页 —— 首页切了协会再回来，徽章跟着全局走（不
     // 本页内容是跨协会聚合的、不随它变，会话指纹没变，refresh 会被跳过；
     // 若不在 onShow 里单独同步徽章，这里就会停在 pkb，与首页显示的两张皮。
     const viewBefore = page.data.view;
-    facade.setAssociation('tt');
+    associationScope.setAssociation('tt');
     await page.onShow();
 
     assert.strictEqual(page.data.associationId, 'tt', '徽章必须跟上全局协会');
     assert.strictEqual(page.data.view, viewBefore, '切协会不该重取本页内容');
   } finally {
-    facade.setAssociation(globalBefore);
+    associationScope.setAssociation(globalBefore);
   }
 });
 
@@ -1256,13 +1254,13 @@ test('个人详情 —— 页内默认本人比赛最多的协会，切换只改
   assert.strictEqual(page.data.showSwitch, true, '已登录且有多协会，给切换徽章');
   assert.ok(page.data.view.summary, '承接了「我的」移出的等级分');
 
-  const globalBefore = facade.getAssociation();
+  const globalBefore = associationScope.getAssociation();
   try {
     await page.onAssociationChange({ detail: { id: 'tt' } });
     assert.strictEqual(page.data.switchValue, 'tt');
-    assert.strictEqual(facade.getAssociation(), globalBefore, '页内切换不写回全局');
+    assert.strictEqual(associationScope.getAssociation(), globalBefore, '页内切换不写回全局');
   } finally {
-    facade.setAssociation(globalBefore);
+    associationScope.setAssociation(globalBefore);
   }
 });
 
@@ -1308,15 +1306,15 @@ test('他人主页 —— 导航栏按页内协会套品牌（标题 = 协会简
 test('他人主页 —— 页内切换协会整页重取，但不写回全局', async () => {
   const page = instantiate(memberConfig);
   await page.onLoad({ userId: 'u08' }); // 默认 tt
-  const globalBefore = facade.getAssociation();
+  const globalBefore = associationScope.getAssociation();
 
   try {
     await page.onAssociationChange({ detail: { id: 'pkb' } });
     assert.strictEqual(page.data.switchValue, 'pkb');
     assert.strictEqual(page.data.view.found, true);
-    assert.strictEqual(facade.getAssociation(), globalBefore, '页内切换不写回全局');
+    assert.strictEqual(associationScope.getAssociation(), globalBefore, '页内切换不写回全局');
   } finally {
-    facade.setAssociation(globalBefore);
+    associationScope.setAssociation(globalBefore);
   }
 });
 
@@ -1796,32 +1794,6 @@ eventPanelTest('赛事页 —— 加载失败时给出提示而不是白屏', as
  * 赛事闭环（列表 → 详情 → 发布 → 名次录入）
  * ============================================================ */
 
-/**
- * 造一场「报名中」的赛事，返回落库后的记录。
- * 发布门槛是学院负责人，这里直接以管理员身份落库，与会话解耦——
- * 用例想以谁的身份看赛事，自己在 onLoad 前摆登录态即可。
- */
-async function publishTestEvent(overrides = {}) {
-  const result = await facade.publishEvent(
-    {
-      title: '测试单打赛',
-      description: '淘汰赛制',
-      matchType: MATCH_TYPE.SINGLES,
-      level: EVENT_LEVEL.SECOND,
-      bronzeMode: EVENT_BRONZE_MODE.TIED,
-      seedMode: SEED_MODE.ELO,
-      seedCount: 8,
-      location: '体育馆 1 号场',
-      startTime: '2026-06-10T09:00:00',
-      quota: 8,
-      courtCount: 4,
-      ...overrides,
-    },
-    ADMIN._id
-  );
-  assert.strictEqual(result.ok, true, `发布赛事失败：${result.firstError}`);
-  return result.record;
-}
 
 eventPanelTest('赛事页 —— 赛事列表把报名中、进行中的排在已结束之前', async (fx) => {
 
@@ -2863,9 +2835,6 @@ test('登录页 —— 填写完整后提交，申请落进 S2 数据源并停�
   await page.onLoad();
   page.onGoRegister();
 
-  // 旧栈申请台账的基线：S2 注册不该往里写任何东西（B3 §7.2.3）
-  const legacyApplicationsBefore = await facade.getMemberApplications();
-
   fillValidForm(page);
   await page.onSubmit();
 
@@ -2885,10 +2854,6 @@ test('登录页 —— 填写完整后提交，申请落进 S2 数据源并停�
   assert.strictEqual(session.account.status, 'pending', '学校身份申请应落在 S2');
   assert.strictEqual(session.account.studentId, '2023001234');
   assert.ok(session.user.userId, '平台账号已开通');
-
-  // 旧栈申请台账一条都没多：不向旧 registerMember 再写账号
-  const legacyApplicationsAfter = await facade.getMemberApplications();
-  assert.strictEqual(legacyApplicationsAfter.length, legacyApplicationsBefore.length, '旧栈台账不应被 S2 注册污染');
 });
 
 test('登录页 —— 已经有账号的人再提交，结果页不说「申请已提交」', async () => {

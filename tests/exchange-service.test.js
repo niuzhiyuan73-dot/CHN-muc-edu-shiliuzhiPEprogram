@@ -180,24 +180,6 @@ test('registration closes at start time and ignores client supplied user or repr
   assert.equal((await call(repo, 'signUpExchangeEvent', { eventId: id }, 'demo_muc_admin', 'muc', new Date(form.startTime))).ok, false);
 });
 
-test('exchange writes do not enter old event/match collections or change school ratings', async () => {
-  const { createFixtureRepo } = require('./helpers/cloud-fixture');
-  const seed = createSchoolDemoSeed();
-  const repo = createFixtureRepo({ ...seed });
-  const before = JSON.stringify({ matches: await repo.matches.list(), events: await repo.events.list() });
-  const id = await create(repo);
-  await accept(repo, id);
-  await signup(repo, id);
-  await signup(repo, id, 'demo_buaa_member', 'buaa');
-  await call(repo, 'lockExchangeRoster', { eventId: id });
-  await call(repo, 'drawExchangeEvent', { eventId: id, seedValue: 1 });
-  const [match] = await repo.exchangeMatches.listByEvent(id);
-  await call(repo, 'submitExchangeScore', { eventId: id, matchId: match._id, scoreA: 11, scoreB: 4 });
-  await call(repo, 'confirmExchangeRanking', { eventId: id });
-  assert.equal((await repo.exchangeEvents.getById(id)).status, 'finished');
-  assert.equal(JSON.stringify({ matches: await repo.matches.list(), events: await repo.events.list() }), before);
-});
-
 test('draw is limited to managers of both schools and only after the roster locks', async () => {
   const repo = fixture();
   const id = await create(repo);

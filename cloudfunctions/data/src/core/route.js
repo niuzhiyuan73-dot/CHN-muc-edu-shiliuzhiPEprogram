@@ -1,8 +1,7 @@
 /**
  * 云函数入口的路由判据
  * ============================================================
- * 一次调用要么走协议 2（学校维度，`handleSchoolRequest`），要么走旧协议
- * （`dispatch`）。判据单独成函数，是为了能**脱离 wx-server-sdk 单测**——
+ * 判据单独成函数，是为了能**脱离 wx-server-sdk 单测**——
  * `cloudfunctions/data/index.js` 顶层 require 了 wx-server-sdk，测试环境
  * 装不了它，判据留在 index.js 里就永远测不到。
  *
@@ -20,6 +19,10 @@
  * 协议 2 的客户端**总是**带 `protocolVersion: 2`（见
  * `miniprogram/services/school-cloud.js` 的 `requestFor`，写死的），
  * 所以 `schoolId` 这个条件纯属多余，去掉即可。
+ *
+ * 【协议 1 已完全下线（P10）】旧协议分支（dispatch）已删；本判据保留，
+ * 为的是把「请求压根没带版本号」与「版本不是 2」的提示分开——前者在
+ * index.js 直接得到「请升级客户端」，后者由 handleSchoolRequest 报版本不符。
  * ============================================================
  */
 

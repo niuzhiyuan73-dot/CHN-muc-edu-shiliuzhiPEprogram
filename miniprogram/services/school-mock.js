@@ -119,13 +119,15 @@ function attachLegacyMembers(seed) {
 }
 
 /**
- * 学校维度的默认演示身份：跟随旧版 `mock.js` 的 DEFAULT_CURRENT_USER_ID。
+ * 学校维度的默认演示身份：u06（原 protocol-1 mock.js 的
+ * DEFAULT_CURRENT_USER_ID，P10 删 mock.js 后常量落在这里，取值不变——
+ * 既有用例与文档都按这个编号约定）。
  * 从前这里默认是 S2 的「普通访客」demo_applicant（无学校归属），演示
  * u01–u24 时协会空间会被判成无权限；旧版账号接入学校维度后，身份直接由
- * mock.js 那一个常量决定，改编号即换人。
+ * 这一个常量决定，改编号即换人。
  */
 function defaultActorId() {
-  return require('./mock.js').DEFAULT_CURRENT_USER_ID;
+  return 'u06';
 }
 
 let actorId = DEMO_ACTORS[0].id;

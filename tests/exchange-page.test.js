@@ -1,6 +1,6 @@
 const { test, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
-const facade = require('../miniprogram/services/index');
+const runtime = require('../miniprogram/services/runtime-mode');
 const mock = require('../miniprogram/services/school-mock');
 function page() {
   let config;
@@ -12,7 +12,7 @@ function page() {
   return { ...config, data: JSON.parse(JSON.stringify(config.data)), setData(data) { Object.assign(this.data, data); } };
 }
 const select = value => ({ detail: { value } });
-beforeEach(() => { facade.setDataSource('mock'); mock.reset(); });
+beforeEach(() => { runtime.setDataSource('mock'); mock.reset(); });
 
 /**
  * 演示种子里预置的跨校邀请赛场次（2026-10-16 起）。
@@ -87,13 +87,13 @@ test('cloud 数据源下走云端协议 2，而不是偷偷用本地演示数据
   // 2026-10-16：邀请赛已接入云函数（协议 2 注册了全部动作），页面不再要求「仅本地模拟」。
   // 这条用例守的是「云模式必须真的走云」：wx.cloud 没初始化时如实报错，
   // 而不是回落到本地仓储把演示数据当真实数据展示。
-  facade.setDataSource('cloud');
+  runtime.setDataSource('cloud');
   const p = page();
   await p.onLoad();
   assert.match(p.data.error, /云开发尚未初始化/);
   assert.equal(p.data.canCreate, false);
   assert.deepEqual(p.data.events, []);
-  facade.setDataSource('mock');
+  runtime.setDataSource('mock');
 });
 
 test('B7 身份切换经 app 统一入口：兼容会话随演示身份一起刷新', async () => {

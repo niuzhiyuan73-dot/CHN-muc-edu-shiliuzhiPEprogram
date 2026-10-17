@@ -13,11 +13,9 @@
  * 必须先解开的硬耦合点。本切片把模式搬到中立模块 runtime-mode.js。
  *
  * 本测试钉住两件事：
- *   ① 运行模式本身的行为（含门面转发，协议 1 下线后该组随门面一起删）；
- *   ② 解耦后的静态事实——页面层与学校维度都不再碰旧门面，且服务层残留清单
- *      必须**恰好等于**下面登记的那一份。这份清单是切片 B 的进度条：
- *      改完一个文件就要从这里划掉一个，多一个（新引入依赖）与少一个（该更新
- *      清单了）都会当场变红，谁也别想悄悄漂移。
+ *   ① 运行模式本身的行为；
+ *   ② 解耦的静态事实——页面层、模板与服务层都不再碰旧门面（协议 1 已随
+ *      P10-c 完全下线，清单空了；这条静态守护继续钉住「不许复活」）。
  * ============================================================
  */
 
@@ -27,7 +25,6 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const runtime = require('../miniprogram/services/runtime-mode.js');
-const facade = require('../miniprogram/services/index.js');
 
 const MINIPROGRAM = path.join(__dirname, '..', 'miniprogram');
 const FACADE_REF = 'services/index.js';
@@ -100,34 +97,6 @@ describe('运行模式 —— 状态与校验', () => {
       runtime.resetDataSource();
       assert.equal(runtime.getDataSource(), 'mock');
     });
-  });
-});
-
-/**
- * 门面转发：协议 1 完全下线后，这一组随门面一起删除。
- * 在此之前它们是「同一份状态、两个入口」的证据——门面没有各存一份副本，
- * 拨一边另一边必须同步。
- */
-describe('运行模式 —— 旧门面只是转发（门面删除后本组一并移除）', () => {
-  test('门面拨开关，运行模式读到同一个状态', () => {
-    const original = facade.getDataSource();
-    try {
-      facade.setDataSource('cloud');
-      assert.equal(runtime.getDataSource(), 'cloud');
-      assert.equal(runtime.isMockNow(), false);
-    } finally {
-      facade.setDataSource(original);
-    }
-    assert.equal(runtime.isMockNow(), true);
-  });
-
-  test('门面的 isMock / currentSource 读的是运行模式', () => {
-    withMode('cloud', () => {
-      assert.equal(facade.isMock, false);
-      assert.equal(facade.currentSource, 'cloud');
-    });
-    assert.equal(facade.isMock, true);
-    assert.equal(facade.currentSource, 'mock');
   });
 });
 

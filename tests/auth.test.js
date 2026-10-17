@@ -19,8 +19,8 @@ const {
 } = require('../miniprogram/services/auth.js');
 const { ROLE, USER_STATUS, COLLEGES: COLLEGES_CONST } = require('../miniprogram/utils/constants.js');
 const { MEMBER_SEED } = require('../miniprogram/services/seed.js');
-// 只为下面那条「纯函数」断言：register 写完，数据源里一条申请都不该多出来
-const facade = require('../miniprogram/services/index.js');
+const fs = require('node:fs');
+const path = require('node:path');
 
 describe('COLLEGES —— 学院名单', () => {
   test('共 26 所，且不含「其他」', () => {
@@ -227,16 +227,18 @@ describe('register —— 注册申请', () => {
     assert.equal(result.state.isPending, true);
   });
 
-  test('register 是纯函数：算完不往数据源里写任何东西', async () => {
-    // 落库是数据源的 registerMember 干的，register 只负责校验与组装。
-    // 这条断言把两者的分工钉死——将来谁把写操作挪进来，这里立刻会红。
-    facade.resetCache();
-    const before = await facade.getMemberApplications();
-
-    register(validForm());
-
-    const after = await facade.getMemberApplications();
-    assert.equal(after.length, before.length, 'register 不该多出申请');
-    assert.deepEqual(after, before, 'register 不该改动任何一条申请');
+  test('register 是纯函数：算完不往数据源里写任何东西', () => {
+    // 落库是 S2 的 registerSchoolAccount 干的，register 只负责校验与组装。
+    // 旧栈门面已随 P10 删除，纯度改由两条结构事实钉死：
+    //   ① auth.js 不再 require 任何数据源（mock / index / store）；
+    //   ② 同一输入永远得到相同输出（无隐藏的写副作用可改变后续结果）。
+    const text = fs.readFileSync(
+      path.join(__dirname, '..', 'miniprogram', 'services', 'auth.js'), 'utf8');
+    assert.ok(!/require\(['"]\.\/(mock|index)|services\/(mock|index)/.test(text),
+      'auth.js 不得再依赖旧栈数据源');
+    const a = register(validForm(), { now: new Date('2026-09-10T10:00:00') });
+    const b = register(validForm(), { now: new Date('2026-09-10T10:00:00') });
+    assert.deepEqual(a.account, b.account, '同一输入产出相同账号');
+    assert.notEqual(a.account, b.account, '每次返回新对象，不是共享的可变状态');
   });
 });

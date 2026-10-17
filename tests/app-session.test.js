@@ -20,12 +20,14 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { beforeEach } = require('node:test');
 
-const facade = require('../miniprogram/services/index.js');
+const runtime = require('../miniprogram/services/runtime-mode.js');
+const associationScope = require('../miniprogram/services/association-scope.js');
 const appSession = require('../miniprogram/services/app-session.js');
 const schoolSession = require('../miniprogram/services/school-session.js');
 const schoolMock = require('../miniprogram/services/school-mock.js');
 const { resolveAuthState } = require('../miniprogram/services/auth.js');
-const { DEFAULT_CURRENT_USER_ID } = require('../miniprogram/services/mock.js');
+// 原常量住在 protocol-1 mock.js（P10 删）；演示身份编号约定不变
+const DEFAULT_CURRENT_USER_ID = 'u06';
 const { defaultAssociationId } = require('../miniprogram/utils/associations.js');
 const { DATA_SOURCE, STORAGE_KEY, ROLE, USER_STATUS } = require('../miniprogram/utils/constants.js');
 
@@ -145,7 +147,7 @@ beforeEach(() => {
   cloudActions = [];
   cloudResults = {};
   // 门面、统一会话、学校范围、S2 演示身份都是模块级单例，用例之间必须复位
-  facade.setDataSource(DATA_SOURCE.MOCK);
+  runtime.setDataSource(DATA_SOURCE.MOCK);
   appSession.clear();
   schoolSession.reset();
   schoolMock.reset();
@@ -450,7 +452,7 @@ test('wx.cloud.init 抛错时整份退回 mock，onLaunch 不中断', async () =
     await launch({ envId: 'bad-env' });
 
     assert.strictEqual(appConfig.globalData.dataSource, DATA_SOURCE.MOCK);
-    assert.strictEqual(facade.getDataSource(), DATA_SOURCE.MOCK);
+    assert.strictEqual(runtime.getDataSource(), DATA_SOURCE.MOCK);
     assert.strictEqual(cloudCalls, 0, '退回 mock 后不该再调云函数');
     // 启动流程走完了，后面的步骤（采集系统信息）没被跳过
     assert.ok(appConfig.globalData.systemInfo, 'onLaunch 不该中断在 initDataSource');
@@ -466,7 +468,7 @@ test('基础库没有 wx.cloud 时退回 mock，不抛错', async () => {
     await launch({ envId: 'test-env' });
 
     assert.strictEqual(appConfig.globalData.dataSource, DATA_SOURCE.MOCK);
-    assert.strictEqual(facade.getDataSource(), DATA_SOURCE.MOCK);
+    assert.strictEqual(runtime.getDataSource(), DATA_SOURCE.MOCK);
   } finally {
     global.wx.cloud = originalCloud;
   }
@@ -483,7 +485,7 @@ test('基础库没有 wx.cloud 时退回 mock，不抛错', async () => {
 test('未登录时冷启动把协会复位到兜底默认，且不落盘', async () => {
   await launch({ envId: '' });
 
-  assert.strictEqual(facade.getAssociation(), defaultAssociationId());
+  assert.strictEqual(associationScope.getAssociation(), defaultAssociationId());
   assert.strictEqual(appConfig.globalData.association, defaultAssociationId());
   // 不记忆上次选择：协会不再持久化，本地不该多出 association 这个键
   assert.ok(!('association' in storage), '协会不该落盘');
@@ -504,7 +506,7 @@ test('已登录时按「比赛最多的协会」定默认，不认缓存里的�
 
   await launch({ envId: '' });
 
-  assert.strictEqual(facade.getAssociation(), expected, '默认取比赛最多的协会');
+  assert.strictEqual(associationScope.getAssociation(), expected, '默认取比赛最多的协会');
   assert.strictEqual(appConfig.globalData.association, expected);
   // 缓存里那条旧协会原封不动：既没读它，也没写回去
   assert.strictEqual(storage.association, 'bd');
@@ -515,12 +517,12 @@ test('setAssociation 切换会话、不写缓存，未知协会抛错', async ()
 
   const next = appConfig.setAssociation('bd');
   assert.strictEqual(next, 'bd');
-  assert.strictEqual(facade.getAssociation(), 'bd');
+  assert.strictEqual(associationScope.getAssociation(), 'bd');
   assert.strictEqual(appConfig.globalData.association, 'bd');
   // 不持久化：切换只在本次会话生效
   assert.ok(!('association' in storage), '协会不该落盘');
 
   assert.throws(() => appConfig.setAssociation('nope'), /未知的协会 id/);
   // 抛错后仍停在原协会，不落到半个态
-  assert.strictEqual(facade.getAssociation(), 'bd');
+  assert.strictEqual(associationScope.getAssociation(), 'bd');
 });

@@ -1,6 +1,6 @@
 const { test, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
-const facade = require('../miniprogram/services/index');
+const runtime = require('../miniprogram/services/runtime-mode');
 const mock = require('../miniprogram/services/school-mock');
 const service = require('../miniprogram/services/school-identity');
 const scope = require('../miniprogram/services/association-scope');
@@ -23,7 +23,7 @@ async function submit(p) {
   p.onStudentIdInput(select('NEW003'));
   await p.onApply();
 }
-beforeEach(() => { facade.setDataSource('mock'); mock.reset(); scope.setAssociation('tt'); });
+beforeEach(() => { runtime.setDataSource('mock'); mock.reset(); scope.setAssociation('tt'); });
 
 test('page supports Beihang application and local-admin approval without changing old association', async () => {
   mock.setDemoActor('demo_applicant');
@@ -157,10 +157,10 @@ test('demo client binds actor at creation and serializes competing approvals', a
 });
 
 test('cloud mode hides demo controls and prevents demo actor selection', async () => {
-  facade.setDataSource('cloud');
+  runtime.setDataSource('cloud');
   assert.deepEqual(service.getDemoActors(), []);
   assert.throws(() => service.setDemoActor('demo_muc_admin'));
-  facade.setDataSource('mock');
+  runtime.setDataSource('mock');
 });
 
 test('unified grant entry lets a school admin assign an association role', async () => {
