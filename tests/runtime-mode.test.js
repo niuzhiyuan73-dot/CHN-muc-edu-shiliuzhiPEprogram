@@ -41,8 +41,10 @@ const FACADE_REQUIRE = "require('./index.js')";
  * 每消掉一个，切片 B 就离「可以删门面」更近一步。
  */
 const SERVICE_FILES_PENDING = [
+  // association-scope 的 withAssociation 承载 association-usage → app.js 启动默认
+  // 协会这条活路径（api.getMyProjects），S2 尚无等价读端，本阶段不强行迁移
+  // （见 docs/施工切片账本.md 的「已确认本阶段无法解绑的一项」）。
   'association-scope.js',
-  'events-view.js',
 ].sort();
 
 /** 递归列出目录下的 .js 文件。 */

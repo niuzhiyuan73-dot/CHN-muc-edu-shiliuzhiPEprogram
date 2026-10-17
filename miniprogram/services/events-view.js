@@ -69,23 +69,6 @@ const { describeLive } = require('./live-view.js');
 // 手工指定种子要凑几位，与真正抽签时同一把尺子（种子数与参赛人数的较小者）；
 // 双打每两位参赛者编成一队，人数是组数的两倍，见 manualPlayersNeeded
 const { actualSeedCount, manualPlayersNeeded, splitTeamId } = require('./draw.js');
-const {
-  getCurrentUser,
-  getMembers,
-  getEvents,
-  getEventSignups,
-  getMatchRecords,
-  getSeasonState,
-} = require('./index.js');
-// 学院赛已迁到学校维度（协议 2）：个人赛仍走旧门面，学院赛列表改由 S2 协会空间
-// 取数——否则「发布走 S2、列表读旧栈」，两处各说各话，新发的学院赛根本不显示。
-// 范围（学校 + 协会）在这里现取一次，与页面进入时固定的是同一份全局选择。
-const schoolSession = require('./school-session.js');
-const associationScope = require('./association-scope.js');
-const { LEGACY_SCHOOL_ID } = require('../utils/school.js');
-const { loadCollegeEventListRows } = require('./school-college-view.js');
-
-/** 前三名的奖牌样式，其余为空字符串（不额外装饰） */
 const MEDALS = ['gold', 'silver', 'bronze'];
 
 /** 名次 → 奖牌样式。只有前三名有奖牌，第四名与八强不装饰 */
@@ -195,7 +178,7 @@ function countEvents(events) {
 /**
  * 一句话说清当前赛季的起止。
  *
- * @param {Object} season getSeasonState 的结果
+ * @param {Object} season 赛季文档
  * @returns {string}
  */
 function describeSeason(season = {}) {
@@ -347,21 +330,6 @@ function buildEventListRows(events, ctx = {}) {
     const signups = signupMap.get(event._id) || [];
     return buildEventRow(event, { actor, signups });
   });
-}
-
-/**
- * 一次取齐所有赛事的报名记录，按赛事编号建索引。
- * 列表要显示「已报几人」「我报没报」，每场各取一次，并发发出。
- *
- * @param {Array<Object>} events
- * @returns {Promise<Map<string, Array<Object>>>}
- */
-async function loadSignupMap(events) {
-  const list = asArray(events);
-  const pairs = await Promise.all(
-    list.map(async (event) => [event._id, await getEventSignups(event._id)])
-  );
-  return new Map(pairs);
 }
 
 /**
@@ -578,7 +546,7 @@ function byeTextOf(draw, memberMap) {
 /**
  * 把该赛事的比赛整形成签表行，按轮次 → 阶段 → 签位排。
  *
- * @param {Array<Object>} records getMatchRecords 的结果
+ * @param {Array<Object>} records 比赛台账记录
  * @param {Object} event 赛事记录（要它的 draw 与编号）
  * @param {Map<string, Object>} memberMap 会员编号 → 档案
  * @param {Object} [ctx]
@@ -812,202 +780,6 @@ function buildStandings(event, records, memberMap, actor = null) {
 }
 
 /**
- * 装载赛事页的全部数据（赛事列表 + 赛季积分榜）。
- *
- * 【登录态为什么由页面传进来】
- * mock 的 getCurrentUser() 永远答 u06。若这里自己去问，一个没登录的访客
- * 也会被当成 u06，凭空拿到报名与管理权限。页面把登录态显式传下来，
- * 传 null 就是访客；不传时退回数据源的当前用户（供 Node 测试直接调用）。
- *
- * @param {Object} [options]
- * @param {Object|null} [options.user] 当前登录会员
- * @param {number} [options.listLimit] 两个列表各取几条；缺省 LIST_LIMIT，
- *        传 Infinity 表示不截断（「查看全部」列表页用）
- * @returns {Promise<Object>}
- */
-async function loadEventsView(options = {}) {
-  const usesExplicitUser = Object.prototype.hasOwnProperty.call(options, 'user');
-
-  // 学院赛列表走学校维度：范围取当前全局学校 + 协会，与工作台页面进入时固定的
-  // 是同一份选择；「谁能提交名单 / 谁能审核」由 S2 读端随行下发（见
-  // school-college-service.listCollegeEvents），视图不再拿旧 actor 现算。
-  const collegeScope = {
-    schoolId: schoolSession.getSchoolId() || LEGACY_SCHOOL_ID,
-    association: associationScope.getAssociation(),
-  };
-
-  const [current, members, events, season, college] = await Promise.all([
-    getCurrentUser(),
-    getMembers(),
-    getEvents(),
-    getSeasonState(),
-    loadCollegeEventListRows(collegeScope),
-  ]);
-
-  const actor = usesExplicitUser ? options.user : current;
-  const myId = actor ? actor._id : null;
-
-  // 名次先在完整榜上算好，再截断显示——顺序不能反，否则前十之外的人
-  // 拿不到自己的名次
-  const allRows = buildPointsRows(members, countEvents(events), myId);
-  const rows = allRows.slice(0, TOP_LIMIT);
-  const total = allRows.length;
-  const myRow = (myId && allRows.find((row) => row.isMe)) || null;
-
-  const signupMap = await loadSignupMap(events);
-  const allEventRows = buildEventListRows(events, { actor, signupMap });
-  const allCollegeRows = college.rows;
-  const canPublish = canManageEvent(actor);
-
-  // 页面只摆最近几条，全量留给「查看全部」那一页。`listLimit` 传 Infinity
-  // 即不截断——列表页就是这么拿到全部行的，两个页面共用同一套装载逻辑。
-  const listLimit = options.listLimit === undefined ? LIST_LIMIT : options.listLimit;
-  const eventRows = allEventRows.slice(0, listLimit);
-  const collegeRows = allCollegeRows.slice(0, listLimit);
-
-  return {
-    seasonText: describeSeason(season),
-    rows,
-    // 完整榜不参与默认渲染，但页面的搜索框要在全量里找人
-    allRows,
-    total,
-    hasMore: total > rows.length,
-    // 前十之外还有人就如实交代总数，不能只报 10
-    playerCountText: total > TOP_LIMIT ? `前 ${TOP_LIMIT} 名 · 共 ${total} 人` : `${total} 人上榜`,
-    empty: rows.length === 0,
-    emptyNote: '本赛季还没有人拿到积分，参加一次赛事就能上榜',
-    me:
-      myRow === null
-        ? null
-        : {
-            rank: myRow.rank,
-            // 分母用完整榜人数：即使我排在第 15、列表里看不到我，
-            // 也该知道自己是第 15 / 20，而不是第 15 / 10
-            total,
-            beatText: `超过 ${formatPercent((total - myRow.rank) / total)} 的会员`,
-          },
-    meHint: myRow === null ? '本赛季还没有积分，参加一次赛事就能上榜' : '',
-
-    // 赛事闭环入口：列表 + 发布权
-    events: eventRows,
-    hasEvents: eventRows.length > 0,
-    eventsEmptyNote: '还没有赛事，等管理员发布一场吧',
-    // 「查看全部」入口的两个数字：总场次与有没有被截断
-    eventTotal: allEventRows.length,
-    hasMoreEvents: allEventRows.length > eventRows.length,
-    canPublish,
-    // 学院赛入口：列表按人给出不同去向（管理员审核 / 学院负责人交名单），
-    // 发布入口与个人赛同权限门槛（仅管理员）
-    collegeEvents: collegeRows,
-    hasCollegeEvents: collegeRows.length > 0,
-    collegeEventsEmptyNote: '还没有学院赛，等管理员发布一场吧',
-    collegeEventTotal: allCollegeRows.length,
-    hasMoreCollegeEvents: allCollegeRows.length > collegeRows.length,
-    // 发布学院赛的权限门槛与其余管理动作一致，取 S2 读端算好的 canManage
-    canManageCollege: college.canManage,
-  };
-}
-
-/**
- * 装载一场赛事的详情。
- *
- * @param {string} eventId
- * @param {Object} [options]
- * @param {Object|null} [options.user]
- * @param {boolean} [options.isMock=false] 是否放宽签表上的「确认」权
- * @returns {Promise<Object>}
- */
-async function loadEventDetailView(eventId, options = {}) {
-  const usesExplicitUser = Object.prototype.hasOwnProperty.call(options, 'user');
-  const { isMock: mock = false } = options;
-
-  const [current, members, events] = await Promise.all([
-    getCurrentUser(),
-    getMembers(),
-    getEvents(),
-  ]);
-  const actor = usesExplicitUser ? options.user : current;
-
-  const event = asArray(events).find((item) => item._id === eventId) || null;
-  if (!event) {
-    return {
-      found: false,
-      notFoundText: '这场赛事不存在或已被删除',
-      event: null,
-      signupRows: [],
-      hasSignups: false,
-      signupsEmptyNote: '',
-      bracketRows: [],
-      hasBracket: false,
-      standings: [],
-      hasStandings: false,
-      drawText: '',
-      byeText: '',
-      seedCandidates: [],
-      manualSeedNeeded: 0,
-      seedUnit: '位种子',
-      resultRows: [],
-      hasResults: false,
-      courtBoard: [],
-      hasCourts: false,
-    };
-  }
-
-  // 抽签排出的比赛状态是「待确认」，getMatches 只给已生效的，签表会空，
-  // 所以这里必须走台账（getMatchRecords），与「比赛」页同一条口径
-  const [signups, ledger] = await Promise.all([
-    getEventSignups(eventId),
-    getMatchRecords({ eventId }),
-  ]);
-  const row = buildEventRow(event, { actor, signups });
-  const memberMap = new Map(asArray(members).map((member) => [member._id, member]));
-
-  const signupRows = buildSignupRows(signups, memberMap, { actor, event });
-  const bracketRows = buildBracketRows(ledger, event, memberMap, { actor, isMock: mock });
-  const standings = buildStandings(event, ledger, memberMap, actor);
-  const resultRows = buildResultRows(event, memberMap, actor);
-  // 场地分配表完全由现有数据推得（Q2：批次不落库），不需要新接口
-  const courtBoard = buildCourtBoard(event, ledger, bracketRows);
-
-  // 手工指定种子的候选名单就是有效报名者；顺序由管理员在页面上点出来，
-  // 这里给的先后不重要——抽签的随机性只该来自 seedValue（见 draw.js）
-  const seedCandidates = signupRows.map((signup) => ({
-    userId: signup.userId,
-    nickName: signup.nickName,
-    avatarText: signup.avatarText,
-    avatarUrl: signup.avatarUrl || '',
-  }));
-
-  return {
-    found: true,
-    notFoundText: '',
-    event: row,
-    signupRows,
-    hasSignups: signupRows.length > 0,
-    signupsEmptyNote: '还没有人报名',
-    bracketRows,
-    hasBracket: bracketRows.length > 0,
-    courtBoard,
-    hasCourts: courtBoard.length > 0,
-    standings,
-    hasStandings: standings.some((group) => group.rows.length > 0),
-    drawText: describeDraw(event.draw),
-    byeText: byeTextOf(event.draw, memberMap),
-    // 手工指定种子要凑几位：参赛人数不够种子数时，人人都是种子。
-    // 双打每两位参赛者编成一队，管理员要点的人数是一样两倍（每组 2 人）
-    seedCandidates,
-    manualSeedNeeded: row.isDoubles
-      ? manualPlayersNeeded(row.seedCount, seedCandidates.length)
-      : actualSeedCount(row.seedCount, seedCandidates.length),
-    // 点名单位：单打点的是种子本人，双打点的是参赛者（每 2 人合成 1 组种子）。
-    // 放在视图模型里，界面文案与页面提示就同一份口径，不必各自判断项目
-    seedUnit: row.isDoubles ? '位参赛者' : '位种子',
-    resultRows,
-    hasResults: resultRows.length > 0,
-  };
-}
-
-/**
  * 抽签结果里出现过的队伍编号（去重、保序）。
  * 单败淘汰看签位 slots，循环 / 小组看各组名单；两处都空时返回空数组。
  *
@@ -1051,114 +823,6 @@ function buildTeamRows(teamIds, memberMap) {
       statText: '',
     };
   });
-}
-
-/**
- * 装载名次录入页。
- *
- * 【为什么失败关闭】
- * 名次直接换成积分，一个错字就凭空多出一位参赛者。没有管理权时一条名单
- * 都不下发，界面上就不可能冒出一个能点的录入框。与 season-view 同一套路数。
- *
- * @param {string} eventId
- * @param {Object} [options]
- * @param {Object|null} [options.user]
- * @returns {Promise<Object>}
- */
-async function loadEventPlacementView(eventId, options = {}) {
-  const usesExplicitUser = Object.prototype.hasOwnProperty.call(options, 'user');
-
-  const [current, members, events] = await Promise.all([
-    getCurrentUser(),
-    getMembers(),
-    getEvents(),
-  ]);
-  const actor = usesExplicitUser ? options.user : current;
-
-  const allowed = canManageEvent(actor);
-
-  // 闸门：没有管理权就到此为止，一个字段都不下发
-  if (!allowed) {
-    return {
-      allowed: false,
-      blockedText: actor ? '当前账号没有录入名次的权限，请联系管理员' : '请先登录后再录入名次',
-      found: true,
-      canEdit: false,
-      statusNote: '',
-      event: null,
-      rows: [],
-      hasRows: false,
-      emptyNote: '',
-      bronzeHint: '',
-      hintText: '',
-    };
-  }
-
-  const event = asArray(events).find((item) => item._id === eventId) || null;
-  if (!event) {
-    return {
-      allowed: true,
-      blockedText: '',
-      found: false,
-      canEdit: false,
-      statusNote: '',
-      event: null,
-      rows: [],
-      hasRows: false,
-      emptyNote: '',
-      bronzeHint: '',
-      hintText: '',
-    };
-  }
-
-  const [signups, ledger] = await Promise.all([
-    getEventSignups(eventId),
-    getMatchRecords({ eventId }),
-  ]);
-  const row = buildEventRow(event, { actor, signups });
-  const memberMap = new Map(asArray(members).map((member) => [member._id, member]));
-  // 双打按队伍录入名次（一行两人），单打按人。双打一旦抽过签，队伍就由
-  // 签表定了；极端情况下没有签表时退回按人，至少不挡住录入
-  const teamIds = row.isDoubles ? drawnTeamIds(event.draw) : [];
-  const rows =
-    teamIds.length > 0
-      ? buildTeamRows(teamIds, memberMap)
-      : buildSignupRows(signups, memberMap, { actor, event });
-  const canEdit = canFinishEvent(event, actor);
-
-  let statusNote = '';
-  if (!canEdit) {
-    statusNote = row.isFinished
-      ? '这场赛事已经结束，名次不可再改'
-      : '赛事开始后才能录入名次，请先在详情页把赛事设为「进行中」';
-  }
-
-  // 循环 / 小组 / 双败的名次是算出来的：把推导结果预填进输入框，管理员在
-  // 上面微调即可。没打完时推导失败，输入框留空，由提示文案说明原因。
-  const derived = hasAutoPlacements(event)
-    ? derivePlacements({ event, draw: event.draw, matches: ledger })
-    : { ok: false, results: [], message: '' };
-  const autoPlacement = new Map(
-    derived.ok ? derived.results.map((item) => [item.userId, item.placement]) : []
-  );
-  const filled = rows.map((item) => {
-    const placement = autoPlacement.get(item.userId);
-    return placement === undefined ? item : { ...item, placementText: String(placement) };
-  });
-
-  return {
-    allowed: true,
-    blockedText: '',
-    found: true,
-    canEdit,
-    statusNote,
-    event: row,
-    rows: filled,
-    hasRows: filled.length > 0,
-    emptyNote: '还没有人报名，录入名次前先让会员报名',
-    bronzeHint: bronzeHintOf(event),
-    hintText: hasAutoPlacements(event) ? groupedPlacementHint(event, row, derived) : bronzeHintOf(event),
-  };
 }
 
 /**
@@ -1207,7 +871,6 @@ module.exports = {
   placementLabelOf,
   bronzeHintOf,
   buildEventListRows,
-  loadSignupMap,
   buildSignupRows,
   buildResultRows,
   stageOrder,
@@ -1223,8 +886,5 @@ module.exports = {
   buildStandings,
   drawnTeamIds,
   buildTeamRows,
-  loadEventsView,
-  loadEventDetailView,
-  loadEventPlacementView,
   groupedPlacementHint,
 };

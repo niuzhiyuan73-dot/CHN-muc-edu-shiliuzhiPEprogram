@@ -29,7 +29,9 @@ const {
   DEFAULT_TIE_ALGO,
 } = require('../miniprogram/utils/constants.js');
 const { planCourts } = require('../miniprogram/services/court.js');
-const { buildCourtBoard, loadEventDetailView } = require('../miniprogram/services/events-view.js');
+// 旧栈 loadEventDetailView 已随协议 1 下线删除；场地看板的视图级守护
+// 迁到了 tests/school-event-view.test.js 的「场地看板」用例（S2 详情装载器）。
+const { buildCourtBoard } = require('../miniprogram/services/events-view.js');
 const { buildEventRow } = require('../miniprogram/services/event.js');
 const { buildRecordRow } = require('../miniprogram/services/match-view.js');
 
@@ -367,21 +369,4 @@ test('零回归 —— 历史赛事没有场地数字段时显示「未设置」
   const row = buildEventRow({ ...events[0], courtCount: undefined });
   assert.strictEqual(row.courtCountText, '未设置', '缺字段时显示「未设置」而不是崩溃');
   assert.strictEqual(row.courtCount, 0);
-});
-
-test('赛事详情 —— 视图模型带出「场地数」与场地分配表', async () => {
-  const { eventId } = await setupSingles(8, { courtCount: 4 });
-  const view = await loadEventDetailView(eventId, { user: { _id: ADMIN_ID, role: ROLE.ADMIN } });
-
-  assert.strictEqual(view.event.courtCountText, '4 块场地');
-  assert.strictEqual(view.hasCourts, true);
-  assert.deepStrictEqual(
-    view.courtBoard.map((group) => group.courtText),
-    ['1 号场', '2 号场', '3 号场', '4 号场'],
-    '首轮四场各占一块，四块场地都该出现在分配表里'
-  );
-  view.courtBoard.forEach((group) => {
-    assert.strictEqual(group.rows.length, 1, `${group.courtText} 首轮只该有一场`);
-    assert.ok(group.rows[0].teamAText, '分配表里的对阵要带上队名');
-  });
 });

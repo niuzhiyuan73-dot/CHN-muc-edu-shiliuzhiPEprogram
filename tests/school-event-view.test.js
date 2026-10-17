@@ -14,7 +14,9 @@ const { createSchoolDemoSeed } = require('../miniprogram/services/school-seed');
 const { createSchoolMemoryRepo } = require('../miniprogram/services/school-memory-repo');
 const { buildSchoolContext } = require('../miniprogram/services/school-context');
 const { schoolMemberKey } = require('../miniprogram/utils/school');
-const { MATCH_TYPE, EVENT_FORMAT } = require('../miniprogram/utils/constants');
+const {
+  MATCH_TYPE, EVENT_FORMAT, EVENT_BRONZE_MODE, SEED_MODE, MATCH_STATUS,
+} = require('../miniprogram/utils/constants');
 
 const eventSvc = require('../miniprogram/services/school-event-service');
 const matchSvc = require('../miniprogram/services/school-match-service');
@@ -31,8 +33,11 @@ const NOW = new Date('2026-10-13T10:00:00Z');
 const DAY = 24 * 60 * 60 * 1000;
 const startAt = new Date(NOW.getTime() + DAY).toISOString();
 
-/** 民大 pkb：管理员 + 四名在册男会员（够排单打 4 人与双打 2 队）。 */
-function fixture() {
+/**
+ * 民大 pkb：管理员 + 四名在册男会员（够排单打 4 人与双打 2 队）。
+ * @param {number} [extraCount] 再补几名在册男会员（8 人签位 / 场地看板要用）
+ */
+function fixture(extraCount = 0) {
   const seed = createSchoolDemoSeed();
   seed.users.push({ _id: 'demo_platform_admin', openId: 'mock_openid_platform_admin',
     nickName: '平台管理员', platformStatus: 'active', platformRole: 'admin', simulated: true });
@@ -46,7 +51,26 @@ function fixture() {
     seed.schoolMembers.push({ _id: schoolMemberKey(id, 'muc'), userId: id, schoolId: 'muc',
       collegeId: 'c01', studentId: `TEST00${index + 3}`, status: 'active', simulated: true });
   });
+  for (let index = 0; index < extraCount; index += 1) {
+    const id = `demo_muc_player_${index + 1}`;
+    seed.users.push({ _id: id, openId: `mock_openid_player_${index + 1}`, nickName: `选手${index + 1}`,
+      gender: 'M', platformStatus: 'active', platformRole: 'member',
+      primarySchoolId: 'muc', simulated: true });
+    seed.schoolMembers.push({ _id: schoolMemberKey(id, 'muc'), userId: id, schoolId: 'muc',
+      collegeId: 'c01', studentId: `PLAYER0${index + 1}`, status: 'active', simulated: true });
+  }
   return createSchoolMemoryRepo(seed);
+}
+
+/**
+ * 直接打一个 S2 处理器（SPACE_NAMES 之外也要用得上，比如驳回 / 手工抽签）。
+ * @returns {Promise<Object>} 处理器的 `.data`
+ */
+async function call(repo, name, payload, actor = 'demo_muc_admin') {
+  const ctx = await buildSchoolContext({
+    repo, actorId: actor, scope: { schoolId: 'muc', association: 'pkb' }, now: NOW,
+  });
+  return (await SPACE_HANDLERS[name](payload || {}, { ...ctx, isMock: true })).data;
 }
 
 /**
@@ -545,4 +569,207 @@ test('人数真值：台账有记录时以台账为准，主记录计数偏大�
   assert.equal(detail.event.signupCount, 1, '台账里只有一个有效报名');
   assert.equal(detail.event.quotaText, '1/8 人');
   assert.equal(detail.signupRows.length, 1);
+});
+
+/* ============================================================
+ * 旧栈 loadEventDetailView 三个端到端场景的 S2 对应
+ * ------------------------------------------------------------
+ * P10 合并批第 9 子批要先建这三段覆盖，才能删掉旧装载器：
+ *   · 打三四名模式下逐轮推进（旧：赛事详情 —— 抽签后签表随详情下发）
+ *   · 驳回后重抽，签位回到待确认（旧：首轮某场被驳回后重抽）
+ *   · 手工指定种子的候选名单与需凑齐的人数（旧：手工指定种子）
+ * 外加 tests/court-assign.test.js 里那条「视图模型带出场地数与场地分配表」。
+ * ============================================================ */
+
+test('打三四名：首轮打完同时补出决赛与季军赛', async () => {
+  const repo = fixture();
+  const admin = spaceClient(repo);
+  const eventId = await publish(admin, 'r_bronze', {
+    bronzeMode: EVENT_BRONZE_MODE.PLAYOFF, courtCount: 2,
+  });
+  await signUpAll(repo, eventId,
+    ['demo_muc_member', 'demo_muc_member_2', 'demo_muc_member_3', 'demo_muc_member_4']);
+  const drawn = await admin.drawSchoolEvent({ eventId, seedValue: 42 });
+  assert.equal(drawn.ok, true, drawn.message);
+  await admin.startSchoolEvent({ eventId });
+
+  for (const matchId of drawn.matchIds) {
+    const doc = await repo.matches.getById(matchId);
+    await repo.matches.set(matchId, {
+      ...doc, scoreA: [11], scoreB: [9], winner: 'A', recorder: 'demo_muc_admin',
+    });
+    const confirmed = await admin.confirmSchoolMatch({ matchId });
+    assert.equal(confirmed.ok, true, confirmed.message);
+  }
+
+  const detail = await asSpace(repo, { actor: 'demo_muc_admin' }, () =>
+    view.loadSchoolEventDetailView(eventId, { schoolId: 'muc', association: 'pkb', actorId: 'demo_muc_admin' }));
+  assert.equal(detail.bracketRows.length, 4, '两场半决赛 + 决赛 + 季军赛');
+  const texts = detail.bracketRows.map(row => row.roundText);
+  assert.equal(texts.filter(text => text === '半决赛').length, 2);
+  assert.equal(texts.filter(text => text === '决赛').length, 1);
+  assert.equal(texts.filter(text => text === '季军赛').length, 1,
+    '打三四名模式下必须排出季军赛，否则季军要凭空造');
+});
+
+test('重抽：被驳回的签位回到待确认，不再卡在已撤销', async () => {
+  const repo = fixture();
+  const admin = spaceClient(repo);
+  const eventId = await publish(admin, 'r_redraw');
+  await signUpAll(repo, eventId,
+    ['demo_muc_member', 'demo_muc_member_2', 'demo_muc_member_3', 'demo_muc_member_4']);
+
+  const drawn = await admin.drawSchoolEvent({ eventId, seedValue: 42 });
+  assert.equal(drawn.ok, true, drawn.message);
+  const target = drawn.matchIds[0];
+
+  // 某一签位被对手驳回：比赛记录上压一条 REVOKED 改判
+  const doc = await repo.matches.getById(target);
+  const rejected = await call(repo, 'rejectSchoolMatch',
+    { matchId: target, reason: '比分记错了' }, doc.teamB[0]);
+  assert.equal(rejected.ok, true, rejected.message);
+  assert.equal((await repo.matches.getById(target)).status, MATCH_STATUS.REVOKED);
+
+  // 再抽一次：编号是确定的，会落到同一个 _id 上
+  const redrawn = await admin.drawSchoolEvent({ eventId, seedValue: 42 });
+  assert.equal(redrawn.ok, true, redrawn.message);
+  assert.equal((await repo.matches.getById(target)).status, MATCH_STATUS.PENDING,
+    '重抽清掉旧改判，该签位回到待确认，而不是永远卡在已撤销');
+});
+
+test('手工种子：下发候选人名单与需凑齐的人数，没点名不许抽', async () => {
+  const repo = fixture();
+  const admin = spaceClient(repo);
+  const eventId = await publish(admin, 'r_manual', { seedMode: SEED_MODE.MANUAL, seedCount: 4 });
+  const players = ['demo_muc_member', 'demo_muc_member_2', 'demo_muc_member_3'];
+  await signUpAll(repo, eventId, players);
+
+  const detail = await asSpace(repo, { actor: 'demo_muc_admin' }, () =>
+    view.loadSchoolEventDetailView(eventId, { schoolId: 'muc', association: 'pkb', actorId: 'demo_muc_admin' }));
+  assert.equal(detail.event.isManualSeed, true, '手工指定的赛事要能被界面认出来');
+  assert.equal(detail.seedCandidates.length, 3, '候选名单就是有效报名者');
+  assert.equal(detail.manualSeedNeeded, 3,
+    '选定 4 位种子但只有 3 人参赛，只需点 3 位（与抽签算法同一口径）');
+  assert.equal(detail.seedUnit, '位种子');
+  for (const candidate of detail.seedCandidates) {
+    assert.ok(players.includes(candidate.userId));
+    assert.ok(candidate.nickName, '候选人要有名字可点');
+  }
+
+  // 没点名就抽：算法必须拒绝，而不是悄悄按报名顺序顶上
+  const refused = await admin.drawSchoolEvent({ eventId, seedValue: 42 });
+  assert.equal(refused.ok, false);
+  assert.match(refused.message, /请指定 3 位种子/);
+
+  // 点名的顺序就是种子顺序，不是等级分顺序
+  const manualOrder = [players[2], players[1], players[0]];
+  const drawn = await admin.drawSchoolEvent({ eventId, seedValue: 42, manualOrder });
+  assert.equal(drawn.ok, true, drawn.message);
+  assert.deepEqual(drawn.draw.seeds.slice().sort(), manualOrder.slice().sort(),
+    '抽签落库的种子应与点名的那几位一致');
+});
+
+test('场地看板：详情带出场地数与按场地分组的分配表', async () => {
+  const repo = fixture(4);
+  const admin = spaceClient(repo);
+  const eventId = await publish(admin, 'r_court', { courtCount: 4 });
+  const players = ['demo_muc_member', 'demo_muc_member_2', 'demo_muc_member_3', 'demo_muc_member_4',
+    'demo_muc_player_1', 'demo_muc_player_2', 'demo_muc_player_3', 'demo_muc_player_4'];
+  await signUpAll(repo, eventId, players);
+  const drawn = await admin.drawSchoolEvent({ eventId, seedValue: 42 });
+  assert.equal(drawn.ok, true, drawn.message);
+  assert.equal(drawn.matchIds.length, 4, '8 人 8 签，首轮四场');
+  await admin.startSchoolEvent({ eventId });
+
+  const detail = await asSpace(repo, { actor: 'demo_muc_admin' }, () =>
+    view.loadSchoolEventDetailView(eventId, { schoolId: 'muc', association: 'pkb', actorId: 'demo_muc_admin' }));
+  assert.equal(detail.event.courtCountText, '4 块场地');
+  assert.equal(detail.hasCourts, true);
+  assert.deepEqual(detail.courtBoard.map(group => group.courtText),
+    ['1 号场', '2 号场', '3 号场', '4 号场'],
+    '首轮四场各占一块，四块场地都该出现在分配表里');
+  detail.courtBoard.forEach(group => {
+    assert.equal(group.rows.length, 1, `${group.courtText} 首轮只该有一场`);
+    assert.ok(group.rows[0].teamAText, '分配表里的对阵要带上队名');
+  });
+});
+
+/* ============================================================
+ * 旧栈 loadEventsView 置顶与积分端到端的 S2 对应
+ * ------------------------------------------------------------
+ * 旧栈两条用例守的组合行为，S2 此前只有散件覆盖（写路径的置顶测试、
+ * 列表行的 canPin 测试、纯函数的积分规则），组合链没人守：
+ *   · 管理员置顶后该赛事排到列表最前，普通会员无权置顶；
+ *   · 赛事名次结束后积分进入会员统计：参赛的有分、没参赛的一分不动。
+ * ============================================================ */
+
+test('置顶端到端：管理员置顶后该赛事排到列表最前，普通会员无权置顶', async () => {
+  const repo = fixture();
+  const admin = spaceClient(repo);
+  // 服务端排序：置顶优先，其次状态，同状态按开赛时间倒序——
+  // 所以默认情况下晚发布（开赛更晚）的 r2 排前面，置顶 r1 才能看出被提到最前。
+  const earlier = await publish(admin, 'r_pin_earlier');
+  const later = await publish(admin, 'r_pin_later', { startTime: new Date(NOW.getTime() + 2 * DAY).toISOString() });
+
+  const before = await asSpace(repo, { actor: 'demo_muc_admin' }, () =>
+    view.loadSchoolEventListView({ schoolId: 'muc', association: 'pkb', actorId: 'demo_muc_admin' }));
+  assert.equal(before.events[0].id, later, '未置顶时晚开赛的排前面');
+  assert.equal(before.events[0].pinned, false);
+
+  const denied = await call(repo, 'setSchoolEventPinned', { eventId: earlier, pinned: true }, 'demo_muc_member');
+  assert.equal(denied.ok, false, '普通会员不能置顶');
+  assert.match(denied.message, /没有管理赛事的权限/);
+
+  const done = await call(repo, 'setSchoolEventPinned', { eventId: earlier, pinned: true });
+  assert.equal(done.ok, true, done.message);
+
+  const adminView = await asSpace(repo, { actor: 'demo_muc_admin' }, () =>
+    view.loadSchoolEventListView({ schoolId: 'muc', association: 'pkb', actorId: 'demo_muc_admin' }));
+  assert.equal(adminView.events[0].id, earlier, '置顶的赛事排到最前');
+  assert.equal(adminView.events[0].pinned, true);
+  assert.equal(adminView.events[0].canPin, true, '管理员看得到置顶开关');
+
+  // 普通会员看同一份列表：置顶标记照旧可见，但拿不到置顶开关
+  const memberView = await asSpace(repo, { actor: 'demo_muc_member' }, () =>
+    view.loadSchoolEventListView({ schoolId: 'muc', association: 'pkb', actorId: 'demo_muc_member' }));
+  assert.equal(memberView.events[0].id, earlier);
+  assert.equal(memberView.events[0].pinned, true);
+  assert.equal(memberView.events[0].canPin, false, '普通会员拿不到置顶开关');
+});
+
+test('名次积分端到端：结束后参赛者积分上涨、没参赛的一分不动', async () => {
+  const repo = fixture();
+  const admin = spaceClient(repo);
+  const eventId = await publish(admin, 'r_points');
+  const players = ['demo_muc_member', 'demo_muc_member_2'];
+  await signUpAll(repo, eventId, players);
+  await admin.drawSchoolEvent({ eventId, seedValue: 42 });
+  await admin.startSchoolEvent({ eventId });
+
+  const statsOf = async userIds => {
+    const result = await call(repo, 'getSchoolMemberStats', { userIds });
+    assert.equal(result.ok, true, result.message);
+    return Object.fromEntries(result.members.map(row => [row.userId, row]));
+  };
+
+  const outsider = 'demo_muc_member_3';
+  const before = await statsOf([...players, outsider]);
+
+  const finished = await admin.finishSchoolEvent({
+    eventId,
+    results: [
+      { userId: 'demo_muc_member', placement: 1 },
+      { userId: 'demo_muc_member_2', placement: 2 },
+    ],
+  });
+  assert.equal(finished.ok, true, finished.message);
+
+  const after = await statsOf([...players, outsider]);
+  const delta = userId => Number(after[userId].points) - Number(before[userId].points);
+  const championDelta = delta('demo_muc_member');
+  assert.ok(Number.isInteger(championDelta), '积分是整数（名次分 + 参与分，不出现零头）');
+  assert.ok(championDelta >= 2, `冠军至少拿 2 分参与分（实测 +${championDelta}）`);
+  assert.ok(delta('demo_muc_member_2') >= 2, '亚军也至少拿参与分');
+  assert.ok(championDelta > delta('demo_muc_member_2'), '同一赛事里名次越靠前分越多');
+  assert.equal(delta(outsider), 0, '没参赛的人积分一分不动');
 });
