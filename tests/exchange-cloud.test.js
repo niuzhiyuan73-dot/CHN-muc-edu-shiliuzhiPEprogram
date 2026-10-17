@@ -45,14 +45,14 @@ async function readyFour(repo) {
 test('邀请赛动作已在协议 2 注册，且服务端实现来自共享库镜像', async () => {
   const expected = ['createExchangeEvent', 'respondExchangeInvitation', 'signUpExchangeEvent',
     'cancelExchangeSignup', 'removeExchangeSignup', 'checkInExchangeSignup',
-    'withdrawExchangeInvitation', 'cancelExchangeEvent', 'revokeExchangeScore',
+    'withdrawExchangeInvitation', 'cancelExchangeEvent',
     'lockExchangeRoster', 'drawExchangeEvent', 'assignExchangeReferee',
     'submitExchangeScore', 'confirmExchangeRanking', 'getExchangeEvents', 'getExchangeEvent'];
   assert.deepEqual(Object.keys(handlers).sort(), expected.slice().sort());
   assert.equal((await request(fixture(), 'notAnExchangeAction')).ok, false, '未注册动作仍被拒');
 });
 
-test('云端入口：报名 → 锁定 → 代签 → 抽签 → 录分 → 撤销 → 名次全程可用', async () => {
+test('云端入口：报名 → 锁定 → 代签 → 抽签 → 录分 → 名次全程可用', async () => {
   const repo = fixture();
   const baseline = { matches: (await repo.matches.list()).length };
   const id = await readyFour(repo);
@@ -74,10 +74,8 @@ test('云端入口：报名 → 锁定 → 代签 → 抽签 → 录分 → 撤�
   assert.ok(final, '两场半决赛确认后应在云入口生成决赛');
   await call(repo, 'submitExchangeScore', { eventId: id, matchId: final._id, scoreA: 11, scoreB: 7 });
 
-  // 撤销：从最后一轮往前
-  assert.equal((await call(repo, 'revokeExchangeScore', { eventId: id, matchId: matches[0]._id })).ok, false);
-  assert.equal((await call(repo, 'revokeExchangeScore', { eventId: id, matchId: final._id, reason: '记错' })).ok, true);
-  await call(repo, 'submitExchangeScore', { eventId: id, matchId: final._id, scoreA: 11, scoreB: 7 });
+  // 撤销已随逐场结算改造取消：录完决赛直接进名次确认
+  assert.equal(typeof handlers.revokeExchangeScore, 'undefined', '撤销实现已删除');
 
   const ranked = await call(repo, 'confirmExchangeRanking', { eventId: id });
   assert.equal(ranked.ok, true, ranked.message);
@@ -114,5 +112,5 @@ test('客户端门面：云数据源不再直接拒绝进入邀请赛', async ()
   schoolMock.reset();
   const client = exchange.forScope({ schoolId: 'muc', association: 'pkb' });
   assert.equal(typeof client.checkInExchangeSignup, 'function', '剩余能力在门面上可用');
-  assert.equal(typeof client.revokeExchangeScore, 'function');
+  assert.equal(typeof client.revokeExchangeScore, 'undefined', '撤销已从客户端门面移除');
 });

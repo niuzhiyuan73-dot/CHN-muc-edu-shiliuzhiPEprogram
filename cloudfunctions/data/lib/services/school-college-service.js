@@ -67,6 +67,8 @@ const { canAssignReferee, buildRefereePatch } = require('./match-record.js');
 const { REVIEW_ACTION } = require('./member-review.js');
 // 弃权生效后把这一小项写回大场、必要时推进下一轮（与个人赛场次确认后同一条链路）。
 const { advanceCollegeAfterLeg } = require('./school-college-advance.js');
+// 小场弃权同样是终态：要落一份「不计分」结算决定（见 settleMatchInTransaction）
+const { settleMatchInTransaction } = require('./school-rating-service.js');
 
 const ok = data => ({ ok: true, data });
 const refused = (message, extra = {}) => ({ ok: false, message, ...extra });
@@ -916,7 +918,7 @@ async function forfeitCollegeTieLeg(payload = {}, ctx) {
 
     // 站在 A 边的人弃权，就是 B 边获胜（与个人赛 buildForfeitPatch 同一换算）。
     const winner = college === tie.collegeA ? TEAM.B : TEAM.A;
-    const next = {
+    const candidate = {
       ...match,
       outcome: MATCH_OUTCOME.FORFEIT,
       forfeitBy: college,
@@ -928,6 +930,13 @@ async function forfeitCollegeTieLeg(payload = {}, ctx) {
       action: 'forfeit',
       actor: ctx.actorId,
       actedAt: nowIso,
+    };
+    // 弃权是终态封口：落一份「不计分」结算决定（forfeit），别让 ACTIVE 小场
+    // 缺结算快照——学院赛单打计分、双打不计分的口径就靠快照里的排除原因解释。
+    const { settlement } = await settleMatchInTransaction(tx, ctx, candidate, {});
+    const next = {
+      ...candidate,
+      settlement,
       revision: Number(match.revision || 1) + 1,
       updatedAt: nowIso,
     };

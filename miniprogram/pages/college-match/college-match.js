@@ -172,7 +172,7 @@ Page({
     return this.refresh();
   },
 
-  /* ---------- 确认 / 撤销 ---------- */
+  /* ---------- 确认 ---------- */
 
   async onConfirm() {
     if (this.data.acting || !this.data.view.canConfirm) return undefined;
@@ -191,33 +191,7 @@ Page({
     return this.refresh();
   },
 
-  async onRevoke() {
-    if (this.data.acting || !this.data.view.canRevoke) return undefined;
-    if (typeof wx === 'undefined' || typeof wx.showModal !== 'function') return undefined;
-
-    const confirmed = await new Promise((resolve) => {
-      wx.showModal({
-        title: '撤销这场比赛',
-        content: '撤销后成绩作废，个人等级分随之回滚。确定撤销吗？',
-        success: (res) => resolve(Boolean(res && res.confirm)),
-        fail: () => resolve(false),
-      });
-    });
-    if (!confirmed) return undefined;
-
-    this.setData({ acting: 'revoke' });
-    const result = await space.forScope(this.scope || this.currentScope())
-      .revokeSchoolMatch({ matchId: this.matchId, reason: '学院赛小场撤销' });
-    this.setData({ acting: '' });
-
-    if (!result || !result.ok) {
-      this.showToast((result && (result.firstError || result.message)) || '撤销失败');
-      return undefined;
-    }
-
-    this.showToast('已撤销', 'success');
-    return this.refresh();
-  },
+  // 撤销已随 Elo 逐场结算改造取消（确认即最终结算），onRevoke 一并移除
 
   /* ---------- 弃权（管理员） ---------- */
 

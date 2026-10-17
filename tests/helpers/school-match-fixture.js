@@ -38,6 +38,7 @@ function createMatchFixture(currentUser) {
       return { ...result, match: result.match && record(result.match) };
     },
     confirmMatch: (matchId, actor) => api(actor).confirmSchoolMatch({ matchId }),
+    rejectMatch: (matchId, reason, actor) => api(actor).rejectSchoolMatch({ matchId, reason }),
     assignMatchReferee: (matchId, refereeId, actor) => api(actor).assignSchoolMatchReferee({ matchId, refereeId }),
     async getMatchRecords(filter = {}) {
       if (filter.id) { const r = await api('u01').getSchoolMatch({ matchId: filter.id }); return r.ok ? [record(r.match)] : []; }

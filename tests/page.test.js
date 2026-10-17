@@ -3035,11 +3035,18 @@ test('普通比赛 S2：录入重试幂等、本人列表、对手确认、管�
     fx.to('demo_muc_admin');
     await panel.refresh();
     await panel.onConfirm({ currentTarget: { dataset: { matchId } } });
-    assert.equal((await fx.api().getSchoolMatch({ matchId })).match.status, MATCH_STATUS.ACTIVE);
-    panel.onOpenAction({ currentTarget: { dataset: { matchId, kind: 'revoke' } } });
+    const stored = (await fx.api().getSchoolMatch({ matchId })).match;
+    assert.equal(stored.status, MATCH_STATUS.ACTIVE);
+    assert.ok(stored.settlement, '确认即结算：比赛带结算快照');
+    // 撤销已删除；确认前驳回仍在。这里用驳回验证同一块面板的写入恢复路径。
+    const pending = await fx.api().submitSchoolMatch({ requestId: 'panel_reject_case',
+      matchType: MATCH_TYPE.SINGLES, teamA: ['demo_muc_admin'], teamB: ['demo_muc_member'],
+      scoreA: [11, 11], scoreB: [9, 7], gamePoints: 11, bestOf: 3, matchTime: '2026-09-02T10:00:00', location: '' });
+    assert.equal(pending.ok, true, pending.message);
+    panel.onOpenAction({ currentTarget: { dataset: { matchId: pending.match.matchId, kind: 'reject' } } });
     panel.onInputReason({ detail: { value: '比分有误' } });
     await panel.onSubmitAction();
-    assert.equal((await fx.api().getSchoolMatch({ matchId })).match.status, MATCH_STATUS.REVOKED);
+    assert.equal((await fx.api().getSchoolMatch({ matchId: pending.match.matchId })).match.status, MATCH_STATUS.REVOKED);
     fx.to('demo_buaa_member');
     require('../miniprogram/services/school-session').setSchoolId('buaa');
     await panel.refresh();
@@ -3057,8 +3064,8 @@ test('比赛面板 S2：读取失败清掉旧台账，写入异常解除提交�
     const panel = instantiate(matchConfig);
     await panel.onLoad();
     // 客户端不可变，用替代客户端模拟网络失败。
-    panel.api = { revokeSchoolMatch: async () => { throw new Error('网络故障'); } };
-    panel.onOpenAction({ currentTarget: { dataset: { matchId: 'missing', kind: 'revoke' } } });
+    panel.api = { rejectSchoolMatch: async () => { throw new Error('网络故障'); } };
+    panel.onOpenAction({ currentTarget: { dataset: { matchId: 'missing', kind: 'reject' } } });
     panel.onInputReason({ detail: { value: '测试异常恢复' } });
     await panel.onSubmitAction();
     assert.equal(panel.data.acting, false);
@@ -3247,19 +3254,17 @@ schoolMatchTest('比赛页 —— 确认后成绩计入等级分，待确认标�
   assert.ok(calls.toasts.some((text) => /已计入等级分/.test(text)));
 });
 
-schoolMatchTest('比赛页 —— 管理员撤销后分数回滚，理由留在台账里', async (facade) => {
+schoolMatchTest('比赛页 —— 确认即最终结算：无撤销入口，重开面板也不会出现撤销文案', async (facade) => {
   resetSession();
   app.globalData.userInfo = adminMember();
 
-  // 让管理员本人就在场上：这样「我参与的」一栏里找得到它，写入端也会
-  // 按 u01 在种子里的角色（管理员）放行——两个「u01」必须是同一个人
+  // 让管理员本人就在场上：这样「我参与的」一栏里找得到它
   const { match } = await facade.submitMatch({
     ...pendingParams(),
     teamA: [ADMIN_ID],
     teamB: [RIVAL],
   });
   await facade.confirmMatch(match._id, RIVAL);
-  const beforeRevoke = (await facade.getMatches()).length;
 
   const page = instantiate(matchConfig);
   await page.onLoad();
@@ -3267,27 +3272,17 @@ schoolMatchTest('比赛页 —— 管理员撤销后分数回滚，理由留在�
 
   const row = page.data.view.records.find((item) => item.matchId === match._id);
   assert.ok(row);
-  assert.strictEqual(row.canRevoke, true, '管理员应当能撤销这场');
+  assert.strictEqual('canRevoke' in row, false, '任何角色都没有撤销旗标');
 
+  // 绕过界面直接构造撤销动作：面板没有对应文案，直接忽略
   await page.onOpenAction({ currentTarget: { dataset: { matchId: match._id, kind: 'revoke' } } });
-  page.onInputReason({ detail: { value: '这局其实没打完' } });
+  assert.strictEqual(page.data.action.open, false, '撤销动作不再打开任何面板');
 
-  calls.toasts.length = 0;
-  await page.onSubmitAction();
-
-  // 撤销只是写一条改判，下一次加载把它从回放集里丢掉——分数就这样回滚
-  assert.strictEqual((await facade.getMatches()).length, beforeRevoke - 1);
   const ledgerRow = (await facade.getMatchRecords()).find((item) => item._id === match._id);
-  assert.strictEqual(ledgerRow.status, MATCH_STATUS.REVOKED);
-  assert.strictEqual(ledgerRow.reason, '这局其实没打完');
-
-  const after = page.data.view.records.find((item) => item.matchId === match._id);
-  assert.strictEqual(after.statusLabel, '已撤销');
-  assert.strictEqual(after.statusReason, '这局其实没打完');
-  assert.ok(calls.toasts.some((text) => /已撤销/.test(text)));
+  assert.strictEqual(ledgerRow.status, MATCH_STATUS.ACTIVE, '成绩保持生效');
 });
 
-schoolMatchTest('比赛页 —— 撤销权只在管理员手上，录入者本人也撤不动', async (facade) => {
+schoolMatchTest('比赛页 —— 撤销已取消：已结算比赛驳回也被拒，成绩原样生效', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 
@@ -3300,20 +3295,17 @@ schoolMatchTest('比赛页 —— 撤销权只在管理员手上，录入者本�
 
   const row = page.data.view.records.find((item) => item.matchId === match._id);
   assert.ok(row);
-  assert.strictEqual(row.canRevoke, false, '撤销入口不该出现在普通会员的页面上');
+  assert.strictEqual(row.canConfirm, false, '已结算的比赛不再给确认入口');
 
-  // 就算绕过界面直接提交，写入端也要挡住——界面上的按钮不是权限边界
-  page.setData({
-    action: { open: true, matchId: match._id, kind: 'revoke' },
-    reason: '我自己录的，我想撤',
-  });
-  await page.onSubmitAction();
+  // 已结算的比赛没有撤销，也没有驳回：写入端按「只有待确认可驳回」挡住
+  const rejected = await facade.rejectMatch(match._id, '我自己录的，我想撤');
+  assert.strictEqual(rejected.ok, false, '已生效比赛不能驳回');
 
   const ledgerRow = (await facade.getMatchRecords()).find((item) => item._id === match._id);
   assert.strictEqual(ledgerRow.status, MATCH_STATUS.ACTIVE, '被挡下就不该动到状态');
 });
 
-schoolMatchTest('比赛页 —— 撤销不填理由被拦下，比赛原样不动', async (facade) => {
+schoolMatchTest('比赛页 —— 驳回不填理由被拦下，比赛原样不动', async (facade) => {
   resetSession();
   app.globalData.userInfo = adminMember();
 
@@ -3322,21 +3314,20 @@ schoolMatchTest('比赛页 —— 撤销不填理由被拦下，比赛原样不�
     teamA: [ADMIN_ID],
     teamB: [RIVAL],
   });
-  await facade.confirmMatch(match._id, RIVAL);
 
   const page = instantiate(matchConfig);
   await page.onLoad();
 
-  await page.onOpenAction({ currentTarget: { dataset: { matchId: match._id, kind: 'revoke' } } });
+  await page.onOpenAction({ currentTarget: { dataset: { matchId: match._id, kind: 'reject' } } });
   await page.onSubmitAction();
 
   assert.strictEqual(page.data.actionError, '请填写理由');
   assert.strictEqual(page.data.action.open, true, '校验失败时面板不该关掉');
   const ledgerRow = (await facade.getMatchRecords()).find((item) => item._id === match._id);
-  assert.strictEqual(ledgerRow.status, MATCH_STATUS.ACTIVE, '没有理由就不能作废成绩');
+  assert.strictEqual(ledgerRow.status, MATCH_STATUS.PENDING, '没有理由就不能作废成绩');
 });
 
-schoolMatchTest('比赛页 —— 驳回与撤销共用终态，但文案要分得清', async (facade) => {
+schoolMatchTest('比赛页 —— 驳回把待确认比分作废，文案要说清是驳回', async (facade) => {
   resetSession();
   app.globalData.userInfo = activeMember();
 

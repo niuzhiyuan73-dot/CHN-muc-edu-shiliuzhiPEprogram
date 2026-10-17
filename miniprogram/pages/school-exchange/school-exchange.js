@@ -332,15 +332,5 @@ Page({
         : undefined));
   },
 
-  /** 撤销已确认的比分（从最后一轮往前撤），撤销后可以重新录入 */
-  onRevokeScore(event) {
-    const { detail } = this.data;
-    if (this.data.busy || !detail) return;
-    const matchId = event.currentTarget.dataset.matchid;
-    if (!matchId) return;
-    return this.confirmAction('撤销后这场比赛回到待确认，比分要重新录入。确定撤销吗？', '撤销比分')
-      .then(confirmed => (confirmed
-        ? this.write(api => api.revokeExchangeScore({ eventId: detail.event._id, matchId }))
-        : undefined));
-  },
+  // 撤销比分已随 Elo 逐场结算改造取消：已确认的比分不可撤销（个人赛与交流赛同规则）
 });

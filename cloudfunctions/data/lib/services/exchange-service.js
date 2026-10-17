@@ -2,7 +2,7 @@
 const { buildSchoolContext } = require('./school-context.js');
 const { canSchoolAction } = require('./school-permission.js');
 const { schoolKey, schoolAssociationKey, PLATFORM_ROLE, PLATFORM_STATUS, SCHOOL_MEMBER_STATUS } = require('../utils/school.js');
-const { planExchangeDraw, planExchangeMatches, placementsFromExchange, findExchangeDependents } = require('./exchange-plan.js');
+const { planExchangeDraw, planExchangeMatches, placementsFromExchange } = require('./exchange-plan.js');
 const { formatOf, normalizeGroupCount, normalizeAdvancePerGroup } = require('./draw.js');
 const {
   EVENT_FORMAT, EVENT_FORMAT_LABEL, DEFAULT_EVENT_FORMAT,
@@ -337,60 +337,14 @@ async function cancelExchangeEvent(payload = {}, ctx) {
 }
 
 /**
- * 撤销一场已经确认的跨校比分（比分修订的第一步）。
- * ============================================================
- * 与普通比赛同一条规则：**后面还有已确认的场次就先撤后面的**（从最后一轮往前撤）。
- * 撤销把这一场退回「待确认」并清掉比分与胜者；下一轮的场次由签表投影重算——
- * 对阵在两侧重新定下来时会自动刷新（见 exchange-plan 的刷新逻辑），因此不会
- * 留下「上一轮的败者还在下一轮里」这种自相矛盾的签表。
- * 权限与录分一致：平台管理员、双方校管理员、或该场指定裁判。
+ * 【撤销比分已取消】
+ * 跨校邀请赛的已确认比分同样不可撤销（Elo 逐场结算改造：确认即最终结论，
+ * 个人赛与交流赛同一规则）。原 revokeExchangeScore 已删除；比分录错时的
+ * 处理口径：已结束的赛事以最终名次为准，进行中的赛事由裁判/管理员按实际
+ * 重录——不再提供把已确认比分退回待确认的入口。
  *
- * @param {Object} payload { eventId, matchId, reason? }
+ * @param {Object} payload { eventId, reason? }
  */
-async function revokeExchangeScore(payload = {}, ctx) {
-  const snapshot = await ctx.repo.exchangeEvents.getById(payload.eventId);
-  const match = await ctx.repo.exchangeMatches.getById(payload.matchId);
-  if (!snapshot || !match || match.eventId !== snapshot._id) return ok(refused('比赛不存在'));
-  // 见 submitExchangeScore：已结束 / 已取消的赛事不再动比分。
-  if (snapshot.status === 'finished') return ok(refused('赛事已结束，不能再撤销比分'));
-  if (snapshot.status === 'canceled') return ok(refused('赛事已取消'));
-  if (!canScoreMatch(snapshot, match, ctx)) return ok(refused('没有比分撤销权限'));
-  // 撤销前的自查：谁排在这场之后。阶段与轮次的先后由 format-plan 判定，
-  // 双败的胜者组 / 败者组 / 总决赛、小组赛与淘汰赛之间也分得清。
-  // 只有「已确认」的后继会挡路——还没录分的下一轮会在重录后被刷新换人。
-  const ledger = await ctx.repo.exchangeMatches.listByEvent(snapshot._id);
-  const laterIds = findExchangeDependents({ match, matches: ledger })
-    .filter(id => {
-      const row = ledger.find(item => item._id === id);
-      return Boolean(row && row.status === 'active');
-    });
-  if (laterIds.length > 0) return ok(refused('后面轮次已有确认的比分，请从最后一轮往前依次撤销'));
-  return ok(await ctx.repo.transaction(async tx => {
-    const fresh = await freshContext(tx, ctx);
-    const event = await tx.exchangeEvents.getById(payload.eventId);
-    const current = await tx.exchangeMatches.getById(payload.matchId);
-    if (!event || !current || current.eventId !== event._id) return refused('比赛不存在');
-    if (!canScoreMatch(event, current, fresh)) return refused('没有比分撤销权限');
-    if (event.status === 'finished') return refused('赛事已结束，不能再撤销比分');
-    if (event.status === 'canceled') return refused('赛事已取消');
-    if (current.status !== 'active') return refused('这场比赛还没有确认的比分');
-    // 事务内复查：读到撤销之前，可能刚有人确认了下一轮（整表查询事务里不允许，逐个点读）
-    for (const id of laterIds) {
-      const row = await tx.exchangeMatches.getById(id);
-      if (row && row.status === 'active') return refused('后面轮次已有确认的比分，请从最后一轮往前依次撤销');
-    }
-    const scored = { ...current, scoreA: null, scoreB: null, winner: '', status: 'pending',
-      recordedBy: '', recordedAt: null, revokedBy: fresh.actorId, revokedAt: fresh.now,
-      revokeReason: typeof payload.reason === 'string' ? payload.reason.trim().slice(0, 200) : '',
-      revision: Number(current.revision || 1) + 1 };
-    await tx.exchangeMatches.set(scored._id, scored);
-    const next = { ...event, revision: event.revision + 1 };
-    await tx.exchangeEvents.set(next._id, next);
-    await audit(tx, fresh, next, 'revokeExchangeScore');
-    return { ok: true, event: summary(next), message: '' };
-  }));
-}
-
 async function lockExchangeRoster(payload = {}, ctx) {
   const snapshot = await ctx.repo.exchangeEvents.getById(payload.eventId);
   if (!eventMatches(snapshot, ctx) || snapshot.schoolId !== ctx.schoolId || !manages(ctx)) return ok(refused('只有主办学校可以锁定名单'));
@@ -676,12 +630,13 @@ async function getExchangeEvent(payload = {}, ctx) {
       referee: match.referee || '', refereeName: names.get(match.referee) || '',
       canAssignReferee: !canceled && canManage && match.status === 'pending',
       canScore: !canceled && match.status === 'pending' && canScoreMatch(event, match, ctx),
-      canRevoke: !canceled && match.status === 'active' && canScoreMatch(event, match, ctx),
-    })), message: '' });
+      // canRevoke 已随撤销取消移除：已确认的交流赛比分不可撤销
+    })),
+    message: '' });
 }
 
 module.exports = { createExchangeEvent, respondExchangeInvitation, signUpExchangeEvent,
   cancelExchangeSignup, removeExchangeSignup, checkInExchangeSignup, withdrawExchangeInvitation,
-  cancelExchangeEvent, revokeExchangeScore,
+  cancelExchangeEvent,
   lockExchangeRoster, drawExchangeEvent, assignExchangeReferee,
   submitExchangeScore, confirmExchangeRanking, getExchangeEvents, getExchangeEvent };

@@ -232,7 +232,7 @@ test('页面：撤回邀请（受邀校自己那条）', async () => {
   assert.equal(p.data.detail.schools.find(row => row.id === 'buaa').status, '已撤回');
 });
 
-test('页面：代签 / 移出报名 / 锁定 / 抽签 / 撤销比分 / 取消赛事', async () => {
+test('页面：代签 / 移出报名 / 锁定 / 抽签 / 录分 / 取消赛事', async () => {
   mock.setDemoActor('demo_muc_admin');
   const p = page();
   await p.onLoad();
@@ -279,7 +279,7 @@ test('页面：代签 / 移出报名 / 锁定 / 抽签 / 撤销比分 / 取消�
   assert.equal(p.data.error, '');
   assert.equal(p.data.detail.participants.find(row => row.userId === mucRow.userId).checkedIn, true);
 
-  // 抽签 → 录分 → 撤销比分 → 重录 → 取消赛事
+  // 抽签 → 录分（撤销比分入口已随逐场结算改造移除）→ 取消赛事
   await p.onDraw();
   assert.equal(p.data.detail.matches.length, 1);
   const match = p.data.detail.matches[0];
@@ -288,14 +288,7 @@ test('页面：代签 / 移出报名 / 锁定 / 抽签 / 撤销比分 / 取消�
   await p.onSubmitScore({ currentTarget: { dataset: { matchid: match._id } } });
   assert.equal(p.data.detail.matches[0].statusText, '已确认');
 
-  assert.equal(p.data.detail.matches[0].canRevoke, true);
-  await p.onRevokeScore({ currentTarget: { dataset: { matchid: match._id } } });
-  assert.equal(p.data.error, '');
-  assert.equal(p.data.detail.matches[0].statusText, '待比赛', '撤销后回到待确认');
-
-  await p.onScoreInput({ currentTarget: { dataset: { matchid: match._id, side: 'a' } }, detail: { value: '11' } });
-  await p.onScoreInput({ currentTarget: { dataset: { matchid: match._id, side: 'b' } }, detail: { value: '9' } });
-  await p.onSubmitScore({ currentTarget: { dataset: { matchid: match._id } } });
+  assert.equal('canRevoke' in p.data.detail.matches[0], false, '撤销入口已删除');
   assert.equal(p.data.error, '');
   assert.equal(p.data.detail.canConfirmRanking, true);
   await p.onCancelEvent();

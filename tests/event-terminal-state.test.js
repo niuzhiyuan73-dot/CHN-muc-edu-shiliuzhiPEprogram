@@ -85,16 +85,13 @@ test('跨校邀请赛：名次确认之后，比分不可撤、不可重录', as
   const frozen = (await repo.exchangeEvents.getById(eventId)).results;
   assert.equal(frozen.length, 4, '名次已冻结在赛事上');
 
-  // 终态：撤销与重录都必须被拒（原先只挡了比赛自身状态，赛事结束也照改不误）。
-  const revoke = await exchangeCall(repo, 'revokeExchangeScore',
-    { eventId, matchId: semis[0]._id, reason: '事后反悔' });
-  assert.equal(revoke.ok, false, '已结束的赛事不能撤销比分');
-  assert.match(revoke.message, /已结束/);
-
+  // 终态：重录必须被拒；撤销动作已整体删除，不再存在「事后反悔」的入口。
   const rescore = await exchangeCall(repo, 'submitExchangeScore',
     { eventId, matchId: semis[0]._id, scoreA: 4, scoreB: 11 });
   assert.equal(rescore.ok, false, '已结束的赛事不能重录比分');
   assert.match(rescore.message, /已结束/);
+  const handlers = require('../miniprogram/services/exchange-service.js');
+  assert.equal(typeof handlers.revokeExchangeScore, 'undefined', '交流赛撤销比分已删除');
 
   // 台账与名次都没被动过：撤销会被「已结束」挡住，而不是悄悄改掉比分。
   assert.deepEqual((await repo.exchangeEvents.getById(eventId)).results, frozen, '名次未被改写');
@@ -171,9 +168,11 @@ test('校内个人赛：赛事结束之后，比赛不可确认 / 撤销 / 弃�
   assert.equal(confirm.ok, false, '已结束的赛事不能确认比赛');
   assert.match(confirm.message, /已结束/);
 
-  const revoke = await matchCall(repo, 'revokeSchoolMatch', { matchId: drawn.matchIds[1], reason: '录错了' });
-  assert.equal(revoke.ok, false, '已结束的赛事不能撤销比赛');
-  assert.match(revoke.message, /已结束/);
+  // 撤销已随逐场结算改造删除（服务实现不再导出），只剩驳回 / 弃权仍被终态闸拦住
+  assert.equal(typeof matchHandlers.revokeSchoolMatch, 'undefined', '撤销实现已删除');
+  const reject = await matchCall(repo, 'rejectSchoolMatch', { matchId: drawn.matchIds[0], reason: '录错了' });
+  assert.equal(reject.ok, false, '已结束的赛事不能驳回比赛');
+  assert.match(reject.message, /已结束/);
 
   const second = await repo.matches.getById(drawn.matchIds[1]);
   const forfeitBy = (second.teamA || [])[0];

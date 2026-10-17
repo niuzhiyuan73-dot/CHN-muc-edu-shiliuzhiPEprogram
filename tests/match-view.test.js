@@ -204,18 +204,14 @@ test('buildRecordRow —— 已经有比分的比赛不再给「录分」', () =
   assert.strictEqual(row.canRecord, false);
 });
 
-test('buildRecordRow —— 撤销权：只有管理员有，录入者本人也没有', () => {
+test('buildRecordRow —— 撤销已取消：行数据不再带 canRevoke 旗标', () => {
+  // Elo 逐场结算改造：确认即最终结算，任何角色都没有撤销入口
   const base = { userId: ME, nameOf: fakeNameOf, role: ROLE.MEMBER };
-  // ME 就是这一场的 recorder：撤销改写已生效的账本，当事人不能单方面行使
-  assert.strictEqual(buildRecordRow(pendingRecord(), base).canRevoke, false);
-
+  assert.strictEqual('canRevoke' in buildRecordRow(pendingRecord(), base), false);
   assert.strictEqual(
-    buildRecordRow(pendingRecord(), { ...base, userId: RIVAL }).canRevoke,
-    false
-  );
-  assert.strictEqual(
-    buildRecordRow(pendingRecord(), { ...base, userId: 'u99', role: ROLE.ADMIN }).canRevoke,
-    true
+    'canRevoke' in buildRecordRow(pendingRecord(), { ...base, userId: 'u99', role: ROLE.ADMIN }),
+    false,
+    '管理员也没有撤销旗标'
   );
 });
 

@@ -97,6 +97,62 @@ test('确认：严格口径下只有对手能确认，录入方自己不行', as
   assert.equal(byOpponent.match.status, MATCH_STATUS.ACTIVE);
 });
 
+test('确认即结算：同一比赛重复确认幂等，已结算后驳回/弃权均被拒', async () => {
+  const repo = fixture();
+  const match = await record(repo, 'r1');
+  const first = await call(repo, 'confirmSchoolMatch', { matchId: match.matchId },
+    { actor: 'demo_muc_member_2' });
+  assert.equal(first.ok, true, first.message);
+  const ratingDoc = await repo.memberRatings.getById(
+    require('../miniprogram/utils/school.js').memberRatingKey('demo_muc_member', 'singles',
+      { schoolId: 'muc', association: 'pkb' }));
+  const counterId = require('../miniprogram/utils/school.js').ratingSeqKey({ schoolId: 'muc', association: 'pkb' });
+  const afterFirst = { rating: ratingDoc && ratingDoc.elo, seq: (await repo.ratingCounters.getById(counterId)).seq };
+
+  // 确认响应丢失后的重试：返回既有结果，评级与序号纹丝不动
+  const retry = await call(repo, 'confirmSchoolMatch', { matchId: match.matchId },
+    { actor: 'demo_muc_member_2' });
+  assert.equal(retry.ok, true, retry.message);
+  const ratingAgain = await repo.memberRatings.getById(ratingDoc._id);
+  assert.equal(ratingAgain.elo, afterFirst.rating, '重复确认不再加分');
+  assert.equal(ratingAgain.matchCount, 1);
+  assert.equal((await repo.ratingCounters.getById(counterId)).seq, afterFirst.seq, '序号不再消耗');
+
+  // 已结算比赛封口：驳回（requirePending）与弃权（canForfeit 仅待确认）都被拒
+  const reject = await call(repo, 'rejectSchoolMatch',
+    { matchId: match.matchId, reason: '不认' }, { actor: 'demo_muc_member_2' });
+  assert.equal(reject.ok, false);
+  const forfeit = await call(repo, 'forfeitSchoolMatch',
+    { matchId: match.matchId, forfeitBy: 'demo_muc_member' }, { actor: 'demo_muc_member' });
+  assert.equal(forfeit.ok, false);
+  const stored = await repo.matches.getById(match.matchId);
+  assert.equal(stored.status, MATCH_STATUS.ACTIVE);
+  assert.ok(stored.settlement && stored.settlement.settlementSeq >= 1);
+});
+
+test('弃权：终态封口带不计分结算快照，且不占评级', async () => {
+  const repo = fixture();
+  // 直接种一场带 eventId 的赛事比赛并记弃权
+  const matchId = schoolMatchKey(schoolKey('m', 'demo_muc_admin', 'evf1'), { schoolId: 'muc', association: 'pkb' });
+  await repo.matches.set(matchId, {
+    _id: matchId, schoolId: 'muc', association: 'pkb', eventId: 'evt1',
+    matchType: MATCH_TYPE.SINGLES, pool: 1, teamA: ['demo_muc_member'], teamB: ['demo_muc_member_2'],
+    scoreA: [], scoreB: [], winner: '', gamePoints: 11, bestOf: 1, location: '',
+    matchTime: at(-HOUR), recorder: 'demo_muc_member', status: MATCH_STATUS.PENDING, revision: 1,
+  });
+  const forfeited = await call(repo, 'forfeitSchoolMatch', { matchId, forfeitBy: 'demo_muc_member' },
+    { actor: 'demo_muc_member' });
+  assert.equal(forfeited.ok, true, forfeited.message);
+  const stored = await repo.matches.getById(matchId);
+  assert.equal(stored.status, MATCH_STATUS.ACTIVE);
+  assert.equal(stored.settlement.status, 'excluded', '弃权写不计分快照');
+  assert.equal(stored.settlement.exclusionReason, 'forfeit');
+  assert.equal(stored.settlement.settlementSeq, null, '不计分不占序号');
+  // 参赛者没有评级文档被建出来
+  const ratingKey = require('../miniprogram/utils/school.js').memberRatingKey;
+  assert.equal(await repo.memberRatings.getById(ratingKey('demo_muc_member', 'singles', { schoolId: 'muc', association: 'pkb' })), null);
+});
+
 test('确认：管理员可确认任意一场；无比分不能确认', async () => {
   const repo = fixture();
   const match = await record(repo, 'r1');
@@ -135,23 +191,25 @@ test('驳回：须填理由，状态落到已撤销（action=reject）', async (
   assert.equal(rejected.match.action, 'reject');
 });
 
-test('撤销：仅管理员、须理由、只对已生效或待确认场次', async () => {
+test('撤销已取消：action 不在协议 2 白名单，已结算比赛没有撤销入口', async () => {
   const repo = fixture();
   const match = await record(repo, 'r1');
-  await call(repo, 'confirmSchoolMatch', { matchId: match.matchId }, { actor: 'demo_muc_member_2' });
+  const confirmed = await call(repo, 'confirmSchoolMatch', { matchId: match.matchId },
+    { actor: 'demo_muc_member_2' });
+  assert.equal(confirmed.ok, true, confirmed.message);
 
-  const byMember = await call(repo, 'revokeSchoolMatch',
-    { matchId: match.matchId, reason: 'x' }, { actor: 'demo_muc_member' });
-  assert.equal(byMember.ok, false, '普通会员不能撤销');
+  // 撤销动作已随 Elo 逐场结算改造从协议 2 删除：白名单与实现里都没有它
+  const actions = require('../miniprogram/utils/school-actions.js');
+  assert.equal(actions.SCHOOL_SPACE_ACTIONS.includes('revokeSchoolMatch'), false,
+    '撤销动作不应在协议 2 白名单里');
+  const write = require('../miniprogram/utils/write.js');
+  assert.equal(write.SCHOOL_WRITE_ACTIONS.includes('revokeSchoolMatch'), false,
+    '撤销动作不应在写操作名单里');
 
-  const noReason = await call(repo, 'revokeSchoolMatch', { matchId: match.matchId });
-  assert.equal(noReason.ok, false);
-
-  const revoked = await call(repo, 'revokeSchoolMatch',
-    { matchId: match.matchId, reason: '赛果有争议' }, { actor: 'demo_muc_admin' });
-  assert.equal(revoked.ok, true, revoked.message);
-  assert.equal(revoked.match.status, MATCH_STATUS.REVOKED);
-  assert.equal(revoked.match.action, 'revoke');
+  // 服务端实现也不再导出：旧 action 无从构造
+  assert.equal(typeof require('../miniprogram/services/school-match-service.js').revokeSchoolMatch,
+    'undefined', '撤销实现已删除');
+  assert.ok(confirmed.match.settlement, '确认即结算：比赛带结算快照');
 });
 
 test('弃权：日常约球不能弃；赛事比赛本人可弃，胜方判给对手', async () => {
@@ -455,7 +513,7 @@ async function bracketRepo() {
   return repo;
 }
 
-test('F1：账号被平台停用后不能再确认 / 驳回 / 撤销 / 弃权', async () => {
+test('F1：账号被平台停用后不能再确认 / 驳回 / 弃权', async () => {
   const repo = fixture();
   const match = await record(repo, 'f1_confirm');
   await setPlatformStatus(repo, 'demo_muc_member_2', PLATFORM_STATUS.DISABLED);
@@ -469,13 +527,10 @@ test('F1：账号被平台停用后不能再确认 / 驳回 / 撤销 / 弃权', 
   const stored = await repo.matches.getById(match.matchId);
   assert.equal(stored.status, MATCH_STATUS.PENDING, '状态没有被改动');
 
-  // 同一条通路上的驳回 / 撤销 / 弃权也要一起拦住
+  // 同一条通路上的驳回 / 弃权也要一起拦住（撤销已随逐场结算改造删除）
   const reject = await call(repo, 'rejectSchoolMatch',
     { matchId: match.matchId, reason: '不认' }, { actor: 'demo_muc_member_2' });
   assert.equal(reject.ok, false);
-  const revoke = await call(repo, 'revokeSchoolMatch',
-    { matchId: match.matchId, reason: '撤了' }, { actor: 'demo_muc_member_2' });
-  assert.equal(revoke.ok, false);
   const forfeit = await call(repo, 'forfeitSchoolMatch',
     { matchId: match.matchId, forfeitBy: 'demo_muc_member' }, { actor: 'demo_muc_member_2' });
   assert.equal(forfeit.ok, false);
@@ -600,39 +655,36 @@ test('F4 相邻：停用选手的历史流水仍留在台账与回放里', async
   assert.ok(listed.matches.some(row => row.matchId === match.matchId), '历史记录仍读得到');
 });
 
-test('F5：半决赛后面还挂着决赛时，撤销被拒（要求从最后一轮往前撤）', async () => {
+test('F5（新语义）：已排进下一轮的比赛同样不可撤销——撤销入口已整体移除', async () => {
+  // 撤销能力已随逐场结算改造删除：不存在「从最后一轮往前撤」的路径。
+  // 保留一条护栏：已结算的半决赛不可被驳回（requirePending），状态不变。
   const repo = await bracketRepo();
-
-  const blocked = await call(repo, 'revokeSchoolMatch',
+  const reject = await call(repo, 'rejectSchoolMatch',
     { matchId: 'm_semi_1', reason: '录错了' }, { actor: 'demo_muc_admin' });
-  assert.equal(blocked.ok, false, '下游还在，不能直接撤');
-  assert.match(blocked.message, /往前|排进/);
+  assert.equal(reject.ok, false, '已生效比赛不能驳回');
+  assert.match(reject.message, /待确认/);
   assert.equal((await repo.matches.getById('m_semi_1')).status, MATCH_STATUS.ACTIVE, '没有改动');
-
-  // 从后往前撤：先撤决赛，再撤半决赛就放行
-  const finalFirst = await call(repo, 'revokeSchoolMatch',
-    { matchId: 'm_final', reason: '先撤决赛' }, { actor: 'demo_muc_admin' });
-  assert.equal(finalFirst.ok, true, finalFirst.message);
-  const thenSemi = await call(repo, 'revokeSchoolMatch',
-    { matchId: 'm_semi_1', reason: '再撤半决赛' }, { actor: 'demo_muc_admin' });
-  assert.equal(thenSemi.ok, true, thenSemi.message);
-  assert.equal((await repo.matches.getById('m_semi_1')).status, MATCH_STATUS.REVOKED);
 });
 
-test('F5 相邻：下游已作废的不再挡路；日常约球没有下游，随时可撤', async () => {
-  const repo = await bracketRepo();
-  await putMatch(repo, { ...(await repo.matches.getById('m_final')), status: MATCH_STATUS.REVOKED });
+test('F3：已结算比赛不释放名额——录满之后不能借驳回腾出额度', async () => {
+  const repo = fixture();
+  const limit = RATED_PAIR_LIMIT;
+  const first = await record(repo, 'seat_0');
+  await call(repo, 'confirmSchoolMatch', { matchId: first.matchId }, { actor: 'demo_muc_member_2' });
+  for (let i = 1; i < limit; i += 1) {
+    const match = await record(repo, `seat_${i}`);
+    await call(repo, 'confirmSchoolMatch', { matchId: match.matchId }, { actor: 'demo_muc_member_2' });
+  }
+  const blocked = await call(repo, 'submitSchoolMatch', { requestId: 'seat_full', ...casual() });
+  assert.equal(blocked.ok, false, '打满之后录不进来');
+  assert.match(blocked.message, /上限/);
 
-  const semi = await call(repo, 'revokeSchoolMatch',
-    { matchId: 'm_semi_1', reason: '下游已撤' }, { actor: 'demo_muc_admin' });
-  assert.equal(semi.ok, true, semi.message);
-
-  const casualFirst = fixture();
-  const casualMatch = await record(casualFirst, 'f5_casual');
-  await call(casualFirst, 'confirmSchoolMatch', { matchId: casualMatch.matchId }, { actor: 'demo_muc_admin' });
-  const casualRevoke = await call(casualFirst, 'revokeSchoolMatch',
-    { matchId: casualMatch.matchId, reason: '不算' }, { actor: 'demo_muc_admin' });
-  assert.equal(casualRevoke.ok, true, casualRevoke.message);
+  // 已生效比赛不可驳回（额度占用随之保留，交接文档 §4.4：已结算不释放额度）
+  const reject = await call(repo, 'rejectSchoolMatch',
+    { matchId: first.matchId, reason: '成绩不算' }, { actor: 'demo_muc_member_2' });
+  assert.equal(reject.ok, false);
+  const stillBlocked = await call(repo, 'submitSchoolMatch', { requestId: 'seat_after', ...casual() });
+  assert.equal(stillBlocked.ok, false, '额度仍然占满');
 });
 
 test('F3：只剩一个名额时，两次并发提交只成功一次', async () => {
@@ -656,23 +708,24 @@ test('F3：只剩一个名额时，两次并发提交只成功一次', async () 
   assert.equal(counted, limit, `最终不超过上限 ${limit}`);
 });
 
-test('F3：撤销会释放名额，撤掉之后又能录进来', async () => {
+test('F3：驳回（确认前）会释放名额，驳掉之后又能录进来', async () => {
   const repo = fixture();
   const limit = RATED_PAIR_LIMIT;
-  const first = await record(repo, 'seat_0');
-  await call(repo, 'confirmSchoolMatch', { matchId: first.matchId }, { actor: 'demo_muc_member_2' });
+  // 占用最后一个名额但**不确认**（提交即占额度）
+  const pending = await record(repo, 'seat_0');
   for (let i = 1; i < limit; i += 1) {
     const match = await record(repo, `seat_${i}`);
     await call(repo, 'confirmSchoolMatch', { matchId: match.matchId }, { actor: 'demo_muc_member_2' });
   }
   const blocked = await call(repo, 'submitSchoolMatch', { requestId: 'seat_full', ...casual() });
-  assert.equal(blocked.ok, false, '打满之后录不进来');
+  assert.equal(blocked.ok, false, '额度占满');
   assert.match(blocked.message, /上限/);
 
-  const revoked = await call(repo, 'revokeSchoolMatch',
-    { matchId: first.matchId, reason: '成绩不算' }, { actor: 'demo_muc_admin' });
-  assert.equal(revoked.ok, true, revoked.message);
-  const again = await call(repo, 'submitSchoolMatch', { requestId: 'seat_after_revoke', ...casual() });
+  // 驳回那条**待确认**的比赛（确认前纠错保留）：额度释放一次
+  const rejected = await call(repo, 'rejectSchoolMatch',
+    { matchId: pending.matchId, reason: '比分记错' }, { actor: 'demo_muc_member_2' });
+  assert.equal(rejected.ok, true, rejected.message);
+  const again = await call(repo, 'submitSchoolMatch', { requestId: 'seat_after_reject', ...casual() });
   assert.equal(again.ok, true, again.message);
 });
 

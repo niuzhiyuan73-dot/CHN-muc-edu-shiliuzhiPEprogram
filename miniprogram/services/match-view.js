@@ -1,9 +1,9 @@
 /**
  * 比赛页的视图模型
  * ============================================================
- * 比赛页要做的事比「我的」页更敏感：它不只展示成绩，还让人确认、驳回、
- * 撤销成绩。因此这里的重点是**把权限算在视图模型里**，页面拿到的每一行
- * 都自带 canConfirm / canRevoke，页面只负责照着渲染按钮。
+ * 比赛页要做的事比「我的」页更敏感：它不只展示成绩，还让人确认、驳回
+ * 成绩。因此这里的重点是**把权限算在视图模型里**，页面拿到的每一行
+ * 都自带 canConfirm 等旗标，页面只负责照着渲染按钮。
  *
  * 【为什么权限不上页面】
  * 页面上写 `wx:if="{{item.status === 0 && item.side !== 'A'}}"` 这种条件，
@@ -41,7 +41,6 @@ const {
   canConfirm,
   canForfeit,
   canRecordScore,
-  canRevoke,
   hasReferee,
   needsScore,
   sideOf,
@@ -213,7 +212,7 @@ function buildRecordRow(record, ctx = {}) {
     // （见 match-record.canRecordScore）。演示数据源不再放宽，免得看到
     // 一个点下去会被拒的入口。
     canRecord: Boolean(waiting && userId && canRecordScore(record, userId, { role, college, collegeOf })),
-    canRevoke: canRevoke(record, userId, { role }),
+    // 撤销已随 Elo 逐场结算改造取消（确认即最终结算），不再提供 canRevoke 旗标
     // 本人自选弃权（D41）：只有赛事的待确认比赛可以，约球不行；本人弃自己那场，
     // 管理员若也在场上同样成立。弃权后对手直接晋级，且不计个人等级分。
     canForfeit: canForfeit(record, userId, userId, { role }),

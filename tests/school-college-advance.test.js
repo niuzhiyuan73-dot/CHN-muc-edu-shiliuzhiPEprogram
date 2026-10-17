@@ -206,68 +206,16 @@ test('本轮全部打完 → 按胜者排出下一轮大场，带范围且只补
   assert.equal(after, before);
 });
 
-test('撤销小场：已排进下一轮的撤不动；决定性的一场被拒', async () => {
-  const repo = fixture();
-  const { eventId, ties } = await toRound1(repo);
-  for (const tie of ties) {
-    await startTie(repo, tie);
-    await playLeg(repo, eventId, tie, 1, 'A');
-    await playLeg(repo, eventId, tie, 2, 'A');
-  }
-  // 此时第二轮大场已按首轮胜者落成。
-  assert.ok(await repo.ties.getById(collegeTieKey(eventId, 2, 0)));
-
-  const blocked = await call(repo, match, 'revokeSchoolMatch',
-    { matchId: collegeLegKey(eventId, ties[0].tieId, 1), reason: '录错了' });
-  assert.equal(blocked.ok, false);
-  assert.match(blocked.message, /最后一轮往前/);
-});
-
-test('撤销小场：大场还没定胜负时撤得动，只把这一场收回去', async () => {
+test('撤销小场已取消：学院赛小场一经确认即为最终结算', async () => {
+  // Elo 逐场结算改造：撤销入口整体移除（服务实现不再导出），
+  // 「从最后一轮往前撤」「回收大场结果」两条路径不复存在。
   const repo = fixture();
   const { eventId, tie } = await toSingleTie(repo);
   await startTie(repo, tie);
-
-  // 先赢一场：两个小项「打满比净胜」，此时大场还没结束。
   await playLeg(repo, eventId, tie, 1, 'A');
-  let stored = await repo.ties.getById(tie.tieId);
-  assert.equal(stored.status, TIE_STATUS.ONGOING);
-  assert.equal(stored.legs[0].winner, defByName(tie.collegeA).name);
 
-  // 撤这一场：大场里那一场的胜负与比分都要跟着作废，结论不变（本来就没有结论）。
-  const revoked = await call(repo, match, 'revokeSchoolMatch',
-    { matchId: collegeLegKey(eventId, tie.tieId, 1), reason: '人名记错了' });
-  assert.equal(revoked.ok, true, revoked.message);
-  stored = await repo.ties.getById(tie.tieId);
-  assert.equal(stored.legs[0].winner, null, '撤销了小场，大场不能还记着它赢了');
-  assert.equal(stored.legs[0].scoreText, '', '比分文本一并清掉');
-  assert.equal(stored.legs[0].matchId, collegeLegKey(eventId, tie.tieId, 1), '比赛编号留着，详情页还点得进去');
-  assert.equal(stored.status, TIE_STATUS.ONGOING);
-  assert.equal(stored.winner, null);
-});
-
-test('撤销小场：大场定胜负后撤掉决定性的一场被拒', async () => {
-  const repo = fixture();
-  const { eventId, tie } = await toSingleTie(repo);
-  await startTie(repo, tie);
-
-  const a = defByName(tie.collegeA);
-  await playLeg(repo, eventId, tie, 1, 'A');
-  await playLeg(repo, eventId, tie, 2, 'A');
-  let stored = await repo.ties.getById(tie.tieId);
-  assert.equal(stored.status, TIE_STATUS.FINISHED);
-  assert.equal(stored.winner, a.name);
-
-  // 两个小项已定胜负，撤掉其中任何一场都会让大场永远打不完，当场拒绝，
-  // 改用「录入名次更正」那条路（见 revertLegResult 头注）。
-  const decisive = await call(repo, match, 'revokeSchoolMatch',
-    { matchId: collegeLegKey(eventId, tie.tieId, 1), reason: '想重打' });
-  assert.equal(decisive.ok, false);
-  assert.match(decisive.message, /永远打不完/);
-
-  // 被拒之后一分不动，大场结论照旧。
-  stored = await repo.ties.getById(tie.tieId);
-  assert.equal(stored.legs[0].winner, a.name);
-  assert.equal(stored.status, TIE_STATUS.FINISHED);
-  assert.equal(stored.winner, a.name);
+  const mod = require('../miniprogram/services/school-match-service.js');
+  assert.equal(typeof mod.revokeSchoolMatch, 'undefined', '撤销实现已删除');
+  const stored = await repo.ties.getById(tie.tieId);
+  assert.equal(stored.legs[0].winner, defByName(tie.collegeA).name, '已生效的小场结果保持不变');
 });

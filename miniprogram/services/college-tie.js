@@ -386,57 +386,9 @@ function legResultOf(tie, match) {
 }
 
 /**
- * 一场小场被撤销之后，把这一场的结果从大场里收回来。
- *
- * 【为什么必须有这一步】
- * tie.legs[] 不是实时读比赛记录，而是小场确认那一刻抄下来的一份快照（见
- * legResultOf）。撤了小场却不动大场，大场仍记着那一场的胜负：汇总照旧算它
- * 一场胜、大场照样「已结束 + 胜者」、下一轮照样顶着这个人晋级——可等级分
- * 已经退回去了。同一份结果两处各说各话，且谁也看不出来。
- *
- * 【为什么撤掉决定性的那一场是「拒绝」而不是「把大场退回进行中」】
- * 小场的编号是确定的（collegeLegKey），而作废是终态：既不能重录（录分只认
- * 待确认），也不能重新开台（startTie 只补不覆盖，且进行中的大场不给再开）。
- * 所以一旦把决定性的那一场退回去，这个大场就再也打不完——赛事也跟着结束
- * 不了。与其把人推进一个死局，不如当场拒绝，让管理员走名次更正那条路
- * （finishCollegeEvent 的名次是管理员填的，本来就允许与签表不同）。
- *
- * 撤掉无关紧要的那一场则照准：胜负结论不变，只把这一场的比分收回去。
- *
- * @param {Object} params
- * @param {Object} params.tie 大场
- * @param {Object} params.event 学院赛（决定算法与净胜口径）
- * @param {number} params.legNo 被撤销的小项序号
- * @returns {{legs:Array<Object>, patch:Object}|{blocked:string}|null}
- *          patch 是要写回大场的字段；blocked 是拒绝理由；
- *          这个大场里没有这个序号时给 null（不该发生，兜底）
- */
-function revertLegResult({ tie = null, event = null, legNo } = {}) {
-  if (!tie) return null;
-  const target = Number(legNo);
-  let hit = false;
-
-  const legs = (Array.isArray(tie.legs) ? tie.legs : []).map((leg) => {
-    if (!leg || Number(leg.legNo) !== target) return leg;
-    hit = true;
-    // matchId 留着：比赛记录还在（只是作废了），详情页仍要能点进去看
-    return { ...leg, winner: null, outcome: null, scoreText: '', pointsA: 0, pointsB: 0 };
-  });
-  if (!hit) return null;
-
-  // 大场没结束过：没有结论可推翻，把这一场收回去就够了
-  if (tie.status !== TIE_STATUS.FINISHED) return { legs, patch: { legs } };
-
-  const summary = summarizeTie({ tie: { ...tie, legs }, event });
-  if (!summary.complete || !summary.winnerSide) {
-    return { blocked: '这一场决定了大场的胜负，撤销会让这个大场永远打不完，请改用录入名次更正' };
-  }
-  // 撤的不是决定性的那一场：胜负照旧，只把比分收回去
-  return { legs, patch: { legs, winner: summary.winner } };
-}
-
-/**
  * 这条比赛记录要不要进回放计个人 ELO（M4-3 / M4-4）。
+ * 【Elo 逐场结算改造后】本函数只余数据集构建等旧口径使用；结算侧的计分判定
+ * 在 school-rating-service.decideSettlement（同一口径：弃权 / 学院双打不计）。
  *
  *   个人赛       —— 计（caller 已筛过「已生效」，这里只再判弃权）
  *   学院赛单打   —— 计（照一级赛事 K=32，D24）
@@ -824,7 +776,6 @@ module.exports = {
   scoreTextOf,
   totalPoints,
   legResultOf,
-  revertLegResult,
   isEloEligibleMatch,
   canStartCollegeEvent,
   tieStatusOf,

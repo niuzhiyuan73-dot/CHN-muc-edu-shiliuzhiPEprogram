@@ -1,7 +1,7 @@
 <!--
   比赛面板（协会工作台内嵌）
   数据形状见 services/match-view.js 的 loadMatchView。
-  canConfirm / canRevoke 是视图模型算好的，这里不做任何权限推导。
+  canConfirm 等旗标是视图模型算好的，这里不做任何权限推导。
   根节点不带 page-container：外层工作台已经提供了页面内边距。
 -->
 <view class="{{themeClass}}">
@@ -123,7 +123,7 @@
         <!-- 作废的比赛把理由亮出来，否则看到「已撤销」会一头雾水 -->
         <view wx:if="{{item.statusReason}}" class="match-reason">理由：{{item.statusReason}}</view>
 
-        <view wx:if="{{item.canRecord || item.canConfirm || item.canRevoke || item.canForfeit || item.canAssignReferee}}" class="match-actions">
+        <view wx:if="{{item.canRecord || item.canConfirm || item.canForfeit || item.canAssignReferee}}" class="match-actions">
           <!-- 抽签排出的比赛还没有比分：先录分，之后才有「确认」可谈 -->
           <view
             wx:if="{{item.canRecord}}"
@@ -151,13 +151,7 @@
             data-kind="reject"
             bindtap="onOpenAction"
           >驳回</view>
-          <view
-            wx:if="{{item.canRevoke}}"
-            class="mini-btn is-danger"
-            data-match-id="{{item.matchId}}"
-            data-kind="revoke"
-            bindtap="onOpenAction"
-          >撤销</view>
+          <!-- 撤销已取消：比赛一经确认即为最终结算，发现录错请在确认前驳回 -->
           <!-- 指派裁判：仅管理员，且只在还没生效的场次上开 -->
           <view
             wx:if="{{item.canAssignReferee}}"

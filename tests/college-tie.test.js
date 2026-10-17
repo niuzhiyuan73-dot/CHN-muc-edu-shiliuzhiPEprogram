@@ -28,7 +28,6 @@ const {
   scoreTextOf,
   totalPoints,
   legResultOf,
-  revertLegResult,
   isEloEligibleMatch,
   canStartCollegeEvent,
   tieStatusOf,
@@ -713,73 +712,9 @@ test('buildTieRow —— 没派裁判时字段兜底为空，不渲染 undefined
 });
 
 /* ============================================================
- * 七、撤销小场之后回滚大场（缺陷修复）
+ * 七、（已删除）撤销小场之后回滚大场
  * ============================================================
- * tie.legs[] 不是实时读比赛记录，而是确认那一刻抄下来的快照。撤了小场却
- * 不动大场，大场会一直记着已经退回去的那一场胜负：等级分退回了，大场却
- * 还把晋级给了同一个人。revertLegResult 就是这道回滚。
+ * revertLegResult 及其四条用例已随 Elo 逐场结算改造一并删除：
+ * 比赛一经确认即为最终结算，不存在「撤销小场回收大场」的路径。
  * ============================================================ */
 
-/** 造一个大场：按 legs 的战绩算出汇总结果 */
-function tieWith(legs, overrides = {}) {
-  const base = tie(overrides);
-  const source = { ...base, legs };
-  const summary = summarizeTie({ tie: source, event: { tieAlgo: TIE_ALGO.FIRST_TO_N } });
-  return {
-    ...source,
-    status: summary.complete && summary.winnerSide ? TIE_STATUS.FINISHED : TIE_STATUS.ONGOING,
-    winner: summary.winner || null,
-  };
-}
-
-test('revertLegResult —— 撤一场未结束的大场：只清那一场，状态与胜者本来就没落地', () => {
-  const target = tieWith(
-    [
-      { legNo: 1, discipline: 'MS', matchId: 'l1', winner: '体育学院', outcome: null, pointsA: 11, pointsB: 5 },
-      { legNo: 2, discipline: 'MD', matchId: 'l2', winner: null, outcome: null },
-      { legNo: 3, discipline: 'XD', matchId: 'l3', winner: null, outcome: null },
-    ],
-    { status: TIE_STATUS.ONGOING }
-  );
-
-  const reverted = revertLegResult({ tie: target, event: { tieAlgo: TIE_ALGO.FIRST_TO_N }, legNo: 1 });
-  assert.equal(reverted.legs[0].winner, null, '胜负要清掉');
-  assert.equal(reverted.legs[0].scoreText, '');
-  assert.equal(reverted.legs[0].pointsA, 0);
-  assert.equal(reverted.legs[0].matchId, 'l1', '比赛记录还在，编号留着让详情页点得进去');
-  assert.equal(reverted.patch.status, undefined, '没结束过的大场不动状态');
-  assert.equal(reverted.patch.winner, undefined);
-});
-
-test('revertLegResult —— 撤掉决定性的那一场：拒绝，不把大场留在打不完的状态', () => {
-  // 三小项「先到 2 场胜」，A 赢下前两场即结束；撤掉第 2 场只剩 1 场胜
-  const target = tieWith([
-    { legNo: 1, discipline: 'MS', matchId: 'l1', winner: '体育学院', outcome: null, pointsA: 11, pointsB: 5 },
-    { legNo: 2, discipline: 'MD', matchId: 'l2', winner: '体育学院', outcome: null, pointsA: 11, pointsB: 5 },
-    { legNo: 3, discipline: 'XD', matchId: 'l3', winner: null, outcome: null },
-  ]);
-  assert.equal(target.status, TIE_STATUS.FINISHED);
-
-  const reverted = revertLegResult({ tie: target, event: { tieAlgo: TIE_ALGO.FIRST_TO_N }, legNo: 2 });
-  assert.equal(reverted.patch, undefined, '不能悄悄把大场打回进行中');
-  assert.match(reverted.blocked, /永远打不完/);
-});
-
-test('revertLegResult —— 撤的不是决定性的那一场：胜负照旧，不把大场打回进行中', () => {
-  // A 先赢下第 1、2 场，第 3 场记成 B 胜——撤掉第 3 场，A 仍然是 2:0
-  const target = tieWith([
-    { legNo: 1, discipline: 'MS', matchId: 'l1', winner: '体育学院', outcome: null, pointsA: 11, pointsB: 5 },
-    { legNo: 2, discipline: 'MD', matchId: 'l2', winner: '体育学院', outcome: null, pointsA: 11, pointsB: 5 },
-    { legNo: 3, discipline: 'XD', matchId: 'l3', winner: '信息工程学院', outcome: null, pointsA: 5, pointsB: 11 },
-  ]);
-
-  const reverted = revertLegResult({ tie: target, event: { tieAlgo: TIE_ALGO.FIRST_TO_N }, legNo: 3 });
-  assert.equal(reverted.blocked, undefined);
-  assert.equal(reverted.patch.status, undefined, '结论仍成立就别动状态');
-  assert.equal(reverted.patch.winner, '体育学院', '胜者照旧');
-});
-
-test('revertLegResult —— 序号对不上或没有大场时返回 null', () => {
-  assert.equal(revertLegResult({ tie: tie(), event: {}, legNo: 99 }), null);
-  assert.equal(revertLegResult({ tie: null, event: {}, legNo: 1 }), null);
-});

@@ -1,5 +1,12 @@
 /**
- * 学校维度：比赛记录 —— 录入 / 确认 / 驳回 / 撤销 / 弃权 / 指派裁判（协议 2，M1）
+ * 学校维度：比赛记录 —— 录入 / 确认（即结算）/ 驳回 / 弃权 / 指派裁判（协议 2，M1）
+ * ============================================================
+ * 【确认即最终结算（Elo 逐场结算改造）】
+ * confirmSchoolMatch 在确认的同一个事务里调用 school-rating-service 的
+ * settleMatchInTransaction：参赛者评级落库并按当场比分逐场更新，比赛文档带上
+ * 结算快照。已结算的比赛没有撤销入口（revokeSchoolMatch 已删除）；发现录错
+ * 只能在确认前驳回。弃权（forfeitSchoolMatch）同样在事务里写「不计分」结算
+ * 决定，保证每条 ACTIVE 记录都有可解释的结算快照。
  * ============================================================
  * 与旧栈 `match-record.js` 同一把尺子（权限判定与字段组装全部复用该纯模块），
  * 区别只在**归属**与**角色来源**：
@@ -39,22 +46,20 @@ const {
   MATCH_STATUS, MATCH_STATUS_LABEL, MATCH_COMPETITION, MATCH_OUTCOME, EVENT_STATUS,
 } = require('../utils/constants.js');
 const {
-  canRecordScore, canConfirm, canRevoke, canAssignReferee, canForfeit, needsScore,
+  canRecordScore, canConfirm, canConfirmIdentity, canAssignReferee, canForfeit, needsScore,
   isParticipant, buildMatchRecord, fillScheduledMatch, buildRefereePatch, buildForfeitPatch,
 } = require('./match-record.js');
+const { settleMatchInTransaction } = require('./school-rating-service.js');
 const {
   checkSubmitAllowed, seasonPairCounts, crossPairList, tallyPairUsage,
   findCappedPairs, pairCapMessage, isCasualMatch,
 } = require('./rating-cap.js');
-const { findDependentMatches } = require('./format-plan.js');
 const { loadSeason } = require('./school-rank-service.js');
 const { RATED_PAIR_LIMIT } = require('../utils/constants.js');
 const { liveScoreOf } = require('./live-score.js');
 const { advanceSchoolEvent } = require('./school-event-service.js');
-// 学院赛小场生效 / 撤销后的收尾：把结果写回大场、必要时排出下一轮（M2-c2）。
-const {
-  advanceCollegeAfterLeg, collegeLegRevokeBlocker, revertCollegeAfterRevoke,
-} = require('./school-college-advance.js');
+// 学院赛小场生效后的收尾：把结果写回大场、必要时排出下一轮（M2-c2）。
+const { advanceCollegeAfterLeg } = require('./school-college-advance.js');
 
 const ok = data => ({ ok: true, data });
 const refused = (message, extra = {}) => ({ ok: false, message, ...extra });
@@ -190,39 +195,6 @@ function nameResolverOf(dir) {
   return id => byId.get(id) || id;
 }
 
-/**
- * 个人赛签表里「已经排在这场比赛之后」的场次（2026-10-16 独立验收 F5）。
- *
- * 旧协议与旧 mock 都用 `findDependentMatches` 在撤销前拦一道，S2 迁移时只保留了
- * 学院赛小场那一道，个人赛这条规则漏掉了：撤掉半决赛后，已经排出来的决赛仍带着
- * 原晋级者，等着谁随手录个比分确认掉，凭空多出一场不该有的成绩。
- * 事务内不许整表查询，所以这里在事务外先列出候选，事务内再逐个点读复查。
- */
-async function bracketDependentsFor(ctx, matchId) {
-  if (typeof matchId !== 'string' || !matchId) return [];
-  const doc = await ctx.repo.matches.getById(matchId);
-  if (!isMatchDoc(doc) || !belongsToSchoolScope(doc, ctx) || !doc.eventId) return [];
-  const matches = (await ctx.repo.forScope(ctx).matches.list())
-    .filter(row => row.eventId === doc.eventId);
-  return findDependentMatches({ match: doc, matches });
-}
-
-/** 事务内复查：候选下游里还有没作废的，就仍然挡着撤销。 */
-async function stillPendingDependents(tx, dependents) {
-  const still = [];
-  for (const row of dependents) {
-    const doc = await tx.matches.getById(row._id);
-    if (doc && doc.status !== MATCH_STATUS.REVOKED) still.push(doc || row);
-  }
-  return still;
-}
-
-/** 撤销被下游挡住时的提示：与学院赛小场 blocker 同一句话。 */
-function dependentRevokeMessage(dependent) {
-  const round = dependent && Number(dependent.round) > 0 ? `第 ${Number(dependent.round)} 轮` : '下一轮';
-  return `这场的结果已经排进了${round}，请从最后一轮往前依次撤销`;
-}
-
 /** 比赛记录 DTO：数据 + 权限旗标，展示交给页面。 */
 function matchSummary(doc, ctx, dir) {
   const options = recordOptions(ctx, dir);
@@ -275,9 +247,11 @@ function matchSummary(doc, ctx, dir) {
     confirmRelaxed: ctx.isMock === true && canConfirm(doc, self, { isMock: true, role: options.role }) &&
       !canConfirm(doc, self, { isMock: false, role: options.role }),
     canConfirm: canConfirm(doc, self, { isMock: ctx.isMock === true, role: options.role }),
-    canRevoke: canRevoke(doc, self, { role: options.role }),
+    // 撤销已随 Elo 逐场结算改造取消：比赛一经确认即为最终结算，无撤销入口
     canForfeit: canForfeit(doc, self, self, { role: options.role }),
     canAssignReferee: canManageAssociationSpace(ctx) && canAssignReferee(doc),
+    // 结算快照（已结算的计分/不计分比赛才有）：前端「已计分/不计分原因」展示用
+    settlement: doc.settlement || null,
     revision: Number(doc.revision || 1),
   };
 }
@@ -490,8 +464,11 @@ async function confirmSchoolMatch(payload = {}, ctx) {
     action: 'confirm',
     auditAction: 'confirmMatch',
     message: '你无权确认这场比赛',
-    allow: (doc, opts) => canConfirm(doc, ctx.actorId, opts),
+    // 确认资格与状态解耦（canConfirmIdentity）：待确认时正常盖章；已结算时
+    // 凭同一资格返回既有结算结果（确认响应丢失后的重试，§6 约束 6）。
+    allow: (doc, opts) => canConfirmIdentity(doc, ctx.actorId, opts),
     requireWinner: true,
+    settle: true,
     patch: () => ({ status: MATCH_STATUS.ACTIVE }),
   });
   const resolved = await advanceAfterResolved(ctx, result.data);
@@ -519,71 +496,14 @@ async function advanceCollegeAfterResolved(ctx, result) {
   return result;
 }
 
-/** 撤销学院赛小场后的收尾：把结果从大场里收回来。 */
-async function revertCollegeAfterRevoked(ctx, result) {
-  if (!result || !result.ok || !result.match) return result;
-  if (result.match.competition !== MATCH_COMPETITION.COLLEGE) return result;
-  const doc = await ctx.repo.matches.getById(result.match.matchId);
-  if (doc) await revertCollegeAfterRevoke(ctx, doc);
-  return result;
-}
-
-async function rejectSchoolMatch(payload = {}, ctx) {
-  const reason = String(payload.reason || '').trim();
-  if (!reason) return ok(refused('请填写驳回理由'));
-  return transition(payload, ctx, {
-    action: 'reject',
-    auditAction: 'rejectMatch',
-    message: '你无权驳回这场比赛',
-    allow: (doc, opts) => canConfirm(doc, ctx.actorId, opts),
-    requirePending: true,
-    patch: () => ({ status: MATCH_STATUS.REVOKED, reason }),
-  });
-}
-
-async function revokeSchoolMatch(payload = {}, ctx) {
-  const reason = String(payload.reason || '').trim();
-  if (!reason) return ok(refused('请填写撤销理由'));
-  // 学院赛小场的下游在大场那一侧（下一轮按胜者落成真实记录），matches 表里的依赖检查
-  // 够不着，先单独拦一道（与云端 revokeMatch 的 collegeLegRevokeBlocker 同源）。
-  const blocked = await collegeRevokeBlockerFor(ctx, payload.matchId);
-  if (blocked) return ok(refused(blocked));
-  // 个人赛签表反过来：下游就在 matches 里，用 findDependentMatches 拦（与旧协议同规则）
-  const dependents = await bracketDependentsFor(ctx, payload.matchId);
-  if (dependents.length > 0) return ok(refused(dependentRevokeMessage(dependents[0])));
-  const result = await transition(payload, ctx, {
-    action: 'revoke',
-    auditAction: 'revokeMatch',
-    message: '你无权撤销这场比赛',
-    allow: (doc, opts) => canRevoke(doc, ctx.actorId, opts),
-    notRevoked: true,
-    patch: () => ({ status: MATCH_STATUS.REVOKED, reason }),
-    // 读了依赖与写状态之间还有一道缝：并发确认可能刚把决赛落成生效。
-    // 事务内逐个点读复查（整表查询在事务里不允许），缝就没了。
-    precondition: async (tx) => {
-      const still = await stillPendingDependents(tx, dependents);
-      return still.length > 0 ? dependentRevokeMessage(still[0]) : '';
-    },
-  });
-  return ok(await revertCollegeAfterRevoked(ctx, result.data));
-}
-
-/** 待撤销的若是学院赛小场，先问一句「撤得动吗」；其余比赛不拦。 */
-async function collegeRevokeBlockerFor(ctx, matchId) {
-  if (typeof matchId !== 'string' || !matchId) return '';
-  const doc = await ctx.repo.matches.getById(matchId);
-  if (!doc || doc.competition !== MATCH_COMPETITION.COLLEGE) return '';
-  return collegeLegRevokeBlocker(ctx, doc);
-}
-
 /**
  * 父赛事已进终态时，比赛记录不可再改。
  *
- * 【为什么需要这道闸（2026-10-16 审计）】confirm / reject / revoke / forfeit 原先
+ * 【为什么需要这道闸（2026-10-16 审计）】confirm / reject / forfeit 原先
  * 只看比赛自身的状态，不看父赛事。于是「赛事已结束、名次已公布」之后，
  *   · 还能把 PENDING 的比赛确认生效 —— 收尾的 `advanceSchoolEvent` 会在**已结束**
  *     的赛事上再补排一轮（凭空多出一场决赛）；
- *   · 还能把 ACTIVE 的比赛作废 —— 等级分回放随之改变，而对外公布的 results 纹丝不动。
+ *   · 还能把比赛驳回 / 弃权 —— 而对外公布的 results 纹丝不动。
  * 名次是唯一对外口径，赛事结束就该只读；要更正得走赛事修订，不是偷偷改比赛。
  *
  * 日常约球没有 eventId，自然跳过（它们不受任何赛事约束）；学院赛小场的
@@ -600,8 +520,23 @@ async function finishedEventBlocker(tx, doc) {
   return '赛事已结束，比赛记录不可再改';
 }
 
+async function rejectSchoolMatch(payload = {}, ctx) {
+  const reason = String(payload.reason || '').trim();
+  if (!reason) return ok(refused('请填写驳回理由'));
+  return transition(payload, ctx, {
+    action: 'reject',
+    auditAction: 'rejectMatch',
+    message: '你无权驳回这场比赛',
+    // 与 confirm 同源的资格判断；待确认状态由 requirePending 单独闸（已结算的
+    // 比赛走到这里只会得到「只有待确认的比赛可以驳回」，而不是误导性的无权限）。
+    allow: (doc, opts) => canConfirmIdentity(doc, ctx.actorId, opts),
+    requirePending: true,
+    patch: () => ({ status: MATCH_STATUS.REVOKED, reason }),
+  });
+}
+
 /**
- * confirm / reject / revoke 共用的状态机：取记录 → 判权 → 写状态 + 审计。
+ * confirm / reject 共用的状态机：取记录 → 判权 →（结算）→ 写状态 + 审计。
  *
  * 【为什么要拿事务内的 fresh 重判身份与角色】2026-10-16 独立验收 F1：
  * 原先只判「记录归属 + 行级权限」，而行级权限用的角色取自请求进入时的上下文；
@@ -609,8 +544,15 @@ async function finishedEventBlocker(tx, doc) {
  * 比赛确认成生效。现在事务内先过「账号 / 学籍 / 学校协会有效」这道闸，
  * 再用重读到的角色重算行级权限——请求飞在路上时被停用、被撤权都不算数。
  *
- * 【spec.precondition】留给个别动作的事务内复查（目前是撤销前的下游依赖），
- * 返回非空字符串即拒绝；放在权限判定之后，先答复「你有没有资格」再谈「撤不撤得动」。
+ * 【spec.settle —— 确认即结算】
+ * 置位时在同一个事务里调 `settleMatchInTransaction`：点读全部参赛者评级与
+ * 范围序号计数，算出结算快照，随比赛文档一并落盘。赛事等级在事务内点读
+ * 赛事文档决定（match.level > event.level > 日常 K），不信任客户端 level。
+ * 比赛已带结算快照时（确认响应丢失后的重试）直接返回既有结果，不加分、
+ * 不重复结算——防重不依赖请求 ID，换一个请求 ID 也只能结算一次。
+ *
+ * 【spec.precondition】留给个别动作的事务内复查，返回非空字符串即拒绝；
+ * 放在权限判定之后，先答复「你有没有资格」再谈「做不做得动」。
  */
 async function transition(payload, ctx, spec) {
   if (!ctx.actorId) return ok(refused('请先登录'));
@@ -622,27 +564,34 @@ async function transition(payload, ctx, spec) {
     if (!canReadAssociationSpace(fresh)) return refused('账号已停用，或没有本协会的访问权限');
     const doc = await tx.matches.getById(payload.matchId);
     if (!isMatchDoc(doc) || !belongsToSchoolScope(doc, fresh)) return refused('找不到这场比赛');
-    if (spec.requirePending && doc.status !== MATCH_STATUS.PENDING) {
-      return refused('只有待确认的比赛可以驳回');
-    }
-    if (spec.notRevoked && doc.status === MATCH_STATUS.REVOKED) return refused('这场比赛已经作废了');
-    if (spec.requireWinner && !doc.winner) {
-      return refused('这场比赛还没有比分，请先录入成绩');
-    }
     // mock 放宽只影响演示：isMock 由 mock 端打在 ctx 上，这里原样带进事务
     const allowOptions = { isMock: ctx.isMock === true, ...recordOptions(fresh, dir) };
     if (!spec.allow(doc, allowOptions)) return refused(spec.message);
+    // 已有最终结算：有权限的重试返回既有结果（资格已在上一步核过），不加分
+    if (spec.settle && doc.settlement && doc.settlement.id) {
+      return { ok: true, match: matchSummary(doc, fresh, dir), message: '' };
+    }
+    if (spec.requirePending && doc.status !== MATCH_STATUS.PENDING) {
+      return refused('只有待确认的比赛可以驳回');
+    }
+    if (spec.requireWinner && !doc.winner) {
+      return refused('这场比赛还没有比分，请先录入成绩');
+    }
     // 先答复「你有没有资格」，再谈「赛事还让不让改」（与下面 precondition 同序）。
     const terminal = await finishedEventBlocker(tx, doc);
     if (terminal) return refused(terminal);
-    if (typeof spec.precondition === 'function') {
-      const blocked = await spec.precondition(tx, doc);
-      if (blocked) return refused(blocked);
-    }
 
     const nowIso = iso(ctx.now);
+    // 确认即结算：评级、序号计数与比赛状态在**同一个事务**里落盘；
+    // 任何一步失败整体回滚，不会出现「分涨了比赛没生效」或反过来。
+    let settlement = null;
+    if (spec.settle) {
+      const event = doc.eventId ? await tx.events.getById(doc.eventId) : null;
+      settlement = (await settleMatchInTransaction(tx, fresh, doc, { event })).settlement;
+    }
     const patch = { ...spec.patch(), action: spec.action, actor: ctx.actorId, actedAt: nowIso };
     const next = { ...doc, ...patch, revision: doc.revision + 1 };
+    if (settlement) next.settlement = settlement;
     await tx.matches.set(doc._id, next);
     await tx.audit.append({ _id: matchAuditKey(doc._id, spec.auditAction, next.revision),
       action: spec.auditAction, schoolId: ctx.schoolId, association: ctx.association,
@@ -678,7 +627,11 @@ async function forfeitSchoolMatch(payload = {}, ctx) {
 
     const nowIso = iso(ctx.now);
     const patch = buildForfeitPatch(doc, forfeitBy, { actorId: fresh.actorId, now: fresh.now });
-    const next = { ...doc, ...patch, actedAt: nowIso, revision: doc.revision + 1 };
+    const candidate = { ...doc, ...patch, actedAt: nowIso };
+    // 弃权是终态封口：也要落一份「不计分」结算决定（forfeit），否则 ACTIVE
+    // 记录缺结算快照，读端无法解释「这场为什么不算分」（交接文档 §6 约束 10）。
+    const { settlement } = await settleMatchInTransaction(tx, fresh, candidate, {});
+    const next = { ...candidate, settlement, revision: doc.revision + 1 };
     await tx.matches.set(doc._id, next);
     await tx.audit.append({ _id: matchAuditKey(doc._id, 'forfeitMatch', next.revision),
       action: 'forfeitMatch', schoolId: fresh.schoolId, association: fresh.association,
@@ -759,6 +712,7 @@ module.exports = {
   MATCH_LIST_LIMIT, legacyRoleOf, isMatchDoc, matchSummary,
   buildDirectory, recordOptions,
   listSchoolMatches, getSchoolMatch, getSchoolMatchEntryContext, submitSchoolMatch,
-  confirmSchoolMatch, rejectSchoolMatch, revokeSchoolMatch,
+  // 撤销（revokeSchoolMatch）已随 Elo 逐场结算改造取消：确认即最终结算
+  confirmSchoolMatch, rejectSchoolMatch,
   forfeitSchoolMatch, assignSchoolMatchReferee,
 };

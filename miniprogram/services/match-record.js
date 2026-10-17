@@ -145,6 +145,38 @@ function canRecordScore(match, actorId, options = {}) {
 }
 
 /**
+ * 确认资格（与状态无关）：这场成绩轮不轮得到「这个人」盖章。
+ *
+ * 【为什么从 canConfirm 里拆出来】
+ * 已生效的比赛不再接受再次确认，但「确认响应丢失后重试」必须能凭同一资格
+ * 取回既有结算结果（交接文档 §6 约束 6）——判断「谁有资格」与「比赛处于
+ * 什么状态」是两件事。canConfirm = 待确认状态 ∧ 本函数。
+ *
+ * @param {Object} match
+ * @param {string} userId
+ * @param {Object} [options] 同 canConfirm：isMock / role
+ * @returns {boolean}
+ */
+function canConfirmIdentity(match, userId, options = {}) {
+  const { isMock = false, role = ROLE.MEMBER } = options;
+  if (!match || !userId) return false;
+  // 指定裁判后确认口与录分口同宽：只有裁判与管理员
+  if (hasReferee(match)) {
+    return userId === match.referee || Number(role) >= ROLE.ADMIN;
+  }
+  // 管理员可确认任意一场（含不是自己打的）
+  if (role === ROLE.ADMIN) return true;
+  if (!isParticipant(match, userId)) return false;
+
+  const recorderSide = sideOf(match, match.recorder);
+  // 异常数据：录入者不在场上，无法判断谁是对手，不做额外限制
+  if (recorderSide === null) return true;
+
+  // 站在录入者的对面才有资格确认；录入方自己不行
+  return sideOf(match, userId) !== recorderSide || isMock;
+}
+
+/**
  * 能否确认这场比赛的比分。
  *
  * 生产口径是「对手确认」：录入方不能给自己盖章，否则一个人就能凭空
@@ -175,65 +207,18 @@ function canRecordScore(match, actorId, options = {}) {
  * @returns {boolean}
  */
 function canConfirm(match, userId, options = {}) {
-  const { isMock = false, role = ROLE.MEMBER } = options;
-
   if (!match || match.status !== MATCH_STATUS.PENDING) return false;
-  // 指定裁判后确认口与录分口同宽：只有裁判与管理员
-  if (hasReferee(match)) {
-    return userId === match.referee || Number(role) >= ROLE.ADMIN;
-  }
-  // 管理员可确认任意一场（含不是自己打的），但仍只限「待确认」状态：
-  // 已生效的成绩要改，得先撤销。
-  if (role === ROLE.ADMIN) return true;
-  if (!isParticipant(match, userId)) return false;
-
-  const recorderSide = sideOf(match, match.recorder);
-  // 异常数据：录入者不在场上，无法判断谁是对手，不做额外限制
-  if (recorderSide === null) return true;
-
-  // 站在录入者的对面才有资格确认；录入方自己不行
-  return sideOf(match, userId) !== recorderSide || isMock;
+  return canConfirmIdentity(match, userId, options);
 }
 
 /**
- * 能否撤销这场比赛。只有管理员能撤。
- *
- * 【撤销为什么比确认重】
- * 确认是**向前**盖一个章：把「待确认」的比分变成生效成绩。撤销是**向后**
- * 改写历史：一条已经生效、已经计入等级分与积分的记录被作废，所有人的
- * 分数要跟着回滚。它动的是账本本身，而不是账本上还没入账的一笔。
- *
- * 【为什么连录入者也不能撤】
- * 早先的口径是「管理员 + 录入者」，理由是「谁录的谁最清楚录错了」。但录入者
- * 不是一个可信的第三方：他是录分时自己选的（见 match-entry 页），比赛的一方
- * 完全可以自己录、自己撤。于是「打赢我的那场，我自己来录、回头再删掉」这条路
- * 就通了——不需要伪造比分，只要在事后把记录抹掉，等级分照样回到从前。
- * 撤销权一旦可以被当事人单方面行使，等级分的公信力就没了。
- *
- * 【驳回不受影响】
- * 发现录错了，日常走的是**驳回**（canConfirm，比分生效之前），它不涉及任何
- * 回滚，仍然由对手 / 裁判 / 管理员照常行使。撤销只留给管理员处理那种
- * 「已经生效、事后才发现问题」的场次。
- *
- * @param {Object} match
- * @param {string} userId
- * @param {Object} [options]
- * @param {number} [options.role] 角色，取值见 constants.ROLE
- * @returns {boolean}
- */
-function canRevoke(match, userId, options = {}) {
-  const { role = ROLE.MEMBER } = options;
-
-  if (!match || !userId) return false;
-  return Number(role) >= ROLE.ADMIN;
-}
-
 /**
  * 这场比赛现在还轮不轮得到指派 / 改派 / 取消裁判。
  *
- * 只在「待确认」期间可动：已生效（ACTIVE）的成绩要改先撤销，已作废
- * （REVOKED）的场次本就不该再执法。这样不会出现「改历史」——已经打完
- * 并盖章的成绩，不能事后换一个裁判来背书（§5.2 第 4 条）。
+ * 只在「待确认」期间可动：已生效（ACTIVE）的成绩一经结算即为最终结论
+ * （Elo 逐场结算改造：确认即结算、无撤销），已作废的场次本就不该再执法。
+ * 这样不会出现「改历史」——已经打完并盖章的成绩，不能事后换一个裁判来
+ * 背书（§5.2 第 4 条）。
  *
  * @param {Object} match
  * @returns {boolean}
@@ -631,7 +616,7 @@ module.exports = {
   hasReferee,
   canRecordScore,
   canConfirm,
-  canRevoke,
+  canConfirmIdentity,
   canAssignReferee,
   buildRefereePatch,
   needsScore,

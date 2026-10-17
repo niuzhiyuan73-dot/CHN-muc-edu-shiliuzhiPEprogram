@@ -783,7 +783,6 @@ async function loadCollegeMatchView(matchId, options = {}) {
     needsScore: Boolean(record.needsScore),
     canRecord: Boolean(pending && record.canRecord),
     canConfirm: Boolean(record.canConfirm),
-    canRevoke: Boolean(record.canRevoke),
     canForfeit,
     isDoubles: doubles,
     hasReferee: officiated,

@@ -403,43 +403,23 @@ test('取消赛事：主办方可取消，取消后报名 / 抽签 / 录分 / �
   assert.equal((await call(repo, 'cancelExchangeEvent', { eventId: id })).ok, true);
 });
 
-test('比分撤销：可从最后一轮往前撤，撤掉后重录会刷新下一轮对阵', async () => {
+test('比分撤销已取消：已确认的交流赛比分不可退回待确认', async () => {
+  // Elo 逐场结算改造：确认即最终结论，个人赛与交流赛同一规则。
+  // 录错的处理口径：已结束的赛事以最终名次为准；进行中的赛事无撤销入口。
   const repo = fixture();
   const id = await readyFour(repo);
   await call(repo, 'drawExchangeEvent', { eventId: id, seedValue: 9 });
-  let rows = await repo.exchangeMatches.listByEvent(id);
+  const rows = await repo.exchangeMatches.listByEvent(id);
   const semis = rows.filter(row => row.round === 1).sort((a, b) => (a._id < b._id ? -1 : 1));
   await call(repo, 'submitExchangeScore', { eventId: id, matchId: semis[0]._id, scoreA: 11, scoreB: 6 });
-  await call(repo, 'submitExchangeScore', { eventId: id, matchId: semis[1]._id, scoreA: 11, scoreB: 4 });
-  rows = await repo.exchangeMatches.listByEvent(id);
-  const final = rows.find(row => row.round === 2);
-  assert.ok(final, '两场半决赛确认后应生成决赛');
-  await call(repo, 'submitExchangeScore', { eventId: id, matchId: final._id, scoreA: 11, scoreB: 7 });
 
-  // 后面轮次已确认：必须先撤决赛
-  assert.equal((await call(repo, 'revokeExchangeScore', { eventId: id, matchId: semis[0]._id })).ok, false);
-  assert.equal((await call(repo, 'revokeExchangeScore', { eventId: id, matchId: final._id, reason: '比分记错' })).ok, true);
-  const revokedFinal = await repo.exchangeMatches.getById(final._id);
-  assert.equal(revokedFinal.status, 'pending');
-  assert.equal(revokedFinal.winner, '');
-  assert.equal(revokedFinal.scoreA, null);
-
-  // 现在可以撤半决赛；撤掉之后重录，若晋级者换人，决赛对阵跟着刷新
-  assert.equal((await call(repo, 'revokeExchangeScore', { eventId: id, matchId: semis[0]._id })).ok, true);
-  const loserOfSemi = semis[0].winner === 'A' ? semis[0].playerB : semis[0].playerA;
-  const flipped = semis[0].winner === 'A' ? { scoreA: 5, scoreB: 11 } : { scoreA: 11, scoreB: 5 };
-  await call(repo, 'submitExchangeScore', { eventId: id, matchId: semis[0]._id, ...flipped });
-  const finalAfter = await repo.exchangeMatches.getById(final._id);
-  assert.equal(finalAfter.playerA === loserOfSemi || finalAfter.playerB === loserOfSemi, true,
-    '重新录分后，决赛里的晋级者要换成新的胜者');
-  assert.equal(finalAfter.status, 'pending');
-  // 非参赛者且非管理员没有撤销权（参赛者本人可以撤销，与录分权限同一把尺子）
-  await call(repo, 'submitExchangeScore', { eventId: id, matchId: finalAfter._id, scoreA: 11, scoreB: 9 });
-  assert.equal((await call(repo, 'revokeExchangeScore', { eventId: id, matchId: finalAfter._id },
-    'demo_buaa_member_2', 'buaa')).ok, false);
-  // 参赛者本人可以撤销（该场未指定裁判时，与录分同权）
-  assert.equal((await call(repo, 'revokeExchangeScore', { eventId: id, matchId: finalAfter._id },
-    finalAfter.playerA, await schoolOf(repo, id, finalAfter.playerA))).ok, true);
+  const confirmed = await repo.exchangeMatches.getById(semis[0]._id);
+  assert.equal(confirmed.status, 'active');
+  assert.equal(typeof handlers.revokeExchangeScore, 'undefined', '撤销实现已删除');
+  const actions = require('../miniprogram/utils/school-actions.js');
+  assert.equal(actions.SCHOOL_EXCHANGE_ACTIONS.includes('revokeExchangeScore'), false,
+    '撤销动作已从协议 2 白名单移除');
+  assert.equal((await repo.exchangeMatches.getById(semis[0]._id)).scoreA, 11, '比分未被清空');
 });
 
 test('失效身份在锁定名单时被清理并释放名额，仍够两校则照常锁定', async () => {

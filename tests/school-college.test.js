@@ -1051,7 +1051,8 @@ describe('小场视图 —— 旧栈两条回归在 S2 的对应', () => {
 
       assert.equal(view.found, true, view.blockReason);
       assert.equal(typeof view.canConfirm, 'boolean');
-      assert.equal(typeof view.canRevoke, 'boolean');
+      // 撤销旗标已随逐场结算改造移除（曾经的回归点：canRevoke 必须是布尔量而非抛错）
+      assert.equal('canRevoke' in view, false, '小场视图不再提供撤销旗标');
       // 场上参与者即可确认——正是这条路以前会抛 ReferenceError
       assert.equal(view.canConfirm, true, '场上参与者应当能确认自己这一场');
     } finally {

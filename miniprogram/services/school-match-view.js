@@ -20,7 +20,7 @@ async function loadSchoolMatchView(api, tab) {
   const names = new Map(context.members.map(member => [member.userId, member.nickName || member.userId]));
   const records = result.matches.map(dto => {
     const row = buildRecordRow(recordOf(dto), { userId: viewerId, nameOf: id => names.get(id) || id, isMock: false });
-    for (const key of ['canRecord', 'canConfirm', 'canRevoke', 'canForfeit', 'canAssignReferee', 'confirmRelaxed']) row[key] = Boolean(dto[key]);
+    for (const key of ['canRecord', 'canConfirm', 'canForfeit', 'canAssignReferee', 'confirmRelaxed']) row[key] = Boolean(dto[key]);
     row.refereeNotice = dto.hasReferee && !dto.canSubmitScore && !dto.canConfirm
       ? `本场由 ${row.refereeName} 裁判执法，仅裁判与管理员可录分` : '';
     return row;

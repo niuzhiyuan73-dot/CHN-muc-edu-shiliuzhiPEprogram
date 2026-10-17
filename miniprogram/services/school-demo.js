@@ -520,7 +520,6 @@ function matchRowOf(school, entry) {
     confirmRelaxed: false,
     needsScore: false,
     canRecord: false,
-    canRevoke: false,
     canForfeit: false,
     hasReferee: false,
     referee: '',

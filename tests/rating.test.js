@@ -11,7 +11,6 @@ const {
   createEmptyRatings,
   getPoolRating,
   applyMatchResult,
-  revertMatchResult,
   hasPlayedPool,
   summarizeCareer,
 } = require('../miniprogram/utils/rating.js');
@@ -219,67 +218,8 @@ describe('applyMatchResult —— 更新分数', () => {
   });
 });
 
-describe('revertMatchResult —— 撤销比赛', () => {
-  test('撤销后分数回到比赛前的状态', () => {
-    const user = newUser();
-    const afterMatch = applyMatchResult({
-      user,
-      pool: RATING_POOL.DOUBLES,
-      delta: 18,
-      isWin: true,
-    });
-    const afterRevert = revertMatchResult({
-      user: { ...user, ratings: afterMatch },
-      pool: RATING_POOL.DOUBLES,
-      delta: 18,
-      isWin: true,
-    });
-
-    assert.equal(afterRevert[RATING_POOL.DOUBLES].elo, 1500);
-    assert.equal(afterRevert[RATING_POOL.DOUBLES].matchCount, 0);
-    assert.equal(afterRevert[RATING_POOL.DOUBLES].wins, 0);
-  });
-
-  test('撤销不会把场次减成负数（防止数据被搞坏）', () => {
-    const user = newUser();
-    const result = revertMatchResult({
-      user,
-      pool: RATING_POOL.DOUBLES,
-      delta: 18,
-      isWin: true,
-    });
-    assert.equal(result[RATING_POOL.DOUBLES].matchCount, 0);
-    assert.equal(result[RATING_POOL.DOUBLES].wins, 0);
-    assert.ok(result[RATING_POOL.DOUBLES].matchCount >= 0);
-  });
-
-  test('撤销只影响目标池', () => {
-    const user = newUser();
-    const withDoubles = applyMatchResult({
-      user,
-      pool: RATING_POOL.DOUBLES,
-      delta: 18,
-      isWin: true,
-    });
-    const withBoth = applyMatchResult({
-      user: { ...user, ratings: withDoubles },
-      pool: RATING_POOL.SINGLES,
-      delta: 12,
-      isWin: true,
-    });
-
-    const reverted = revertMatchResult({
-      user: { ...user, ratings: withBoth },
-      pool: RATING_POOL.DOUBLES,
-      delta: 18,
-      isWin: true,
-    });
-
-    // 双打回到初始，单打保持不变
-    assert.equal(reverted[RATING_POOL.DOUBLES].elo, 1500);
-    assert.equal(reverted[RATING_POOL.SINGLES].elo, 1512);
-  });
-});
+// （已删除）revertMatchResult 撤销用例：撤销能力已随 Elo 逐场结算改造取消，
+// 评级不可逆减；发现录错只能在确认前驳回。
 
 describe('hasPlayedPool —— 判断是否参赛过', () => {
   test('从未参赛返回 false', () => {

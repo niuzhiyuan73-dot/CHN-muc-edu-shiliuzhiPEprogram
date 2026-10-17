@@ -53,7 +53,7 @@ const SCHOOL_SPACE_ACTIONS = Object.freeze([
   'startSchoolEvent',             'drawSchoolEvent',              'checkInSchoolEvent',
   'finishSchoolEvent',            'listSchoolMatches',            'getSchoolMatchEntryContext',
   'getSchoolMatch',               'submitSchoolMatch',            'confirmSchoolMatch',
-  'rejectSchoolMatch',            'revokeSchoolMatch',            'forfeitSchoolMatch',
+  'rejectSchoolMatch',            'forfeitSchoolMatch',
   'assignSchoolMatchReferee',     'startSchoolLiveScore',         'recordSchoolRally',
   'undoSchoolRally',              'finishSchoolLiveScore',        'getSchoolLiveScores',
   'listCollegeEvents',            'getCollegeEvent',              'publishCollegeEvent',
@@ -71,7 +71,7 @@ const SCHOOL_SPACE_ACTIONS = Object.freeze([
 const SCHOOL_EXCHANGE_ACTIONS = Object.freeze([
   'createExchangeEvent',        'respondExchangeInvitation',  'signUpExchangeEvent',
   'cancelExchangeSignup',       'removeExchangeSignup',       'checkInExchangeSignup',
-  'withdrawExchangeInvitation', 'cancelExchangeEvent',        'revokeExchangeScore',
+  'withdrawExchangeInvitation', 'cancelExchangeEvent',
   'lockExchangeRoster',         'drawExchangeEvent',          'assignExchangeReferee',
   'submitExchangeScore',        'confirmExchangeRanking',     'getExchangeEvents',
   'getExchangeEvent',

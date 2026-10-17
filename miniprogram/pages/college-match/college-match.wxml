@@ -127,14 +127,6 @@
       >确认生效</view>
     </view>
 
-    <view wx:elif="{{view.canRevoke}}" class="submit-bar">
-      <view class="btn btn-outline submit-btn" bindtap="onBack">返回</view>
-      <view
-        class="btn btn-outline submit-btn btn-danger-text {{acting ? 'btn-disabled' : ''}}"
-        bindtap="onRevoke"
-      >撤销</view>
-    </view>
-
     <view wx:else class="submit-bar">
       <view class="btn btn-outline submit-btn" bindtap="onBack">返回</view>
     </view>

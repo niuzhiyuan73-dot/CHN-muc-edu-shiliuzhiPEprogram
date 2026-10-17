@@ -133,35 +133,6 @@ function applyMatchResult({ user, pool, delta, isWin, matchTime }) {
 }
 
 /**
- * 撤销一场比赛对分数的影响。
- *
- * 与 applyMatchResult 相反：减去变动量、回退场次与胜负记录。
- * 管理员撤销作弊或录错的成绩时使用。
- *
- * @param {Object} params
- * @param {Object} params.user 用户对象
- * @param {string} params.pool 池名
- * @param {number} params.delta 当初生效时的等级分变动量
- * @param {boolean} params.isWin 当初是否获胜
- * @returns {Object} 更新后的 ratings 对象
- */
-function revertMatchResult({ user, pool, delta, isWin }) {
-  const current = getPoolRating(user, pool);
-
-  return {
-    ...((user && user.ratings) || createEmptyRatings()),
-    [pool]: {
-      ...current,
-      elo: current.elo - delta,
-      // 场次不减到负数：撤销操作不应把计数器搞坏
-      matchCount: Math.max(0, current.matchCount - 1),
-      wins: Math.max(0, current.wins - (isWin ? 1 : 0)),
-      losses: Math.max(0, current.losses - (isWin ? 0 : 1)),
-    },
-  };
-}
-
-/**
  * 判断某位会员是否打过某个池。
  * 用于界面上决定「是否展示该池的分数」——从没打过双打的人，
  * 展示他的双打初始分没有意义，反而让人困惑。
@@ -208,7 +179,6 @@ module.exports = {
   createEmptyRatings,
   getPoolRating,
   applyMatchResult,
-  revertMatchResult,
   hasPlayedPool,
   summarizeCareer,
 };

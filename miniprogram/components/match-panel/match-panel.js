@@ -3,15 +3,15 @@
  * ============================================================
  * 原来是一个独立的 tabBar 页面。中间三个页签收进「协会工作台」之后，这一页
  * 变成一个自定义组件，由工作台按当前协会挂载。
- * 三件事：看比赛台账、确认对手录入的比分、撤销（或驳回）一场。
+ * 三件事：看比赛台账、确认对手录入的比分、驳回一场（确认后不可撤销）。
  * 取数适配在 services/school-match-view.js，权限由 S2 读端下发，面板只做渲染与交互
  * ——那一层不碰 wx API，因而权限规则能在 Node 里逐条测。
  *
  * 本人身份与行级能力来自 S2；读写和实时比分绑定同一学校 / 协会客户端。
  *
  * 【为什么不用 wx.showModal】
- * 撤销要填理由，而 showModal 的 editable 版本只能收一行文本、
- * 也没法做「不填不给提交」的校验；驳回与撤销的文案还不一样。
+ * 驳回要填理由，而 showModal 的 editable 版本只能收一行文本、
+ * 也没法做「不填不给提交」的校验。
  * 与其和模态框的脾气较劲，不如在面板内做一块面板，行为完全可控。
  *
  * 【onShow 为什么要带守卫】
@@ -36,17 +36,12 @@ const { applyLiveRows } = require('../../services/live-view.js');
 const { isMock } = require('../../services/runtime-mode.js');
 const { currentThemeClass } = require('../../services/branding.js');
 
-/** 撤销与驳回的面板文案。两者的终态相同，但要说清楚各自是干什么的 */
+/** 驳回面板文案（撤销已随 Elo 逐场结算改造取消，只剩驳回一种作废动作） */
 const ACTION_TEXT = {
   reject: {
     title: '驳回这场比分',
     hint: '驳回后这场成绩作废，不会计入等级分。请说明哪里不对。',
     placeholder: '例如：第二局比分录反了',
-  },
-  revoke: {
-    title: '撤销这场比分',
-    hint: '撤销后这场成绩作废，等级分与积分会立刻回滚。',
-    placeholder: '例如：这局其实没打完',
   },
 };
 
@@ -77,8 +72,8 @@ Component({
     demoSchool: false,
     /** 演示学校简称，供只读提示条显示 */
     demoSchoolName: '',
-    /** 撤销 / 驳回面板 */
-    action: { open: false, matchId: '', kind: 'revoke', title: '', hint: '', placeholder: '' },
+    /** 驳回面板 */
+    action: { open: false, matchId: '', kind: "reject", title: '', hint: '', placeholder: '' },
     /** 面板里填的理由 */
     reason: '',
     /** 提交中，防止连点 */
@@ -364,9 +359,9 @@ Component({
       return this.refresh();
     },
 
-    /* ---------- 撤销 / 驳回面板 ---------- */
+    /* ---------- 驳回面板 ---------- */
 
-    /** 打开面板。撤销与驳回共用一块，只是文案不同 */
+    /** 打开驳回面板 */
     onOpenAction(event) {
       const { matchId, kind } = event.currentTarget.dataset;
       const text = ACTION_TEXT[kind];
@@ -389,14 +384,15 @@ Component({
     },
 
     /**
-     * 提交撤销 / 驳回。
-     * 理由必填——没有理由的作废记录，事后谁也说不清当初为什么撤。
+     * 提交驳回。
+     * 理由必填——没有理由的驳回，事后谁也说不清当初为什么拒。
      * 校验放在这里而不是只靠后端：让用户在点下按钮的当下就看到问题。
+     * （撤销已随 Elo 逐场结算改造取消：确认即最终结算，这里只剩驳回。）
      */
     async onSubmitAction() {
       if (this.data.acting) return undefined;
 
-      const { matchId, kind } = this.data.action;
+      const { matchId } = this.data.action;
       const reason = String(this.data.reason || '').trim();
       const user = this.currentUser();
 
@@ -410,10 +406,7 @@ Component({
       }
 
       this.setData({ acting: true, actionError: '' });
-      const result =
-        kind === 'reject'
-          ? await this.write('rejectSchoolMatch', { matchId, reason })
-          : await this.write('revokeSchoolMatch', { matchId, reason });
+      const result = await this.write('rejectSchoolMatch', { matchId, reason });
       this.setData({ acting: false });
 
       if (!result.ok) {
@@ -422,7 +415,7 @@ Component({
       }
 
       this.setData({ action: { ...this.data.action, open: false }, reason: '' });
-      this.showToast(kind === 'reject' ? '已驳回' : '已撤销，分数已回滚', 'success');
+      this.showToast('已驳回', 'success');
       return this.refresh();
     },
 

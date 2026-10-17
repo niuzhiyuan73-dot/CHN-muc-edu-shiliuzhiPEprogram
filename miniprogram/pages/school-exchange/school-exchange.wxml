@@ -69,7 +69,7 @@
             <input class="field score-input" type="number" placeholder="{{item.nameB}}" value="{{scoreDraft[item._id].b}}" data-matchid="{{item._id}}" data-side="b" bindinput="onScoreInput" />
             <button size="mini" disabled="{{busy}}" data-matchid="{{item._id}}" bindtap="onSubmitScore">确认比分</button>
           </view>
-          <button wx:if="{{item.canRevoke}}" size="mini" disabled="{{busy}}" data-matchid="{{item._id}}" bindtap="onRevokeScore">撤销比分</button>
+          <!-- 撤销比分已取消：已确认的比分不可撤销，录错时与对手协商后按实际重录前的口径处理 -->
         </view>
       </block>
       <button wx:if="{{detail.canConfirmRanking}}" disabled="{{busy}}" bindtap="onConfirmRanking">确认最终名次</button>
