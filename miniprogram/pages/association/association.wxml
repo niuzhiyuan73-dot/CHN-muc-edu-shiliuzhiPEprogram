@@ -23,21 +23,22 @@
       <view class="assoc-intro-note">进入后可查看该协会的排行榜、比赛与赛事</view>
     </view>
 
-    <view class="assoc-list">
+    <!-- 图标式网格：squircle 渐变图标在上、文字提示在下（参照主流体育 App 首页宫格） -->
+    <view class="assoc-grid">
       <view
         wx:for="{{associations}}"
         wx:key="id"
-        class="assoc-btn {{item.active ? 'is-active' : ''}}"
+        class="assoc-item {{item.active ? 'is-active' : ''}}"
         data-association="{{item.id}}"
         bindtap="onChooseAssociation"
       >
-        <view class="assoc-btn-glyph">{{item.glyph}}</view>
-        <view class="assoc-btn-main">
-          <view class="assoc-btn-name">{{item.name}}</view>
-          <view class="assoc-btn-sport">{{item.sportName}}</view>
+        <view wx:if="{{item.active}}" class="assoc-item-current">当前</view>
+        <view class="assoc-item-icon">
+          <image wx:if="{{item.icon}}" class="assoc-item-icon-img" src="{{item.icon}}" mode="aspectFit" />
+          <text wx:else>{{item.glyph}}</text>
         </view>
-        <view wx:if="{{item.active}}" class="assoc-btn-current">当前</view>
-        <view class="assoc-btn-arrow">›</view>
+        <view class="assoc-item-name">{{item.name}}</view>
+        <view class="assoc-item-sport">{{item.sportName}}</view>
       </view>
     </view>
 

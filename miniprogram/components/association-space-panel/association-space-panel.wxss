@@ -6,10 +6,32 @@
  */
 @import "../../templates/rank-board.wxss";
 
-/* 训练页签的状态筛选：复用页签样式，紧贴列表上方 */
+/* 三级筛选（全部 / 可报名 / 进行中…）：浅底药丸式，弱于二级胶囊页签。
+   工作台三层页签的分级约定见 pages/association-home/association-home.wxss：
+   一级下划线、二级胶囊、三级药丸——层级感靠样式差异而非位置记忆。 */
 .space-filters {
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  border-radius: 0;
+  gap: var(--space-xs);
   margin-bottom: var(--space-md);
   flex-wrap: wrap;
+}
+
+.space-filters .pool-tab {
+  flex: none;
+  width: auto;
+  padding: 8rpx 24rpx;
+  border-radius: 999rpx;
+  background: var(--color-divider);
+  font-size: var(--font-sm);
+}
+
+.space-filters .pool-tab.is-active {
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  font-weight: 600;
 }
 
 /* 可点选的日期 / 时间选择器（picker 包一层容器给出可见样式） */

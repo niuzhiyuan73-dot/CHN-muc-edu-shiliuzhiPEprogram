@@ -6,15 +6,19 @@
 <view class="page-container {{themeClass}}">
 
   <!-- 当前协会的名头。工作台只服务一个协会，页面内不再提供切换（切换回「协会」页签） -->
+  <!-- 名头：渐变圆底 + 运动线条图标（缺省退回文字徽标） -->
   <view class="ws-head">
-    <view class="ws-head-glyph">{{associationGlyph}}</view>
+    <view class="ws-head-glyph">
+      <image wx:if="{{associationIcon}}" class="ws-head-glyph-icon" src="{{associationIcon}}" mode="aspectFit" />
+      <text wx:else>{{associationGlyph}}</text>
+    </view>
     <view class="ws-head-main">
       <view class="ws-head-name">{{associationName}}</view>
       <view class="ws-head-note">协会空间 · 排行榜 · 比赛 · 赛事</view>
     </view>
   </view>
 
-  <!-- 页签。样式沿用全局的 .pool-tabs -->
+  <!-- 一级页签：下划线式（二级胶囊、三级药丸，样式分级见 wxss 内说明） -->
   <view class="pool-tabs ws-tabs">
     <view
       wx:for="{{tabs}}"

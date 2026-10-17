@@ -36,7 +36,8 @@
   width: 120rpx;
   height: 120rpx;
   border-radius: 50%;
-  background: var(--color-primary);
+  /* 渐变底与主按钮、首页品牌区同一套语言，避免大面积实心色的呆板感 */
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
   color: #ffffff;
   font-size: var(--font-lg);
   font-weight: 600;
@@ -172,15 +173,23 @@
   text-align: center;
 }
 
+/* 统计大数字：用展示字号 + 更重字重，与下方小标签形成大小对比。
+   排名、参赛/冠军/进前三等关键数据靠这组对比成为卡片的视觉焦点。 */
 .score-cell-value {
-  font-size: var(--font-lg);
-  font-weight: 600;
+  font-size: var(--font-display);
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+/* 冠军数用荣誉金：整组统计里唯一带色的数字，荣誉一眼可辨（不随协会主题换色） */
+.score-cell-value.is-champion {
+  color: var(--color-honor);
 }
 
 .score-cell-label {
   font-size: var(--font-xs);
   color: var(--color-text-tertiary);
-  margin-top: 4rpx;
+  margin-top: 6rpx;
 }
 
 .score-foot {
@@ -331,9 +340,10 @@
   color: var(--color-text-secondary);
 }
 
+/* 前三名名次徽章：荣誉金浅底（全局荣誉变量，跨协会一致） */
 .event-place.is-top {
-  background: #fef3c7;
-  color: #b45309;
+  background: var(--color-honor-light);
+  color: var(--color-honor);
 }
 
 /* ---------- 逐场战绩 ---------- */

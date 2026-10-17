@@ -35,6 +35,11 @@ page {
   --color-silver: #a8a9ad;
   --color-bronze: #cd7f32;
 
+  /* ---------- 荣誉金（冠军数、「最好成绩」徽章等荣誉场景） ----------
+     荣誉语义跨协会一致，不随协会主题换色；比奖牌金深一档，白底可读。 */
+  --color-honor: #a97b12;
+  --color-honor-light: #f9efdb;
+
   /* ---------- 间距（以 8rpx 为基础单位，保证视觉节奏统一） ---------- */
   --space-xs: 8rpx;
   --space-sm: 16rpx;
@@ -53,6 +58,8 @@ page {
   --font-md: 30rpx;
   --font-lg: 36rpx;
   --font-xl: 44rpx;
+  /* 展示型大数字（排名、荣誉统计等）：与正文拉开明显大小对比，让数据一眼可读 */
+  --font-display: 48rpx;
 
   background-color: var(--color-bg);
   color: var(--color-text);
@@ -75,7 +82,7 @@ page {
   border-radius: var(--radius-md);
   padding: var(--space-lg);
   margin-bottom: var(--space-md);
-  box-shadow: 0 2rpx 12rpx rgba(0, 0, 0, 0.04);
+  box-shadow: 0 4rpx 16rpx rgba(31, 35, 41, 0.07);
 }
 
 .card-title {
@@ -155,8 +162,10 @@ page {
   border: none;
 }
 
+/* 主按钮用主色渐变：比实心色块多一层质感，也和顶部品牌区的渐变呼应。
+   禁用态保持实心灰——渐变会给「不可点」的元素误加视觉权重。 */
 .btn-primary {
-  background: var(--color-primary);
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
   color: #ffffff;
 }
 
@@ -198,7 +207,7 @@ page {
   border-radius: var(--radius-md);
   padding: var(--space-xs);
   margin-bottom: var(--space-md);
-  box-shadow: 0 2rpx 12rpx rgba(0, 0, 0, 0.04);
+  box-shadow: 0 4rpx 16rpx rgba(31, 35, 41, 0.07);
 }
 
 .pool-tab {
@@ -280,10 +289,18 @@ page {
   color: var(--color-text-tertiary);
 }
 
+/* 空状态图标统一底座：emoji 收进同一个浅灰圆形，全站所有空态
+   （🔒⚠️🔍📣🏸👥等约 50 处）只改这一处就获得一致观感——
+   emoji 本身各页不同没关系，底座一致就不显杂乱。 */
 .empty-state-icon {
-  font-size: 96rpx;
+  width: 112rpx;
+  height: 112rpx;
+  line-height: 112rpx;
+  text-align: center;
+  border-radius: 50%;
+  background: var(--color-divider);
+  font-size: 56rpx;
   margin-bottom: var(--space-md);
-  opacity: 0.4;
 }
 
 .empty-state-text {

@@ -205,7 +205,7 @@
           <view class="score-cell-label">参赛</view>
         </view>
         <view class="score-cell">
-          <view class="score-cell-value">{{events.summary.championCount}}</view>
+          <view class="score-cell-value is-champion">{{events.summary.championCount}}</view>
           <view class="score-cell-label">冠军</view>
         </view>
         <view class="score-cell">
@@ -247,7 +247,7 @@
           <view class="score-cell-label">参赛</view>
         </view>
         <view class="score-cell">
-          <view class="score-cell-value">{{honors.summary.championCount}}</view>
+          <view class="score-cell-value is-champion">{{honors.summary.championCount}}</view>
           <view class="score-cell-label">冠军</view>
         </view>
         <view class="score-cell">

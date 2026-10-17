@@ -1,0 +1,82 @@
+"""
+生成协会运动图标（P2 美学改造）
+============================================================
+为各协会生成白色线条运动图标 PNG，放在协会主题色的渐变圆底上使用
+（协会选择页 assoc-btn-glyph、工作台 ws-head-glyph）。
+
+产物（miniprogram/assets/assoc/）：
+  pkb.png  匹克球：拍面 + 短柄 + 球
+  tt.png   乒乓球：圆拍 + 短柄 + 球
+  bd.png   羽毛球：球拍 + 球
+
+图标一律白色（#FFFFFF）线条 + 透明底——颜色由底座（渐变）提供，
+新增协会时在 ICONS 里加一个绘制函数即可。
+"""
+
+from pathlib import Path
+
+from PIL import Image, ImageDraw
+
+OUT_DIR = Path(__file__).resolve().parents[1] / "miniprogram" / "assets" / "assoc"
+
+SIZE = 288  # 画布；显示处约 88rpx（44px），高分辨率缩小保证平滑
+WHITE = (255, 255, 255, 255)
+
+
+def render(draw_fn) -> Image.Image:
+    img = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
+    draw_fn(ImageDraw.Draw(img))
+    return img.resize((144, 144), Image.LANCZOS)
+
+
+def save(img: Image.Image, name: str) -> None:
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    img.save(OUT_DIR / name)
+    print("wrote", OUT_DIR / name)
+
+
+def draw_pkb(d) -> None:
+    """匹克球：方圆拍面 + 短柄 + 带孔的球"""
+    w = 18
+    # 拍面：近方圆形（匹克球拍比乒乓拍大且方）
+    d.rounded_rectangle([(58, 36), (198, 176)], radius=44, outline=WHITE, width=w)
+    # 柄
+    d.rounded_rectangle([(112, 170), (144, 246)], radius=10, outline=WHITE, width=w - 4)
+    # 球（右侧下方），带三个小孔
+    d.ellipse([(196, 186), (268, 258)], outline=WHITE, width=w)
+    for hx, hy in ((222, 210), (238, 226), (222, 238)):
+        d.ellipse([(hx, hy), (hx + 10, hy + 10)], fill=WHITE)
+
+
+def draw_tt(d) -> None:
+    """乒乓球：圆形拍面 + 竖直短柄 + 右上小球（横置柄会误读成放大镜）"""
+    w = 18
+    # 拍面：正圆
+    d.ellipse([(60, 36), (208, 184)], outline=WHITE, width=w)
+    # 柄：竖直向下
+    d.rounded_rectangle([(116, 178), (152, 252)], radius=10, outline=WHITE, width=w - 4)
+    # 球：右上，明显离开拍面
+    d.ellipse([(214, 60), (266, 112)], outline=WHITE, width=w)
+
+
+def draw_bd(d) -> None:
+    """羽毛球：单个羽毛球（裙边扇形 + 球头），比「拍+球」组合更易识别"""
+    w = 16
+    # 裙边：顶部圆弧 + 两侧斜线收拢到球头
+    d.arc([(92, 28), (216, 152)], start=180, end=360, fill=WHITE, width=w)
+    d.line([(96, 90), (138, 216)], fill=WHITE, width=w)
+    d.line([(212, 90), (170, 216)], fill=WHITE, width=w)
+    # 裙内两根羽毛线
+    d.line([(128, 66), (146, 200)], fill=WHITE, width=w - 6)
+    d.line([(180, 66), (162, 200)], fill=WHITE, width=w - 6)
+    # 球头：底部小圆
+    d.ellipse([(132, 208), (176, 252)], outline=WHITE, width=w)
+
+
+def main() -> None:
+    for name, draw_fn in (("pkb", draw_pkb), ("tt", draw_tt), ("bd", draw_bd)):
+        save(render(draw_fn), f"{name}.png")
+
+
+if __name__ == "__main__":
+    main()

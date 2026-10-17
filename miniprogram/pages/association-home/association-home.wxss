@@ -16,13 +16,22 @@
   flex: none;
   width: 72rpx;
   height: 72rpx;
-  line-height: 72rpx;
-  text-align: center;
-  border-radius: var(--radius-md);
-  background: var(--color-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  /* 渐变圆底与协会选择页徽标、首页品牌区同一套语言；
+     白色运动线条图标来自 tools/gen_assoc_icons.py */
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
   color: #fff;
   font-size: var(--font-md);
   font-weight: 600;
+  overflow: hidden;
+}
+
+.ws-head-glyph-icon {
+  width: 44rpx;
+  height: 44rpx;
 }
 
 .ws-head-main {
@@ -44,6 +53,44 @@
 }
 
 /* 页签紧贴名头，别再叠一层外边距 */
+
+/* ==================== 一级页签：下划线式 ==================== */
+/* 工作台里页签有三层（面板内还有二级页签与三级筛选）。若三层都是同款
+   胶囊，用户分不清自己在第几层。约定：一级用下划线式、二级用胶囊、
+   三级用浅底药丸——样式逐级减弱，层级感靠视觉差异而非位置记忆。
+   下面的规则覆盖 app.wxss 里 .pool-tabs / .pool-tab 的胶囊默认样式。 */
 .ws-tabs {
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  border-radius: 0;
   margin-bottom: var(--space-md);
+  border-bottom: 2rpx solid var(--color-border);
+}
+
+.ws-tabs .pool-tab {
+  position: relative;
+  padding: var(--space-sm) 0;
+  border-radius: 0;
+  color: var(--color-text-secondary);
+  transition: color 0.15s ease;
+}
+
+.ws-tabs .pool-tab.is-active {
+  background: transparent;
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+/* 选中态下划线：短于文字宽度，居中放置，比通栏下划线更轻 */
+.ws-tabs .pool-tab.is-active::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 48rpx;
+  height: 6rpx;
+  transform: translateX(-50%);
+  border-radius: 3rpx;
+  background: var(--color-primary);
 }

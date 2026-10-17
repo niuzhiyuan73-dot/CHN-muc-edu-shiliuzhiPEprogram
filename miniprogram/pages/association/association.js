@@ -17,7 +17,7 @@
  * ============================================================
  */
 
-const { activeAssociations } = require('../../utils/associations.js');
+const { activeAssociations, getAssociation } = require('../../utils/associations.js');
 const { resetBranding } = require('../../services/branding.js');
 const associationScope = require('../../services/association-scope.js');
 const runtime = require('../../services/runtime-mode.js');
@@ -105,12 +105,30 @@ Page({
         error: '',
         readOnlySchool: session.isReadOnly(),
         schoolName,
-        associations: base.map((assoc) => ({ ...assoc, active: assoc.id === currentId })),
+        associations: base.map((assoc) => ({
+          ...assoc,
+          icon: this.iconOf(assoc.id),
+          active: assoc.id === currentId,
+        })),
       });
     } catch (err) {
       console.error('[association] 协会清单加载失败', err);
       this.loaded = true;
       this.setData({ loading: false, error: '协会列表加载失败，请下拉重试' });
+    }
+  },
+
+  /**
+   * 协会的运动图标路径（注册表 logoIcon）。演示协会沿用注册表 id，同图标；
+   * 未知 id 回退空串——wxml 据此退回文字徽标。
+   * @param {string} id
+   * @returns {string}
+   */
+  iconOf(id) {
+    try {
+      return getAssociation(id).logoIcon || '';
+    } catch (err) {
+      return '';
     }
   },
 

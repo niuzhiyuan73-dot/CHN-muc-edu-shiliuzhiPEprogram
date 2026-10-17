@@ -49,6 +49,8 @@ Page({
     associationId: '',
     associationName: '',
     associationGlyph: '',
+    /** 协会运动图标（白色 PNG）；为空时名头退回文字徽标 */
+    associationIcon: '',
     /** 顶部页签：[{ tab, label, active }] */
     tabs: TAB_DEFS.map((def) => ({ ...def, active: def.tab === DEFAULT_TAB })),
     /** 当前页签 */
@@ -80,6 +82,7 @@ Page({
       associationId: id,
       associationName: meta.name,
       associationGlyph: meta.glyph,
+      associationIcon: meta.icon,
       themeClass: `assoc-${id}`,
       activeTab: tab,
       tabs: TAB_DEFS.map((def) => ({ ...def, active: def.tab === tab })),
@@ -94,18 +97,33 @@ Page({
 
   /**
    * 协会显示名。外校（北航）用演示名（带学校前缀），本校用注册表简称。
+   * 演示协会沿用注册表 id，图标同源；未知 id 回退空串（wxml 退回文字徽标）。
    * @param {string} id
-   * @returns {{name: string, glyph: string}}
+   * @returns {{name: string, glyph: string, icon: string}}
    */
   resolveMeta(id) {
     const session = require('../../services/school-session.js');
     const schoolId = session.getSchoolId();
     const demo = require('../../services/school-demo.js').schoolAssociations(schoolId);
     const found = demo && demo.find((item) => item.id === id);
-    if (found) return { name: found.name, glyph: found.glyph };
+    const icon = this.iconOf(id);
+    if (found) return { name: found.name, glyph: found.glyph, icon };
 
     const assoc = getAssociation(id);
-    return { name: assoc.shortName, glyph: assoc.logoGlyph };
+    return { name: assoc.shortName, glyph: assoc.logoGlyph, icon };
+  },
+
+  /**
+   * 协会的运动图标路径（注册表 logoIcon）。
+   * @param {string} id
+   * @returns {string}
+   */
+  iconOf(id) {
+    try {
+      return getAssociation(id).logoIcon || '';
+    } catch (err) {
+      return '';
+    }
   },
 
   /** 导航栏套当前协会的品牌色，标题用协会显示名 */

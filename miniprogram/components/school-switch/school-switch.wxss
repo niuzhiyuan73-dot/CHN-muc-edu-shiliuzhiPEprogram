@@ -15,6 +15,12 @@
   opacity: 0.7;
 }
 
+/* 深色品牌区（首页 Hero）上的玻璃拟态变体，与协会切换徽章同一套语言 */
+.school-switch--onbrand {
+  background: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+}
+
 .school-switch__name {
   font-weight: 600;
   white-space: nowrap;

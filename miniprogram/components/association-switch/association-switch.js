@@ -29,6 +29,11 @@ Component({
         this.refreshLabel(next);
       },
     },
+    /** 视觉变体：'onbrand' 用于深色品牌区（半透明白玻璃拟态）；缺省为浅底胶囊 */
+    variant: {
+      type: String,
+      value: '',
+    },
   },
 
   data: {

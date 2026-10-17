@@ -60,7 +60,11 @@ function baseRules() {
  *   name          全称，用于选择页与页内大标题。
  *   shortName     简称，用于导航栏标题等窄处。
  *   sportName     项目名（三字），用于协会切换徽章、公告页协会标签等极窄处。
- *   logoGlyph     文字徽标（一个汉字），当前首页只用文字徽标、不用图片资源。
+ *   logoGlyph     文字徽标（一个汉字），小面积场景（公告 chip、比分行）与图标
+ *                 缺失时的兜底。
+ *   logoIcon      运动项目线条图标（白色 PNG，透明底），铺在协会主题色的渐变
+ *                 圆底上；用于协会选择页与工作台名头等大尺寸场景。纯展示字段，
+ *                 云端校验不读它，但镜像同步要求两边一致。
  *   theme         主题色，配合 app.wxss 的 .assoc-<id> 覆盖 CSS 变量。
  *   format/elo/…  规则默认值，见 baseRules()。
  *   status        启用/停用；停用保留历史数据，见 ASSOCIATION_STATUS。
@@ -74,6 +78,7 @@ const ASSOCIATIONS = [
     shortName: '民大匹克球',
     sportName: '匹克球',
     logoGlyph: '匹',
+    logoIcon: '/assets/assoc/pkb.png',
     theme: {
       // 匹克球 → 蓝
       primary: '#1565C0',
@@ -90,6 +95,7 @@ const ASSOCIATIONS = [
     shortName: '民大乒乓',
     sportName: '乒乓球',
     logoGlyph: '乒',
+    logoIcon: '/assets/assoc/tt.png',
     theme: {
       // 乒乓球 → 深绿（RGB 0,77,64）
       primary: '#004D40',
@@ -106,6 +112,7 @@ const ASSOCIATIONS = [
     shortName: '民大羽球',
     sportName: '羽毛球',
     logoGlyph: '羽',
+    logoIcon: '/assets/assoc/bd.png',
     theme: {
       // 羽毛球 → 紫
       primary: '#6A1B9A',

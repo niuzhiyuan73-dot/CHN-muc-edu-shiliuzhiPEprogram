@@ -9,12 +9,14 @@
         <association-switch
           wx:if="{{auth.loggedIn}}"
           value="{{associationId}}"
+          variant="onbrand"
           bind:change="onAssociationChange"
         />
         <school-switch
           wx:if="{{schoolList.length > 1}}"
           value="{{schoolId}}"
           list="{{schoolList}}"
+          variant="onbrand"
           bind:change="onSchoolChange"
         />
       </view>

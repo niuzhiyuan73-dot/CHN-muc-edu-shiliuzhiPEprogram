@@ -16,6 +16,14 @@
   opacity: 0.7;
 }
 
+/* 深色品牌区（首页 Hero）上的玻璃拟态变体：半透明白底 + 白字，
+   比浅底红字的「贴纸感」更融入品牌区。默认浅底样式保持不变——
+   「我的」页头卡上同样在用这个组件，那里是白底卡片。 */
+.assoc-switch--onbrand {
+  background: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+}
+
 .assoc-switch__name {
   font-weight: 600;
   white-space: nowrap;

@@ -32,74 +32,85 @@
   color: var(--color-text-secondary);
 }
 
-/* ==================== 协会按钮 ==================== */
+/* ==================== 协会宫格（图标式） ==================== */
 
-.assoc-list {
+/* 横向网格，一行三个（三个协会正好一行；将来加协会自动换行）。
+   图标在上、文字提示在下，参照主流体育 App 的首页宫格布局。 */
+.assoc-grid {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
   gap: var(--space-md);
 }
 
-.assoc-btn {
+.assoc-item {
+  position: relative;
+  box-sizing: border-box;
+  width: calc((100% - 2 * var(--space-md)) / 3);
+  padding: var(--space-lg) var(--space-xs) var(--space-md);
   display: flex;
+  flex-direction: column;
   align-items: center;
-  padding: var(--space-lg);
+  text-align: center;
   background: var(--color-card);
-  border-radius: var(--radius-md);
   border: 2rpx solid transparent;
-  box-shadow: 0 2rpx 12rpx rgba(0, 0, 0, 0.04);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 4rpx 16rpx rgba(31, 35, 41, 0.07);
 }
 
-/* 当前全局协会：左边一条主色描边，扫一眼就知道「我现在在哪个协会」 */
-.assoc-btn.is-active {
+/* 当前全局协会：主色描边 + 浅色底，扫一眼就知道「我现在在哪个协会」 */
+.assoc-item.is-active {
   border-color: var(--color-primary);
   background: var(--color-primary-light);
 }
 
-.assoc-btn-glyph {
-  flex: none;
-  width: 88rpx;
-  height: 88rpx;
-  line-height: 88rpx;
-  text-align: center;
-  border-radius: var(--radius-md);
-  background: var(--color-primary);
-  color: #fff;
-  font-size: var(--font-lg);
-  font-weight: 600;
-}
-
-.assoc-btn-main {
-  flex: 1;
-  min-width: 0;
-  margin-left: var(--space-md);
-}
-
-.assoc-btn-name {
-  font-size: var(--font-md);
-  font-weight: 600;
-  color: var(--color-text);
-}
-
-.assoc-btn-sport {
-  margin-top: 4rpx;
-  font-size: var(--font-sm);
-  color: var(--color-text-secondary);
-}
-
-.assoc-btn-current {
-  flex: none;
-  margin-right: var(--space-sm);
+/* 「当前」小角标：挂在卡片右上角，不占文字行的位置 */
+.assoc-item-current {
+  position: absolute;
+  top: var(--space-sm);
+  right: var(--space-sm);
   padding: 2rpx 12rpx;
   border-radius: 999rpx;
   background: var(--color-primary);
   color: #fff;
   font-size: var(--font-xs);
+  line-height: 1.5;
 }
 
-.assoc-btn-arrow {
-  flex: none;
-  color: var(--color-text-tertiary);
+/* 图标：主题色渐变 squircle（App 图标式的圆角方），白色运动线条图标居中。
+   图标来自 tools/gen_assoc_icons.py；缺省退回文字徽标。 */
+.assoc-item-icon {
+  width: 112rpx;
+  height: 112rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 28rpx;
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
+  color: #fff;
   font-size: var(--font-xl);
-  line-height: 1;
+  font-weight: 600;
+  overflow: hidden;
+}
+
+.assoc-item-icon-img {
+  width: 64rpx;
+  height: 64rpx;
+}
+
+/* 文字提示：协会名一行 + 项目名一行弱化显示 */
+.assoc-item-name {
+  margin-top: var(--space-sm);
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: var(--color-text);
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.assoc-item-sport {
+  margin-top: 2rpx;
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
 }
