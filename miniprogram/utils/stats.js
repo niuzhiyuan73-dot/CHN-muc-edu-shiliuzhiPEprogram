@@ -65,6 +65,9 @@ function viewMatch(match, userId) {
     eloAfter: detail ? detail.eloAfter : null,
     eloDelta: detail ? detail.eloDelta : null,
     pointDelta: detail ? detail.pointDelta : null,
+    // 结算快照原样带出（若有）：走势按结算序号连链、页面解释「这场为什
+    // 么算 / 不算分」都要用它（Elo 逐场结算改造）
+    settlement: match.settlement || null,
     partnerIds: myTeam.filter((id) => id !== userId),
     opponentIds: [...otherTeam],
     // 统一成「我方 : 对方」的顺序，页面直接渲染即可，不必再关心 A/B
@@ -280,33 +283,45 @@ function buildMatchHistory(matches, userId, options = {}) {
 /**
  * 生成某个池的等级分变化曲线。
  *
- * 按时间升序返回，每个点带着赛前分、赛后分和本场变动量，
- * 前端可以直接画折线图，也可以在点上标出「+16」「-12」。
- *
  * 没有分数明细的比赛（老数据）会被跳过，因为它们无法在曲线上落点。
  *
- * @param {Array<Object>} matches 回放后的比赛流水
- * @param {string} userId
+ * 【排序口径】
+ *   'time'       —— 按比赛发生时间升序（旧行为，测试与旧调用方默认）；
+ *   'settlement' —— 按「结算序号」升序（Elo 逐场结算改造后的正确链序）。
+ * 两条时间轴不能混为一谈：补录的旧比赛 matchTime 早，但它的分差落在
+ * 结算链的当前位置——画等级分走势必须沿结算链连点，曲线才是真实路径
+ * （交接文档 §4.2）。
+ *
+ * @param {Array<Object>} matches 回放后的比赛流水（或带结算快照的比赛）
+ * @param {string} userId 会员编号
  * @param {string} pool 等级分池
- * @returns {Array<Object>} 按时间升序
+ * @param {Object} [options]
+ * @param {'time'|'settlement'} [options.order='time'] 排序口径
+ * @returns {Array<Object>} 按所选顺序排列
  */
-function buildRatingHistory(matches, userId, pool) {
+function buildRatingHistory(matches, userId, pool, options = {}) {
+  const { order = 'time' } = options;
   if (!ALL_RATING_POOLS.includes(pool)) {
     throw new Error(`未知的等级分池：${pool}`);
   }
 
-  return findPlayerMatches(matches, userId)
+  const points = findPlayerMatches(matches, userId)
     .filter((view) => view.pool === pool && typeof view.eloAfter === 'number')
-    .sort((a, b) => new Date(a.matchTime) - new Date(b.matchTime))
-    .map((view) => ({
-      matchId: view.matchId,
-      matchTime: view.matchTime,
-      eloBefore: view.eloBefore,
-      eloAfter: view.eloAfter,
-      eloDelta: view.eloDelta,
-      isWin: view.isWin,
-      opponentIds: view.opponentIds,
-    }));
+    .map((view) => ({ ...view, settlementSeq: (view.settlement && view.settlement.settlementSeq) || null }));
+  if (order === 'settlement') {
+    points.sort((a, b) => (a.settlementSeq || 0) - (b.settlementSeq || 0));
+  } else {
+    points.sort((a, b) => new Date(a.matchTime) - new Date(b.matchTime));
+  }
+  return points.map((view) => ({
+    matchId: view.matchId,
+    matchTime: view.matchTime,
+    eloBefore: view.eloBefore,
+    eloAfter: view.eloAfter,
+    eloDelta: view.eloDelta,
+    isWin: view.isWin,
+    opponentIds: view.opponentIds,
+  }));
 }
 
 /**

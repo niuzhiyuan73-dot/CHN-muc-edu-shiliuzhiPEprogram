@@ -64,16 +64,33 @@ async function call(repo, action, payload = {}, opts = {}) {
   return (await handlers[action](payload, ctx)).data;
 }
 
-/** 直接种一场已生效的比赛（不进状态机，只喂回放）。 */
+/** 直接种一场已生效的比赛，并经**真实结算内核**落评级与结算快照（阶段D口径）。 */
 async function seedMatch(repo, id, {
   a, b, winner, matchType = MATCH_TYPE.SINGLES, time = at(-HOUR),
   schoolId = 'muc', association = 'pkb', ...extra
 }) {
-  await repo.matches.set(id, {
-    _id: id, schoolId, association, matchType, pool: 1,
+  const { buildSchoolContext } = require('../miniprogram/services/school-context');
+  const { settleMatchInTransaction } = require('../miniprogram/services/school-rating-service');
+  const { MATCH_TYPE_TO_POOL } = require('../miniprogram/utils/constants');
+  const doc = {
+    _id: id, schoolId, association, matchType,
+    pool: MATCH_TYPE_TO_POOL[matchType] || 'singles',
     teamA: a, teamB: b, scoreA: [11], scoreB: [winner === 'A' ? 5 : 11],
     winner, gamePoints: 11, bestOf: 1, location: '', matchTime: time,
     recorder: a[0], status: MATCH_STATUS.ACTIVE, revision: 1, ...extra,
+  };
+  const ctx = await buildSchoolContext({
+    repo, actorId: null, scope: { schoolId, association }, now: NOW,
+  });
+  const { status = MATCH_STATUS.ACTIVE, ...rest } = doc;
+  if (status !== MATCH_STATUS.ACTIVE) {
+    // 待确认等非终态：只种比赛本身，不走结算（与确认前状态一致）
+    await repo.matches.set(id, { ...rest, status });
+    return;
+  }
+  await repo.transaction(async (tx) => {
+    const { settlement } = await settleMatchInTransaction(tx, { ...ctx, now: NOW }, { ...rest, status }, {});
+    await tx.matches.set(id, { ...rest, status, settlement });
   });
 }
 

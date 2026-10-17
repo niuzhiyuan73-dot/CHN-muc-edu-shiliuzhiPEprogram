@@ -8,8 +8,11 @@ const { allAssociations } = require('../utils/associations.js');
 const {
   schoolAssociationKey, collegeKey, schoolMemberKey, schoolRoleKey,
   schoolMembershipKey, schoolEventKey, schoolEventSignupKey, schoolMatchKey,
-  schoolAnnouncementKey, schoolKey,
+  schoolAnnouncementKey, schoolKey, memberRatingKey,
 } = require('../utils/school.js');
+// 演示比赛的评级与结算快照由**同一个纯结算内核**产出（Elo 逐场结算改造）：
+// 与线上确认路径同一份纯函数，演示数据与真实数据从此不可能分叉。
+const { materializeRatings, computeSettlement } = require('./school-rating-service.js');
 // 记录组装复用旧栈纯规则模块（同一把尺子）——演示内容里的事件 / 比赛 / 公告
 // 因此与页面点出来的形状一字不差，不会各写一份、慢慢分叉。
 const { buildAnnouncementRecord } = require('./announcement.js');
@@ -396,11 +399,65 @@ function demoSignupDocs(spec, now) {
 /**
  * 某范围的比赛流水：单打 / 双打混排，分给不同演示账号。
  * 谁的战绩厚、等级分高，切演示身份进个人页与榜单就看得出。
+ *
+ * 【Elo 逐场结算改造后：种子比赛经**同一个纯结算内核**逐场结算】
+ * 读取端不再回放流水，演示种子里的已生效比赛必须自带评级与结算快照——
+ * 否则榜单 / 个人页全是空态。这里按比赛发生时间升序（即演示里的「确认顺序」）
+ * 逐场调用 materializeRatings + computeSettlement（与线上确认路径同一份纯函数），
+ * 评级文档随种子一并产出（content.memberRatings），结算快照直接附在比赛上。
+ * 起评分按性别取（男 1450 / 女 1300），与管理预设 initialElo 无关——演示账号
+ * 不走审核入口。
  */
-function demoMatchDocs(spec, now) {
+function demoGenderOf(userId) {
+  const account = DEMO_ACCOUNT_BY_ID.get(userId);
+  return account ? account.gender : undefined;
+}
+
+/**
+ * 结算一批演示比赛（同一范围）。
+ * @param {Array<Object>} docs 已组装的比赛文档（原地附 settlement）
+ * @param {Object} scope { schoolId, association }
+ * @param {Map} settleState 范围级结算状态：scopeKey -> { seq, ratings: Map }
+ * @param {Map} ratingAccumulator 全部演示范围的评级文档汇总（键 = ratingKey）
+ */
+function settleDemoMatchDocs(docs, scope, settleState, ratingAccumulator) {
+  const stateKey = `${scope.schoolId}|${scope.association}`;
+  const state = settleState.get(stateKey) || { seq: 0, ratings: new Map() };
+  settleState.set(stateKey, state);
+  const chronological = [...docs]
+    .sort((a, b) => new Date(a.matchTime) - new Date(b.matchTime)
+      || (String(a._id) < String(b._id) ? -1 : 1));
+  for (const doc of chronological) {
+    if (doc.status !== MATCH_STATUS.ACTIVE || doc.outcome !== MATCH_OUTCOME.NORMAL) continue;
+    state.seq += 1;
+    const userIds = [...new Set([...doc.teamA, ...doc.teamB])];
+    const existingByUser = new Map();
+    const startEloByUser = new Map();
+    for (const userId of userIds) {
+      const key = memberRatingKey(userId, doc.pool, scope);
+      const current = state.ratings.get(key) || ratingAccumulator.get(key) || null;
+      if (current) existingByUser.set(userId, current);
+      else startEloByUser.set(userId, { gender: demoGenderOf(userId) });
+    }
+    const view = materializeRatings({
+      userIds, pool: doc.pool, scope, existingByUser, startEloByUser, now: doc.matchTime,
+    });
+    const { settlement, ratingDocs } = computeSettlement({
+      match: doc, eventLevel: undefined, ratingsByUser: view, seq: state.seq,
+      settledAt: doc.matchTime,
+    });
+    doc.settlement = settlement;
+    for (const { doc: ratingDoc } of ratingDocs) {
+      state.ratings.set(ratingDoc._id, ratingDoc);
+      ratingAccumulator.set(ratingDoc._id, ratingDoc);
+    }
+  }
+}
+
+function demoMatchDocs(spec, now, settleState, ratingAccumulator) {
   const scope = { schoolId: spec.schoolId, association: spec.association };
   const at = iso(now);
-  return spec.matches.map((item) => {
+  const docs = spec.matches.map((item) => {
     const matchTime = new Date(now.getTime() - item.ago * DAY_MS);
     const record = builtRecordOf(buildMatchRecord({
       matchType: item.teamA.length === 2 ? MATCH_TYPE.DOUBLES : MATCH_TYPE.SINGLES,
@@ -416,6 +473,8 @@ function demoMatchDocs(spec, now) {
       action: 'seed', actor: 'demo-seed', actedAt: at, revision: 1,
     };
   });
+  settleDemoMatchDocs(docs, scope, settleState, ratingAccumulator);
+  return docs;
 }
 
 /* ============================================================
@@ -577,12 +636,18 @@ function demoTransferApplication(now) {
 function createSchoolDemoContent() {
   const now = DEMO_CONTENT_NOW;
   const content = { announcements: [], events: [], matches: [], eventSignups: [] };
+  // 结算状态与评级文档在一次内容构建内累积：同范围的比赛共享一条结算链
+  // （settlementSeq 连续），跨范围各持一份；评级文档随 content.memberRatings
+  // 一起落种子，读取端「评级落库」因此对演示数据同样成立。
+  const settleState = new Map();
+  const ratingAccumulator = new Map();
   for (const spec of DEMO_CONTENT_SPECS) {
     content.announcements.push(...demoAnnouncementDocs(spec, now));
     content.events.push(...demoEventDocs(spec, now));
-    content.matches.push(...demoMatchDocs(spec, now));
+    content.matches.push(...demoMatchDocs(spec, now, settleState, ratingAccumulator));
     content.eventSignups.push(...demoSignupDocs(spec, now));
   }
+  content.memberRatings = [...ratingAccumulator.values()];
   const schoolNames = Object.fromEntries(createSchoolSeed().schools.map(row => [row._id, row.name]));
   const exchange = demoExchangeDocs(now, schoolNames);
   content.exchangeEvents = exchange.events;

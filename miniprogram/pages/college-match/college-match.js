@@ -177,6 +177,18 @@ Page({
   async onConfirm() {
     if (this.data.acting || !this.data.view.canConfirm) return undefined;
 
+    // 确认即最终结算：核对 + 不可撤销提示（交接文档 §4.3）
+    if (typeof wx === 'undefined' || typeof wx.showModal !== 'function') return undefined;
+    const confirmed = await new Promise((resolve) => {
+      wx.showModal({
+        title: '确认生效',
+        content: '确认后成绩立即生效并计入等级分，之后不可撤销、不可修改。确定确认吗？',
+        success: (res) => resolve(Boolean(res && res.confirm)),
+        fail: () => resolve(false),
+      });
+    });
+    if (!confirmed) return undefined;
+
     this.setData({ acting: 'confirm' });
     const result = await space.forScope(this.scope || this.currentScope())
       .confirmSchoolMatch({ matchId: this.matchId });

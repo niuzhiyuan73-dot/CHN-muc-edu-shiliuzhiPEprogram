@@ -1,25 +1,22 @@
 /**
  * 学校维度：计分 / 赛季 / 排行榜（协议 2，M4）
  * ============================================================
- * 旧栈的等级分从比赛流水重放而来（见 mock.buildCache / 云端 derive.js），
- * 本模块是这套管线在**学校维度**下的对应物：读的是本范围（`schoolId +
- * association`）的流水与会员，算出的分数按学校 / 协会天然分开——同一名
- * 会员在两所学校各持一份等级分，互不相干。
+ * 【Elo 逐场结算改造后的读取口径】
+ * 等级分不再由比赛流水重放：当前评级落库在 member_ratings（确认比赛时
+ * 逐场结算，见 school-rating-service），读取端直接**点读评级表**；个人
+ * 历史与走势读比赛上的**结算快照**（settlement），绝不由当前评级反推。
+ * 本模块只做「取数 + 组形状 + 判权」，一行计分逻辑都不重写。
  *
- * 【复用同一把尺子，只换数据边界】
- *   流水筛选  → isEloEligibleMatch + findCappedMatchIds（与 mock / derive 一致）
- *   计分回放  → replaySeason（纯模块，逐字节镜像上云）
+ *   评级      → member_ratings（缺档按性别展示值兜底，读请求不写库）
+ *   积分      → school-points-service（赛事名次分 + 训练签到分，独立聚合）
+ *   个人历史  → settlement.players（只取计分场；走势按结算序号连链）
  *   榜单排序  → buildProjectLeaderboard（纯模块）
  *   赛季权限  → canResetSeason（纯模块，与旧栈同一门槛）
- * 这里只做「取数 + 组形状 + 判权」，一行计分逻辑都不重写。学校维度止步于
- * `ctx.repo.forScope(ctx)` 与按范围派生的赛季键。
  *
  * 【为什么不落排行榜快照】
- * 旧栈云端为了省掉冷启动时的全表读 + 两遍回放，把结果另存一份 rankings
- * 快照。本模块当前每次都现算：mock 与测试的数据量下这最快也最不会出错，
- * 而「分数以流水为唯一事实来源」这条纪律因此少一个可能不一致的副本。
- * 云端真要上量时，再按 derive.js 的办法加一层按范围的快照即可——那是
- * 性能优化，不影响这里的接口形状。
+ * 每次读 = 一次范围评级列表 + 一次范围比赛列表（只挑带快照的），数据量
+ * 下这最快也最不会出错；云端真要上量时再加按范围的快照——那是性能优化，
+ * 不影响这里的接口形状。
  *
  * 【赛季键为什么带学校与协会】
  * 赛季锚点 / 分界点 / 编号都是「每校每协会各一份」。若共用一个键，一个
@@ -30,12 +27,11 @@
 const { canReadAssociationSpace } = require('./association-space-permission.js');
 const { legacyActorOf, legacyRoleOf, buildDirectory } = require('./school-actor.js');
 const { permissionOf, permissionLabelOf } = require('./school-permission.js');
-const { replaySeason } = require('./replay.js');
-const { isEloEligibleMatch } = require('./college-tie.js');
-const { findCappedMatchIds } = require('./rating-cap.js');
+const { displayRating } = require('./school-rating-service.js');
+const { aggregatePoints, collectEventPointFacts, mountEventPointDeltas } = require('./school-points-service.js');
+const { buildTrainingPointFacts } = require('./training-points.js');
 const { buildProjectLeaderboard, percentileFromBoard } = require('../utils/leaderboard.js');
 const { getPoolRating } = require('../utils/rating.js');
-const { buildTrainingPointFacts } = require('./training-points.js');
 const {
   buildEventRecord, summarizeEvents, buildRatingHistory, buildHeadToHead,
   buildPartnerRecord, buildMatchHistory, summarizeForm,
@@ -44,7 +40,8 @@ const { isEventDoc } = require('./school-event-service.js');
 const { canResetSeason } = require('./season.js');
 const { formatElo, formatPercent } = require('../utils/format.js');
 const {
-  ALL_RATING_POOLS, ALL_RANK_PROJECTS, RANK_PROJECT_LABEL, RANK_PROJECT_CONFIG, USER_STATUS,
+  ALL_RATING_POOLS, ALL_RANK_PROJECTS, RANK_PROJECT_LABEL, RANK_PROJECT_CONFIG,
+  USER_STATUS, SETTLEMENT_STATUS,
 } = require('../utils/constants.js');
 const {
   scopeKey, belongsToSchoolScope, SCHOOL_MEMBER_STATUS, PLATFORM_STATUS,
@@ -149,22 +146,9 @@ async function replayMembersOf(ctx) {
 }
 
 /**
- * 本范围的比赛流水：先筛「计个人等级分」的（已生效 / 非弃权 / 学院赛仅单打），
- * 再排除防刷分超限的场次（与 mock.buildCache / derive.buildDataset 同一路数）。
- *
- * @param {Object} ctx
- * @param {Object} season
- * @returns {Promise<Array<Object>>}
- */
-async function replayMatchesOf(ctx, season) {
-  const all = (await ctx.repo.forScope(ctx).matches.list())
-    .map(match => ({ ...match }));
-  const cappedIds = findCappedMatchIds(all, { seasonStart: season.resetTime });
-  return all.filter(match => isEloEligibleMatch(match) && !cappedIds.has(String(match._id)));
-}
-
-/**
- * 本范围的训练积分事实（P5 接入）：已确认的签到归一成事实，交回放统一叠加。
+ * 本范围的训练积分事实（P5 接入）：已确认的签到归一成事实。
+ * 【Elo 逐场结算改造后】训练事实交给 school-points-service 统一聚合，
+ * 这里保留导出供需要事实明细的调用方（测试）使用。
  *
  * @param {Object} ctx
  * @returns {Promise<Array<Object>>}
@@ -178,36 +162,69 @@ async function trainingFactsOf(ctx) {
 }
 
 /**
- * 重放本范围的赛季，产出「回放后的会员」（含 ratings / points）与
- * 回放后的比赛流水（每场带 players 的赛前 / 赛后分数，供个人战绩构建器用）。
- *
- * 与旧栈一致：等级分不落库，每次由流水重放得出。返回的 members 已按
- * 本范围初始分与改分时间线重放——初始分 / 改分这些按范围存的字段，
- * 旧栈由 derive.withScopedInitialElo 摊平，S2 里本就按范围分桶，直接透传。
+ * 装载本范围的读取视图：在册会员 + 落库评级 + 计分比赛 + 赛季积分。
+ * ============================================================
+ * 这是三个读接口（榜单 / 会员成绩 / 个人主页）共用的取数层，取代旧的
+ * 旧的 replayScope——**不再有全量回放**：
+ *   · 评级来自 member_ratings 列表（按 scope 查询一次），缺档的会员用
+ *     displayRating 兜底（按性别的起点展示值，不写库）；
+ *   · 计分比赛取带「计分结算快照」的已生效比赛，players 取自快照
+ *     （赛前/赛后分是结算那一刻的事实），并按 settlementSeq 升序排列
+ *     ——这正是 Elo 变化链的顺序；
+ *   · 积分由 school-points-service 从赛事结果与训练事实独立聚合，
+ *     赛事分按「结算序号最大的那场」挂载 pointDelta。
  *
  * @param {Object} ctx
- * @returns {Promise<{season:Object, members:Array<Object>, matches:Array<Object>}>}
+ * @returns {Promise<{season:Object, members:Array<Object>, matches:Array<Object>, pointFacts:Array<Object>}>}
  */
-async function replayScope(ctx) {
+async function loadScopeView(ctx) {
   const season = await loadSeason(ctx);
-  const [members, matches, trainingPointFacts, events] = await Promise.all([
+  const [members, matches, ratingDocs, events, trainings, trainingRegistrations] = await Promise.all([
     replayMembersOf(ctx),
-    replayMatchesOf(ctx, season),
-    trainingFactsOf(ctx),
+    ctx.repo.forScope(ctx).matches.list(),
+    ctx.repo.forScope(ctx).memberRatings.list(),
     ctx.repo.forScope(ctx).events.list(),
+    ctx.repo.forScope(ctx).associationTrainings.list(),
+    ctx.repo.forScope(ctx).trainingRegistrations.list(),
   ]);
-  const replayed = replaySeason({
-    members,
-    matches,
+
+  // ── 评级：按「userId|pool」建索引；缺档按性别兜底，读请求不写库 ──
+  const ratingByKey = new Map(ratingDocs.map(doc => [`${doc.userId}|${doc.pool}`, doc]));
+  const viewMembers = members.map((user) => ({
+    ...user,
+    ratings: ALL_RATING_POOLS.reduce((acc, pool) => {
+      const doc = ratingByKey.get(`${user._id}|${pool}`);
+      acc[pool] = doc || displayRating(user, pool);
+      return acc;
+    }, {}),
+  }));
+
+  // ── 计分比赛：带「计分」结算快照的已生效比赛，按结算序号连成 Elo 链 ──
+  const pointFacts = collectEventPointFacts({ events, resetTime: season.resetTime });
+  const ratedMatches = matches
+    .filter(match => match.status === 1 && match.settlement
+      && match.settlement.status === SETTLEMENT_STATUS.RATED)
+    .map(match => ({
+      ...match,
+      // players 取自快照并补 pointDelta 槽位：赛事分挂载由下面完成
+      players: (match.settlement.players || []).map(player => ({ ...player, pointDelta: 0 })),
+    }))
+    .sort((a, b) => Number(a.settlement.settlementSeq || 0) - Number(b.settlement.settlementSeq || 0));
+
+  // ── 积分：独立聚合（赛事 + 训练），赛事分挂到各人最后一场 ──
+  const pointsByUser = aggregatePoints({
     events,
-    options: {
-      // 锚点由赛季文档钉死；尚未定下时传 null，回放退回「流水里最早一场」。
-      seasonStart: season.anchorTime,
-      resetTime: season.resetTime || null,
-      trainingPointFacts,
-    },
+    trainings,
+    trainingRegistrations,
+    resetTime: season.resetTime,
+    members: viewMembers.map(m => ({ userId: m._id })),
   });
-  return { season, members: replayed.users, matches: replayed.matches };
+  mountEventPointDeltas(ratedMatches, pointFacts);
+  for (const member of viewMembers) {
+    member.points = pointsByUser.get(member._id) || 0;
+  }
+
+  return { season, members: viewMembers, matches: ratedMatches, pointFacts };
 }
 
 /* ------------------------------------------------------------------ 排行榜 */
@@ -298,7 +315,7 @@ async function getSchoolRanking(payload = {}, ctx) {
       ...emptyRanking(activeProject, activeProjectLabel) });
   }
 
-  const { members } = await replayScope(ctx);
+  const { members } = await loadScopeView(ctx);
   const myId = ctx.actorId || '';
   const allRows = buildRows(members, activeProject, myId);
   const rows = allRows.slice(0, TOP_LIMIT);
@@ -342,11 +359,11 @@ async function getSchoolRanking(payload = {}, ctx) {
  * 按编号取人——榜内榜外一个口径。
  *
  * 【与榜单同源】
- * 回放走 replayScope（同一把尺子），因此这里给出的等级分与积分必然与榜单
- * 一致；等级分不落库、每次重放这条纪律也照旧。
+ * 取数走 loadScopeView（与榜单同一份视图），因此这里给出的等级分与积分必然
+ * 与榜单一致；评级已落库、读请求不写库。
  *
  * 【跨范围只读得到本范围的人】
- * replayScope 只回放 primarySchoolId 匹配本范围、且正常在册的会员，请求里
+ * loadScopeView 只装载 primarySchoolId 匹配本范围、且正常在册的会员，请求里
  * 夹带外校编号也取不到——隔离在取数层完成，不靠调用方自觉。
  *
  * @param {Object} [payload] { userIds?: string[] } 省略则返回本范围全部在册会员
@@ -357,7 +374,7 @@ async function getSchoolMemberStats(payload = {}, ctx) {
   const wanted = new Set((Array.isArray(payload.userIds) ? payload.userIds : [])
     .filter(id => typeof id === 'string' && id));
 
-  const { members } = await replayScope(ctx);
+  const { members } = await loadScopeView(ctx);
   const rows = members
     .filter(member => wanted.size === 0 || wanted.has(member._id))
     .map(member => ({
@@ -432,7 +449,7 @@ async function getSchoolMemberProfile(payload = {}, ctx) {
   const historyLimit = Number.isInteger(payload.historyLimit) && payload.historyLimit > 0
     ? Math.min(payload.historyLimit, 200) : 20;
 
-  const { members, matches } = await replayScope(ctx);
+  const { members, matches } = await loadScopeView(ctx);
   const member = members.find(row => row._id === userId);
   if (!member) return ok({ ok: false, found: false, message: '没有找到这位会员' });
 
@@ -467,7 +484,7 @@ async function getSchoolMemberProfile(payload = {}, ctx) {
   const active = projects[0] || null;
   const poolFilter = active ? active.pool : null;
 
-  const ratingHistory = active ? buildRatingHistory(matches, userId, active.pool) : [];
+  const ratingHistory = active ? buildRatingHistory(matches, userId, active.pool, { order: "settlement" }) : [];
   const headToHead = buildHeadToHead(matches, userId, { nameOf, pool: poolFilter });
   const partners = buildPartnerRecord(matches, userId, { nameOf, pool: poolFilter });
   const history = buildMatchHistory(matches, userId, { nameOf, pool: poolFilter, limit: historyLimit });

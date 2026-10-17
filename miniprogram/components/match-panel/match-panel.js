@@ -307,6 +307,18 @@ Component({
         this.showToast('请先登录后再确认比分');
         return undefined;
       }
+      // 确认即最终结算：先核对结果、把「不可撤销」说在前面，再落库
+      // （交接文档 §4.3：确认前必须有可见的结果核对与不可撤销提示）。
+      if (typeof wx === 'undefined' || typeof wx.showModal !== 'function') return undefined;
+      const confirmed = await new Promise((resolve) => {
+        wx.showModal({
+          title: '确认比分',
+          content: '确认后成绩立即生效并计入等级分，之后不可撤销、不可修改。确定确认吗？',
+          success: (res) => resolve(Boolean(res && res.confirm)),
+          fail: () => resolve(false),
+        });
+      });
+      if (!confirmed) return undefined;
 
       const result = await this.write('confirmSchoolMatch', { matchId });
       if (!result.ok) {
