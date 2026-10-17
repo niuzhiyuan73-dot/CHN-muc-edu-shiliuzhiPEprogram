@@ -21,6 +21,14 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
+// 时区必须与线上一致：云函数入口（cloudfunctions/data/index.js）在模块加载时把
+// TZ 钉成 Asia/Shanghai（2026-10-17 只读审计 C1），自然键摘要里又含
+// `new Date(naiveMatchTime).toISOString()`——同一串在 UTC 与 UTC+8 下算出不同
+// 的 _id。这条「Python 与 Node 逐字节一致」的契约因此**不能随运行机器的时区
+// 翻转**：开发机恰好在 UTC+8 所以从前全绿，CI 或别的时区下会假红
+// （实测：TZ=UTC 重跑全量套件，本条转红）。钉在这里，契约才有确定含义。
+process.env.TZ = 'Asia/Shanghai';
+
 const { buildMatchRecord } = require('../miniprogram/services/match-record.js');
 const { matchNaturalKey } = require('../cloudfunctions/data/src/core/idempotency.js');
 const { validateMatchScore } = require('../miniprogram/utils/match-format.js');

@@ -47,7 +47,22 @@ const pad2 = (value) => String(value).padStart(2, '0');
 const ymd = (date) => `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
 const hm = (date) => `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
 /** 本地日期 + 时间拼成可被 Date.parse 解析的本地时刻串；缺一即视为未填 */
-const localMoment = (date, time) => (date && time ? `${date}T${time}` : '');
+/**
+ * 日期 + 时间两栏（picker 产出，本地墙上时间）→ ISO 绝对串。
+ *
+ * 【为什么不能直接拼 naive 串】（2026-10-17 只读审计 C1）
+ * 云函数容器时区是 UTC+0、小程序端是 UTC+8。直接发 `2026-10-17T19:30`
+ * 会被服务端按 UTC 解析，比用户选的时间晚 8 小时：发布训练的「开始必须在
+ * 未来」校验、报名截止、签到窗口全部按错误时刻判定。先在本地时区解析再
+ * `toISOString()`，两端才解析同一个绝对时刻（样板见 school-exchange 页）。
+ *
+ * 只用于组装 payload；回显走 isoToLocal（下方）， round-trip 不依赖本函数。
+ */
+const localMoment = (date, time) => {
+  if (!date || !time) return '';
+  const at = new Date(`${date}T${time}`);
+  return Number.isFinite(at.getTime()) ? at.toISOString() : '';
+};
 
 Component({
   options: {

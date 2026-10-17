@@ -715,8 +715,11 @@ async function drawSchoolEvent(payload = {}, ctx) {
   const existing = (await scoped.matches.list()).filter(row => row.eventId === doc._id);
   if (doc.draw && !canRedraw(existing)) return ok(refused('该赛事已有比赛确认生效，不能再重抽'));
 
-  const value = payload.seedValue === undefined || payload.seedValue === null
-    ? Date.now() : Number(payload.seedValue);
+  // 抽签种子：只认「调用方显式给的有限数字」（客户端传 Date.now() 供复核），
+  // 其余一律服务端现取。从前 `Number(payload.seedValue)` 会把 null/''/true
+  // 变成 0/1——传 null 即得确定性种子，签位可被本地穷举后复现（审计 C6）。
+  const value = typeof payload.seedValue === 'number' && Number.isFinite(payload.seedValue)
+    ? payload.seedValue : Date.now();
   const plan = planDraw({ event: doc, signups, members: dir.members,
     seedValue: value, manualOrder: payload.manualOrder });
   if (!plan.ok) return ok(refused(plan.message));

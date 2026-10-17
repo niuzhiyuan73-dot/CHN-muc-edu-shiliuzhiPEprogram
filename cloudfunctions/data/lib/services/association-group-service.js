@@ -110,27 +110,46 @@ function groupSummary(group, joined) {
   };
 }
 
-/** 成员名录 DTO：昵称 + 学院 + 权限标签，不含学号 / 手机号 / OpenID */
+/**
+ * 成员名录 DTO：昵称 + 学院 + 权限标签，不含学号 / 手机号 / OpenID。
+ *
+ * 【为什么先把四个集合各 list 一次再查表】（2026-10-17 只读审计 C5）
+ * 从前是「每个成员 4 次 getById」：50 人的组就是 200 次 RPC，云端数据库
+ * QPS 配额只有 30，风群并发直接触发限流。改成四张表各读一次建 Map，
+ * RPC 数从 4N 降到 4（与 buildDirectory / school-member-service 同一模式）。
+ *
+ * @param {Object} repo ctx.repo（读路径，不在事务里）
+ * @param {Object} ctx
+ * @param {Array<string>} userIds
+ */
 async function describeMembers(repo, ctx, userIds) {
-  const colleges = await repo.forScope(ctx).colleges.list();
+  const [colleges, users, members, roles, memberships] = await Promise.all([
+    repo.forScope(ctx).colleges.list(),
+    repo.users.list(),
+    repo.forScope(ctx).schoolMembers.list(),
+    repo.forScope(ctx).schoolRoles.list(),
+    repo.forScope(ctx).memberships.list(),
+  ]);
   const collegeName = id => (colleges.find(row => row.collegeId === id) || {}).name || '';
+  const userById = new Map(users.map(user => [user._id, user]));
+  const memberById = new Map(members.map(row => [row._id, row]));
+  const roleById = new Map(roles.map(row => [row._id, row]));
+  const membershipById = new Map(memberships.map(row => [row._id, row]));
   const seen = new Set();
   const out = [];
   for (const userId of userIds) {
     if (seen.has(userId)) continue;
     seen.add(userId);
-    const [user, member, role, membership] = await Promise.all([
-      repo.users.getById(userId),
-      repo.schoolMembers.getById(schoolMemberKey(userId, ctx.schoolId)),
-      repo.schoolRoles.getById(schoolRoleKey(userId, ctx.schoolId)),
-      repo.memberships.get(schoolMembershipKey(userId, ctx)),
-    ]);
+    const member = memberById.get(schoolMemberKey(userId, ctx.schoolId));
     out.push({
       userId,
-      nickName: (user && user.nickName) || '会员',
+      nickName: (userById.get(userId) || {}).nickName || '会员',
       collegeId: (member && member.collegeId) || '',
       collegeName: collegeName(member && member.collegeId),
-      permissionLabel: permissionLabelOf(role, membership),
+      permissionLabel: permissionLabelOf(
+        roleById.get(schoolRoleKey(userId, ctx.schoolId)),
+        membershipById.get(schoolMembershipKey(userId, ctx)),
+      ),
     });
   }
   return out;

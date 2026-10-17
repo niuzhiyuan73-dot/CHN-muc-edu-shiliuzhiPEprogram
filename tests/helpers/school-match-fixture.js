@@ -41,8 +41,17 @@ function createMatchFixture(currentUser) {
     assignMatchReferee: (matchId, refereeId, actor) => api(actor).assignSchoolMatchReferee({ matchId, refereeId }),
     async getMatchRecords(filter = {}) {
       if (filter.id) { const r = await api('u01').getSchoolMatch({ matchId: filter.id }); return r.ok ? [record(r.match)] : []; }
-      const r = await api('u01').listSchoolMatches({ ...filter, limit: 10000 });
-      assert.equal(r.ok, true, r.message); return r.matches.map(record);
+      // 台账要读全量：listSchoolMatches 有 100 行/页的上限（2026-10-17 审计 C6/C8），
+      // 按 offset 翻页取齐——这也是生产端「读全量」的既定姿势。
+      const out = [];
+      const PAGE = 100;
+      for (let offset = 0; ; offset += PAGE) {
+        const r = await api('u01').listSchoolMatches({ ...filter, limit: PAGE, offset });
+        assert.equal(r.ok, true, r.message);
+        out.push(...r.matches.map(record));
+        if (!r.hasMore || r.matches.length < PAGE) break;
+      }
+      return out;
     },
     async getMatches() { return (await fixture.getMatchRecords()).filter(m => m.status === 1); },
     async getMembers() { return (await api('u01').getSchoolMatchEntryContext({})).members.map(m => ({ ...m, _id: m.userId })); },

@@ -178,3 +178,103 @@ test('事务内 tx.X.set 在云端真的能写进去（审计里挂掉的那条�
   await cloud.transaction(async (tx) => { await tx.seasons.set('s_current', { _id: 's_current', seasonNo: 1 }); });
   assert.deepEqual(await cloud.seasons.getById('s_current'), { _id: 's_current', seasonNo: 1 });
 });
+
+/* ---------------------------------------------------------------- 审计 C3 */
+// 云端与本地仓储的「错误形态」差异：本地读不到返回 null，云端读不到抛错；
+// 其中「集合不存在」（-502005）与「文档不存在」的 errMsg 都含 not exist，
+// 旧 isMissing 正则一把抓，把少建集合读成了空结果——读静默、写才炸。
+// 这两条钉住修好后的区分：集合不存在必须响亮失败，文档不存在仍然降级 null。
+
+/** 造一个「指定集合抛指定错误」的最小 db 桩 */
+function failingDb(collectionName, errFactory) {
+  return {
+    collection(name) {
+      if (name !== collectionName) throw new Error(`unexpected collection ${name}`);
+      return {
+        doc: () => ({ get: async () => { throw errFactory(); } }),
+      };
+    },
+    runTransaction: async (fn) => fn(this),
+  };
+}
+
+test('集合不存在（-502005）时读路径抛出可操作的中文错误，不降级成空结果', async () => {
+  const err = new Error('database collection not exists');
+  err.errCode = -502005;
+  const repo = createRepo(failingDb('users', () => err));
+
+  await assert.rejects(
+    () => repo.users.getById('acc:whatever'),
+    /集合 users 不存在.*-502005/,
+    '少建集合时必须指明是哪个集合，而不是让业务层当成「这条数据没有」',
+  );
+});
+
+test('集合不存在的另一种官方文案（Db or Table not exist）同样被识别', async () => {
+  // 控制台实测 errMsg 可能是 "[ResourceNotFound] Db or Table not exist"，
+  // 只认 errCode 不够——按官方错误码页与社区记录，两种文案都要接住。
+  const err = new Error('[ResourceNotFound] Db or Table not exist. Please check your request');
+  err.errCode = -502005;
+  const repo = createRepo(failingDb('schools', () => err));
+
+  await assert.rejects(() => repo.schools.getById('muc'), /集合 schools 不存在/);
+});
+
+test('文档不存在仍然降级成 null（与集合不存在区分开）', async () => {
+  // 这是 readDoc 的原有语义：读一条不存在的文档等价于 null，业务照常走。
+  const err = new Error('document does not exist');
+  err.errCode = -1;
+  const repo = createRepo(failingDb('users', () => err));
+
+  assert.equal(await repo.users.getById('acc:nope'), null);
+});
+
+/* ---------------------------------------------------------------- 审计 C4 */
+// 事务写入预算护栏：本地内存事务无操作数上限，云端未公示（社区实践约 100 写）。
+// 超预算必须当场抛出人话，而不是让云开发在事务中途晦涩报错。
+
+test('事务写入超过预算时抛出可操作错误，且 bolt 之前已写的操作被带到错误信息里', async () => {
+  const db = database();
+  const cloud = createRepo(db);
+  // 预算默认 200；这里用 210 条写入探到护栏（内存桩无上限，正好验证护栏本身）。
+  await assert.rejects(
+    () => cloud.transaction(async (tx) => {
+      for (let i = 0; i < 210; i += 1) {
+        await tx.matches.set(`m_${i}`, { _id: `m_${i}`, eventId: 'e1' });
+      }
+    }),
+    /超过写入预算/,
+  );
+});
+
+test('事务写入在预算之内不打扰（护栏不误伤正常批量）', async () => {
+  const db = database();
+  const cloud = createRepo(db);
+  // 建 50 人小组 = 53 次写，是已知最大的合法批量；护栏必须放行。
+  await cloud.transaction(async (tx) => {
+    for (let i = 0; i < 53; i += 1) {
+      await tx.matches.set(`m_${i}`, { _id: `m_${i}`, eventId: 'e1' });
+    }
+  });
+  assert.equal(await cloud.matches.list().then(rows => rows.length), 53);
+});
+
+/* ---------------------------------------------------------------- 审计 C9 */
+// 同一个时间字段在云数据库里不能有 Date 与字符串两种 BSON 类型：控制台排序与
+// 聚合按类型分段，orderBy 落到时间字段会静默错序。仓储写入口统一收口。
+
+test('写库把 Date 规格成 ISO 绝对串（含嵌套），undefined 字段被去掉', async () => {
+  const db = database();
+  const cloud = createRepo(db);
+  const at = new Date('2026-10-17T19:30:00');
+  await cloud.events.set('e_c9', {
+    _id: 'e_c9', schoolId: 'muc', association: 'pkb',
+    startTime: at, draw: { drawnAt: at, seedValue: 1 }, note: undefined,
+  });
+  const stored = await cloud.events.getById('e_c9');
+  assert.equal(stored.startTime, at.toISOString(), '顶层 Date 要落成 ISO 串');
+  assert.equal(stored.draw.drawnAt, at.toISOString(), '嵌套 Date 同样收口');
+  assert.equal('note' in stored, false, 'undefined 字段不落库（两种仓储可见字段集一致）');
+  // 读回来是串，业务侧 new Date(x) 照吃——读路径无需配套改动
+  assert.equal(new Date(stored.startTime).getTime(), at.getTime());
+});

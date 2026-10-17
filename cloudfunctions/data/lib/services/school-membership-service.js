@@ -362,14 +362,25 @@ function createSchoolHandlers({ claimKey }) {
    */
   async function getSchoolApplications(_payload, ctx) {
     if (!canSchoolAction(ctx, 'reviewMembers', ctx)) return ok({ ok: false, applications: [], message: '没有本校审核权限' });
-    const colleges = await ctx.repo.forScope(ctx).colleges.list();
+    // 账号取一次建 Map：待审申请逐个 users.getById 是 N+1，云端 QPS 30 下
+    // 几十个待审就够触发限流（2026-10-17 只读审计 C5）。
+    // 转出校名称只对「转校申请」存在，按去重后的 id 逐个取——不走 schools.list()，
+    // 免得给本读路径新增对 where({}) 空条件的依赖（该兼容性未实测，见审计 §二）。
+    const [colleges, users] = await Promise.all([
+      ctx.repo.forScope(ctx).colleges.list(),
+      ctx.repo.users.list(),
+    ]);
     const collegeName = id => (colleges.find(row => row.collegeId === id) || {}).name || '';
+    const userById = new Map(users.map(user => [user._id, user]));
     const rows = await ctx.repo.forScope(ctx).schoolMembers.list();
-    const applications = await Promise.all(rows.filter(row => row.status === 'pending').map(async row => {
-      const user = await ctx.repo.users.getById(row.userId);
+    const pending = rows.filter(row => row.status === 'pending');
+    const transferIds = [...new Set(pending.filter(row => row.transferFrom).map(row => row.transferFrom))];
+    const schoolById = new Map(await Promise.all(transferIds.map(async id => [id, await ctx.repo.schools.getById(id)])));
+    const applications = pending.map(row => {
+      const user = userById.get(row.userId);
       // 转校申请在同一条待审台账里，但要标出来「从哪转来」：
       // 审核页据此走 reviewSchoolTransfer，而不是普通入会审批（两条口径不同）。
-      const fromSchool = row.transferFrom ? await ctx.repo.schools.getById(row.transferFrom) : null;
+      const fromSchool = row.transferFrom ? schoolById.get(row.transferFrom) : null;
       return { userId: row.userId, schoolId: row.schoolId,
         collegeId: row.collegeId, collegeName: collegeName(row.collegeId),
         studentId: row.studentId, revision: row.revision, appliedAt: row.appliedAt,
@@ -380,7 +391,7 @@ function createSchoolHandlers({ claimKey }) {
         realName: user && user.realName || '',
         gender: user && user.gender || '',
         avatarUrl: user && user.avatarUrl || '' };
-    }));
+    });
     return ok({ ok: true, applications, message: '' });
   }
 
@@ -459,23 +470,32 @@ function createSchoolHandlers({ claimKey }) {
   async function getSchoolMembers(_payload, ctx) {
     if (!canReadSchool(ctx)) return ok({ ok: false, members: [], grants: [], readOnly: false, message: '没有读取该校成员的权限' });
     const readOnly = Boolean(ctx.actor.primarySchoolId && ctx.actor.primarySchoolId !== ctx.schoolId);
-    const colleges = await ctx.repo.forScope(ctx).colleges.list();
+    // 四个集合各取一次建 Map：逐成员 3 次 getById 是 N+1，云端 QPS 30 下
+    // 上百人的名录就够触发限流（2026-10-17 只读审计 C5）。
+    const [colleges, users, roles, memberships] = await Promise.all([
+      ctx.repo.forScope(ctx).colleges.list(),
+      ctx.repo.users.list(),
+      ctx.repo.forScope(ctx).schoolRoles.list(),
+      ctx.repo.forScope(ctx).memberships.list(),
+    ]);
     const collegeName = id => (colleges.find(row => row.collegeId === id) || {}).name || '';
+    const userById = new Map(users.map(user => [user._id, user]));
+    const roleById = new Map(roles.map(row => [row._id, row]));
+    const membershipById = new Map(memberships.map(row => [row._id, row]));
     const rows = (await ctx.repo.forScope(ctx).schoolMembers.list()).filter(row => row.status === SCHOOL_MEMBER_STATUS.ACTIVE);
-    const members = await Promise.all(rows.map(async row => {
-      const [user, role, membership] = await Promise.all([
-        ctx.repo.users.getById(row.userId),
-        ctx.repo.schoolRoles.getById(schoolRoleKey(row.userId, ctx.schoolId)),
-        ctx.repo.memberships.get(schoolMembershipKey(row.userId, ctx)),
-      ]);
-      return {
-        userId: row.userId,
-        nickName: (user && user.nickName) || '会员',
-        collegeId: row.collegeId || '',
-        collegeName: collegeName(row.collegeId),
-        permission: permissionOf(role, membership),
-        permissionLabel: permissionLabelOf(role, membership),
-      };
+    const members = rows.map(row => ({
+      userId: row.userId,
+      nickName: (userById.get(row.userId) || {}).nickName || '会员',
+      collegeId: row.collegeId || '',
+      collegeName: collegeName(row.collegeId),
+      permission: permissionOf(
+        roleById.get(schoolRoleKey(row.userId, ctx.schoolId)),
+        membershipById.get(schoolMembershipKey(row.userId, ctx)),
+      ),
+      permissionLabel: permissionLabelOf(
+        roleById.get(schoolRoleKey(row.userId, ctx.schoolId)),
+        membershipById.get(schoolMembershipKey(row.userId, ctx)),
+      ),
     }));
     members.sort((a, b) => (a.userId < b.userId ? -1 : 1));
     return ok({ ok: true, members, grants: readOnly ? [] : grantOptions(ctx), readOnly, message: '' });

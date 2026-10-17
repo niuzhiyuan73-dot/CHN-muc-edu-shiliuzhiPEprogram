@@ -21,10 +21,24 @@
  * 旧动作。route.js 的判据保留，是为了把「没带版本号」与「版本不对」
  * 的提示分开（2026-10-16 只读审计 H6）。
  *
+ * 【时区为什么要在入口钉死（2026-10-17 只读审计 C1）】
+ * 云函数容器默认 UTC+0，而小程序端在中国 UTC+8。客户端历史上有几处把
+ * 「日期 + 时间选择器」直接拼成 naive 串（无时区后缀）发送，服务端
+ * `new Date(naive)` 按运行时区解析——同一个串在云端比客户端意图晚 8 小时，
+ * 录分被判「比赛时间不能晚于现在」、赛事与训练的开赛/签到窗口整体偏移。
+ * 客户端已改为发送 ISO 绝对串（match-entry-view / event-edit /
+ * college-event-edit / association-space-panel 四处），但 naive 串一旦
+ * 残留（旧版本客户端、控制台直写），偏移就会回来。官方建议给函数配置
+ * 环境变量 TZ=Asia/Shanghai（见同目录 config.json）；这里在模块加载时
+ * 再兜底一次：已显式配置则不覆盖，未配置则按北京时间解析。
+ *
  * 【仓储为什么要缓存】
  * 云函数容器会热复用。db 句柄建一次就够。冷启动时重建，缓存自然从头来过。
  * ============================================================
  */
+
+// 必须在任何 Date 解析之前执行（模块加载期，早于首个请求）。
+if (!process.env.TZ) process.env.TZ = 'Asia/Shanghai';
 
 const cloud = require('wx-server-sdk');
 
@@ -49,11 +63,14 @@ function getRepo() {
  * @returns {Promise<Object>} 回包信封
  */
 exports.main = async (event = {}) => {
+  // 供 catch 里写日志用：openId 只在协议 2 分支取得，旧协议请求本就是空的。
+  let openId = '';
   try {
     // 只认 protocolVersion（见 src/core/route.js 的说明）。
     if (isSchoolRequest(event)) {
       const { OPENID } = cloud.getWXContext();
-      return await handleSchoolRequest(event, { repo: getRepo(), openId: OPENID });
+      openId = OPENID || '';
+      return await handleSchoolRequest(event, { repo: getRepo(), openId });
     }
 
     // 协议 1 已下线：不带 protocolVersion 的请求不做任何业务。
@@ -61,7 +78,16 @@ exports.main = async (event = {}) => {
   } catch (err) {
     // 到这里说明是没预料到的故障（数据库连不上、代码有 bug）。
     // 原始错误写进日志便于排查，回给前端的是不泄露内部细节的一句中文。
-    console.error('[data] 处理失败', event && event.action, err);
+    // 日志必须带 scope 与 openId：否则「学校不存在或已停用」这类业务 throw
+    // 与「数据库连不上」在云端日志里长得一模一样，无从判断是哪所学校
+    // 哪个协会出的问题（2026-10-17 只读审计 C7）。
+    console.error('[data] 处理失败', {
+      action: event && event.action,
+      schoolId: event && event.schoolId,
+      association: event && event.association,
+      openId: openId || undefined,
+      error: err && (err.stack || err.message || err),
+    });
     return fail('服务异常，请稍后再试');
   }
 };

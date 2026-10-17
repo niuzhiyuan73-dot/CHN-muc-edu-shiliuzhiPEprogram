@@ -449,11 +449,20 @@ Page({
 
   /* ---------- 提交 ---------- */
 
-  /** 把日期与时间两栏拼成 ISO 字符串，缺一不可 */
+  /**
+   * 把日期与时间两栏拼成 ISO 绝对串，缺一不可。
+   *
+   * 【为什么先解析再 toISOString，而不是直接拼串】
+   * picker 两栏是本地墙上时间。云函数容器时区是 UTC+0、小程序端是 UTC+8，
+   * 直接发 `2026-10-17T19:30:00` 会被服务端按 UTC 解析、比用户选的时间
+   * 晚 8 小时——报名截止与开赛判定跟着错（2026-10-17 只读审计 C1）。
+   * 样板见 pages/school-exchange 的创建跨校赛事。
+   */
   buildStartTime() {
     const { date, time } = this.data.form;
     if (!date || !time) return '';
-    return `${date}T${time}:00`;
+    const at = new Date(`${date}T${time}:00`);
+    return Number.isFinite(at.getTime()) ? at.toISOString() : '';
   },
 
   /**

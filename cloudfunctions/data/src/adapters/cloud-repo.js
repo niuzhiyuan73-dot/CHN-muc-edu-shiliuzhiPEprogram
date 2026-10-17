@@ -26,14 +26,52 @@ const { attachSchoolRepository } = require('../school-repository.js');
 /** 单页条数，取云开发云函数端的查询上限 */
 const PAGE_SIZE = 100;
 
+/** 单次整表读超过这个条数就告警：云端每翻一页是一次 RPC，深翻页同时放大耗时与读配额 */
+const DEEP_READ_WARN = 500;
+
 /**
- * 判断读失败是不是「文档不存在」。
- * 云开发把它当异常抛，但业务上等价于 null。
+ * 事务写入预算：云数据库事务的操作数上限**未公示**（社区实践约 100 个写/事务，
+ * 超限时整个事务报错且文案晦涩）。超过预算当场抛出可操作的中文错误——失败得早、
+ * 失败得明白；没超则一切照旧。可用环境变量 TX_WRITE_BUDGET 调整（真机验收校准后）。
+ */
+const TX_WRITE_BUDGET = Number(process.env.TX_WRITE_BUDGET) > 0 ? Number(process.env.TX_WRITE_BUDGET) : 200;
+
+/** 单事务写操作超过这个数就留痕：真机验收时用来核对云端到底能吃多少 */
+const TX_WARN_WRITES = Number(process.env.TX_WARN_WRITES) > 0 ? Number(process.env.TX_WARN_WRITES) : 50;
+
+/**
+ * 是不是「集合不存在」。
+ *
+ * 官方错误码 -502005，errMsg 形如 `database collection not exists` 或
+ * `[ResourceNotFound] Db or Table not exist`。它**不是**「文档不存在」——
+ * 旧实现用 /not exist/i 一把抓，把少建集合读成了空结果（审计 C3）。
+ *
  * @param {Error} err
  * @returns {boolean}
  */
-function isMissing(err) {
+function isMissingCollection(err) {
   if (!err) return false;
+  const code = err.errCode !== undefined ? err.errCode : err.code;
+  const msg = String(err.errMsg || err.message || '');
+  return code === -502005 || /collection|db or table/i.test(msg);
+}
+
+/**
+ * 判断读失败是不是「文档不存在」。
+ * 云开发把它当异常抛，但业务上等价于 null。
+ *
+ * 【集合不存在为什么必须排除在外】（2026-10-17 只读审计 C3）
+ * -502005 的 errMsg 同样含 "not exist"，旧正则把它和文档不存在混为一谈：
+ * 少建一个集合时，读路径静默返回 null/空（表现为「账号不存在」「学校不存在或
+ * 已停用」「榜单为空」），排查方向被彻底带偏；只有写路径才炸。集合不存在必须
+ * 响亮地失败，让控制台日志里一眼可辨。
+ *
+ * @param {Error} err
+ * @returns {boolean}
+ */
+function isMissingDoc(err) {
+  if (!err) return false;
+  if (isMissingCollection(err)) return false;
   const code = err.errCode !== undefined ? err.errCode : err.code;
   if (code === -1) return true;
   return /not exist/i.test(String(err.errMsg || err.message || ''));
@@ -41,6 +79,11 @@ function isMissing(err) {
 
 /**
  * 按主键读一条，不存在返回 null。
+ *
+ * 集合不存在时不降级成 null，而是抛一句可操作的中文错误：README §三 要求建齐
+ * 30 个集合，少建任何一个都该在云端日志里写明是哪个集合，而不是让业务层把
+ * 「集合没建」当成「这条数据没有」继续演下去。
+ *
  * @param {Object} scope db 或 transaction
  * @param {string} name 集合名
  * @param {string} id
@@ -51,7 +94,10 @@ async function readDoc(scope, name, id) {
     const res = await scope.collection(name).doc(id).get();
     return (res && res.data) || null;
   } catch (err) {
-    if (isMissing(err)) return null;
+    if (isMissingDoc(err)) return null;
+    if (isMissingCollection(err)) {
+      throw new Error(`数据库集合 ${name} 不存在（错误码 -502005）：请先在云开发控制台按 README §三 建齐全部集合`);
+    }
     throw err;
   }
 }
@@ -82,12 +128,50 @@ async function readAll(scope, name) {
     for (const doc of batch) out.push(doc);
     if (batch.length < PAGE_SIZE) break;
   }
+  // 云端每翻一页就是一次 RPC：深翻页同时放大单次耗时（默认 3 秒超时的大头）
+  // 与每日读配额（官方 5 万次/天）。超过阈值留痕，真机验收时按日志定位慢在哪。
+  if (out.length >= DEEP_READ_WARN) {
+    console.warn(`[data] 深翻页告警：${name} 单次读 ${out.length} 条（${Math.ceil(out.length / PAGE_SIZE)} 页 RPC），请考虑加范围条件或批读接口`);
+  }
   return out;
 }
 
-/** 复制一份并去掉 _id */
+/**
+ * 写库前的规格化：深拷贝、Date → ISO 绝对串、去掉值为 undefined 的字段。
+ *
+ * 【为什么在仓储层收口，而不是逐个调用点改】（2026-10-17 只读审计 C9）
+ * 业务层有的写 iso 串、有的直接写 Date 对象（小组 / 跨校邀请赛 / 身份 / 实时
+ * 比分的时间戳）。云数据库按 BSON 类型落库——同一个字段两种类型，控制台里排序
+ * 与聚合按类型分段，将来任何 orderBy 落到时间字段都会静默错序。仓储是**全部**
+ * 写操作的唯一必经之路（set / insert / update / audit.append 都经过 withoutId），
+ * 在这里收口一次，胜过追着几十个调用点改，也不依赖将来每个新调用点记得转换。
+ * 读路径一律 `new Date(x)`，串与 Date 都吃，故读侧无需配套改动。
+ *
+ * 【为什么顺手去掉 undefined】
+ * 内存仓储原样保留 `field: undefined`；云数据库对 undefined 的处理（报错 /
+ * 丢弃 / 存 null）没有真机验证过。统一去掉后两种仓储的可见字段集一致，也免得
+ * 将来真机上冒出一个与业务无关的序列化错误。
+ *
+ * @param {*} value 任意文档 / 补丁 / 审计条目
+ * @returns {*} 规格化后的深拷贝
+ */
+function stripForStorage(value) {
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return value.map(stripForStorage);
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const [key, item] of Object.entries(value)) {
+      if (item === undefined) continue;
+      out[key] = stripForStorage(item);
+    }
+    return out;
+  }
+  return value;
+}
+
+/** 复制一份、去掉 _id，并把时间规格成 ISO 串（见 stripForStorage）。 */
 function withoutId(doc) {
-  const copy = { ...doc };
+  const copy = stripForStorage(doc);
   delete copy._id;
   return copy;
 }
@@ -112,6 +196,9 @@ async function readWhere(scope, name, where) {
     const batch = (res && res.data) || [];
     for (const doc of batch) out.push(doc);
     if (batch.length < PAGE_SIZE) break;
+  }
+  if (out.length >= DEEP_READ_WARN) {
+    console.warn(`[data] 深翻页告警：${name}（条件 ${JSON.stringify(where)}）单次读 ${out.length} 条（${Math.ceil(out.length / PAGE_SIZE)} 页 RPC）`);
   }
   return out;
 }
@@ -315,6 +402,66 @@ function buildCollections(scope, inTx) {
 }
 
 /**
+ * 给事务对象套一层「操作计数」。
+ *
+ * 【为什么需要它】（2026-10-17 只读审计 C4）
+ * 云数据库事务「只允许单记录操作，可以在一个事务中对多个记录进行操作」，
+ * 但**操作数上限未公示**（社区实践约 100 个写/事务）。代码里存在按参与人数
+ * 在单事务内循环写的路径：建小组（50 成员 = 53 写 + 约 106 读）、学院赛抽签
+ * （64 队 = 67 写）、锁定跨校名单（100 报名 = 202 写）。本地内存仓储无任何
+ * 上限，测试永远全绿；云端超限时整个事务报错、文案晦涩，用户只看到
+ * 「服务异常，请稍后再试」。
+ *
+ * 这里的对策分两层：
+ *   1. 写操作超过 TX_WRITE_BUDGET 当场抛出可操作的中文错误（失败得早、失败得
+ *      明白）；预算可用环境变量调整，真机验收校准后按实际值收紧；
+ *   2. 写操作超过 TX_WARN_WRITES 留痕告警——给真机验收一份「哪些事务在临界」
+ *      的清单，避免将来悄悄长到云端上限。
+ *
+ * 计数只包事务路径；非事务的 db 直读直写不经过这里，不计入。
+ *
+ * @param {Object} transaction db.runTransaction 回调收到的事务对象
+ * @returns {{stats:{writes:number,reads:number}, transaction:Object}}
+ */
+function instrumentTransaction(transaction) {
+  const stats = { writes: 0, reads: 0 };
+
+  const budgetGuard = () => {
+    if (stats.writes > TX_WRITE_BUDGET) {
+      throw new Error(
+        `单个事务已写入 ${stats.writes} 次，超过写入预算（${TX_WRITE_BUDGET} 次）：`
+        + '云数据库事务的操作数上限未公示，超限会在事务中途整体报错。请分批处理，'
+        + '或按真机验收结果调整环境变量 TX_WRITE_BUDGET。',
+      );
+    }
+  };
+
+  const wrapCollection = (name, collection) => ({
+    doc: (id) => {
+      const ref = collection.doc(id);
+      return {
+        get: async () => { stats.reads += 1; return ref.get(); },
+        set: async (arg) => { stats.writes += 1; budgetGuard(); return ref.set(arg); },
+        update: async (arg) => { stats.writes += 1; budgetGuard(); return ref.update(arg); },
+        remove: async () => { stats.writes += 1; budgetGuard(); return ref.remove(); },
+      };
+    },
+    add: async (arg) => { stats.writes += 1; budgetGuard(); return collection.add(arg); },
+    // 事务内做集合查询本来就被云开发拒绝（见 buildCollections 的各处 inTx 拦阻）；
+    // 包一层是为了让漏网之路也得到同一句人话，而不是 TypeError。
+    where: () => { throw new Error(`事务内不允许条件读取（${name}），请改用 getById`); },
+  });
+
+  return {
+    stats,
+    transaction: {
+      collection: (name) => wrapCollection(name, transaction.collection(name)),
+      rollback: (...args) => transaction.rollback(...args),
+    },
+  };
+}
+
+/**
  * 在真实的云数据库上建一个仓储。
  *
  * @param {Object} db cloud.database() 的返回值
@@ -324,7 +471,20 @@ function createRepo(db) {
   const repo = buildCollections(db, false);
 
   repo.transaction = (fn) =>
-    db.runTransaction(async (transaction) => fn(buildCollections(transaction, true)));
+    db.runTransaction(async (transaction) => {
+      const instrumented = instrumentTransaction(transaction);
+      try {
+        return await fn(buildCollections(instrumented.transaction, true));
+      } finally {
+        // 观测层：接近临界的事务留痕，供真机验收核对云端真实上限（审计 C4）。
+        if (instrumented.stats.writes >= TX_WARN_WRITES) {
+          console.warn(
+            `[data] 事务操作数告警：写 ${instrumented.stats.writes} 次 / 读 ${instrumented.stats.reads} 次`
+            + `（预算 ${TX_WRITE_BUDGET} 写）。云端事务上限未公示，请在真机验收时重点核对。`,
+          );
+        }
+      }
+    });
 
   return repo;
 }

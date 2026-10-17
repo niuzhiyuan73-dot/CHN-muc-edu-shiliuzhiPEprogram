@@ -546,11 +546,20 @@ async function resetSchoolSeason(payload = {}, ctx) {
   const dir = await buildDirectory(ctx);
   if (!canResetSeason(legacyActorOf(ctx, dir))) return ok(refused('只有管理员可以开始新赛季'));
 
+  // 分界点由客户端传入，但必须是个能解析的时间。NaN 会顺着 resetTime 流进
+  // 积分切分与交手名额计数，报错点离现场很远（2026-10-17 只读审计 C6）。
+  // 校验放在事务外：明显非法的请求不必占一个事务。
+  const requested = payload.resetTime === undefined || payload.resetTime === null
+    ? null : new Date(payload.resetTime);
+  if (requested && !Number.isFinite(requested.getTime())) {
+    return ok(refused('赛季分界时间无效'));
+  }
+
   const id = seasonKeyOf(ctx);
   const result = await ctx.repo.transaction(async tx => {
     const existing = await tx.seasons.getById(id);
     const base = existing && belongsToSchoolScope(existing, ctx) ? existing : defaultSeason(ctx);
-    const resetTime = payload.resetTime ? new Date(payload.resetTime) : ctx.now;
+    const resetTime = requested || ctx.now;
     const next = {
       ...base,
       _id: id,

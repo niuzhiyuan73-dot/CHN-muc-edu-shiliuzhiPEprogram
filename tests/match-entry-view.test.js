@@ -193,8 +193,29 @@ test('toSubmitParams —— 日期与时间拼成完整时间串', () => {
     location: '学校体育馆 1 号场',
   });
 
-  assert.strictEqual(params.matchTime, '2026-09-01T18:30:00');
+  // 断言写成 round-trip：发出去的串必须与「本地 2026-09-01 18:30」是同一
+  // 时刻，且不依赖运行机器的时区（云端 UTC 下这条也应成立）。
+  assert.strictEqual(params.matchTime, new Date('2026-09-01T18:30:00').toISOString());
   assert.strictEqual(params.location, '学校体育馆 1 号场');
+});
+
+test('toSubmitParams —— 比赛时间是 ISO 绝对串，不是 naive 本地串（C1 云端时区回归）', () => {
+  // 云函数容器时区 UTC+0、小程序端 UTC+8：naive 串发上去会被按 UTC 解析，
+  // 「刚打完的比赛」被判「不能晚于现在」或落库时刻整体偏移 8 小时。
+  const params = toSubmitParams({
+    matchType: MATCH_TYPE.SINGLES,
+    teamA: ['u06'],
+    teamB: ['u02'],
+    date: '2026-09-01',
+    time: '18:30',
+  });
+
+  assert.match(params.matchTime, /(?:Z|[+-]\d{2}:\d{2})$/, '必须带时区标识');
+  assert.strictEqual(
+    new Date(params.matchTime).getTime(),
+    new Date('2026-09-01T18:30:00').getTime(),
+    '必须与本地墙上时间是同一绝对时刻',
+  );
 });
 
 test('toSubmitParams —— 日期或时间没填时比赛时间为空串，交给校验去报错', () => {

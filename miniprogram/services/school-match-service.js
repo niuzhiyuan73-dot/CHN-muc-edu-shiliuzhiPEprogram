@@ -61,6 +61,12 @@ const refused = (message, extra = {}) => ({ ok: false, message, ...extra });
 
 const REQUEST_ID_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
 const MATCH_LIST_LIMIT = 100;
+/**
+ * listSchoolMatches 的 limit 硬上限。调用方传再大也只给这么多——每行还要附带
+ * 一次实时比分读，无上限的 limit 既是回包超限（云函数回包约 1MB）也是耗时
+ * 炸弹（2026-10-17 只读审计 C6/C8）。与 MATCH_LIST_LIMIT 同值：默认即上限。
+ */
+const MATCH_LIST_MAX = 100;
 
 const iso = value => new Date(value).toISOString();
 const freshContext = (tx, ctx) => buildSchoolContext({
@@ -308,14 +314,19 @@ async function listSchoolMatches(payload = {}, ctx) {
   const pendingCount = rows.filter(row => row.status === MATCH_STATUS.PENDING).length;
   if (typeof payload.status === 'number') rows = rows.filter(row => row.status === payload.status);
   rows.sort((a, b) => (Date.parse(b.matchTime) || 0) - (Date.parse(a.matchTime) || 0));
+  // limit 加上限、并支持 offset 翻页：无上限时一个畸形入参就能把整库比赛
+  // （每场还带一次实时比分读）全量拉回来，既超云函数回包上限（约 1MB）又拖垮
+  // 耗时（2026-10-17 只读审计 C6/C8）。要读全量的调用方按 offset 翻页，
+  // total / hasMore 就是为这个准备的。
   const limit = Number.isInteger(payload.limit) && payload.limit >= 0
-    ? payload.limit : MATCH_LIST_LIMIT;
+    ? Math.min(payload.limit, MATCH_LIST_MAX) : MATCH_LIST_LIMIT;
+  const offset = Number.isInteger(payload.offset) && payload.offset >= 0 ? payload.offset : 0;
   const matches = [];
-  for (const doc of rows.slice(0, limit)) {
+  for (const doc of rows.slice(offset, offset + limit)) {
     matches.push(await withLive(matchSummary(doc, ctx, dir), ctx));
   }
   return ok({ ok: true, canManage: canManageAssociationSpace(ctx), matches,
-    total: rows.length, hasMore: rows.length > matches.length, pendingCount, message: '' });
+    total: rows.length, hasMore: rows.length > offset + matches.length, pendingCount, message: '' });
 }
 
 /** 录入页所需的本人、有效成员及本赛季交手次数；不暴露数字角色。 */

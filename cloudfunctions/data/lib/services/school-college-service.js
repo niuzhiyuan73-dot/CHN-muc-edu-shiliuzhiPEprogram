@@ -537,8 +537,10 @@ async function drawCollegeEvent(payload = {}, ctx) {
   const entries = (await ctx.repo.forScope(ctx).collegeEntries.list())
     .filter(row => row.eventId === event._id);
   // seedValue 由调用方给（测试可复现）；没给就现取一个随机值并落库备查。
-  const seedValue = Number.isFinite(Number(payload.seedValue))
-    ? Number(payload.seedValue) : Math.floor(Math.random() * 0x7fffffff);
+  // 只认「本身就是有限数字」的入参：`Number(null)===0`、`Number('')===0`，
+  // 从前 null/空串会落成确定性种子 0，签位可被穷举复现（2026-10-17 审计 C6）。
+  const seedValue = typeof payload.seedValue === 'number' && Number.isFinite(payload.seedValue)
+    ? payload.seedValue : Math.floor(Math.random() * 0x7fffffff);
 
   const plan = planCollegeDraw({ event, actor, entries, seedColleges: payload.seedColleges, seedValue });
   if (!plan.ok) return ok(refused(plan.message));

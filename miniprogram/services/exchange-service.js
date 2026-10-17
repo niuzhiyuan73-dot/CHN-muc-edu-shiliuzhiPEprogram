@@ -457,7 +457,10 @@ async function drawExchangeEvent(payload = {}, ctx) {
   if (existing.some(match => match.status === 'active')) return ok(refused('已有比赛确认生效，不能再抽签'));
   const { rows, map } = await entrantsOf(ctx.repo, snapshot._id);
   if (rows.length < 2) return ok(refused('至少需要两名参赛者才能抽签'));
-  const seedValue = Number.isInteger(payload.seedValue) ? payload.seedValue : ctx.now.getTime();
+  // 种子只认「本身就是有限数字」的入参：Number(null)===0、Number('')===0，
+  // 从前 null/空串会落成确定性种子，跨校签位可被穷举复现（2026-10-17 审计 C6）。
+  const seedValue = typeof payload.seedValue === 'number' && Number.isFinite(payload.seedValue)
+    ? payload.seedValue : ctx.now.getTime();
   const planned = planExchangeDraw({ entries: rows, seedValue, format: formatOf(snapshot),
     groupCount: snapshot.groupCount, advancePerGroup: snapshot.advancePerGroup });
   if (!planned.ok) return ok(refused(planned.message));

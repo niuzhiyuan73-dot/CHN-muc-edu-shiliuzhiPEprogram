@@ -32,6 +32,11 @@ const refused = (message, extra = {}) => ({ ok: false, message, ...extra });
 
 const iso = value => new Date(value).toISOString();
 
+/** getSchoolLiveScores 一次最多跟多少场：轮询接口，编号由客户端给，必须限量 */
+const LIVE_IDS_MAX = 50;
+/** 批量读实时比分的并发批大小：顺序读 50 场要 50 个 RTT，轮询等不起；10 并发离 QPS 30 有余量 */
+const LIVE_READ_BATCH = 10;
+
 /** 计分权与录分权一字不差：能录这一场的人才能开台 / 判球 / 撤销 / 定稿。 */
 function mayRecord(doc, ctx, dir) {
   return canRecordScore(doc, ctx.actorId, recordOptions(ctx, dir));
@@ -178,15 +183,23 @@ async function finishSchoolLiveScore(payload = {}, ctx) {
 /** 批量取实时比分，供查看端轮询。只返回比分相关字段，尽量小。 */
 async function getSchoolLiveScores(payload = {}, ctx) {
   if (!canReadAssociationSpace(ctx)) return ok({ ok: true, scores: [], message: '' });
-  const ids = Array.isArray(payload.matchIds) ? payload.matchIds : [];
+  // matchIds 由客户端给（当前页可见的比赛），必须限量：无上限时一次轮询
+  // 可以变成上千次顺序 RPC，正好撞上默认 3 秒超时（2026-10-17 审计 C6/C8）。
+  const ids = (Array.isArray(payload.matchIds) ? payload.matchIds : [])
+    .filter(id => typeof id === 'string' && id)
+    .slice(0, LIVE_IDS_MAX);
   if (ids.length === 0) return ok({ ok: true, scores: [], message: '' });
 
+  // 小批并发：顺序读 50 场要 50 个 RTT，轮询接口等不起；每批 10 个，
+  // 既把墙钟时间压下来，也离云端 QPS 30 的限流线有距离（审计 C5）。
   const scores = [];
-  for (const matchId of ids) {
-    if (typeof matchId !== 'string' || !matchId) continue;
-    const state = await ctx.repo.liveScores.getById(schoolLiveKey(matchId, ctx));
+  for (let offset = 0; offset < ids.length; offset += LIVE_READ_BATCH) {
+    const batch = ids.slice(offset, offset + LIVE_READ_BATCH);
+    const states = await Promise.all(batch.map(matchId => ctx.repo.liveScores.getById(schoolLiveKey(matchId, ctx))));
     // 编号由调用方给，直读集合前判一次归属——别校 / 别协会的实时比分同样读不到。
-    if (state && belongsToSchoolScope(state, ctx)) scores.push(liveScoreOf(state));
+    for (const state of states) {
+      if (state && belongsToSchoolScope(state, ctx)) scores.push(liveScoreOf(state));
+    }
   }
   return ok({ ok: true, scores, message: '' });
 }

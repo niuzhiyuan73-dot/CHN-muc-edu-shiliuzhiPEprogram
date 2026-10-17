@@ -179,6 +179,26 @@ function formatTextOf(gamePoints, bestOf) {
 }
 
 /**
+ * 日期 + 时间两栏（picker 产出，本地墙上时间）→ ISO 绝对串。
+ *
+ * 【为什么不能直接拼 naive 串】（2026-10-17 只读审计 C1）
+ * 云函数容器时区是 UTC+0，小程序端是 UTC+8。直接把 `2026-10-17T19:30:00`
+ * 发上去，服务端 `new Date()` 会按 UTC 解析成 19:30Z=次日 03:30 北京时间：
+ * 「比赛时间不能晚于现在」把刚打完的比赛拒掉，或把落库时刻整体挪晚 8 小时。
+ * 先在客户端本地时区里解析再 `toISOString()`，发出去的就是唯一绝对时刻，
+ * 两端解析一致（样板见 pages/school-exchange 的创建跨校赛事）。
+ *
+ * @param {string} date YYYY-MM-DD
+ * @param {string} time HH:mm
+ * @returns {string} ISO 串；缺一或不可解析时返回空串，交给校验报「请选择比赛时间」
+ */
+function toIsoMoment(date, time) {
+  if (!date || !time) return '';
+  const at = new Date(`${date}T${time}:00`);
+  return Number.isFinite(at.getTime()) ? at.toISOString() : '';
+}
+
+/**
  * 表单 → submitMatch 的入参。
  * 只做搬运与清洗：空选手去掉（交给人数的校验去报错），
  * 日期与时间拼成完整的时间串，胜方**不带**——由数据层从比分推。
@@ -195,7 +215,7 @@ function toSubmitParams(form) {
     scoreB: form.scoreB,
     gamePoints: form.gamePoints,
     bestOf: form.bestOf,
-    matchTime: form.date && form.time ? `${form.date}T${form.time}:00` : '',
+    matchTime: toIsoMoment(form.date, form.time),
     location: form.location,
   };
 }
