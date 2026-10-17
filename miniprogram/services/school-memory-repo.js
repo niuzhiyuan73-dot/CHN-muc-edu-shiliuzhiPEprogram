@@ -12,7 +12,11 @@ const KEYS = ['users', 'schools', 'schoolAssociations', 'colleges', 'schoolMembe
   // M4：赛季文档（每范围一份，_id 由 scopeKey 组成，跨范围读不到也改不掉）
   'seasons',
   // 交手名额计数：每对每赛季一条，_id 由 scope + 赛季号 + 两人编号组成
-  'pairCounts'];
+  'pairCounts',
+  // 会员评级表：每「学校 + 协会 + 用户 + 池」一条，_id 由 memberRatingKey 组成
+  'memberRatings',
+  // 结算序号计数：每「学校 + 协会」一条，_id 由 ratingSeqKey 组成
+  'ratingCounters'];
 
 function createSchoolMemoryRepo(seed = {}) {
   let state = Object.fromEntries(KEYS.map(key => [key, new Map((seed[key] || []).map(doc => [doc._id, clone(doc)]))]));
@@ -51,7 +55,7 @@ function createSchoolMemoryRepo(seed = {}) {
       'collegeEvents', 'collegeEntries', 'ties', 'lineups', 'liveScores', 'seasons',
       'associationGroups', 'associationGroupMembers',
       'associationNotices', 'associationTrainings', 'trainingRegistrations',
-      'pairCounts',
+      'pairCounts', 'memberRatings', 'ratingCounters',
     ];
     // 只按学校（不带协会）判归属的集合：学院目录 / 身份 / 校级角色是学校级的。
     const SCHOOL_SCOPED = ['colleges', 'schoolMembers', 'schoolRoles'];

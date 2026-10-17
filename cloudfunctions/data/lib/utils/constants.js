@@ -277,6 +277,30 @@ const MATCH_STATUS_LABEL = {
 };
 
 /**
+ * 单场结算快照的状态（Elo 逐场结算改造）。
+ *
+ * 每场比赛走到终态（生效或弃权等不计分收口）时，都在比赛文档上落一份
+ * **一次性结算快照**：计分场带赛前/赛后分数链，不计分场带明确的排除原因。
+ * 此后规则再怎么改，历史分差都以快照为准，不由当前评级反推。
+ */
+const SETTLEMENT_STATUS = {
+  RATED: 'rated', // 计分：已按当场比赛更新评级
+  EXCLUDED: 'excluded', // 不计分：写明排除原因，评级不动
+};
+
+/**
+ * 不计分的排除原因。写进快照的 exclusionReason，是审计与「为什么这场没涨分」
+ * 的唯一依据。新增原因时先在这里登记，不要裸写魔法字符串。
+ */
+const EXCLUSION_REASON = {
+  FORFEIT: 'forfeit', // 弃权（D41：对阵照常推进，但不产生等级分）
+  COLLEGE_DOUBLES: 'college_doubles', // 学院赛双打只汇总大场（D25）
+};
+
+/** 结算算法版本：快照与评级表都带它，将来调参可解释「这批数据是哪套规则算的」。 */
+const ALGORITHM_VERSION = 'elo-v2';
+
+/**
  * 防刷分上限：同一对会员在一个赛季内最多这么多场「自行录入的比赛」计入等级分。
  *
  * 【为什么要有这条】
@@ -690,6 +714,12 @@ const COLLECTION = {
   // 它本身没有业务含义，只为一件事存在——把名额判断放进事务，让并发的两次录分
   // 在同一份文档上撞车（见 school-match-service 的 pairUsage 一段）。
   PAIR_COUNTS: 'pair_counts',
+  // 会员评级表（Elo 逐场结算）：每个「学校 + 协会 + 用户 + 池」一条，当前评级落库，
+  // 确认比赛时在事务里逐场结算。_id = scope + userId + pool 的稳定键（见 school.js）。
+  MEMBER_RATINGS: 'member_ratings',
+  // 结算序号计数：每个「学校 + 协会」一条，settlementSeq 从这里原子递增，
+  // 决定 Elo 变化链的顺序（用服务端结算顺序，不靠客户端比赛时间）。
+  RATING_COUNTERS: 'rating_counters',
 };
 
 /** 本地缓存键名 */
@@ -1150,6 +1180,9 @@ module.exports = {
   RANK_PROJECT_CONFIG,
   MATCH_STATUS,
   MATCH_STATUS_LABEL,
+  SETTLEMENT_STATUS,
+  EXCLUSION_REASON,
+  ALGORITHM_VERSION,
   RATED_PAIR_LIMIT,
   EVENT_STATUS,
   EVENT_STATUS_LABEL,

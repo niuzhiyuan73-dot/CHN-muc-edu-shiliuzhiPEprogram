@@ -382,7 +382,8 @@ function buildCollections(scope, inTx) {
     'associationGroups', 'associationGroupMembers',
     'associationNotices', 'associationTrainings', 'trainingRegistrations',
     'announcements', 'events', 'eventSignups', 'matches', 'liveScores',
-    'collegeEvents', 'collegeEntries', 'ties', 'lineups', 'seasons', 'pairCounts']) {
+    'collegeEvents', 'collegeEntries', 'ties', 'lineups', 'seasons', 'pairCounts',
+    'memberRatings', 'ratingCounters']) {
     repo[key] = {
       getById: (id) => readDoc(scope, COLLECTIONS[key], id),
       set: (id, doc) => col(key).doc(id).set({ data: withoutId(doc) }),

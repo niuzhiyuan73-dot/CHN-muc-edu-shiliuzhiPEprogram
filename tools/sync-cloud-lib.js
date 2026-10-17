@@ -94,6 +94,8 @@ const MANIFEST = [
   // M4：计分 / 赛季 / 排行榜的学校维度服务，复用纯模块 replay.js / leaderboard.js /
   // rating-cap.js / college-tie.js / season.js（同一把尺子），按范围重放流水。
   'services/school-rank-service.js',
+  // Elo 逐场结算：评级落库 + 确认时单场结算（取代 replay 的在线读路径）
+  'services/school-rating-service.js',
   'services/exchange-service.js',
   'services/exchange-plan.js',
   'services/court.js',

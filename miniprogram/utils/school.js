@@ -66,9 +66,25 @@ const schoolMembershipKey = (userId, scope) => {
   return schoolKey('mb', s.schoolId, s.association, userId);
 };
 const collegeKey = (schoolId, collegeId) => schoolKey('co', requireSchoolId(schoolId), collegeId);
-// 【为什么没有 ratingKey】学校维度的等级分一贯「按 scope 重放 matches 流水推导、
-// 从不落库」，因此没有 member_ratings 集合，也不需要有它的键（2026-10-16 只读
-// 审计 H2：曾有一个全链路无人读写的 memberRatings 键与集合，已删）。
+// 会员评级表（Elo 逐场结算）：每个「学校 + 协会 + 用户 + 池」一条。
+//
+// 【为什么键里有 pool】单打/双打是两个独立评级池，一场双打只动 doubles。
+// 【为什么用户编号直接作为键的一段】与 schoolMemberKey 同一约定：userId 是
+// 平台生成的安全标识（schoolAccountKey 产物），不含需要转义的任意输入，
+// 键本身带分隔语义，少一层摘要就少一处「查不到自己」的排查成本。
+const memberRatingKey = (userId, pool, scope) => {
+  const s = schoolScope(scope);
+  if (!userId || typeof userId !== 'string') throw new Error('评级键缺少用户编号');
+  if (typeof pool !== 'string' || !pool) throw new Error('评级键缺少池名');
+  return schoolKey('mr', s.schoolId, s.association, userId, pool);
+};
+// 结算序号计数：每个「学校 + 协会」一条，settlementSeq 从这里原子递增。
+// 【为什么不含 pool】结算顺序是范围级的总分链口径：按「确认先后」给全范围
+// 的比赛编号，图表与审计按同一条链读；分池编号反而让两条链对不上账。
+const ratingSeqKey = (scope) => {
+  const s = schoolScope(scope);
+  return schoolKey('mrseq', s.schoolId, s.association);
+};
 const scopeKey = (scope) => {
   const s = schoolScope(scope);
   return schoolKey('scope', s.schoolId, s.association);
@@ -181,5 +197,5 @@ module.exports = {
   associationNoticeKey, associationTrainingKey, trainingRegistrationKey,
   schoolEventKey, schoolEventSignupKey, schoolMatchKey, schoolLiveKey,
   collegeEventKey, collegeEntryKey, collegeLineupKey, schoolAnnouncementKey,
-  schoolAccountKey, pairCountKey,
+  schoolAccountKey, pairCountKey, memberRatingKey, ratingSeqKey,
 };

@@ -4,7 +4,9 @@ const { schoolScope } = require('../lib/utils/school.js');
 const SCHOOL_COLLECTIONS = ['schools', 'schoolAssociations', 'colleges', 'schoolMembers', 'schoolRoles', 'studentIdClaims',
   'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
   'associationGroups', 'associationGroupMembers',
-  'associationNotices', 'associationTrainings', 'trainingRegistrations', 'pairCounts'];
+  'associationNotices', 'associationTrainings', 'trainingRegistrations', 'pairCounts',
+  // 会员评级表与结算序号计数：均为「学校 + 协会」双维度归属，写入即校验。
+  'memberRatings', 'ratingCounters'];
 const SCHOOL_ONLY = ['colleges', 'schoolMembers', 'schoolRoles'];
 const SCOPED_COLLECTIONS = [
   'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
@@ -16,6 +18,10 @@ const SCOPED_COLLECTIONS = [
   'associationNotices', 'associationTrainings', 'trainingRegistrations',
   // 交手名额计数：每对一条，同属「学校 + 协会 + 赛季」，写入即校验归属。
   'pairCounts',
+  // 会员评级表：每「学校 + 协会 + 用户 + 池」一条，写入即校验归属。
+  'memberRatings',
+  // 结算序号计数：每「学校 + 协会」一条，写入即校验归属。
+  'ratingCounters',
 ];
 
 function attachSchoolRepository(repo, io, inTx) {
