@@ -18,3 +18,13 @@
 .meet-notice { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: #e8f5ec; color: #1f7a3d; font-size: 24rpx; }
 .meet-error { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: #fdece9; color: #b23a2e; font-size: 24rpx; }
 .meet-hint { margin-top: 20rpx; font-size: 24rpx; color: #888; }
+
+/* 报名按钮：意向态与可报名态用不同底色，避免「已报名」被看成可点 */
+.meet-event-state { margin-top: 8rpx; font-size: 22rpx; color: #1f7a3d; }
+.meet-event-btn { margin-top: 8rpx; padding: 8rpx 18rpx; border-radius: 999rpx; background: #b23a2e; color: #fff; font-size: 22rpx; text-align: center; }
+.meet-event-btn.is-pending { background: #f2f2f2; color: #666; }
+.meet-review-ops { display: flex; gap: 12rpx; }
+.meet-review { padding: 8rpx 18rpx; border-radius: 999rpx; font-size: 22rpx; }
+.meet-review.is-ok { background: #e8f5ec; color: #1f7a3d; }
+.meet-review.is-no { background: #fdece9; color: #b23a2e; }
+.meet-college-link { margin: 20rpx 0 4rpx; text-align: center; font-size: 24rpx; color: #b23a2e; }

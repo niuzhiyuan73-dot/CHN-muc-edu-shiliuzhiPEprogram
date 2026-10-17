@@ -19,7 +19,7 @@ const path = require('node:path');
 const ROOT = path.join(__dirname, '..');
 const MINI = path.join(ROOT, 'miniprogram');
 
-const PAGES = ['meet-list', 'meet-detail', 'meet-setup'];
+const PAGES = ['meet-list', 'meet-detail', 'meet-setup', 'meet-college'];
 
 /** 抓住 Page(配置)：页面文件在 require 时调用 Page()。 */
 function loadPage(name) {
@@ -48,7 +48,7 @@ function handlersOf(name) {
   return [...names];
 }
 
-test('运动会三个页面都已注册，且 js/json/wxml/wxss 齐备', () => {
+test('运动会四个页面都已注册，且 js/json/wxml/wxss 齐备', () => {
   const app = JSON.parse(fs.readFileSync(path.join(MINI, 'app.json'), 'utf8'));
   for (const name of PAGES) {
     assert.ok(app.pages.includes(`pages/${name}/${name}`), `${name} 未在 app.json 注册`);
@@ -95,7 +95,8 @@ test('列表页加载、搜索、分页与详情跳转都接到服务层', () =>
 
 test('详情页与向导页的关键动作存在', () => {
   const detail = loadPage('meet-detail');
-  for (const method of ['reload', 'onPublish', 'onDelete', 'onOpenSetup', 'onOpenAtChange', 'onCloseAtChange']) {
+  for (const method of ['reload', 'onPublish', 'onDelete', 'onOpenSetup', 'onOpenAtChange', 'onCloseAtChange',
+    'onInterest', 'onWithdrawInterest', 'onReview', 'onOpenCollege']) {
     assert.equal(typeof detail[method], 'function', `详情页缺少 ${method}`);
   }
   const setup = loadPage('meet-setup');
@@ -104,4 +105,9 @@ test('详情页与向导页的关键动作存在', () => {
   }
   // 带 meetId 进入时应直接落在第二步（继续配置）
   assert.equal(setup.data.step, 1, '无 meetId 时应从第一步开始');
+
+  const college = loadPage('meet-college');
+  for (const method of ['reload', 'onOpenEvent', 'onToggleApplicant', 'onSubmitEntry', 'onWithdrawEntry']) {
+    assert.equal(typeof college[method], 'function', `学院工作台缺少 ${method}`);
+  }
 });

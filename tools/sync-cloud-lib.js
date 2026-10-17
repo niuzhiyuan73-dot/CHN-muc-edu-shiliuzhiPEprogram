@@ -133,6 +133,8 @@ const MANIFEST = [
   // 运动会 B4：草稿 / 项目配置 / 发布报名。云端与模拟端同一份校验，
   // 否则「限额、组别、发布前置」会在两端给出不同结果。
   'services/meet-service.js',
+  // 运动会 B5：报名主链（意向 / 正式名单 / 审核 / 补报窗口）。
+  'services/meet-registration-service.js',
 ];
 
 /**

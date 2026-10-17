@@ -1,0 +1,24 @@
+.meet-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16rpx; }
+.meet-college { font-size: 26rpx; color: #333; font-weight: 500; }
+.meet-link { font-size: 24rpx; color: #b23a2e; }
+.meet-row { padding: 20rpx 24rpx; margin-bottom: 12rpx; }
+.meet-row-head { display: flex; justify-content: space-between; align-items: center; }
+.meet-row-name { font-size: 28rpx; font-weight: 500; }
+.meet-row-meta { margin-top: 6rpx; font-size: 22rpx; color: #888; }
+.meet-row-tag { font-size: 22rpx; padding: 4rpx 14rpx; border-radius: 999rpx; background: #e8f5ec; color: #1f7a3d; }
+.meet-row-tag.is-closed { background: #f2f2f2; color: #777; }
+.meet-pool { margin-top: 16rpx; padding-top: 16rpx; border-top: 1rpx solid #f0f0f0; }
+.meet-pool-hint { font-size: 22rpx; color: #888; margin-bottom: 12rpx; }
+.meet-pool-empty { font-size: 24rpx; color: #999; padding: 12rpx 0; }
+.meet-person { display: flex; align-items: center; gap: 12rpx; padding: 14rpx 18rpx; border-radius: 12rpx; background: #f7f8fa; margin-bottom: 10rpx; }
+.meet-person.is-checked { background: #fdece9; }
+.meet-person-name { flex: 1; font-size: 26rpx; }
+.meet-person-gender { font-size: 22rpx; color: #888; }
+.meet-person-check { width: 32rpx; text-align: center; color: #b23a2e; }
+.meet-section-title { margin: 24rpx 0 12rpx; font-size: 26rpx; font-weight: 600; color: #555; }
+.meet-entry { display: flex; justify-content: space-between; align-items: center; padding: 18rpx 24rpx; margin-bottom: 10rpx; }
+.meet-entry-name { font-size: 26rpx; }
+.meet-entry-meta { margin-top: 6rpx; font-size: 22rpx; color: #888; }
+.meet-entry-op { font-size: 24rpx; color: #b23a2e; padding: 8rpx 16rpx; }
+.meet-notice { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: #e8f5ec; color: #1f7a3d; font-size: 24rpx; }
+.meet-error { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: #fdece9; color: #b23a2e; font-size: 24rpx; }

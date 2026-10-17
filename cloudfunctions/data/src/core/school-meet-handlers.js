@@ -11,5 +11,8 @@
 const { SCHOOL_MEET_ACTIONS, pickActions } = require('../../lib/utils/school-actions.js');
 const meetService = require('../../lib/services/meet-service.js');
 const leadService = require('../../lib/services/meet-college-lead-service.js');
+const registrationService = require('../../lib/services/meet-registration-service.js');
 
-module.exports = Object.freeze(pickActions([meetService, leadService], SCHOOL_MEET_ACTIONS));
+module.exports = Object.freeze(
+  pickActions([meetService, leadService, registrationService], SCHOOL_MEET_ACTIONS),
+);

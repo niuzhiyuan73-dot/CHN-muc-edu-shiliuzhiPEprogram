@@ -114,6 +114,13 @@ const SCHOOL_WRITE_ACTIONS = [
   'deleteSportsMeet',
   'grantMeetCollegeLead',
   'revokeMeetCollegeLead',
+  // 运动会报名（B5）：意向、正式名单、审核、补报窗口
+  'submitMeetInterest',
+  'withdrawMeetInterest',
+  'submitMeetCollegeEntry',
+  'withdrawMeetCollegeEntry',
+  'reviewMeetEntry',
+  'openMeetLateWindow',
 ];
 
 const SCHOOL_WRITE_ACTION_SET = new Set(SCHOOL_WRITE_ACTIONS);

@@ -190,6 +190,17 @@ function forMeet(input) {
     revokeMeetCollegeLead: payload => request('revokeMeetCollegeLead', payload),
     listMeetCollegeLeads: payload => request('listMeetCollegeLeads', payload),
     getMyMeetCollegeLead: payload => request('getMyMeetCollegeLead', payload),
+    // 报名主链（B5）
+    submitMeetInterest: payload => request('submitMeetInterest', payload),
+    withdrawMeetInterest: payload => request('withdrawMeetInterest', payload),
+    getMyMeetParticipation: payload => request('getMyMeetParticipation', payload),
+    listMeetCollegeEvents: payload => request('listMeetCollegeEvents', payload),
+    getMeetApplicantPool: payload => request('getMeetApplicantPool', payload),
+    submitMeetCollegeEntry: payload => request('submitMeetCollegeEntry', payload),
+    withdrawMeetCollegeEntry: payload => request('withdrawMeetCollegeEntry', payload),
+    reviewMeetEntry: payload => request('reviewMeetEntry', payload),
+    openMeetLateWindow: payload => request('openMeetLateWindow', payload),
+    listMeetEntries: payload => request('listMeetEntries', payload),
   });
 }
 

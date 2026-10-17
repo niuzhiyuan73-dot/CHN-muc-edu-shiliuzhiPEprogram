@@ -92,6 +92,11 @@ const SCHOOL_MEET_ACTIONS = Object.freeze([
   // 学院部长授权（B3）
   'grantMeetCollegeLead',        'revokeMeetCollegeLead',
   'listMeetCollegeLeads',        'getMyMeetCollegeLead',
+  // 报名主链（B5）：学生意向 / 学院提交 / 校级审核 / 补报窗口
+  'submitMeetInterest',          'withdrawMeetInterest',        'getMyMeetParticipation',
+  'listMeetCollegeEvents',       'getMeetApplicantPool',
+  'submitMeetCollegeEntry',          'withdrawMeetCollegeEntry',
+  'reviewMeetEntry',             'openMeetLateWindow',          'listMeetEntries',
 ]);
 
 /**

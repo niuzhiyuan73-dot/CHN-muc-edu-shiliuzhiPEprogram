@@ -28,6 +28,7 @@ const schoolMemberService = require('./school-member-service.js');
 const rankService = require('./school-rank-service.js');
 const meetService = require('./meet-service.js');
 const meetLeadService = require('./meet-college-lead-service.js');
+const meetRegistrationService = require('./meet-registration-service.js');
 
 /**
  * 协会空间处理器集合。
@@ -48,7 +49,9 @@ const spaceHandlers = Object.freeze(pickActions([
 const exchangeHandlers = Object.freeze(pickActions([exchange], SCHOOL_EXCHANGE_ACTIONS));
 
 /** 运动会处理器集合（学校级，请求不带协会；与云端 school-meet-handlers 同一份白名单）。 */
-const meetHandlers = Object.freeze(pickActions([meetService, meetLeadService], SCHOOL_MEET_ACTIONS));
+const meetHandlers = Object.freeze(
+  pickActions([meetService, meetLeadService, meetRegistrationService], SCHOOL_MEET_ACTIONS),
+);
 
 const DEMO_ACTORS = Object.freeze([
   { id: 'demo_applicant', label: '模拟申请人' },

@@ -46,8 +46,57 @@
       <view class="meet-event-side">
         <view class="meet-event-limit">每院 {{item.perCollegeLimit}}{{item.entryForm === 'single' ? '人' : item.entryForm === 'team' ? '队' : '组'}}</view>
         <view class="meet-event-members" wx:if="{{item.members > 1}}">每组 {{item.members}} 人</view>
+        <!-- 学生报名：意向不占名额；已入选后不能再撤（D10／D19） -->
+        <block wx:if="{{isRegistration}}">
+          <view wx:if="{{item.myInterestStatus === 'selected'}}" class="meet-event-state">已在正式名单</view>
+          <view
+            wx:elif="{{item.myInterestStatus === 'pending'}}"
+            class="meet-event-btn is-pending"
+            data-event-key="{{item.eventKey}}"
+            bindtap="onWithdrawInterest"
+          >已报名 · 撤回</view>
+          <view
+            wx:else
+            class="meet-event-btn"
+            data-event-key="{{item.eventKey}}"
+            bindtap="onInterest"
+          >我要报名</view>
+        </block>
       </view>
     </view>
+
+    <!-- 我的参与：意向与正式名单要能分清（D10 的三态） -->
+    <block wx:if="{{isRegistration && interests.length > 0}}">
+      <view class="meet-section-title">我的参赛意向</view>
+      <view wx:for="{{interests}}" wx:key="eventKey" class="card meet-entry">
+        <view class="meet-entry-main">
+          <view class="meet-entry-name">{{item.name}} · {{item.group === 'male' ? '男子' : item.group === 'female' ? '女子' : '混合'}}</view>
+          <view class="meet-entry-meta">
+            {{item.status === 'pending' ? '待学院选拔' : item.status === 'selected' ? '已被学院选中' : item.status === 'rejected' ? '未入选' : '已撤回'}}
+          </view>
+        </view>
+      </view>
+    </block>
+
+    <!-- 管理员：待审名单（审核通过才转「已用」名额） -->
+    <block wx:if="{{canManage && pendingEntries.length > 0}}">
+      <view class="meet-section-title">待审核名单 {{pendingEntries.length}} 条</view>
+      <view wx:for="{{pendingEntries}}" wx:key="entryKey" class="card meet-entry">
+        <view class="meet-entry-main">
+          <view class="meet-entry-name">{{item.name}} · {{item.group === 'male' ? '男子' : item.group === 'female' ? '女子' : '混合'}}</view>
+          <view class="meet-entry-meta">{{item.collegeId}} · {{item.members}} 人<text wx:if="{{item.submittedByAdmin}}"> · 代报</text></view>
+        </view>
+        <view class="meet-review-ops">
+          <view class="meet-review is-ok" data-entry-key="{{item.entryKey}}" data-decision="approve" bindtap="onReview">通过</view>
+          <view class="meet-review is-no" data-entry-key="{{item.entryKey}}" data-decision="reject" bindtap="onReview">驳回</view>
+        </view>
+      </view>
+    </block>
+
+    <!-- 学院部长入口 -->
+    <block wx:if="{{isRegistration}}">
+      <view class="meet-college-link" bindtap="onOpenCollege">进入学院报名工作台 ›</view>
+    </block>
 
     <block wx:if="{{canManage && isDraft}}">
       <view class="meet-section-title">发布报名</view>

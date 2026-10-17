@@ -1,0 +1,77 @@
+<!--
+  学院部长工作台：项目组别 × 已报/上限/待审/意向人数，点开从申请人池选人提交。
+  提交按项目组别一条，不做「整院一次提交」的假原子。
+-->
+<view class="page-container">
+
+  <view wx:if="{{notice}}" class="meet-notice">{{notice}}</view>
+  <view wx:if="{{error}}" class="meet-error">{{error}}</view>
+
+  <view class="meet-head">
+    <view class="meet-college">
+      {{byAdmin ? '代报学院' : '本院'}}：{{collegeId || '未授权学院'}}
+    </view>
+    <view class="meet-link" bindtap="onOpenDetail">查看运动会详情</view>
+  </view>
+
+  <view wx:if="{{loading}}" class="loading">正在加载…</view>
+
+  <block wx:else>
+    <view wx:if="{{rows.length === 0}}" class="empty-state">
+      <view class="empty-state-icon">📋</view>
+      <view class="empty-state-text">本届还没有项目</view>
+    </view>
+
+    <view wx:for="{{rows}}" wx:key="eventKey" class="card meet-row">
+      <view class="meet-row-head" data-event-key="{{item.eventKey}}" bindtap="onOpenEvent">
+        <view class="meet-row-main">
+          <view class="meet-row-name">{{item.name}}</view>
+          <view class="meet-row-meta">
+            {{item.group === 'male' ? '男子' : item.group === 'female' ? '女子' : '混合'}}
+            · 已报 {{item.used}}/{{item.limit}}
+            <text wx:if="{{item.pending > 0}}"> · 待审 {{item.pending}}</text>
+            · 意向 {{item.applicants}}
+          </view>
+        </view>
+        <view class="meet-row-tag {{item.closed ? 'is-closed' : ''}}">{{item.closed ? '已提交' : '可报名'}}</view>
+      </view>
+
+      <!-- 选人面板 -->
+      <view wx:if="{{activeEventKey === item.eventKey}}" class="meet-pool">
+        <view class="meet-pool-hint">
+          需 {{activeEvent.members}} 人，已选 {{picked.length}} 人（只列已提交意向的学生）
+        </view>
+        <view wx:if="{{applicants.length === 0}}" class="meet-pool-empty">还没有学生提交参赛意向</view>
+        <view
+          wx:for="{{applicants}}"
+          wx:for-item="person"
+          wx:key="userId"
+          class="meet-person {{person.checked ? 'is-checked' : ''}}"
+          data-user-id="{{person.userId}}"
+          bindtap="onToggleApplicant"
+        >
+          <text class="meet-person-name">{{person.name}}</text>
+          <text class="meet-person-gender">{{person.gender === 'female' ? '女' : person.gender === 'male' ? '男' : ''}}</text>
+          <text class="meet-person-check">{{person.checked ? '✓' : ''}}</text>
+        </view>
+        <button class="btn btn-primary" bindtap="onSubmitEntry" disabled="{{busy}}">提交本院名单</button>
+      </view>
+    </view>
+
+    <view class="meet-section-title">本院已提交名单</view>
+    <view wx:if="{{entries.length === 0}}" class="empty-state">
+      <view class="empty-state-text">还没有提交任何名单</view>
+    </view>
+    <view wx:for="{{entries}}" wx:key="entryKey" class="card meet-entry">
+      <view class="meet-entry-main">
+        <view class="meet-entry-name">{{item.name}} · {{item.group === 'male' ? '男子' : item.group === 'female' ? '女子' : '混合'}}</view>
+        <view class="meet-entry-meta">
+          {{item.members}} 人 ·
+          {{item.status === 'pending_review' ? '待审核' : item.status === 'approved' ? '已通过' : '已驳回'}}
+          <text wx:if="{{item.submittedByAdmin}}"> · 管理员代报</text>
+        </view>
+      </view>
+      <view class="meet-entry-op" data-entry-key="{{item.entryKey}}" bindtap="onWithdrawEntry">撤回</view>
+    </view>
+  </block>
+</view>

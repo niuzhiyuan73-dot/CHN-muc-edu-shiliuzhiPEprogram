@@ -29,7 +29,8 @@
     "pages/school-exchange/school-exchange",
     "pages/meet-list/meet-list",
     "pages/meet-detail/meet-detail",
-    "pages/meet-setup/meet-setup"
+    "pages/meet-setup/meet-setup",
+    "pages/meet-college/meet-college"
   ],
   "window": {
     "backgroundTextStyle": "dark",

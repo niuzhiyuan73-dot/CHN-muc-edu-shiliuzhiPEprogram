@@ -76,6 +76,20 @@ function part(value, label) {
 }
 
 /**
+ * 内嵌键的段：允许冒号。
+ *
+ * 事件 / 参赛记录 / 发布编号本身就是「前一级的键」，它们内部以冒号分段。
+ * 这类段不接受外部输入（都由本模块生成并落库后回读），所以放行冒号不会引入
+ * 「a:b」+「c」与「a」+「b:c」同形的风险；而 meetId / collegeId / userId / slot
+ * 这些来自请求或学籍的段仍然走严格校验。
+ */
+function rawPart(value, label) {
+  const text = String(value == null ? '' : value).trim();
+  if (!text) throw new Error(`运动会键缺少${label}`);
+  return text;
+}
+
+/**
  * 归一运动会范围。
  *
  * @param {{schoolId?:string, meetId?:string}} input
@@ -117,7 +131,7 @@ function meetCollegeKey(meetId, collegeId) {
 
 /** 学生意向：一人一项目组别一条，可撤回（D19）。 */
 function meetInterestKey(meetId, eventKey, userId) {
-  return `mti:${part(meetId, '运动会')}:${part(eventKey, '项目组别')}:${part(userId, '用户')}`;
+  return `mti:${part(meetId, '运动会')}:${rawPart(eventKey, '项目组别')}:${part(userId, '用户')}`;
 }
 
 /**
@@ -128,42 +142,61 @@ function meetInterestKey(meetId, eventKey, userId) {
  * 同一条文档上，而不是不断产生新文档。
  */
 function meetEntryKey(meetId, eventKey, collegeId, slot) {
-  return `mtr:${part(meetId, '运动会')}:${part(eventKey, '项目组别')}:${part(collegeId, '学院')}:${part(slot, '名额序号')}`;
+  return `mtr:${part(meetId, '运动会')}:${rawPart(eventKey, '项目组别')}:${part(collegeId, '学院')}:${part(slot, '名额序号')}`;
 }
 
 /** 学院额度计数：一院一项目组别一条，事务内点读判断是否还有余量。 */
 function meetQuotaKey(meetId, eventKey, collegeId) {
-  return `mtq:${part(meetId, '运动会')}:${part(eventKey, '项目组别')}:${part(collegeId, '学院')}`;
+  return `mtq:${part(meetId, '运动会')}:${rawPart(eventKey, '项目组别')}:${part(collegeId, '学院')}`;
 }
 
 /** 兼项与重复报名声明：一人一项目组别一条，事务内点读即可判重。 */
 function meetClaimKey(meetId, eventKey, userId) {
-  return `mtc:${part(meetId, '运动会')}:${part(eventKey, '项目组别')}:${part(userId, '用户')}`;
+  return `mtc:${part(meetId, '运动会')}:${rawPart(eventKey, '项目组别')}:${part(userId, '用户')}`;
+}
+
+/**
+ * 一人一届一份的兼项计数（同一集合里以 kind='counter' 区分）。
+ *
+ * 为什么不能靠「扫 claim 文档数出来」：云开发事务内不能查询，而兼项上限（个人 2 项）
+ * 是提交时必须判的。把个人项数与团体项数压到一份可点读的计数文档上，
+ * 并发提交时两条写入会撞在同一个文档上，天然串行。
+ */
+function meetParticipantCounterKey(meetId, userId) {
+  return `mtcnt:${part(meetId, '运动会')}:${part(userId, '用户')}`;
+}
+
+/** 参赛名额序号：单人 s1/s2、多人协作组 g1/g2、队伍 t1（一院一队）。 */
+function meetEntrySlot(entryForm, index) {
+  const prefix = entryForm === 'team' ? 't' : entryForm === 'group' ? 'g' : 's';
+  const num = Number(index);
+  if (!Number.isInteger(num) || num < 1) throw new Error('名额序号必须是正整数');
+  return `${prefix}${num}`;
 }
 
 /** 场次：轮次 + 组次（预赛第 1 组、决赛等）。 */
 function meetSessionKey(meetId, eventKey, round, index) {
-  return `mts:${part(meetId, '运动会')}:${part(eventKey, '项目组别')}:${part(round, '轮次')}:${part(index, '组次')}`;
+  return `mts:${part(meetId, '运动会')}:${rawPart(eventKey, '项目组别')}:${part(round, '轮次')}:${part(index, '组次')}`;
 }
 
 /** 裁判指派：场次 + 裁判，一人一场一条（撤换即改状态，不新增文档）。 */
 function meetJudgeKey(meetId, sessionKey, judgeId) {
-  return `mtj:${part(meetId, '运动会')}:${part(sessionKey, '场次')}:${part(judgeId, '裁判')}`;
+  return `mtj:${part(meetId, '运动会')}:${rawPart(sessionKey, '场次')}:${part(judgeId, '裁判')}`;
 }
 
 /** 裁判成绩：参赛记录 + 场次 + 裁判，唯一键防重复提交（含 revision）。 */
 function meetScoreKey(entryKey, sessionKey, judgeId) {
-  return `mtx:${part(entryKey, '参赛记录')}:${part(sessionKey, '场次')}:${part(judgeId, '裁判')}`;
+  return `mtx:${rawPart(entryKey, '参赛记录')}:${rawPart(sessionKey, '场次')}:${part(judgeId, '裁判')}`;
 }
 
 /** 结果发布：一项目组别一条，保存当前生效版本与生效标记（幂等靠它）。 */
 function meetPublicationKey(meetId, eventKey) {
-  return `mtp:${part(meetId, '运动会')}:${part(eventKey, '项目组别')}`;
+  return `mtp:${part(meetId, '运动会')}:${rawPart(eventKey, '项目组别')}`;
 }
 
 /** 结果行：一次发布下的一条参赛记录，一行一个名次与学院积分贡献。 */
 function meetResultRowKey(publicationKey, entryKey) {
-  return `mtrow:${part(publicationKey, '结果发布')}:${part(entryKey, '参赛记录')}`;
+  return `mtrow:${rawPart(publicationKey, '结果发布')}:${rawPart(entryKey, '参赛记录')}`;
 }
 
 /** 学院总榜快照：一届一院一条（规模大时才落地，正式结果仍是事实来源）。 */
@@ -218,6 +251,8 @@ module.exports = {
   meetEntryKey,
   meetQuotaKey,
   meetClaimKey,
+  meetParticipantCounterKey,
+  meetEntrySlot,
   meetSessionKey,
   meetJudgeKey,
   meetScoreKey,

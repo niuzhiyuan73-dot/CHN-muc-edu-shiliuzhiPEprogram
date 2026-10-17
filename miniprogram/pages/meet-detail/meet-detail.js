@@ -23,6 +23,10 @@ Page({
     events: [],
     canManage: false,
     isDraft: false,
+    isRegistration: false,
+    interests: [],
+    myEntries: [],
+    pendingEntries: [],
     openAt: '',
     closeAt: '',
   },
@@ -71,16 +75,97 @@ Page({
     try {
       const result = await this.client().getSportsMeet({ meetId: this.data.meetId });
       const canManage = Boolean(result.permissions && result.permissions.canManage);
+      const isRegistration = result.meet.status === 'registration';
       this.update({
         loading: false,
         meet: result.meet,
         events: result.events,
         canManage,
         isDraft: result.meet.status === 'draft',
+        isRegistration,
       });
+      if (isRegistration) await this.loadParticipation();
     } catch (err) {
       this.update({ loading: false, error: (err && err.message) || '加载失败' });
     }
+  },
+
+  /** 报名期：我的意向/入选状态 + 管理员视角的待审队列 */
+  async loadParticipation() {
+    try {
+      const mine = await this.client().getMyMeetParticipation({});
+      // 把「我在这个项目上的状态」贴到项目行上：WXML 不能查表，只能读字段
+      const byEvent = new Map(mine.interests.map((row) => [row.eventKey, row.status]));
+      this.update({
+        interests: mine.interests,
+        myEntries: mine.entries,
+        events: this.data.events.map((row) => ({
+          ...row, myInterestStatus: byEvent.get(row.eventKey) || '',
+        })),
+      });
+    } catch (err) {
+      // 未提交过意向也会走到这里（服务端返回空列表），失败不影响主信息
+      this.update({ interests: [], myEntries: [] });
+    }
+    if (!this.data.canManage) return;
+    try {
+      const all = await this.client().listMeetEntries({});
+      this.update({ pendingEntries: all.items.filter((row) => row.status === 'pending_review') });
+    } catch (err) {
+      this.update({ pendingEntries: [] });
+    }
+  },
+
+  /** 学生提交参赛意向（不占正式名额，D10） */
+  async onInterest(event) {
+    if (this.data.busy) return undefined;
+    const eventKey = event.currentTarget.dataset.eventKey;
+    if (!eventKey) return undefined;
+    this.update({ busy: true, error: '', notice: '' });
+    try {
+      await this.client().submitMeetInterest({ eventKey });
+      this.update({ busy: false, notice: '已提交参赛意向，等待学院选拔' });
+      return this.loadParticipation();
+    } catch (err) {
+      this.update({ busy: false, error: (err && err.message) || '提交失败' });
+      return undefined;
+    }
+  },
+
+  async onWithdrawInterest(event) {
+    if (this.data.busy) return undefined;
+    const eventKey = event.currentTarget.dataset.eventKey;
+    if (!eventKey) return undefined;
+    this.update({ busy: true, error: '', notice: '' });
+    try {
+      await this.client().withdrawMeetInterest({ eventKey });
+      this.update({ busy: false, notice: '已撤回意向' });
+      return this.loadParticipation();
+    } catch (err) {
+      this.update({ busy: false, error: (err && err.message) || '撤回失败' });
+      return undefined;
+    }
+  },
+
+  /** 管理员审核（B6 可自审：代报后本人审核也允许） */
+  async onReview(event) {
+    if (this.data.busy) return undefined;
+    const { entryKey, decision } = event.currentTarget.dataset;
+    if (!entryKey || !decision) return undefined;
+    this.update({ busy: true, error: '', notice: '' });
+    try {
+      await this.client().reviewMeetEntry({ entryKey, decision });
+      this.update({ busy: false, notice: decision === 'approve' ? '已通过' : '已驳回' });
+      return this.reload();
+    } catch (err) {
+      this.update({ busy: false, error: (err && err.message) || '审核失败' });
+      return undefined;
+    }
+  },
+
+  /** 学院部长入口 */
+  onOpenCollege() {
+    return wx.navigateTo({ url: `/pages/meet-college/meet-college?meetId=${this.data.meetId}` });
   },
 
   onOpenSetup() {
