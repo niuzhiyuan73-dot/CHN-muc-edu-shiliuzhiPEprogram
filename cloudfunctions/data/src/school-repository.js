@@ -1,13 +1,20 @@
 /** 两个适配器共享的学校仓储扩展。原单校接口保留，S2 逐一接入新接口。 */
 const { schoolScope } = require('../lib/utils/school.js');
+const { MEET_COLLECTIONS, meetScope } = require('../lib/utils/meet-scope.js');
 
 const SCHOOL_COLLECTIONS = ['schools', 'schoolAssociations', 'colleges', 'schoolMembers', 'schoolRoles', 'studentIdClaims',
   'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
   'associationGroups', 'associationGroupMembers',
   'associationNotices', 'associationTrainings', 'trainingRegistrations', 'pairCounts',
   // 会员评级表与结算序号计数：均为「学校 + 协会」双维度归属，写入即校验。
-  'memberRatings', 'ratingCounters'];
-const SCHOOL_ONLY = ['colleges', 'schoolMembers', 'schoolRoles'];
+  'memberRatings', 'ratingCounters',
+  // 运动会 12 个集合：学校级业务，不属于任何协会。基础读写挂在这里，
+  // 范围校验走 forMeet（{schoolId, meetId}），不能混进下面的 SCOPED_COLLECTIONS
+  // ——那一组会注入 association 字段，把运动会错挂到协会上。
+  ...MEET_COLLECTIONS,
+  // 学院部长授权：**学校级**常设角色，不随届次、也不挂协会，故按 SCHOOL_ONLY 处理。
+  'sportsMeetCollegeLeads'];
+const SCHOOL_ONLY = ['colleges', 'schoolMembers', 'schoolRoles', 'sportsMeetCollegeLeads'];
 const SCOPED_COLLECTIONS = [
   'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
   ...SCHOOL_ONLY, 'schoolAssociations', 'memberships',
@@ -24,6 +31,73 @@ const SCOPED_COLLECTIONS = [
   'ratingCounters',
 ];
 
+/**
+ * 通用「受范围仓储」。
+ *
+ * 协会维度与运动会维度只有 `expected` 字段不同（前者 schoolId+association，
+ * 后者 schoolId+meetId），读写校验、事务内点读、事务包装完全一致。
+ * 抽成一处而不是复制两份：这段代码里「写入前在同一事务内复查归属」是关键，
+ * 两份实现迟早分叉，而分叉的后果是能跨届/跨院写入。
+ *
+ * @param {Object} repo 基础仓储
+ * @param {Object} io { read, set, query }
+ * @param {boolean} inTx 是否已在事务内
+ * @param {Object} options
+ * @param {ReadonlyArray<string>} options.keys 受范围集合
+ * @param {Object} options.scope 写进文档与结果的范围对象
+ * @param {Function} options.expectedOf (key) => 该集合应有的归属字段
+ * @param {Function} options.surfaceOf (tx, scope) => 事务内的对应受范围仓储
+ * @param {string} options.mismatchMessage 越界写入的报错文案
+ */
+function buildScoped(repo, io, inTx, options) {
+  const { keys, scope, expectedOf, surfaceOf, mismatchMessage } = options;
+  const result = { scope };
+
+  for (const key of keys) {
+    const expected = expectedOf(key);
+    const owns = (doc) => doc && Object.keys(expected).every((field) => doc[field] === expected[field]);
+    const checked = (doc) => {
+      for (const field of Object.keys(expected)) {
+        if (doc[field] !== undefined && doc[field] !== expected[field]) throw new Error(mismatchMessage);
+      }
+      return { ...doc, ...expected };
+    };
+    // 按主键写前检查已有归属，检查与写入保持在同一事务。
+    const write = async (id, doc, mode) => {
+      if (!id || typeof id !== 'string') throw new Error('缺少记录 ID');
+      if (doc._id !== undefined && doc._id !== id) throw new Error('记录 ID 不一致');
+      const patch = checked(doc);
+      const run = async (tx) => {
+        const current = await tx[key].getById(id);
+        if (current && mode === 'insert') throw new Error('记录已存在');
+        if (!current && mode === 'update') throw new Error('记录不存在或不属于当前范围');
+        await tx[key].set(id, mode === 'update' ? { ...current, ...patch } : patch);
+        return { ...(mode === 'update' ? current : {}), ...patch, _id: id };
+      };
+      if (!inTx) return repo.transaction((tx) => run(surfaceOf(tx, scope)));
+      const current = await io.read(key, id);
+      if (current && !owns(current)) throw new Error('记录不存在或不属于当前范围');
+      if (current && mode === 'insert') throw new Error('记录已存在');
+      if (!current && mode === 'update') throw new Error('记录不存在或不属于当前范围');
+      const next = { ...(mode === 'update' ? current : {}), ...patch, _id: id };
+      await io.set(key, id, next);
+      return next;
+    };
+    result[key] = {
+      list: () => repo[key].listByScope(scope),
+      getById: async (id) => {
+        const doc = await io.read(key, id);
+        return owns(doc) ? doc : null;
+      },
+      set: (id, doc) => write(id, doc, 'set'),
+      insert: (doc) => write(doc._id, doc, 'insert'),
+      update: (id, patch) => write(id, patch, 'update'),
+    };
+  }
+  if (!inTx) result.transaction = (fn) => repo.transaction((tx) => fn(surfaceOf(tx, scope)));
+  return result;
+}
+
 function attachSchoolRepository(repo, io, inTx) {
   for (const key of SCHOOL_COLLECTIONS) {
     repo[key] = {
@@ -38,56 +112,63 @@ function attachSchoolRepository(repo, io, inTx) {
       return io.query(key, SCHOOL_ONLY.includes(key) ? { schoolId: scope.schoolId } : scope);
     };
   }
+  // 学校级集合（学院目录 / 身份 / 校级角色 / 学院部长授权）的按校列举。
+  // 为什么另开一个方法：listByScope 走 schoolScope()，它要求 schoolId + association，
+  // 而运动会的 context 里根本没有 association——拿 forScope 去列学院部长会直接抛错。
+  for (const key of SCHOOL_ONLY) {
+    repo[key].listBySchool = (schoolId) => io.query(key, { schoolId: String(schoolId || '') });
+  }
+  // 运动会集合的按校列举（列「本校有哪些届运动会」用）。
+  for (const key of MEET_COLLECTIONS) {
+    repo[key].listBySchool = (schoolId) => io.query(key, { schoolId: String(schoolId || '') });
+  }
+  // 运动会集合的 listByScope 只按「学校 + 运动会」，与协会无关。
+  for (const key of MEET_COLLECTIONS) {
+    repo[key].listByScope = (input) => {
+      const scope = meetScope(input);
+      return io.query(key, { schoolId: scope.schoolId, meetId: scope.meetId });
+    };
+  }
   repo.exchangeSignups.listByEvent = eventId => io.query('exchangeSignups', { eventId });
   repo.exchangeMatches.listByEvent = eventId => io.query('exchangeMatches', { eventId });
+
   repo.forScope = (input) => {
     const scope = schoolScope(input);
-    const result = { scope };
-    for (const key of SCOPED_COLLECTIONS) {
-      const expected = SCHOOL_ONLY.includes(key) ? { schoolId: scope.schoolId } : scope;
-      const owns = (doc) => doc && Object.keys(expected).every((field) => doc[field] === expected[field]);
-      const checked = (doc) => {
-        for (const field of Object.keys(expected)) {
-          if (doc[field] !== undefined && doc[field] !== expected[field]) throw new Error('不能写入其他学校或协会的数据');
-        }
-        return { ...doc, ...expected };
-      };
-      // 按主键写前检查已有归属，检查与写入保持在同一事务。
-      const write = async (id, doc, mode) => {
-        if (!id || typeof id !== 'string') throw new Error('缺少记录 ID');
-        if (doc._id !== undefined && doc._id !== id) throw new Error('记录 ID 不一致');
-        const patch = checked(doc);
-        const run = async (tx) => {
-          const current = await tx[key].getById(id);
-          if (current && mode === 'insert') throw new Error('记录已存在');
-          if (!current && mode === 'update') throw new Error('记录不存在或不属于当前范围');
-          await tx[key].set(id, mode === 'update' ? { ...current, ...patch } : patch);
-          return { ...(mode === 'update' ? current : {}), ...patch, _id: id };
-        };
-        if (!inTx) return repo.transaction((tx) => run(tx.forScope(scope)));
-        const current = await io.read(key, id);
-        if (current && !owns(current)) throw new Error('记录不存在或不属于当前范围');
-        if (current && mode === 'insert') throw new Error('记录已存在');
-        if (!current && mode === 'update') throw new Error('记录不存在或不属于当前范围');
-        const next = { ...(mode === 'update' ? current : {}), ...patch, _id: id };
-        await io.set(key, id, next);
-        return next;
-      };
-      result[key] = {
-        list: () => repo[key].listByScope(scope),
-        getById: async (id) => {
-          const doc = await io.read(key, id);
-          return owns(doc) ? doc : null;
-        },
-        set: (id, doc) => write(id, doc, 'set'),
-        insert: (doc) => write(doc._id, doc, 'insert'),
-        update: (id, patch) => write(id, patch, 'update'),
-      };
-    }
-    if (!inTx) result.transaction = (fn) => repo.transaction((tx) => fn(tx.forScope(scope)));
-    return result;
+    return buildScoped(repo, io, inTx, {
+      keys: SCOPED_COLLECTIONS,
+      scope,
+      expectedOf: (key) => (SCHOOL_ONLY.includes(key)
+        ? { schoolId: scope.schoolId }
+        : { schoolId: scope.schoolId, association: scope.association }),
+      surfaceOf: (tx, next) => tx.forScope(next),
+      mismatchMessage: '不能写入其他学校或协会的数据',
+    });
   };
+
+  /**
+   * 运动会范围的受范围仓储。
+   *
+   * 与 forScope 的关键差异：归属字段是 `{schoolId, meetId}`，**没有 association**。
+   * 因此不能复用 forScope，也不能把运动会集合塞进 SCOPED_COLLECTIONS——
+   * 那会在每次写入时给文档强塞一个 association，等于把运动会挂到匹克球协会上。
+   */
+  repo.forMeet = (input) => {
+    const scope = meetScope(input);
+    return buildScoped(repo, io, inTx, {
+      keys: MEET_COLLECTIONS,
+      scope,
+      expectedOf: () => ({ schoolId: scope.schoolId, meetId: scope.meetId }),
+      surfaceOf: (tx, next) => tx.forMeet(next),
+      mismatchMessage: '不能写入其他学校或其他运动会的数据',
+    });
+  };
+
   return repo;
 }
 
-module.exports = { SCHOOL_COLLECTIONS, SCOPED_COLLECTIONS, attachSchoolRepository };
+module.exports = {
+  SCHOOL_COLLECTIONS,
+  SCOPED_COLLECTIONS,
+  MEET_COLLECTIONS,
+  attachSchoolRepository,
+};

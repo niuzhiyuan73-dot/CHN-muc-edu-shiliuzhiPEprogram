@@ -1,5 +1,6 @@
 /** S2 身份接口客户端，明确范围，不改变旧业务门面的行为。 */
 const { schoolScope } = require('../utils/school.js');
+const { meetRequestScope } = require('../utils/meet-scope.js');
 const { guardWrite, isSchoolWriteAction } = require('../utils/write.js');
 
 /**
@@ -163,4 +164,33 @@ function forExchange(input) {
   });
 }
 
-module.exports = { forSchoolIdentity, forAssociationSpace, forExchange };
+/**
+ * 运动会客户端：**不带 association**。
+ *
+ * 请求体只拼 schoolId（+ 可选 meetId），与协议 2 的其余三面故意不同——
+ * 运动会是学校级栏目，若为了复用门面而塞一个协会参数，服务端就会把它当成
+ * 「该协会的运动会」，协会停用会连带停用运动会。
+ *
+ * meetId 可选：列清单、搜项目模板、发起运动会都没有「届」。
+ */
+function forMeet(input) {
+  const request = requestFor(meetRequestScope(input));
+  return Object.freeze({
+    // 草稿与配置（B4）
+    createSportsMeet: payload => request('createSportsMeet', payload),
+    updateMeetDraft: payload => request('updateMeetDraft', payload),
+    configureMeetEvent: payload => request('configureMeetEvent', payload),
+    publishMeetRegistration: payload => request('publishMeetRegistration', payload),
+    deleteSportsMeet: payload => request('deleteSportsMeet', payload),
+    listSportsMeets: payload => request('listSportsMeets', payload),
+    getSportsMeet: payload => request('getSportsMeet', payload),
+    listSportsEventTemplates: payload => request('listSportsEventTemplates', payload),
+    // 学院部长授权（B3）
+    grantMeetCollegeLead: payload => request('grantMeetCollegeLead', payload),
+    revokeMeetCollegeLead: payload => request('revokeMeetCollegeLead', payload),
+    listMeetCollegeLeads: payload => request('listMeetCollegeLeads', payload),
+    getMyMeetCollegeLead: payload => request('getMyMeetCollegeLead', payload),
+  });
+}
+
+module.exports = { forSchoolIdentity, forAssociationSpace, forExchange, forMeet };

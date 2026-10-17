@@ -22,6 +22,8 @@ const CLIENTS = {
   identity: cloud.forSchoolIdentity(SCOPE),
   space: cloud.forAssociationSpace(SCOPE),
   exchange: cloud.forExchange(SCOPE),
+  // 运动会门面不带 association：只传 schoolId（见 meet-scope 的 meetRequestScope）
+  meet: cloud.forMeet({ schoolId: SCOPE.schoolId }),
 };
 
 /** 读动作判据：学校维度的读动作一律以 get / list 起头（见 write.js 的说明）。 */

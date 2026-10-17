@@ -1,0 +1,75 @@
+<!--
+  运动会详情：基本信息 + 项目清单 + 按角色可见的动作。
+  草稿期才出现「继续配置 / 发布报名 / 删除草稿」——发布后改规则会影响已提交的报名。
+-->
+<view class="page-container">
+
+  <view wx:if="{{loading}}" class="loading">正在加载…</view>
+
+  <view wx:elif="{{error && !meet}}" class="empty-state">
+    <view class="empty-state-icon">⚠️</view>
+    <view class="empty-state-text">{{error}}</view>
+    <button class="btn btn-primary" bindtap="reload">重试</button>
+  </view>
+
+  <block wx:else>
+    <view wx:if="{{notice}}" class="meet-notice">{{notice}}</view>
+    <view wx:if="{{error}}" class="meet-error">{{error}}</view>
+
+    <view class="card meet-head">
+      <view class="meet-name">{{meet.name}}</view>
+      <view class="meet-status meet-status-{{meet.status}}">{{meet.statusLabel}}</view>
+      <view class="meet-meta">{{meet.startDate}} 至 {{meet.endDate}}</view>
+      <view wx:if="{{meet.location}}" class="meet-meta">地点：{{meet.location}}</view>
+      <view class="meet-meta">项目组别：{{meet.eventCount}} 项</view>
+      <view wx:if="{{meet.registration && meet.registration.openAt}}" class="meet-meta">
+        报名：{{meet.registration.openAt}} 至 {{meet.registration.closeAt}}
+      </view>
+    </view>
+
+    <view class="meet-section-title">项目清单</view>
+    <view wx:if="{{events.length === 0}}" class="empty-state">
+      <view class="empty-state-icon">📋</view>
+      <view class="empty-state-text">还没有选择项目</view>
+    </view>
+
+    <view wx:for="{{events}}" wx:key="eventKey" class="card meet-event">
+      <view class="meet-event-main">
+        <view class="meet-event-name">{{item.name}}</view>
+        <view class="meet-event-tags">
+          <text class="meet-tag">{{item.categoryLabel}}</text>
+          <text class="meet-tag">{{item.group === 'male' ? '男子' : item.group === 'female' ? '女子' : '混合'}}</text>
+          <text class="meet-tag">{{item.rounds === 'heat_final' ? '预赛+决赛' : '直接决赛'}}</text>
+          <text class="meet-tag" wx:if="{{!item.scored}}">不计分</text>
+        </view>
+      </view>
+      <view class="meet-event-side">
+        <view class="meet-event-limit">每院 {{item.perCollegeLimit}}{{item.entryForm === 'single' ? '人' : item.entryForm === 'team' ? '队' : '组'}}</view>
+        <view class="meet-event-members" wx:if="{{item.members > 1}}">每组 {{item.members}} 人</view>
+      </view>
+    </view>
+
+    <block wx:if="{{canManage && isDraft}}">
+      <view class="meet-section-title">发布报名</view>
+      <view class="card meet-publish">
+        <view class="meet-field">
+          <text class="meet-label">开始</text>
+          <picker mode="date" value="{{openAt}}" bindchange="onOpenAtChange">
+            <view class="meet-value">{{openAt}}</view>
+          </picker>
+        </view>
+        <view class="meet-field">
+          <text class="meet-label">截止</text>
+          <picker mode="date" value="{{closeAt}}" bindchange="onCloseAtChange">
+            <view class="meet-value">{{closeAt}}</view>
+          </picker>
+        </view>
+        <button class="btn btn-primary" bindtap="onPublish" disabled="{{busy}}">发布报名</button>
+        <button class="btn btn-ghost" bindtap="onOpenSetup" disabled="{{busy}}">继续配置项目</button>
+        <button class="btn btn-ghost meet-danger" bindtap="onDelete" disabled="{{busy}}">删除草稿</button>
+      </view>
+    </block>
+
+    <view wx:elif="{{canManage && !isDraft}}" class="meet-hint">已发布报名，项目配置已锁定（改规则需后续批次的能力）。</view>
+  </block>
+</view>

@@ -78,6 +78,23 @@ const SCHOOL_EXCHANGE_ACTIONS = Object.freeze([
 ]);
 
 /**
+ * 运动会（`forMeet` 声明）。前 9 个是 B3／B4 已实现的草稿与配置动作，
+ * 后续批次在同一清单里追加报名、赛程、录分、发布。
+ *
+ * 注意：这一组请求**不带 association**（运动会是学校级栏目），
+ * 由 school-request.js 走独立的 meet 分支，不要塞进协会空间那一组。
+ */
+const SCHOOL_MEET_ACTIONS = Object.freeze([
+  // 草稿与配置（B4）
+  'createSportsMeet',            'updateMeetDraft',            'listSportsMeets',
+  'getSportsMeet',               'listSportsEventTemplates', 'configureMeetEvent',
+  'publishMeetRegistration',     'deleteSportsMeet',
+  // 学院部长授权（B3）
+  'grantMeetCollegeLead',        'revokeMeetCollegeLead',
+  'listMeetCollegeLeads',        'getMyMeetCollegeLead',
+]);
+
+/**
  * 按白名单从若干 service 模块里挑出处理器。
  *
  * 【缺一个就当场抛，而不是静默少注册】
@@ -103,5 +120,6 @@ module.exports = {
   SCHOOL_IDENTITY_ACTIONS,
   SCHOOL_SPACE_ACTIONS,
   SCHOOL_EXCHANGE_ACTIONS,
+  SCHOOL_MEET_ACTIONS,
   pickActions,
 };

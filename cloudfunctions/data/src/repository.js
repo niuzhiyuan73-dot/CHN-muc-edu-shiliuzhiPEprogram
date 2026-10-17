@@ -126,6 +126,22 @@ const COLLECTIONS = {
   seasons: COLLECTION.SEASONS,
   rankings: COLLECTION.RANKINGS,
   auditLogs: COLLECTION.AUDIT_LOGS,
+  // 运动会：12 个集合均为「学校 + 运动会」双维度归属（无协会），
+  // 由 school-repository.js 的 forMeet 校验写入范围。
+  sportsMeets: COLLECTION.SPORTS_MEETS,
+  sportsMeetEvents: COLLECTION.SPORTS_MEET_EVENTS,
+  sportsMeetColleges: COLLECTION.SPORTS_MEET_COLLEGES,
+  sportsMeetInterests: COLLECTION.SPORTS_MEET_INTERESTS,
+  sportsMeetEntries: COLLECTION.SPORTS_MEET_ENTRIES,
+  sportsMeetSessions: COLLECTION.SPORTS_MEET_SESSIONS,
+  sportsMeetJudgeAssignments: COLLECTION.SPORTS_MEET_JUDGE_ASSIGNMENTS,
+  sportsMeetScores: COLLECTION.SPORTS_MEET_SCORES,
+  sportsMeetPublications: COLLECTION.SPORTS_MEET_PUBLICATIONS,
+  sportsMeetResultRows: COLLECTION.SPORTS_MEET_RESULT_ROWS,
+  sportsMeetQuotaUsage: COLLECTION.SPORTS_MEET_QUOTA_USAGE,
+  sportsMeetParticipantClaims: COLLECTION.SPORTS_MEET_PARTICIPANT_CLAIMS,
+  // 学院部长授权：学校级、一院一条，不属于任何一届运动会。
+  sportsMeetCollegeLeads: COLLECTION.SPORTS_MEET_COLLEGE_LEADS,
 };
 
 module.exports = { COLLECTIONS };

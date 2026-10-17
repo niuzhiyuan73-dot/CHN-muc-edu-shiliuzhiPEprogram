@@ -40,6 +40,14 @@
         <view class="assoc-item-name">{{item.name}}</view>
         <view class="assoc-item-sport">{{item.sportName}}</view>
       </view>
+
+      <!-- 运动会：学校级栏目，与各协会在同一网格里并列（R01）。
+           它不属于任何协会，所以是固定项，不随协会注册表变化。 -->
+      <view class="assoc-item assoc-item-meet" data-kind="meet" bindtap="onChooseMeet">
+        <view class="assoc-item-icon"><text>🏟️</text></view>
+        <view class="assoc-item-name">运动会</view>
+        <view class="assoc-item-sport">校院级赛事</view>
+      </view>
     </view>
 
     <view wx:if="{{associations.length === 0}}" class="empty-note">这所学校还没有协会</view>

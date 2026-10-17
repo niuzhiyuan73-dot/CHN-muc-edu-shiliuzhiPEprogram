@@ -114,3 +114,6 @@
   font-size: var(--font-xs);
   color: var(--color-text-tertiary);
 }
+
+/* 运动会入口：与协会并列，但它是学校级栏目（不属于任何协会），用浅灰底区分 */
+.assoc-item-meet .assoc-item-icon { background: linear-gradient(135deg, #f4f6f9, #e3e8ef); }

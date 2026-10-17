@@ -720,6 +720,22 @@ const COLLECTION = {
   // 结算序号计数：每个「学校 + 协会」一条，settlementSeq 从这里原子递增，
   // 决定 Elo 变化链的顺序（用服务端结算顺序，不靠客户端比赛时间）。
   RATING_COUNTERS: 'rating_counters',
+  // 运动会（学校级栏目，不属于任何协会）。12 个集合一律带 schoolId + meetId，
+  // 范围由 utils/meet-scope.js 的 forMeet 校验；子资源不得越届读写。
+  SPORTS_MEETS: 'sports_meets',
+  SPORTS_MEET_EVENTS: 'sports_meet_events',
+  SPORTS_MEET_COLLEGES: 'sports_meet_colleges',
+  SPORTS_MEET_INTERESTS: 'sports_meet_interests',
+  SPORTS_MEET_ENTRIES: 'sports_meet_entries',
+  SPORTS_MEET_SESSIONS: 'sports_meet_sessions',
+  SPORTS_MEET_JUDGE_ASSIGNMENTS: 'sports_meet_judge_assignments',
+  SPORTS_MEET_SCORES: 'sports_meet_scores',
+  SPORTS_MEET_PUBLICATIONS: 'sports_meet_publications',
+  SPORTS_MEET_RESULT_ROWS: 'sports_meet_result_rows',
+  SPORTS_MEET_QUOTA_USAGE: 'sports_meet_quota_usage',
+  SPORTS_MEET_PARTICIPANT_CLAIMS: 'sports_meet_participant_claims',
+  // 学院部长授权：一院一条（_id = 学校 + 学院），常设角色、不随届次失效。
+  SPORTS_MEET_COLLEGE_LEADS: 'sports_meet_college_leads',
 };
 
 /** 本地缓存键名 */

@@ -26,7 +26,10 @@
     "pages/college-placement/college-placement",
     "pages/live-score/live-score",
     "pages/school-identity/school-identity",
-    "pages/school-exchange/school-exchange"
+    "pages/school-exchange/school-exchange",
+    "pages/meet-list/meet-list",
+    "pages/meet-detail/meet-detail",
+    "pages/meet-setup/meet-setup"
   ],
   "window": {
     "backgroundTextStyle": "dark",

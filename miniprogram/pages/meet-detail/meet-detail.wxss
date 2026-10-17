@@ -1,0 +1,20 @@
+.meet-head { padding: 24rpx; margin-bottom: 20rpx; }
+.meet-name { font-size: 34rpx; font-weight: 600; }
+.meet-status { display: inline-block; margin-top: 10rpx; padding: 4rpx 16rpx; border-radius: 999rpx; font-size: 22rpx; background: #eee; color: #555; }
+.meet-status-registration { background: #fdece9; color: #b23a2e; }
+.meet-status-running { background: #e8f5ec; color: #1f7a3d; }
+.meet-meta { margin-top: 8rpx; font-size: 24rpx; color: var(--color-text-secondary, #666); }
+.meet-section-title { margin: 24rpx 0 12rpx; font-size: 26rpx; font-weight: 600; color: var(--color-text-secondary, #555); }
+.meet-event { display: flex; justify-content: space-between; align-items: center; padding: 20rpx 24rpx; margin-bottom: 12rpx; }
+.meet-event-name { font-size: 28rpx; font-weight: 500; }
+.meet-event-tags { margin-top: 8rpx; display: flex; gap: 8rpx; flex-wrap: wrap; }
+.meet-tag { padding: 2rpx 12rpx; border-radius: 8rpx; font-size: 20rpx; background: var(--color-bg-subtle, #f5f6f8); color: #666; }
+.meet-event-side { text-align: right; font-size: 22rpx; color: #888; }
+.meet-publish { padding: 20rpx 24rpx; }
+.meet-field { display: flex; align-items: center; justify-content: space-between; padding: 12rpx 0; }
+.meet-label { font-size: 26rpx; color: #555; }
+.meet-value { font-size: 26rpx; color: #222; }
+.meet-danger { color: #b23a2e; }
+.meet-notice { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: #e8f5ec; color: #1f7a3d; font-size: 24rpx; }
+.meet-error { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: #fdece9; color: #b23a2e; font-size: 24rpx; }
+.meet-hint { margin-top: 20rpx; font-size: 24rpx; color: #888; }

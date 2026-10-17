@@ -105,6 +105,15 @@ const SCHOOL_WRITE_ACTIONS = [
   'assignExchangeReferee',
   'submitExchangeScore',
   'confirmExchangeRanking',
+  // 运动会：草稿 / 项目配置 / 发布报名 / 删除 / 学院部长授权
+  // （读动作 listSportsMeets、getSportsMeet、searchSportsEventTemplates 不在此列）
+  'createSportsMeet',
+  'updateMeetDraft',
+  'configureMeetEvent',
+  'publishMeetRegistration',
+  'deleteSportsMeet',
+  'grantMeetCollegeLead',
+  'revokeMeetCollegeLead',
 ];
 
 const SCHOOL_WRITE_ACTION_SET = new Set(SCHOOL_WRITE_ACTIONS);

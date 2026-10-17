@@ -1,0 +1,63 @@
+<!--
+  历史运动会记录：运动会栏目唯一的一级标签（R02）。
+  筹备中 / 报名中 / 进行中 / 已结束都在同一列表里，用状态标识区分，进行中由服务端置顶。
+-->
+<view class="page-container">
+
+  <view wx:if="{{loading}}" class="loading">正在加载…</view>
+
+  <view wx:elif="{{error}}" class="empty-state">
+    <view class="empty-state-icon">⚠️</view>
+    <view class="empty-state-text">{{error}}</view>
+    <button class="btn btn-primary" bindtap="reload">重试</button>
+  </view>
+
+  <block wx:else>
+    <view class="meet-toolbar">
+      <input
+        class="meet-search"
+        placeholder="搜索运动会名称"
+        value="{{keyword}}"
+        bindinput="onKeywordInput"
+        bindconfirm="onSearch"
+        confirm-type="search"
+      />
+      <picker range="{{years}}" range-key="label" value="{{yearIndex}}" bindchange="onYearChange">
+        <view class="meet-filter">{{years[yearIndex].label}}</view>
+      </picker>
+      <picker range="{{statusOptions}}" range-key="label" value="{{statusIndex}}" bindchange="onStatusChange">
+        <view class="meet-filter">{{statusOptions[statusIndex].label}}</view>
+      </picker>
+    </view>
+
+    <view wx:if="{{canManage}}" class="meet-create">
+      <button class="btn btn-primary" bindtap="onCreate">发起运动会</button>
+    </view>
+
+    <view wx:if="{{items.length === 0}}" class="empty-state">
+      <view class="empty-state-icon">🏟️</view>
+      <view class="empty-state-text">还没有运动会记录</view>
+    </view>
+
+    <view
+      wx:for="{{items}}"
+      wx:key="meetId"
+      class="card meet-card"
+      data-meet-id="{{item.meetId}}"
+      bindtap="onOpenMeet"
+    >
+      <view class="meet-card-head">
+        <view class="meet-card-name">{{item.name}}</view>
+        <view class="meet-status meet-status-{{item.status}}">{{item.statusLabel}}</view>
+      </view>
+      <view class="meet-card-meta">{{item.startDate}} 至 {{item.endDate}}<text wx:if="{{item.location}}"> · {{item.location}}</text></view>
+      <view class="meet-card-meta">共 {{item.eventCount}} 个项目组别</view>
+    </view>
+
+    <view wx:if="{{hasMore}}" class="meet-more">
+      <button class="btn btn-ghost" bindtap="loadMore" disabled="{{busy}}">{{busy ? '加载中…' : '加载更多'}}</button>
+    </view>
+
+    <view wx:if="{{total > 0}}" class="meet-count">共 {{total}} 届</view>
+  </block>
+</view>

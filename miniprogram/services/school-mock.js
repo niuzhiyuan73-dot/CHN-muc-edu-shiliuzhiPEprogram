@@ -2,13 +2,16 @@ const { createSchoolDemoSeed, createSchoolDemoContent } = require('./school-seed
 const { createSchoolMemoryRepo } = require('./school-memory-repo.js');
 const { createSchoolHandlers } = require('./school-membership-service.js');
 const { buildSchoolContext } = require('./school-context.js');
+const { buildMeetContext } = require('./meet-context.js');
+const { meetRequestScope } = require('../utils/meet-scope.js');
 const {
   LEGACY_SCHOOL_ID, schoolScope, schoolKey,
   schoolMemberKey, schoolRoleKey, schoolMembershipKey,
 } = require('../utils/school.js');
 const { ROLE, COLLEGES } = require('../utils/constants.js');
 const {
-  SCHOOL_IDENTITY_ACTIONS, SCHOOL_SPACE_ACTIONS, SCHOOL_EXCHANGE_ACTIONS, pickActions,
+  SCHOOL_IDENTITY_ACTIONS, SCHOOL_SPACE_ACTIONS, SCHOOL_EXCHANGE_ACTIONS,
+  SCHOOL_MEET_ACTIONS, pickActions,
 } = require('../utils/school-actions.js');
 const { MEMBER_SEED, ASSOC_ROLE_SEED } = require('./seed.js');
 const exchange = require('./exchange-service.js');
@@ -23,6 +26,8 @@ const collegeService = require('./school-college-service.js');
 const announcementService = require('./school-announcement-service.js');
 const schoolMemberService = require('./school-member-service.js');
 const rankService = require('./school-rank-service.js');
+const meetService = require('./meet-service.js');
+const meetLeadService = require('./meet-college-lead-service.js');
 
 /**
  * 协会空间处理器集合。
@@ -41,6 +46,9 @@ const spaceHandlers = Object.freeze(pickActions([
 
 /** 跨校邀请赛处理器集合（同样按白名单收口）。 */
 const exchangeHandlers = Object.freeze(pickActions([exchange], SCHOOL_EXCHANGE_ACTIONS));
+
+/** 运动会处理器集合（学校级，请求不带协会；与云端 school-meet-handlers 同一份白名单）。 */
+const meetHandlers = Object.freeze(pickActions([meetService, meetLeadService], SCHOOL_MEET_ACTIONS));
 
 const DEMO_ACTORS = Object.freeze([
   { id: 'demo_applicant', label: '模拟申请人' },
@@ -256,3 +264,16 @@ function forAssociationSpace(input) {
   }])));
 }
 module.exports.forAssociationSpace = forAssociationSpace;
+
+function forMeet(input) {
+  const scope = meetRequestScope(input);
+  const binding = actorBinding();
+  const boundRepo = repo;
+  return Object.freeze(Object.fromEntries(Object.entries(meetHandlers).map(([name, handler]) => [name, async payload => {
+    const ctx = await buildMeetContext({ repo: boundRepo, ...binding, scope });
+    const result = await handler(payload || {}, ctx);
+    if (!result.ok) throw new Error(result.message);
+    return result.data;
+  }])));
+}
+module.exports.forMeet = forMeet;

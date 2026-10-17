@@ -38,6 +38,11 @@ Page({
     associations: [],
   },
 
+  /** 运动会入口：与协会并列，但它不属于任何协会，跳独立栏目 */
+  onChooseMeet() {
+    return wx.navigateTo({ url: '/pages/meet-list/meet-list' });
+  },
+
   /**
    * 返回 Promise 是有意为之：小程序不关心返回值，
    * 但测试需要一个句柄等首屏加载完（见 tests/page.test.js）。

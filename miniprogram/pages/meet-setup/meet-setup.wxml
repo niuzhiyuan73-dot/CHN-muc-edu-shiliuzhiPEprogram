@@ -1,0 +1,102 @@
+<!--
+  发起运动会：第一步基本信息（新发起才显示）→ 第二步逐项目勾选组别并设限额。
+  继续配置（带 meetId 进入）直接落在第二步。
+-->
+<view class="page-container">
+
+  <view wx:if="{{notice}}" class="meet-notice">{{notice}}</view>
+  <view wx:if="{{error}}" class="meet-error">{{error}}</view>
+
+  <!-- 第一步：基本信息 -->
+  <block wx:if="{{step === 1}}">
+    <view class="card meet-form">
+      <view class="meet-field">
+        <text class="meet-label">名称</text>
+        <input class="meet-input" placeholder="如：第 59 届田径运动会" value="{{name}}" data-field="name" bindinput="onFieldInput" />
+      </view>
+      <view class="meet-field">
+        <text class="meet-label">年份</text>
+        <input class="meet-input" type="number" value="{{year}}" data-field="year" bindinput="onFieldInput" />
+      </view>
+      <view class="meet-field">
+        <text class="meet-label">开始</text>
+        <picker mode="date" value="{{startDate}}" data-field="startDate" bindchange="onDateChange">
+          <view class="meet-value">{{startDate}}</view>
+        </picker>
+      </view>
+      <view class="meet-field">
+        <text class="meet-label">结束</text>
+        <picker mode="date" value="{{endDate}}" data-field="endDate" bindchange="onDateChange">
+          <view class="meet-value">{{endDate}}</view>
+        </picker>
+      </view>
+      <view class="meet-field">
+        <text class="meet-label">地点</text>
+        <input class="meet-input" placeholder="如：学校田径场" value="{{location}}" data-field="location" bindinput="onFieldInput" />
+      </view>
+    </view>
+    <button class="btn btn-primary" bindtap="onNext" disabled="{{busy}}">{{busy ? '创建中…' : '下一步：选择项目'}}</button>
+  </block>
+
+  <!-- 第二步：项目选择 -->
+  <block wx:else>
+    <view class="meet-toolbar">
+      <input class="meet-search" placeholder="搜索项目（100米 / 百米）" value="{{keyword}}" bindinput="onKeywordInput" bindconfirm="onSearch" confirm-type="search" />
+    </view>
+
+    <scroll-view class="meet-cats" scroll-x>
+      <view class="meet-cat {{activeCategory === '' ? 'is-active' : ''}}" data-category="" bindtap="onCategoryTap">全部</view>
+      <view
+        wx:for="{{categories}}"
+        wx:key="category"
+        class="meet-cat {{activeCategory === item.category ? 'is-active' : ''}}"
+        data-category="{{item.category}}"
+        bindtap="onCategoryTap"
+      >{{item.label}}</view>
+    </scroll-view>
+
+    <view wx:if="{{loading}}" class="loading">正在加载项目库…</view>
+
+    <view wx:for="{{templates}}" wx:key="templateId" class="card meet-tpl">
+      <view class="meet-tpl-head">
+        <view class="meet-tpl-name">{{item.name}}</view>
+        <view class="meet-tpl-cat">{{item.categoryLabel}}</view>
+      </view>
+      <view class="meet-tpl-groups">
+        <view
+          wx:for="{{item.groupOptions}}"
+          wx:for-item="option"
+          wx:key="group"
+          class="meet-group {{option.picked ? 'is-picked' : ''}}"
+          data-template-id="{{item.templateId}}"
+          data-group="{{option.group}}"
+          bindtap="onToggleGroup"
+        >{{option.label}}</view>
+        <text wx:if="{{item.fixedMembers}}" class="meet-tpl-note">固定 {{item.fixedMembers}} 人一组</text>
+        <text wx:elif="{{!item.defaultScored}}" class="meet-tpl-note">默认不计分</text>
+      </view>
+    </view>
+
+    <view wx:if="{{picked.length > 0}}" class="meet-section-title">已选 {{pickedCount}} 项</view>
+    <view wx:for="{{picked}}" wx:key="key" class="card meet-pick">
+      <view class="meet-pick-main">
+        <view class="meet-pick-name">{{item.name}} · {{item.groupLabel}}</view>
+        <view class="meet-pick-meta">
+          <text wx:if="{{item.members > 1}}">每组 {{item.members}} 人</text>
+          <text>每院 {{item.limit}}{{item.limitUnit}}</text>
+        </view>
+      </view>
+      <view class="meet-pick-ops">
+        <view class="meet-step" data-index="{{index}}" data-field="members" data-delta="-1" bindtap="onStep">−</view>
+        <text class="meet-step-value">{{item.members}}</text>
+        <view class="meet-step" data-index="{{index}}" data-field="members" data-delta="1" bindtap="onStep">+</view>
+        <view class="meet-step" data-index="{{index}}" data-field="limit" data-delta="-1" bindtap="onStep">−</view>
+        <text class="meet-step-value">{{item.limit}}</text>
+        <view class="meet-step" data-index="{{index}}" data-field="limit" data-delta="1" bindtap="onStep">+</view>
+      </view>
+    </view>
+
+    <button class="btn btn-primary" bindtap="onSubmit" disabled="{{busy}}">{{busy ? '保存中…' : '保存项目'}}</button>
+    <button class="btn btn-ghost" bindtap="onBackToBasic" disabled="{{busy}}">{{isContinue ? '返回详情' : '上一步'}}</button>
+  </block>
+</view>

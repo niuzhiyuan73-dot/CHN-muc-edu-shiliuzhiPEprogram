@@ -42,6 +42,9 @@ const MANIFEST = [
   'utils/constants.js',
   'utils/associations.js',
   'utils/school.js',
+  // 运动会范围与确定性主键：云端仓储的 forMeet 与本地模拟端读同一份，
+  // 免得两边对「什么算同一届」判断不一致。
+  'utils/meet-scope.js',
   // 协议 2 的动作白名单：云端注册表与本地模拟注册表读**同一份**，
   // 免得两侧注册面各自漂移（见 2026-10-16 只读审计 H1）。
   'utils/school-actions.js',
@@ -118,6 +121,18 @@ const MANIFEST = [
   'services/season.js',
   'services/rating-cap.js',
   'services/auth.js',
+  // 运动会 B1：项目模板库与成绩计量。两者都是纯模块（不碰 wx / Node / I/O），
+  // 云端计分与本地模拟必须读同一份模板与精度规则，否则同一成绩两边排名会分叉。
+  'services/meet-event-catalog.js',
+  'services/meet-measure.js',
+  // 运动会 B3：上下文 / 权限 / 学院部长授权。三者只依赖注入的 repo 与 ctx，
+  // mock 与云端必须跑同一份——否则「谁能替学院报名」会在两端给出不同答案。
+  'services/meet-context.js',
+  'services/meet-permission.js',
+  'services/meet-college-lead-service.js',
+  // 运动会 B4：草稿 / 项目配置 / 发布报名。云端与模拟端同一份校验，
+  // 否则「限额、组别、发布前置」会在两端给出不同结果。
+  'services/meet-service.js',
 ];
 
 /**

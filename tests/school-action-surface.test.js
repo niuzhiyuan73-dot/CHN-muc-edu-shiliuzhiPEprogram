@@ -26,10 +26,12 @@ const path = require('node:path');
 
 const {
   SCHOOL_IDENTITY_ACTIONS, SCHOOL_SPACE_ACTIONS, SCHOOL_EXCHANGE_ACTIONS,
+  SCHOOL_MEET_ACTIONS,
 } = require('../miniprogram/utils/school-actions');
 const cloudMember = require('../cloudfunctions/data/src/core/school-member-handlers');
 const cloudSpace = require('../cloudfunctions/data/src/core/school-space-handlers');
 const cloudExchange = require('../cloudfunctions/data/src/core/school-exchange-handlers');
+const cloudMeet = require('../cloudfunctions/data/src/core/school-meet-handlers');
 const schoolMock = require('../miniprogram/services/school-mock');
 
 const ROOT = path.join(__dirname, '..');
@@ -56,7 +58,9 @@ function clientDeclared() {
   return {
     identity: names(slice('forSchoolIdentity', 'function forAssociationSpace')),
     space: names(slice('forAssociationSpace', 'function forExchange')),
-    exchange: names(slice('forExchange', 'module.exports')),
+    exchange: names(slice('forExchange', 'function forMeet')),
+    // 运动会门面：学校级、不带 association，动作单列一组，与前三面互不混入
+    meet: names(slice('forMeet', 'module.exports')),
   };
 }
 
@@ -82,12 +86,13 @@ const INTERNAL_HELPERS = [
   'seasonKeyOf', 'tallySignups', 'trainingState',
 ];
 
-test('白名单与客户端三个门面声明的动作集逐字一致', () => {
+test('白名单与客户端四个门面声明的动作集逐字一致', () => {
   const client = clientDeclared();
   for (const [face, expected, declared] of [
     ['身份', SCHOOL_IDENTITY_ACTIONS, client.identity],
     ['协会空间', SCHOOL_SPACE_ACTIONS, client.space],
     ['跨校邀请赛', SCHOOL_EXCHANGE_ACTIONS, client.exchange],
+    ['运动会', SCHOOL_MEET_ACTIONS, client.meet],
   ]) {
     const d = diff(expected, declared);
     assert.deepEqual(d.missing, [], `${face}：客户端会发但白名单里没有 ${d.missing.join('、')}`);
@@ -95,11 +100,12 @@ test('白名单与客户端三个门面声明的动作集逐字一致', () => {
   }
 });
 
-test('云端三个注册表都恰好等于白名单', () => {
+test('云端四张注册表都恰好等于白名单', () => {
   for (const [face, registered, expected] of [
     ['身份', cloudMember, SCHOOL_IDENTITY_ACTIONS],
     ['协会空间', cloudSpace, SCHOOL_SPACE_ACTIONS],
     ['跨校邀请赛', cloudExchange, SCHOOL_EXCHANGE_ACTIONS],
+    ['运动会', cloudMeet, SCHOOL_MEET_ACTIONS],
   ]) {
     const d = diff(Object.keys(registered), expected);
     assert.deepEqual(d.missing, [], `云端${face}少了这些动作：${d.missing.join('、')}`);
@@ -107,11 +113,13 @@ test('云端三个注册表都恰好等于白名单', () => {
   }
 });
 
-test('本地模拟端的注册面与云端完全一致（含身份 / 空间 / 跨校三面）', () => {
+test('本地模拟端的注册面与云端完全一致（含身份 / 空间 / 跨校 / 运动会四面）', () => {
   const faces = [
     ['身份', schoolMock.forSchoolIdentity(SCOPE), SCHOOL_IDENTITY_ACTIONS],
     ['协会空间', schoolMock.forAssociationSpace(SCOPE), SCHOOL_SPACE_ACTIONS],
     ['跨校邀请赛', schoolMock.forExchange(SCOPE), SCHOOL_EXCHANGE_ACTIONS],
+    // 运动会门面只传 schoolId，不传 association——这是它与其余三面的结构性差异
+    ['运动会', schoolMock.forMeet({ schoolId: SCOPE.schoolId }), SCHOOL_MEET_ACTIONS],
   ];
   for (const [face, client, expected] of faces) {
     const d = diff(Object.keys(client), expected);
@@ -123,6 +131,7 @@ test('本地模拟端的注册面与云端完全一致（含身份 / 空间 / �
 test('27 个内部辅助函数一个都没被注册（H1 的点名回归）', () => {
   const registered = new Set([
     ...Object.keys(cloudMember), ...Object.keys(cloudSpace), ...Object.keys(cloudExchange),
+    ...Object.keys(cloudMeet),
   ]);
   const leaked = INTERNAL_HELPERS.filter(name => registered.has(name));
   assert.deepEqual(leaked, [],
