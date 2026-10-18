@@ -49,3 +49,11 @@
 .meet-judge-name { flex: 1; font-size: 25rpx; color: #222; }
 .meet-judge-college { font-size: 21rpx; color: #999; }
 .meet-judge-add-btn { padding: 6rpx 16rpx; border-radius: 999rpx; background: #b23a2e; color: #fff; font-size: 21rpx; }
+
+/* 单场项目：不提供分组，按钮位置给出说明而不是留空 */
+.meet-btn.is-disabled { background: #f7f7f7; color: #aaa; }
+
+/* 批量指派面板 */
+.meet-chips { display: flex; flex-wrap: wrap; gap: 10rpx; margin-bottom: 16rpx; }
+.meet-chip { padding: 8rpx 20rpx; border-radius: 999rpx; border: 1rpx solid #e2e4e8; background: #fff; font-size: 23rpx; color: #555; }
+.meet-chip.is-on { background: #b23a2e; border-color: #b23a2e; color: #fff; }

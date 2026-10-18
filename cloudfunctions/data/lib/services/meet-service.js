@@ -28,10 +28,11 @@ const {
   MEET_STATUS, MEET_EVENT_STATUS,
   meetEventKey, meetCollegeKey, newMeetId, meetRequestScope, listAliveEvents,
 } = require('../utils/meet-scope.js');
-const { TEMPLATES, getTemplate, searchTemplates, CATEGORY_LABEL, CATEGORY_ORDER, MEET_SCORE_TYPE } = require('./meet-event-catalog.js');
 const {
-  ADVANCE_MODE, MEET_FORMAT, FORMAT_LABEL, DEFAULT_LANE_COUNT,
-} = require('./meet-advance.js');
+  TEMPLATES, getTemplate, searchTemplates, CATEGORY_LABEL, CATEGORY_ORDER,
+  MEET_SCORE_TYPE, HEAT_MODE,
+} = require('./meet-event-catalog.js');
+const { ADVANCE_MODE, MEET_FORMAT, FORMAT_LABEL } = require('./meet-advance.js');
 const { buildMeetContext, freshMeetContext } = require('./meet-context.js');
 const { meetReadable, canManageMeet, isActiveMeetLead } = require('./meet-permission.js');
 const { meetCollegeLeadKey } = require('../utils/meet-scope.js');
@@ -121,6 +122,16 @@ function meetSummary(doc) {
 
 function eventSummary(doc) {
   const template = getTemplate(doc.templateId);
+  // 老数据只有 laneCount、没有 heatMode：按模板推导，避免读出空分批口径后
+  // 页面把「长跑」误显示成「不分批」。老数据的 laneCount 视为每批人数。
+  const heat = doc.heatMode
+    ? { heatMode: doc.heatMode, heatCapacity: Number(doc.heatCapacity) || 0 }
+    : (template
+      ? {
+        heatMode: template.heatMode || '',
+        heatCapacity: Number(doc.laneCount) || template.heatCapacity || 0,
+      }
+      : { heatMode: '', heatCapacity: Number(doc.laneCount) || 0 });
   return {
     eventKey: doc._id,
     templateId: doc.templateId,
@@ -142,6 +153,10 @@ function eventSummary(doc) {
     format: doc.format || '',
     formatLabel: FORMAT_LABEL[doc.format] || '',
     groups: doc.groups || null,
+    // 分批口径：lane 按道数、capacity 按人数上限、single 不分批。
+    // 老数据没有这两个字段时由上面的 heat 兜底推导。
+    heatMode: heat.heatMode,
+    heatCapacity: heat.heatCapacity,
     laneCount: Number(doc.laneCount) || 0,
     // 晋级口径（仅预赛+决赛）：{ mode, count }。空表示不适用。
     advance: doc.advance || null,
@@ -268,6 +283,8 @@ async function setMeetEventProcedure(payload = {}, ctx) {
     const next = {
       ...current,
       rounds: procedure.rounds,
+      heatMode: procedure.heatMode,
+      heatCapacity: procedure.heatCapacity,
       laneCount: procedure.laneCount,
       format: procedure.format,
       groups: procedure.groups,
@@ -428,17 +445,49 @@ function procedureOf(template, payload = {}) {
     advance = { mode, count };
   }
 
-  // 每组人数＝跑道数（径赛）。它决定的不是「一组几个人」这个描述，而是
-  // 「报名人数除以几」：分几组/几枪由它算出来。所以它是赛制的一部分，
-  // 和轮次一起在编排阶段定。胜负项目用不到，记 0。
-  const laneCount = isVersus
-    ? 0
-    : Number(payload.laneCount === undefined ? DEFAULT_LANE_COUNT : payload.laneCount);
-  if (!isVersus && (!Number.isInteger(laneCount) || laneCount < 2 || laneCount > 20)) {
-    return { ok: false, message: '每组人数（跑道数）应为 2–20 的整数' };
+  // 分批口径按项目模板推导（Q1／Q3／Q4）：
+  //   lane     → 一批 = 道数（分道跑，8 道场地一批 8 人/8 队）
+  //   capacity → 一批 = 人数上限（不分道长跑 15、次数 10、趣味 6）
+  //   single   → 不分批（田赛试跳、评分展示依次上场），只有一个场次
+  //
+  // 它决定的不是「一组几个人」这句描述，而是「报名人数除以几」：分几组/几枪
+  // 由它算出来。所以它是赛制的一部分，放在报名截止后的编排阶段定。
+  const heatMode = template.heatMode || null;
+  let heatCapacity = 0;
+  if (heatMode === HEAT_MODE.SINGLE) {
+    // 田赛与展示类没有预赛：一个场次按抽签顺序进行到底
+    if (rounds !== 'final') {
+      return { ok: false, message: `${template.name}在一个场次内按顺序进行，不支持预赛+决赛` };
+    }
+  } else if (heatMode) {
+    const fallback = Number(template.heatCapacity) || 6;
+    // heatCapacity 是新字段；laneCount 是旧名，仍接受，避免旧页面调用直接报错
+    const given = payload.heatCapacity !== undefined
+      ? payload.heatCapacity
+      : (payload.laneCount !== undefined ? payload.laneCount : fallback);
+    const value = Number(given);
+    if (!Number.isInteger(value)) return { ok: false, message: '每组人数应为整数' };
+    if (heatMode === HEAT_MODE.LANE) {
+      if (value < 2 || value > 20) {
+        return { ok: false, message: '跑道数（每组人数）应为 2–20 的整数' };
+      }
+    } else if (value < 2 || value > 50) {
+      return { ok: false, message: '每组人数上限应为 2–50 的整数' };
+    }
+    heatCapacity = value;
   }
 
-  return { ok: true, rounds, laneCount, format, groups, advance };
+  return {
+    ok: true,
+    rounds,
+    heatMode,
+    heatCapacity,
+    // 兼容旧字段：只有分道项目才有「道数」，其余记 0（与旧语义一致）
+    laneCount: heatMode === HEAT_MODE.LANE ? heatCapacity : 0,
+    format,
+    groups,
+    advance,
+  };
 }
 
 /**
@@ -506,6 +555,8 @@ async function configureMeetEvent(payload = {}, ctx) {
       members: members.value,
       perCollegeLimit: limit.value,
       rounds: procedure.rounds,
+      heatMode: procedure.heatMode,
+      heatCapacity: procedure.heatCapacity,
       laneCount: procedure.laneCount,
       format: procedure.format,
       groups: procedure.groups,

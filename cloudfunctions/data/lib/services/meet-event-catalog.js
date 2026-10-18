@@ -98,6 +98,87 @@ const CATEGORY_LABEL = Object.freeze({
   [MEET_CATEGORY.SHOW]: '评分展示',
 });
 
+/**
+ * 分批方式：一个项目怎么切成多个场次。
+ *
+ * 这是 2026-10-18 审查补上的一个**模型缺口**。此前所有项目都按「每组 = 跑道数」
+ * 分批，后果是 1500 米 30 人被拆成 5 组、跳远 30 人被拆成 5 枪——前者规则上
+ * 应 15 人一组，后者根本不该分批。
+ *
+ *   - lane：分道跑，一批 = 道数（8 道场地一批 8 人 / 8 队）
+ *   - capacity：不分道或按顺序，一批 = 人数上限（长跑 15、次数 10、趣味 6）
+ *   - single：不分批，一个场次按顺序进行（田赛试跳、评分展示依次上场）
+ */
+const HEAT_MODE = Object.freeze({
+  LANE: 'lane',
+  CAPACITY: 'capacity',
+  SINGLE: 'single',
+});
+
+/** 默认道数。8 条跑道的场地最常见；6 道场地在编排时逐项目改。 */
+const DEFAULT_LANE_CAPACITY = 8;
+
+/**
+ * 少数项目不能套用分类默认值，按 id 单列。
+ *
+ * 迎面接力与运球/障碍接力都是「队伍接力」，一批只能同时跑 2 队（场地宽可改 4），
+ * 不是分类默认的 6——按 6 排会让 12 支队伍挤进一场。
+ */
+const CAPACITY_BY_ID = Object.freeze({
+  steeplechase: 15,   // 障碍跑：不分道，按人数分批
+  'relay-shuttle': 2, // 迎面接力：两队对向跑
+  'fun-dribble': 2,   // 运球接力：队伍接力
+  'fun-obstacle': 2,  // 障碍接力：队伍接力
+});
+
+/** 按分类的默认每批上限（仅 capacity 模式使用）。 */
+const CAPACITY_BY_CATEGORY = Object.freeze({
+  [MEET_CATEGORY.MIDDLE]: 15,
+  [MEET_CATEGORY.REPS]: 10,
+  [MEET_CATEGORY.FUN]: 6,
+  [MEET_CATEGORY.TEAM]: 6,
+});
+
+/**
+ * 不分批的分类：田赛按抽签顺序试跳/试投，评分展示按队伍依次上场。
+ *
+ * 这两类若也允许分组，赛程页会出现「跳远 决赛 第 3 枪」这种不存在的形态。
+ */
+const SINGLE_HEAT_CATEGORIES = Object.freeze([
+  MEET_CATEGORY.JUMP,
+  MEET_CATEGORY.THROW,
+  MEET_CATEGORY.SHOW,
+]);
+
+/**
+ * 推导一个项目的分批规则。
+ *
+ * 与 order / unit / defaultScored 一样由分类推导，**不接受手写**：
+ * 手写 46 行必然出现「跳远写了 lane」这类错，而且改一处忘一处。
+ *
+ * @returns {{heatMode: string|null, heatCapacity: number}} 胜负项目不分批，返回 null
+ */
+function heatRuleOf({ id, category, scoreType }) {
+  // 拔河走签表，没有「一批几个人」的概念
+  if (scoreType === MEET_SCORE_TYPE.VERSUS) return { heatMode: null, heatCapacity: 0 };
+  if (SINGLE_HEAT_CATEGORIES.includes(category)) {
+    return { heatMode: HEAT_MODE.SINGLE, heatCapacity: 0 };
+  }
+  // 逐个 id 的特例优先：障碍跑在跨栏分类里，迎面接力在接力分类里
+  const byId = CAPACITY_BY_ID[id];
+  if (byId) return { heatMode: HEAT_MODE.CAPACITY, heatCapacity: byId };
+
+  if (category === MEET_CATEGORY.SPRINT
+    || category === MEET_CATEGORY.HURDLE
+    || category === MEET_CATEGORY.RELAY) {
+    return { heatMode: HEAT_MODE.LANE, heatCapacity: DEFAULT_LANE_CAPACITY };
+  }
+  return {
+    heatMode: HEAT_MODE.CAPACITY,
+    heatCapacity: CAPACITY_BY_CATEGORY[category] || 6,
+  };
+}
+
 /** scoreType → 排序方向。计时越小越好，其余数值越大越好，赛制无名次方向。 */
 const ORDER_BY_SCORE_TYPE = Object.freeze({
   [MEET_SCORE_TYPE.TIME]: MEET_ORDER.ASC,
@@ -216,6 +297,7 @@ function normalizeKeyword(input) {
 /** 由原始行推导完整模板（order / unit / defaultScored 不接受手写）。 */
 function normalizeTemplate(row) {
   const [id, name, aliases, category, scoreType, entryForm, defaultMembers, recommendedGroups] = row;
+  const heat = heatRuleOf({ id, category, scoreType });
   return Object.freeze({
     id,
     name,
@@ -228,6 +310,9 @@ function normalizeTemplate(row) {
     fixedMembers: FIXED_MEMBERS[id] || null,
     recommendedGroups: Object.freeze([...recommendedGroups]),
     unit: UNIT_BY_SCORE_TYPE[scoreType],
+    // 分批规则：怎么切成多个场次（审查 C1/C2 的落点）
+    heatMode: heat.heatMode,
+    heatCapacity: heat.heatCapacity,
     // N16：评分展示类默认不计分，其余默认计分。
     defaultScored: category !== MEET_CATEGORY.SHOW,
     // 胜负项目不走数值排序，也不允许配预赛＋决赛之外的赛制由 B7 决定。
@@ -278,6 +363,8 @@ module.exports = {
   MEET_ENTRY_FORM,
   MEET_GROUP,
   MEET_CATEGORY,
+  HEAT_MODE,
+  DEFAULT_LANE_CAPACITY,
   CATEGORY_ORDER,
   CATEGORY_LABEL,
   TEMPLATES,
@@ -285,4 +372,5 @@ module.exports = {
   searchTemplates,
   listByCategory,
   normalizeKeyword,
+  heatRuleOf,
 };

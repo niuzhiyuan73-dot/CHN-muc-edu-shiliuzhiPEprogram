@@ -32,9 +32,16 @@
 
 const { compareMeasure } = require('./meet-measure.js');
 const { bracketSizeOf, standardSeedOrder } = require('../utils/bracket.js');
+const { DEFAULT_LANE_CAPACITY } = require('./meet-event-catalog.js');
 
-/** 每组人数＝径赛跑道数。场地决定一组最多站几个人，默认 6 条道。 */
-const DEFAULT_LANE_COUNT = 6;
+/**
+ * 每组人数（径赛道数）的兜底值。
+ *
+ * 真正的默认值已由项目模板的 `heatCapacity` 承担（见 catalog 的 `heatRuleOf`）。
+ * 这里保留常量只为兼容既有导入点，**不要再写死第二个数字**——两处各写
+ * 一个默认值，改场地道数时必然漏掉一处。
+ */
+const DEFAULT_LANE_COUNT = DEFAULT_LANE_CAPACITY;
 
 /** 晋级口径。 */
 const ADVANCE_MODE = Object.freeze({

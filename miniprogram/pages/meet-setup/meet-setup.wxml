@@ -90,7 +90,8 @@
 
       <!-- 人数：可直接输入，也可设为不限 -->
       <view wx:if="{{item.entryForm !== 'single'}}" class="meet-form-row">
-        <text class="meet-form-label">每组人数</text>
+        <!-- 报名单位：队伍与协作组分开说，且不要与赛程页的「每批人数」混为一谈 -->
+        <text class="meet-form-label">{{item.entryForm === 'team' ? '每队人数' : '每组人数'}}</text>
         <block wx:if="{{item.fixedMembers}}">
           <text class="meet-form-fixed">固定 {{item.fixedMembers}} 人</text>
         </block>

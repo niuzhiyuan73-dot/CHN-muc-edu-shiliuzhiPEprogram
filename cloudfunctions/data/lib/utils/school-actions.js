@@ -102,6 +102,8 @@ const SCHOOL_MEET_ACTIONS = Object.freeze([
   'saveMeetSession',             'publishMeetSchedule',
   'assignMeetJudge',             'removeMeetJudge',             'startMeetEvent',
   'getMeetSchedule',             'getMyMeetJudgeTasks',         'listMeetJudgeCandidates',
+  // 批量指派与场次切换（B9c）
+  'assignMeetJudges',            'listMeetEventSessions',
   // 录分与发布（B7）
   'getMeetSessionScores',        'saveMeetJudgeScore',          'submitMeetJudgeScore',
   'getMeetResultPreview',          'publishMeetResults',          'getPublishedResults',

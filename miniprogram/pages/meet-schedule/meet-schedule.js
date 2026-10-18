@@ -49,6 +49,11 @@ Page({
     judges: [],
     filteredJudges: [],
     judgeKeyword: '',
+    // 批量指派（B9c）：一批人一次派到多个场次
+    bulkOpen: false,
+    bulkJudges: [],
+    bulkSessions: [],
+    bulkDate: '',
     // 展开的行与它正在编辑的场次
     activeEventKey: '',
     editStartAt: '',
@@ -98,6 +103,32 @@ Page({
   },
 
   /**
+   * 赛制与分批摘要。
+   *
+   * 分批口径分三种，不能合并写：lane 按道数、capacity 按人数上限、
+   * single 不分批。若一律写成「每组 N 人」，跳远会显示成「每组 0 人」，
+   * 而 1500 米会显示成「每组 6 人」——这正是审查里的 C1/C2。
+   */
+  procedureLabelOf(item) {
+    if (item.scoreType === 'versus') {
+      const format = FORMAT_LABEL[item.format] || '单败淘汰';
+      const groups = item.groups
+        ? `（${item.groups.count} 组，每组出线 ${item.groups.advancePerGroup}）` : '';
+      return `${format}${groups}`;
+    }
+    if (item.heatMode === 'single') return '单场 · 按顺序进行';
+    const rounds = item.rounds === 'heat_final' ? '预赛+决赛' : '直接决赛';
+    const capacity = item.heatCapacity || item.laneCount;
+    if (!capacity) return rounds;
+    const unit = item.heatMode === 'lane'
+      ? `每组 ${capacity} 人（按道次）`
+      : `每组最多 ${capacity} 人`;
+    const advance = item.advance
+      ? ` · ${ADVANCE_LABEL[item.advance.mode] || ''} ${item.advance.count}` : '';
+    return `${rounds} · ${unit}${advance}`;
+  },
+
+  /**
    * 重新拉赛程。
    *
    * `keep` 用来指定「重载后仍停留在哪个场次」：指派/撤销裁判之后必须留在原地，
@@ -115,10 +146,8 @@ Page({
       const items = schedule.items.map((item) => ({
         ...item,
         readyLabel: item.ready ? '已配齐' : '未配齐',
-        // 赛制摘要：页面上直接看出这个项目怎么比
-        procedureLabel: item.scoreType === 'versus'
-          ? `${FORMAT_LABEL[item.format] || '单败淘汰'}${item.groups ? `（${item.groups.count} 组，每组出线 ${item.groups.advancePerGroup}）` : ''}`
-          : `${item.rounds === 'heat_final' ? '预赛+决赛' : '直接决赛'}${item.laneCount ? ` · 每组 ${item.laneCount} 人` : ''}${item.advance ? ` · ${ADVANCE_LABEL[item.advance.mode] || ''} ${item.advance.count}` : ''}`,
+        procedureLabel: this.procedureLabelOf(item),
+        // canDraw 由服务端给（它读的是兜底后的 heatMode，老数据也正确）
         sessions: (item.sessions || []).map((row) => ({
           ...row,
           roundLabel: row.roundLabel || ROUND_LABEL[row.round] || row.round,
@@ -189,8 +218,9 @@ Page({
       notice: '',
       proc: {
         isVersus: item.scoreType === 'versus',
+        heatMode: item.heatMode || 'capacity',
         rounds: item.rounds || 'final',
-        laneCount: item.laneCount || 6,
+        heatCapacity: item.heatCapacity || item.laneCount || 8,
         advanceCount: (item.advance && item.advance.count) || 3,
         format: item.format || 'single_elim',
         groupCount: (item.groups && item.groups.count) || 2,
@@ -213,13 +243,93 @@ Page({
     const field = event.currentTarget.dataset.field;
     const value = Number(event.detail.value);
     if (!field || !Number.isFinite(value)) return;
+    // 分道项目上限是跑道数（2–20）；不分道项目是每批人数，可以更大（2–50）
+    const capacityRange = this.data.proc.heatMode === 'lane' ? [2, 20] : [2, 50];
     const limits = {
-      laneCount: [2, 20], advanceCount: [1, 50], groupCount: [2, 8], advancePerGroup: [1, 4],
+      heatCapacity: capacityRange,
+      advanceCount: [1, 50], groupCount: [2, 8], advancePerGroup: [1, 4],
     };
     const range = limits[field];
     if (!range) return;
     const next = Math.max(range[0], Math.min(range[1], Math.trunc(value)));
     this.update({ proc: { ...this.data.proc, [field]: next } });
+  },
+
+  /**
+   * 批量指派面板。
+   *
+   * 「连续几个项目同一批裁判」是学生运动会的常态。逐个场次、逐个裁判地派，
+   * 一个上午的赛程要几十次点击，漏派一场那场就开不了赛。所以这里一次选多人、
+   * 一次选多场，服务端按写预算拆事务后全部完成。
+   */
+  onOpenBulk() {
+    this.update({
+      bulkOpen: !this.data.bulkOpen,
+      bulkJudges: [],
+      bulkSessions: [],
+      bulkDate: '',
+      error: '',
+      notice: '',
+    });
+  },
+
+  onToggleBulkJudge(event) {
+    const userId = event.currentTarget.dataset.userId;
+    if (!userId) return;
+    const picked = this.data.bulkJudges.includes(userId)
+      ? this.data.bulkJudges.filter((id) => id !== userId)
+      : [...this.data.bulkJudges, userId];
+    this.update({ bulkJudges: picked });
+  },
+
+  onToggleBulkSession(event) {
+    const sessionKey = event.currentTarget.dataset.sessionKey;
+    if (!sessionKey) return;
+    const picked = this.data.bulkSessions.includes(sessionKey)
+      ? this.data.bulkSessions.filter((key) => key !== sessionKey)
+      : [...this.data.bulkSessions, sessionKey];
+    this.update({ bulkSessions: picked });
+  },
+
+  /** 本项目的全部场次（含未排期的） */
+  onBulkAllSessions() {
+    const item = this.data.items.find((row) => row.eventKey === this.data.activeEventKey);
+    const all = (item && item.sessions || []).map((row) => row.sessionKey);
+    this.update({ bulkSessions: all, bulkDate: '' });
+  },
+
+  onBulkDateInput(event) {
+    // 填了日期就清空勾选：两者是互斥的范围
+    this.update({ bulkDate: event.detail.value, bulkSessions: [] });
+  },
+
+  async onSubmitBulk() {
+    if (this.data.busy) return;
+    const { bulkJudges, bulkSessions, bulkDate, activeEventKey } = this.data;
+    if (bulkJudges.length === 0) {
+      this.update({ error: '请先选择裁判' });
+      return;
+    }
+    const payload = { judgeIds: bulkJudges };
+    if (bulkSessions.length > 0) payload.sessionKeys = bulkSessions;
+    else if (bulkDate) payload.date = bulkDate;
+    else payload.eventKey = activeEventKey;
+
+    this.update({ busy: true, error: '', notice: '' });
+    try {
+      const result = await this.client().assignMeetJudges(payload);
+      await this.reload({ eventKey: activeEventKey, sessionKey: this.data.editSessionKey });
+      const existed = result.existed ? `（${result.existed} 条原本就已指派）` : '';
+      this.update({
+        busy: false,
+        bulkOpen: false,
+        bulkJudges: [],
+        bulkSessions: [],
+        notice: `已指派 ${result.judgeIds.length} 名裁判到 ${result.sessionCount} 个场次${existed}`,
+      });
+    } catch (err) {
+      this.update({ busy: false, error: (err && err.message) || '指派失败' });
+    }
   },
 
   async onSaveProcedure() {
@@ -230,8 +340,11 @@ Page({
     const payload = {
       eventKey,
       rounds: proc.rounds,
-      laneCount: proc.laneCount,
     };
+    // 单场项目没有「每批人数」这个概念，传了也会被服务端按模板覆盖
+    if (!proc.isVersus && proc.heatMode !== 'single') {
+      payload.heatCapacity = proc.heatCapacity;
+    }
     if (proc.isVersus) {
       payload.format = proc.format;
       if (proc.format === 'group_knockout') {

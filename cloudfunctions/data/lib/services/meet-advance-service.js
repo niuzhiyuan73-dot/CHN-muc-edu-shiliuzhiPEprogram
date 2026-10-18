@@ -31,7 +31,7 @@
 const { MEET_ENTRY_STATUS, meetSessionKey, listAliveEvents } = require('../utils/meet-scope.js');
 const { createSeededRandom, shuffle } = require('../utils/random.js');
 const { drawBracket, bracketSizeOf, standardSeedOrder } = require('../utils/bracket.js');
-const { MEET_SCORE_TYPE } = require('./meet-event-catalog.js');
+const { MEET_SCORE_TYPE, HEAT_MODE, getTemplate } = require('./meet-event-catalog.js');
 const {
   ADVANCE_MODE, DEFAULT_LANE_COUNT, MEET_FORMAT, bracketTotalRounds, bracketRoundLabel,
   advanceFromHeats, bracketStandings, roundRobinRounds, roundRobinStandings,
@@ -51,9 +51,15 @@ function groupLabel(index) {
 }
 const toIso = (now) => (now instanceof Date ? now.toISOString() : String(now));
 
-/** 预赛每组默认 8 人，最多 6 组——再多就不是「预赛」而是决赛分枪了。 */
-const MAX_HEATS = 6;
-const DEFAULT_HEAT_SIZE = 8;
+/**
+ * 组（枪）数上限，按分批模式分档。
+ *
+ * 分道项目按道数排：6 组 × 8 道 = 48 人，已是全校单项目的人数上限，再多就该加跑道
+ * 而不是加组。不分道项目（长跑、次数、趣味）按人数排，上限放到 20——跳绳 200 人
+ * 分 10 批、长跑 300 人分 20 组都是正常的，用 6 挡不住。
+ */
+const MAX_HEATS_LANE = 6;
+const MAX_HEATS_CAPACITY = 20;
 
 function approvedOf(entries, eventKey) {
   return entries
@@ -133,11 +139,20 @@ async function drawMeetHeats(payload = {}, ctx) {
     return refused('该项目已有成绩发布，不能再重新分组');
   }
 
-  const laneCount = Number(event.laneCount) || DEFAULT_LANE_COUNT;
-  const needed = Math.max(1, Math.ceil(approved.length / laneCount));
+  // 分批口径按项目模板（Q1／Q3／Q4）：lane 按道数、capacity 按人数上限、
+  // single 不分批。老数据只有 laneCount，按模板补 heatMode 后当每批人数用。
+  const template = getTemplate(event.templateId);
+  const heatMode = event.heatMode || (template && template.heatMode) || HEAT_MODE.CAPACITY;
+  if (heatMode === HEAT_MODE.SINGLE) {
+    return refused('该项目的成绩在一个场次内按顺序产生，不需要分组；请直接为场次填写时间与场地');
+  }
+  const heatCapacity = Number(event.heatCapacity) || Number(event.laneCount)
+    || (template && template.heatCapacity) || DEFAULT_LANE_COUNT;
+  const needed = Math.max(1, Math.ceil(approved.length / heatCapacity));
   const heatCount = Number(payload.heatCount === undefined ? needed : payload.heatCount);
-  if (!Number.isInteger(heatCount) || heatCount < 1 || heatCount > MAX_HEATS) {
-    return refused(`组（枪）数应为 1–${MAX_HEATS} 的整数`);
+  const maxHeats = heatMode === HEAT_MODE.LANE ? MAX_HEATS_LANE : MAX_HEATS_CAPACITY;
+  if (!Number.isInteger(heatCount) || heatCount < 1 || heatCount > maxHeats) {
+    return refused(`组（枪）数应为 1–${maxHeats} 的整数`);
   }
 
   const entryKeys = approved.map((doc) => doc._id);
@@ -202,14 +217,16 @@ async function drawMeetHeats(payload = {}, ctx) {
     const currentEvent = await tx.sportsMeetEvents.getById(eventKey);
     await tx.sportsMeetEvents.set(eventKey, {
       ...currentEvent,
-      heatDraw: { seed, heatCount, laneCount, at: now },
+      heatDraw: { seed, heatCount, heatMode, heatCapacity, at: now },
       updatedAt: now,
     });
     return ok({
       eventKey,
       seed,
       heatCount,
-      laneCount,
+      heatMode,
+      heatCapacity,
+      laneCount: heatMode === HEAT_MODE.LANE ? heatCapacity : 0,
       rounds: event.rounds,
       heats: buckets.map((keys, index) => ({ index: index + 1, entryKeys: keys })),
     });

@@ -19,6 +19,7 @@ const meetService = require('../miniprogram/services/meet-service.js');
 const leadService = require('../miniprogram/services/meet-college-lead-service.js');
 const schedule = require('../miniprogram/services/meet-schedule-service.js');
 const { meetEventKey, meetSessionKey } = require('../miniprogram/utils/meet-scope.js');
+const markSubmitted = require('./helpers/judge-score.js');
 const { collegeKey, schoolMemberKey, schoolRoleKey } = require('../miniprogram/utils/school.js');
 
 const SCHOOL = 'muc';
@@ -204,6 +205,11 @@ test('撤换裁判后计数递减，场次回到「未指派」状态', async ()
   const sessionKey = meetSessionKey(meetId, eventOf(meetId, 'sprint-100m'), 'final', 1);
 
   await schedule.assignMeetJudge({ sessionKey, judgeId: 'u_judge' }, admin);
+  // N4：撤换前必须先有成绩
+  await markSubmitted(repo, {
+    schoolId: SCHOOL, meetId, eventKey: eventOf(meetId, 'sprint-100m'),
+    sessionKey, judgeId: 'u_judge',
+  });
   const removed = await schedule.removeMeetJudge({ sessionKey, judgeId: 'u_judge' }, admin);
   assert.equal(removed.ok, true, removed.message);
 

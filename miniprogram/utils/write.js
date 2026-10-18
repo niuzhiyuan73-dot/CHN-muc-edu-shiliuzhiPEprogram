@@ -127,6 +127,7 @@ const SCHOOL_WRITE_ACTIONS = [
   'saveMeetSession',
   'publishMeetSchedule',
   'assignMeetJudge',
+  'assignMeetJudges',
   'removeMeetJudge',
   'startMeetEvent',
   // 运动会录分与发布（B7）

@@ -59,6 +59,20 @@ const ROW_STATUS = Object.freeze({ RESULT: 'result', VOID: 'void' });
 const isAlive = (doc) => Boolean(doc && doc.status && doc.status !== MEET_STATUS.DELETED);
 
 /**
+ * 裁判人数过多的风险提示（Q2：汇总维持「去极值平均」，但人数 ≥5 时要说清后果）。
+ *
+ * 3 人去极值后只剩中间值，等价于「取中位数」，与手计时规则一致。5 人以上时
+ * 去掉最高最低再平均，可能得到一个**没有任何秒表读出过**的成绩
+ * （12.00/12.01/12.02/12.30/12.40 → 12.15 秒），足以改变名次。
+ *
+ * 只提示、不拦截：用户已裁决不改算法，但赛时应该看见这句话。
+ */
+function judgeCountWarning(judgeCount) {
+  if (Number(judgeCount) < 5) return '';
+  return `${judgeCount} 名裁判取平均，可能产生无人读出过的成绩（如 5 人给出 12.00/12.01/12.02/12.30/12.40 会算成 12.15 秒）；3 人以内不存在这个问题`;
+}
+
+/**
  * 胜负项目的名次：按赛制分支。
  *
  * 单败只看淘汰赛；小组+淘汰要先算小组名次再算淘汰赛；循环赛整体一套。
@@ -141,7 +155,7 @@ async function getMeetSessionScores(payload = {}, ctx) {
   const sessionKey = String(payload.sessionKey || '').trim();
   if (!sessionKey) return refused('请指定场次');
 
-  const [session, entries, scores, assignment, event] = await Promise.all([
+  const [session, entries, scores, assignment, event, sessions, assignments] = await Promise.all([
     ctx.repo.forMeet(scope).sportsMeetSessions.getById(sessionKey),
     ctx.repo.forMeet(scope).sportsMeetEntries.list(),
     ctx.repo.forMeet(scope).sportsMeetScores.list(),
@@ -149,6 +163,8 @@ async function getMeetSessionScores(payload = {}, ctx) {
       meetJudgeKey(ctx.meetId, sessionKey, ctx.actorId || '-'),
     ),
     listAliveEvents(ctx.repo.forMeet(scope).sportsMeetEvents),
+    ctx.repo.forMeet(scope).sportsMeetSessions.list(),
+    ctx.repo.forMeet(scope).sportsMeetJudgeAssignments.list(),
   ]);
   if (!session || session.meetId !== ctx.meetId) return refused('场次不存在或不属于本届运动会');
   const doc = event.find((row) => row._id === session.eventKey);
@@ -189,14 +205,24 @@ async function getMeetSessionScores(payload = {}, ctx) {
       };
     });
 
+  // 能不能录（D70 代录 + B9c 批量指派）：
+  //   · 管理员可代录任意场次；
+  //   · 裁判本人被指派到本场次；
+  //   · **或**被指派到同一项目的任一场次——连续几个项目同一批裁判时，
+  //     逐场逐个指派不现实，同项目内默认他们就是同一组人。
+  const eventSessions = new Set(sessions
+    .filter((doc) => doc.eventKey === session.eventKey)
+    .map((doc) => doc._id));
+  const assignedInEvent = assignments.some((doc) => doc.status === 'active'
+    && doc.judgeId === ctx.actorId && eventSessions.has(doc.sessionKey));
+
   return ok({
     session: {
       sessionKey, eventKey: session.eventKey, round: session.round,
       startAt: session.startAt, venue: session.venue, judgeCount: session.judgeCount || 0,
     },
     items: own,
-    // 能不能录：管理员可代录（D70），裁判必须本人被指派到该场次
-    canEnter: isAdmin || Boolean(assignment && assignment.status === 'active'),
+    canEnter: isAdmin || Boolean(assignment && assignment.status === 'active') || assignedInEvent,
   });
 }
 
@@ -383,9 +409,15 @@ async function getMeetResultPreview(payload = {}, ctx) {
     missing = summary.missing;
   }
 
+  // 多枪项目的裁判数按场次算，取最大值（各枪人数可能不同）
+  const judgeCounts = own.map((row) => assignments
+    .filter((doc) => doc.status === 'active' && doc.sessionKey === row._id).length);
+  const warning = judgeCountWarning(judgeCounts.length ? Math.max(...judgeCounts) : judgeIds.length);
+
   return ok({
     event: { eventKey, name: event.name, group: event.group, scoreType: event.scoreType, order: event.order },
     sessionKey,
+    warning,
     round: session ? session.round : 'final',
     roundLabel: session ? (session.roundLabel || session.round) : '决赛（合并排名）',
     // 多枪决赛合成一份正式成绩；预赛只排名次不计分
@@ -652,7 +684,15 @@ async function publishMeetResults(payload = {}, ctx) {
         updatedAt: now,
       });
     }
+    // 多枪项目的发布键是 'all'，没有对应指派记录，要回到各场次上取人数
+    const publishWarning = judgeCountWarning(aggregateFinal
+      ? Math.max(0, ...ownSessions.map((row) => assignments.filter(
+        (doc) => doc.status === 'active' && doc.sessionKey === row._id,
+      ).length))
+      : assignments.filter((doc) => doc.status === 'active' && doc.sessionKey === sessionKey).length);
+
     return ok({
+      warning: publishWarning,
       publication: {
         eventKey, version, sessionKey, official,
         rows: rows.map((row) => ({

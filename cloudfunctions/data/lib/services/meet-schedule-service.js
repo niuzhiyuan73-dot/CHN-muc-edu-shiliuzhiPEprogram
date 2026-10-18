@@ -24,7 +24,7 @@ const {
   MEET_STATUS, meetSessionKey, meetJudgeKey, listAliveEvents,
 } = require('../utils/meet-scope.js');
 const { schoolMemberKey, SCHOOL_MEMBER_STATUS } = require('../utils/school.js');
-const { MEET_SCORE_TYPE } = require('./meet-event-catalog.js');
+const { MEET_SCORE_TYPE, getTemplate, HEAT_MODE } = require('./meet-event-catalog.js');
 const { buildMeetContext, freshMeetContext } = require('./meet-context.js');
 const { meetReadable, canManageMeet } = require('./meet-permission.js');
 
@@ -35,6 +35,13 @@ const ROUND_LABEL = Object.freeze({ final: '决赛', heat: '预赛', rr: '循环
 /** 赛制轮次用 `r1`、`r2`… 表示；`rf` 不单独存在，最后一轮仍记作 `r<总轮数>`。 */
 const BRACKET_ROUND = /^r[1-9]$/;
 const SESSION_STATUS = Object.freeze({ SCHEDULED: 'scheduled', RUNNING: 'running', FINISHED: 'finished' });
+/** 成绩状态：与 meet-score-service 的 SCORE_STATE.SUBMITTED 同值（这里不反向依赖那个模块）。 */
+const SCORE_SUBMITTED = 'submitted';
+/**
+ * 批量指派的单事务写预算。单事务上限 200，留 50 给同一事务内的其他写入。
+ * 每批场次数 = floor(预算 / (人数 + 1))：人数越多，单批能带的场次越少。
+ */
+const JUDGE_WRITE_BUDGET = 150;
 
 const isAliveMeet = (doc) => Boolean(doc && doc.status && doc.status !== MEET_STATUS.DELETED);
 const toIso = (now) => (now instanceof Date ? now.toISOString() : String(now));
@@ -287,9 +294,217 @@ async function assignMeetJudge(payload = {}, ctx) {
   });
 }
 
+/**
+ * 批量指派裁判。
+ *
+ * 【为什么需要它】
+ * 学生运动会的常态是「连续几个项目同一批计时裁判」。逐个场次、逐个裁判地派，
+ * 一个上午的赛程要几十次点击，漏派一场那场就开不了赛。
+ *
+ * 【写预算与分批】
+ * 每次指派产生两类写入：一条 assignment + 一次场次 judgeIds 更新。
+ * m 人 × n 场 = m*n + n 写，而单事务上限 200。这里按 150 留余量，
+ * 超出就拆成多个事务顺序执行——用户点一次全部完成，不存在「派了一半」的剩余量。
+ * 多个事务之间不原子：中途失败会留下已完成的部分，返回值会说明派了多少场。
+ *
+ * @param {Object} payload { judgeIds: string[], sessionKeys? | eventKey? | date? }
+ *        scope 三选一：显式勾选的场次 / 某个项目的全部场次 / 某一天的全部场次
+ */
+async function assignMeetJudges(payload = {}, ctx) {
+  if (!meetReadable(ctx) || !ctx.meetId) return refused('请先登录');
+  if (!canManageMeet(ctx)) return refused('只有校级管理员及以上可以指派裁判');
+
+  const judgeIds = [...new Set((Array.isArray(payload.judgeIds) ? payload.judgeIds : [])
+    .map((id) => String(id).trim())
+    .filter(Boolean))];
+  if (judgeIds.length === 0) return refused('请选择裁判');
+  if (judgeIds.length > 50) return refused('一次最多指派 50 名裁判');
+
+  const scope = scopeOf(ctx);
+  const [events, sessions] = await Promise.all([
+    listAliveEvents(ctx.repo.forMeet(scope).sportsMeetEvents),
+    listSessions(ctx.repo, ctx),
+  ]);
+  const eventKeys = new Set(events.map((doc) => doc._id));
+
+  // 目标场次：显式勾选 > 整个项目 > 某一天
+  let targets = [];
+  if (Array.isArray(payload.sessionKeys) && payload.sessionKeys.length > 0) {
+    const wanted = new Set(payload.sessionKeys.map((key) => String(key).trim()).filter(Boolean));
+    targets = sessions.filter((doc) => wanted.has(doc._id));
+    if (targets.length === 0) return refused('勾选的场次不存在');
+  } else if (payload.eventKey) {
+    const eventKey = String(payload.eventKey).trim();
+    if (!eventKeys.has(eventKey)) return refused('项目组别不存在');
+    targets = sessions.filter((doc) => doc.eventKey === eventKey);
+    if (targets.length === 0) return refused('该项目还没有场次，请先设置赛制并分组');
+  } else if (payload.date) {
+    // 开始时间是自由文本（只作告知），这里做前缀匹配，不要求严格格式
+    const date = String(payload.date).trim();
+    targets = sessions.filter((doc) => String(doc.startAt || '').startsWith(date));
+    if (targets.length === 0) return refused(`${date} 没有已排期的场次`);
+  } else {
+    return refused('请指定要指派的场次范围（勾选场次 / 整个项目 / 某一天）');
+  }
+
+  // 裁判资格一次性校验完再动手：派到一半才发现有人不在册，会留下半套指派
+  const members = await ctx.repo.schoolMembers.listBySchool(ctx.schoolId);
+  const activeMember = new Map();
+  for (const member of members) {
+    if (member.status === SCHOOL_MEMBER_STATUS.ACTIVE) activeMember.set(member.userId, member);
+  }
+  const valid = [];
+  for (const judgeId of judgeIds) {
+    if (!activeMember.has(judgeId)) return refused(`「${judgeId}」不是本校在册成员`);
+    const user = await ctx.repo.users.getById(judgeId);
+    if (!user || user.platformStatus !== 'active') return refused(`「${judgeId}」账号无效`);
+    valid.push(judgeId);
+  }
+
+  // 每批事务的场次上限：场次 * (人数 + 1) <= 写预算
+  const perBatch = Math.max(1, Math.floor(JUDGE_WRITE_BUDGET / (valid.length + 1)));
+  let created = 0;
+  let existed = 0;
+  const done = [];
+  for (let offset = 0; offset < targets.length; offset += perBatch) {
+    const batch = targets.slice(offset, offset + perBatch);
+    const result = await ctx.repo.transaction(async (tx) => {
+      const fresh = await freshMeetContext(tx, ctx);
+      if (!canManageMeet(fresh)) return refused('只有校级管理员及以上可以指派裁判');
+      const now = toIso(fresh.now);
+      let batchCreated = 0;
+      let batchExisted = 0;
+      for (const session of batch) {
+        const current = await tx.sportsMeetSessions.getById(session._id);
+        if (!current || current.meetId !== fresh.meetId) {
+          return refused('场次不存在或不属于本届运动会');
+        }
+        const ids = Array.isArray(current.judgeIds) ? [...current.judgeIds] : [];
+        for (const judgeId of valid) {
+          const key = meetJudgeKey(fresh.meetId, session._id, judgeId);
+          const assignment = await tx.sportsMeetJudgeAssignments.getById(key);
+          if (assignment && assignment.status === 'active') {
+            batchExisted += 1;
+            continue;
+          }
+          await tx.sportsMeetJudgeAssignments.set(key, {
+            schoolId: fresh.schoolId,
+            meetId: fresh.meetId,
+            sessionKey: session._id,
+            eventKey: current.eventKey,
+            judgeId,
+            status: 'active',
+            assignedBy: fresh.actorId,
+            assignedAt: assignment ? (assignment.assignedAt || now) : now,
+            updatedAt: now,
+          });
+          if (!ids.includes(judgeId)) ids.push(judgeId);
+          batchCreated += 1;
+        }
+        await tx.sportsMeetSessions.set(session._id, {
+          ...current, judgeIds: ids, judgeCount: ids.length, updatedAt: now,
+        });
+      }
+      return ok({ created: batchCreated, existed: batchExisted });
+    });
+    if (!result.ok) return result;
+    created += result.data.created;
+    existed += result.data.existed;
+    for (const session of batch) done.push(session._id);
+  }
+
+  return ok({
+    judgeIds: valid,
+    sessionCount: done.length,
+    created,
+    existed,
+    sessions: done,
+  });
+}
+
+/**
+ * 场次的先后次序：预赛 → 小组赛 → 淘汰赛各轮 → 决赛 → 循环赛。
+ *
+ * 不能只按 index 排：预赛第 1 组、预赛第 2 组、决赛的 index 都是 1、2、1，
+ * 按 index 排会把决赛插到中间。也不能按创建时间——决赛常在预赛之前建出来。
+ */
+function roundRankOf(doc) {
+  const round = String((doc && doc.round) || '');
+  if (round === 'heat') return 1;
+  const group = /^g([1-9])$/.exec(round);
+  if (group) return 2 + Number(group[1]) / 100;
+  const bracket = /^r([1-9])$/.exec(round);
+  if (bracket) return 3 + Number(bracket[1]) / 100;
+  if (round === 'final') return 9;
+  if (round === 'rr') return 50;
+  return 99;
+}
+
+/**
+ * 一个项目的全部场次（录分页的场次切换用）。
+ *
+ * 批量指派之后，同一项目的多个场次属于同一批裁判，需要能顺着切过去录分，
+ * 而不是每录一场退回任务列表再点一次。这里只回场次清单，不回成绩。
+ */
+async function listMeetEventSessions(payload = {}, ctx) {
+  if (!meetReadable(ctx) || !ctx.meetId) return refused('请先登录');
+  const eventKey = String(payload.eventKey || '').trim();
+  if (!eventKey) return refused('请指定项目组别');
+  const scope = scopeOf(ctx);
+
+  const [events, sessions, assignments] = await Promise.all([
+    listAliveEvents(ctx.repo.forMeet(scope).sportsMeetEvents),
+    listSessions(ctx.repo, ctx),
+    ctx.repo.forMeet(scope).sportsMeetJudgeAssignments.list(),
+  ]);
+  const event = events.find((doc) => doc._id === eventKey);
+  if (!event) return refused('项目组别不存在');
+
+  const mine = new Set(assignments
+    .filter((doc) => doc.status === 'active' && doc.judgeId === ctx.actorId)
+    .map((doc) => doc.sessionKey));
+
+  const items = sessions
+    .filter((doc) => doc.eventKey === eventKey)
+    .sort((a, b) => roundRankOf(a) - roundRankOf(b) || Number(a.index) - Number(b.index))
+    .map((doc) => ({
+      sessionKey: doc._id,
+      round: doc.round,
+      roundLabel: doc.roundLabel || ROUND_LABEL[doc.round] || doc.round,
+      index: doc.index,
+      startAt: doc.startAt || '',
+      venue: doc.venue || '',
+      entryCount: (Array.isArray(doc.entryKeys) ? doc.entryKeys : []).filter(Boolean).length,
+      judgeIds: Array.isArray(doc.judgeIds) ? doc.judgeIds : [],
+      assignedToMe: mine.has(doc._id),
+      status: doc.status,
+    }));
+
+  return ok({
+    event: {
+      eventKey, name: event.name, group: event.group,
+      rounds: event.rounds, heatMode: event.heatMode || '',
+    },
+    items,
+  });
+}
+
 /** 移除裁判：保留记录（status=revoked），B7 会据此判断「已提交分数的裁判不可撤换」 */
 async function removeMeetJudge(payload = {}, ctx) {
   if (!ctx.meetId) return refused('请指定运动会');
+
+  // 先查「这个裁判在本场次交没交成绩」：没交就不许撤（见下方 N4 说明）
+  const submittedJudge = String(payload.judgeId || '').trim();
+  const submittedSession = String(payload.sessionKey || '').trim();
+  if (submittedJudge && submittedSession) {
+    const scores = await ctx.repo.forMeet(scopeOf(ctx)).sportsMeetScores.list();
+    const hasSubmitted = scores.some((doc) => doc.sessionKey === submittedSession
+      && doc.judgeId === submittedJudge && doc.state === SCORE_SUBMITTED);
+    if (!hasSubmitted) {
+      return refused('只能撤换已提交成绩的裁判；未提交的裁判撤掉后，本场将永远凑不齐成绩');
+    }
+  }
+
   return ctx.repo.transaction(async (tx) => {
     const fresh = await freshMeetContext(tx, ctx);
     if (!canManageMeet(fresh)) return refused('只有校级管理员及以上可以撤销指派');
@@ -300,7 +515,12 @@ async function removeMeetJudge(payload = {}, ctx) {
     const current = await tx.sportsMeetJudgeAssignments.getById(key);
     if (!current || current.status !== 'active') return refused('该裁判没有在任指派');
 
-    // N4：只允许撤换「还没提交成绩」的裁判。成绩在 B7 落地，届时这里补一道检查。
+    // N4（已裁决）：只允许撤换**已提交成绩**的裁判。
+    //
+    // 分母按原始指派算：撤掉一个还没交分的裁判，这个场次就永远凑不齐「全员提交」，
+    // 成绩再也汇总不出来。已提交的分数保留在库、继续参与汇总，这正是「已评分保留」。
+    //
+    // 事务内不能查询，所以在事务外读一次快照；本动作不是名额类操作，接受快照。
     const now = toIso(fresh.now);
     await tx.sportsMeetJudgeAssignments.set(key, {
       ...current, status: 'revoked', revokedBy: fresh.actorId, revokedAt: now, updatedAt: now,
@@ -377,6 +597,12 @@ async function getMeetSchedule(payload = {}, ctx) {
 
   const items = events.map((event) => {
     const own = sessions.filter((doc) => doc.eventKey === event._id);
+    // 老数据没有 heatMode／heatCapacity：按模板补。不补的话页面会把长跑显示成
+    // 「每批 6 人」，也会把跳远的「抽签分组」按钮点亮——点了才报错。
+    const template = getTemplate(event.templateId);
+    const heatMode = event.heatMode || (template && template.heatMode) || '';
+    const heatCapacity = Number(event.heatCapacity) || Number(event.laneCount)
+      || (template && template.heatCapacity) || 0;
     return {
       eventKey: event._id,
       name: event.name,
@@ -387,6 +613,12 @@ async function getMeetSchedule(payload = {}, ctx) {
       rounds: event.rounds,
       format: event.format || '',
       groups: event.groups || null,
+      // 分批口径：lane 按道数、capacity 按人数上限、single 不分批。
+      // 页面据此决定「抽签分组」按钮是否出现、每组人数怎么称呼。
+      heatMode,
+      heatCapacity,
+      // 单场项目（田赛、评分展示）没有分组这一步
+      canDraw: event.scoreType !== MEET_SCORE_TYPE.VERSUS && heatMode !== HEAT_MODE.SINGLE,
       laneCount: Number(event.laneCount) || 0,
       advance: event.advance || null,
       scored: event.scored,
@@ -477,6 +709,8 @@ async function listMeetJudgeCandidates(payload = {}, ctx) {
 
 module.exports = {
   listMeetJudgeCandidates,
+  assignMeetJudges,
+  listMeetEventSessions,
   saveMeetSession,
   publishMeetSchedule,
   assignMeetJudge,

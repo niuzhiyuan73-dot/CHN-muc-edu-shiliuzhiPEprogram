@@ -21,6 +21,7 @@ const reg = require('../miniprogram/services/meet-registration-service.js');
 const schedule = require('../miniprogram/services/meet-schedule-service.js');
 const score = require('../miniprogram/services/meet-score-service.js');
 const { meetEventKey, meetSessionKey } = require('../miniprogram/utils/meet-scope.js');
+const markSubmitted = require('./helpers/judge-score.js');
 const { collegeKey, schoolMemberKey, schoolRoleKey } = require('../miniprogram/utils/school.js');
 
 const SCHOOL = 'muc';
@@ -307,6 +308,10 @@ test('未指派裁判的场次不能发布', async () => {
   const { meetId, sprint } = world;
   const sessionKey = sessionOf(meetId, sprint);
   for (const judgeId of ['u_j1', 'u_j2', 'u_j3']) {
+    // N4：撤换前必须先有成绩
+    await markSubmitted(world.repo, {
+      schoolId: SCHOOL, meetId, eventKey: sprint, sessionKey, judgeId,
+    });
     await schedule.removeMeetJudge({ sessionKey, judgeId }, world.admin);
   }
   const published = await score.publishMeetResults({ eventKey: sprint }, world.admin);

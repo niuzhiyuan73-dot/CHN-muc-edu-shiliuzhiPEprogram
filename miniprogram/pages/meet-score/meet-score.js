@@ -44,6 +44,10 @@ Page({
     activeSessionKey: '',
     scoreItems: [],
     drafts: {},
+    // 同项目的全部场次（B9c：录分时在组/枪之间切换）
+    eventSessions: [],
+    sessionIndex: -1,
+    canEnterSession: false,
     // 管理员预览
     activeEventKey: '',
     activeRoundKey: '',
@@ -153,7 +157,11 @@ Page({
 
   async onOpenSession(event) {
     const sessionKey = event.currentTarget.dataset.sessionKey;
-    if (!sessionKey) return;
+    return this.openSession(sessionKey);
+  },
+
+  async openSession(sessionKey) {
+    if (!sessionKey) return undefined;
     this.update({ busy: true, error: '', notice: '', activeEventKey: '', preview: null });
     try {
       const result = await this.client().getMeetSessionScores({ sessionKey });
@@ -161,11 +169,53 @@ Page({
         busy: false,
         activeSessionKey: sessionKey,
         scoreItems: result.items,
+        canEnterSession: Boolean(result.canEnter),
         drafts: {},
       });
+      return this.loadEventSessions(sessionKey, result.session && result.session.eventKey);
     } catch (err) {
       this.update({ busy: false, error: (err && err.message) || '任务加载失败' });
+      return undefined;
     }
+  },
+
+  /**
+   * 同项目的场次清单。
+   *
+   * 预赛分组、多枪决赛都会产生多个场次，而它们通常属于同一批裁判。录完一场要能
+   * 直接切下一场——退回任务列表再点一次，一个上午要多点几十次。
+   */
+  async loadEventSessions(sessionKey, eventKey) {
+    if (!eventKey) return undefined;
+    try {
+      const list = await this.client().listMeetEventSessions({ eventKey });
+      const items = (list.items || []).map((row) => ({
+        ...row,
+        displayLabel: row.round === 'heat'
+          ? `预赛 第 ${row.index} 组`
+          : (row.roundLabel || row.round),
+      }));
+      this.update({
+        eventSessions: items,
+        sessionIndex: items.findIndex((row) => row.sessionKey === sessionKey),
+      });
+    } catch (err) {
+      this.update({ eventSessions: [], sessionIndex: -1 });
+    }
+    return undefined;
+  },
+
+  onPickScoreSession(event) {
+    const sessionKey = event.currentTarget.dataset.sessionKey;
+    if (!sessionKey || sessionKey === this.data.activeSessionKey) return undefined;
+    return this.openSession(sessionKey);
+  },
+
+  /** 下一场：录完这场直接过去 */
+  onNextSession() {
+    const next = this.data.eventSessions[this.data.sessionIndex + 1];
+    if (!next) return undefined;
+    return this.openSession(next.sessionKey);
   },
 
   onScoreInput(event) {
@@ -275,12 +325,10 @@ Page({
       // 胜负项目没有场次概念（整张签表一次发布），数值型必须指明场次
       if (sessionKey) payload.sessionKey = sessionKey;
       const result = await this.client().publishMeetResults(payload);
-      this.update({
-        busy: false,
-        notice: result.publication.official
-          ? `已发布第 ${result.publication.version} 版`
-          : `预赛成绩已发布第 ${result.publication.version} 版（不计学院分）`,
-      });
+      const base = result.publication.official
+        ? `已发布第 ${result.publication.version} 版`
+        : `预赛成绩已发布第 ${result.publication.version} 版（不计学院分）`;
+      this.update({ busy: false, notice: result.warning ? `${base}；${result.warning}` : base });
       if (sessionKey) await this.loadPreview(eventKey, sessionKey);
       return undefined;
     } catch (err) {

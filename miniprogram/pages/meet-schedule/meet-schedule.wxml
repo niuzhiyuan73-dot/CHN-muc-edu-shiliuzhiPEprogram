@@ -34,12 +34,15 @@
         <!-- 赛制与编排：报名截止后在这里定 -->
         <view class="meet-actions">
           <view class="meet-btn" data-event-key="{{item.eventKey}}" bindtap="onOpenProcedure">设置赛制</view>
+          <!-- 单场项目（田赛、评分展示）没有分组这一步，按钮不出现 -->
           <view
+            wx:if="{{item.canDraw}}"
             class="meet-btn is-primary"
             data-event-key="{{item.eventKey}}"
             data-versus="{{item.scoreType === 'versus' ? 1 : 0}}"
             bindtap="onDraw"
           >{{item.scoreType === 'versus' ? '编排签表' : '抽签分组'}}</view>
+          <view wx:else class="meet-btn is-disabled">单场项目</view>
         </view>
 
         <!-- 赛制编辑面板 -->
@@ -62,6 +65,13 @@
             </view>
           </block>
 
+          <!-- 单场项目：田赛与评分展示，一个场次按顺序进行到底 -->
+          <block wx:elif="{{proc.heatMode === 'single'}}">
+            <view class="meet-hint">
+              该项目只有一个场次：按顺序依次进行，不分组、不分枪。填好时间与场地即可。
+            </view>
+          </block>
+
           <block wx:else>
             <view class="meet-form-row">
               <text class="meet-form-label">轮次</text>
@@ -71,9 +81,10 @@
               </view>
             </view>
             <view class="meet-form-row">
-              <text class="meet-form-label">每组人数</text>
-              <input class="meet-num" type="number" value="{{proc.laneCount}}" data-field="laneCount" bindinput="onProcInput" />
-              <text class="meet-form-unit">人（=跑道数，组数按报名人数自动算）</text>
+              <!-- 分道跑按道数分批；长跑/次数/趣味按人数上限分批。两者语义不同，标签必须分开 -->
+              <text class="meet-form-label">{{proc.heatMode === 'lane' ? '跑道数' : '每组上限'}}</text>
+              <input class="meet-num" type="number" value="{{proc.heatCapacity}}" data-field="heatCapacity" bindinput="onProcInput" />
+              <text class="meet-form-unit">{{proc.heatMode === 'lane' ? '人/队（组数按报名数自动算）' : '人（组数按报名人数自动算）'}}</text>
             </view>
             <view wx:if="{{proc.rounds === 'heat_final'}}" class="meet-form-row">
               <text class="meet-form-label">每组晋级</text>
@@ -83,6 +94,48 @@
           </block>
 
           <button class="btn btn-primary" bindtap="onSaveProcedure" disabled="{{busy}}">保存赛制</button>
+        </view>
+
+        <!-- 批量指派：一批裁判一次派到多个场次 -->
+        <view class="meet-actions">
+          <view class="meet-btn is-primary" data-event-key="{{item.eventKey}}" bindtap="onOpenBulk">批量派裁判</view>
+        </view>
+
+        <view wx:if="{{bulkOpen && activeEventKey === item.eventKey}}" class="meet-editor">
+          <view class="meet-form-label">选裁判（{{bulkJudges.length}} 人）</view>
+          <view class="meet-chips">
+            <view
+              wx:for="{{filteredJudges}}"
+              wx:for-item="judge"
+              wx:key="userId"
+              class="meet-chip {{bulkJudges.indexOf(judge.userId) >= 0 ? 'is-on' : ''}}"
+              data-user-id="{{judge.userId}}"
+              bindtap="onToggleBulkJudge"
+            >{{judge.name}}</view>
+          </view>
+
+          <view class="meet-form-label">派到哪些场次</view>
+          <view class="meet-actions">
+            <view class="meet-btn" bindtap="onBulkAllSessions">本项目全部场次</view>
+          </view>
+          <view class="meet-chips">
+            <view
+              wx:for="{{item.sessions}}"
+              wx:for-item="rnd"
+              wx:key="sessionKey"
+              class="meet-chip {{bulkSessions.indexOf(rnd.sessionKey) >= 0 ? 'is-on' : ''}}"
+              data-session-key="{{rnd.sessionKey}}"
+              bindtap="onToggleBulkSession"
+            >{{rnd.displayLabel}}</view>
+          </view>
+          <view class="meet-form-row">
+            <text class="meet-form-label">或按日期</text>
+            <input class="meet-input" placeholder="2026-10-24" value="{{bulkDate}}" bindinput="onBulkDateInput" />
+          </view>
+
+          <button class="btn btn-primary" bindtap="onSubmitBulk" disabled="{{busy}}">
+            指派 {{bulkJudges.length}} 人到 {{bulkSessions.length > 0 ? bulkSessions.length + ' 个场次' : (bulkDate ? bulkDate + ' 全部场次' : '本项目全部场次')}}
+          </button>
         </view>
 
         <!-- 场次排期与裁判 -->

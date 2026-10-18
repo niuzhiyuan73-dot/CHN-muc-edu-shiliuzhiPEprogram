@@ -25,6 +25,19 @@
       </view>
 
       <view wx:if="{{activeSessionKey === item.sessionKey}}" class="meet-editor">
+        <!-- 同项目多场次：预赛各组、多枪决赛。切场次不必退回任务列表 -->
+        <scroll-view wx:if="{{eventSessions.length > 1}}" scroll-x class="meet-rounds">
+          <view
+            wx:for="{{eventSessions}}"
+            wx:for-item="rnd"
+            wx:key="sessionKey"
+            class="meet-round {{activeSessionKey === rnd.sessionKey ? 'is-active' : ''}}"
+            data-session-key="{{rnd.sessionKey}}"
+            bindtap="onPickScoreSession"
+          >{{rnd.displayLabel}}</view>
+        </scroll-view>
+
+        <view wx:if="{{!canEnterSession}}" class="meet-warn">你没有被指派到这个项目，不能录入成绩</view>
         <view wx:if="{{scoreItems.length === 0}}" class="meet-hint">该场次还没有通过审核的参赛记录</view>
         <view wx:for="{{scoreItems}}" wx:for-item="row" wx:key="entryKey" class="meet-score-row">
           <view class="meet-score-college">{{row.collegeId}}</view>
@@ -39,6 +52,11 @@
           <view class="meet-score-state">{{row.myScore ? (row.myScore.state === 'submitted' ? '已提交' : '草稿') : '未录'}}</view>
           <view class="meet-score-submit" data-entry-key="{{row.entryKey}}" bindtap="onSubmitScore">提交</view>
         </view>
+        <view
+          wx:if="{{sessionIndex >= 0 && sessionIndex < eventSessions.length - 1}}"
+          class="meet-next"
+          bindtap="onNextSession"
+        >录完这场，去下一场 ›</view>
       </view>
     </view>
 
@@ -126,6 +144,7 @@
 
             <block wx:if="{{preview}}">
               <view wx:if="{{preview.official === false}}" class="meet-hint">预赛只排名次，不计学院分</view>
+              <view wx:if="{{preview.warning}}" class="meet-warn">{{preview.warning}}</view>
               <view wx:if="{{preview.missing.length > 0}}" class="meet-warn">
                 还有 {{preview.missing.length}} 条没有收齐裁判成绩
               </view>

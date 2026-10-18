@@ -213,6 +213,9 @@ function forMeet(input) {
     getMeetSchedule: payload => request('getMeetSchedule', payload),
     getMyMeetJudgeTasks: payload => request('getMyMeetJudgeTasks', payload),
     listMeetJudgeCandidates: payload => request('listMeetJudgeCandidates', payload),
+    // 批量指派与场次切换（B9c）
+    assignMeetJudges: payload => request('assignMeetJudges', payload),
+    listMeetEventSessions: payload => request('listMeetEventSessions', payload),
     // 录分与发布（B7）
     getMeetSessionScores: payload => request('getMeetSessionScores', payload),
     saveMeetJudgeScore: payload => request('saveMeetJudgeScore', payload),

@@ -22,6 +22,7 @@ const schedule = require('../miniprogram/services/meet-schedule-service.js');
 const score = require('../miniprogram/services/meet-score-service.js');
 const advance = require('../miniprogram/services/meet-advance-service.js');
 const { meetEventKey, meetSessionKey } = require('../miniprogram/utils/meet-scope.js');
+const markSubmitted = require('./helpers/judge-score.js');
 const { collegeKey, schoolMemberKey, schoolRoleKey } = require('../miniprogram/utils/school.js');
 
 const SCHOOL = 'muc';
@@ -201,6 +202,12 @@ test('裁判名单：显示真实姓名、撤销后人数同步、开赛判定�
   assert.deepEqual(doc.judgeIds, ['u_j1', 'u_j2']);
   assert.equal(doc.judgeCount, 2);
 
+  // N4：撤换前必须先有成绩，否则本场永远凑不齐全员提交
+  for (const judgeId of ['u_j1', 'u_j2']) {
+    await markSubmitted(world.repo, {
+      schoolId: SCHOOL, meetId, eventKey, sessionKey, judgeId,
+    });
+  }
   await schedule.removeMeetJudge({ sessionKey, judgeId: 'u_j1' }, admin);
   doc = await world.repo.sportsMeetSessions.getById(sessionKey);
   assert.deepEqual(doc.judgeIds, ['u_j2']);
