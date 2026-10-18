@@ -45,10 +45,23 @@ Page({
     // 当前展开的项目与它的申请人池
     activeEventKey: '',
     activeEvent: null,
+    /** 本院该项目已提交名单：面板只提示「先撤回」，不再给提交按钮 */
+    activeClosed: false,
     applicants: [],
     picked: [],
     entries: [],
     memberCap: 1,
+    /** 报名窗口是否还开着：关了就只展示名单，不再提示「可报名」 */
+    registrationClosed: false,
+    /** 学院部长（管理员可见）：本校各学院的任命情况 + 当前学院的部长 */
+    leads: [],
+    currentLead: null,
+    /** 部长候选面板（可搜索）：actionSheet 最多 6 项，成员一多就选不到人 */
+    leadOpen: false,
+    leadKeyword: '',
+    leadCandidates: [],
+    /** 切换学院时记住原来的学院：取消切换要能回到它（没有则不给「取消」） */
+    switchFromCollegeId: '',
   },
 
   onLoad(options = {}) {
@@ -80,18 +93,28 @@ Page({
   async reload() {
     this.update({ loading: true, error: '' });
     try {
-      const [board, entries] = await Promise.all([
+      const [board, entries, meet, leads] = await Promise.all([
         this.client().listMeetCollegeEvents(this.scopePayload()),
         this.client().listMeetEntries({}),
+        // 报名窗口状态：截止之后页面不能再写「可报名」，点了才被拒
+        this.client().getSportsMeet({ meetId: this.data.meetId }),
+        // 部长名单只有管理员能取；非管理员这里会失败，按空处理
+        this.client().listMeetCollegeLeads({}).catch(() => ({ items: [] })),
       ]);
+      const boardCollegeId = board.collegeId;
+      const leadRows = leads.items || [];
       this.update({
         loading: false,
         needCollege: false,
-        collegeId: board.collegeId,
-        collegeName: this.nameOfCollege(board.collegeId) || this.data.collegeName,
+        collegeId: boardCollegeId,
+        collegeName: this.nameOfCollege(boardCollegeId) || this.data.collegeName,
         byAdmin: Boolean(board.byAdmin),
         rows: board.items,
         entries: entries.items,
+        registrationClosed: Boolean(meet.meet && meet.meet.registration && !meet.meet.registration.open
+          && meet.meet.status !== 'draft'),
+        leads: leadRows,
+        currentLead: leadRows.find((row) => row.collegeId === boardCollegeId) || null,
       });
     } catch (err) {
       // 校管理员尚未指定学院时，服务端会要求先选学院；此时给出学院列表
@@ -153,9 +176,32 @@ Page({
     return this.reload();
   },
 
-  /** 已选学院后仍可换一个 */
-  onChangeCollege() {
-    this.update({ needCollege: true, collegeId: '', rows: [], entries: [] });
+  /**
+   * 已选学院后仍可换一个。
+   *
+   * 必须先取学院目录：`colleges` 原先只在 reload 的**失败分支**里才填，
+   * 所以从「自己的学院」点切换会得到一个空列表 + 没有返回入口的死路。
+   */
+  async onChangeCollege() {
+    const colleges = await this.loadColleges();
+    this.update({
+      needCollege: true,
+      switchFromCollegeId: this.data.collegeId,
+      collegeId: '',
+      rows: [],
+      entries: [],
+      colleges,
+      filteredColleges: this.filterColleges(colleges, this.data.collegeKeyword),
+    });
+    return undefined;
+  },
+
+  /** 放弃切换，回到原来的学院视图（没有原学院就什么也不做，留在选择页） */
+  onCancelCollege() {
+    const back = this.data.switchFromCollegeId;
+    if (!back) return undefined;
+    this.update({ needCollege: false, collegeKeyword: '', collegeId: back, switchFromCollegeId: '' });
+    return this.reload();
   },
 
   /** 展开某个项目的选人面板 */
@@ -175,6 +221,7 @@ Page({
         busy: false,
         activeEventKey: eventKey,
         activeEvent: pool.event,
+        activeClosed: Boolean((this.data.rows.find((row) => row.eventKey === eventKey) || {}).closed),
         memberCap: cap,
         applicants: pool.items.map((row) => ({ ...row, checked: picked.includes(row.userId) })),
         picked,
@@ -240,6 +287,84 @@ Page({
       return this.reload();
     } catch (err) {
       this.update({ busy: false, error: (err && err.message) || '撤回失败' });
+      return undefined;
+    }
+  },
+
+  /**
+   * 打开「任命学院部长」候选面板。
+   *
+   * 之前这条链路只有服务与演示种子，没有任何页面入口——真实环境里没人能成为
+   * 学院部长，学院自主报名整条路不可达，只能靠管理员逐院代报。
+   * 候选列表用院校成员接口（可搜索），与「指派裁判」同一套交互；
+   * 不用 wx.showActionSheet：它最多 6 项，本校成员一多就选不到人。
+   */
+  async onAppointLead() {
+    if (this.data.busy || !this.data.byAdmin) return undefined;
+    if (!this.data.collegeId) {
+      this.update({ error: '请先选择学院' });
+      return undefined;
+    }
+    // 一院一名：已有部长时必须先撤销，否则服务端会拒绝（这里先把话说在前面）
+    if (this.data.currentLead) {
+      this.update({ error: '该学院已有学院部长，请先撤销再改派' });
+      return undefined;
+    }
+    if (this.data.leadOpen) {
+      this.update({ leadOpen: false });
+      return undefined;
+    }
+    this.update({ leadOpen: true, leadKeyword: '' });
+    return this.loadLeadCandidates('');
+  },
+
+  async loadLeadCandidates(keyword) {
+    try {
+      const result = await this.client().listMeetJudgeCandidates({ keyword });
+      // 只列**本学院**的在册成员：服务端要求部长是该学院成员，
+      // 摆出别院的人只会让管理员点了才收到「不是本学院在册会员」。
+      const collegeId = this.data.collegeId;
+      const rows = (result.items || []).filter((row) => !collegeId || row.collegeId === collegeId);
+      this.update({ leadCandidates: rows.slice(0, 20) });
+    } catch (err) {
+      this.update({ leadCandidates: [], error: (err && err.message) || '成员加载失败' });
+    }
+    return undefined;
+  },
+
+  onLeadKeyword(event) {
+    const leadKeyword = event.detail.value;
+    this.update({ leadKeyword });
+    return this.loadLeadCandidates(leadKeyword);
+  },
+
+  onPickLead(event) {
+    const userId = event.currentTarget.dataset.userId;
+    if (userId) this.submitLead(userId);
+  },
+
+  async submitLead(userId) {
+    if (this.data.busy) return undefined;
+    this.update({ busy: true, error: '', notice: '' });
+    try {
+      await this.client().grantMeetCollegeLead({ collegeId: this.data.collegeId, userId });
+      this.update({ busy: false, notice: '已任命学院部长' });
+      return this.reload();
+    } catch (err) {
+      this.update({ busy: false, error: (err && err.message) || '任命失败' });
+      return undefined;
+    }
+  },
+
+  async onRevokeLead() {
+    if (this.data.busy || !this.data.currentLead) return undefined;
+    this.update({ busy: true, error: '', notice: '' });
+    try {
+      await this.client().revokeMeetCollegeLead({ collegeId: this.data.currentLead.collegeId });
+      this.update({ busy: false, notice: '已撤销学院部长' });
+      return this.reload();
+    } catch (err) {
+      this.update({ busy: false, error: (err && err.message) || '撤销失败' });
       return undefined;
     }
   },

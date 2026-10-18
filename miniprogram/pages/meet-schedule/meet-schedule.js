@@ -50,6 +50,10 @@ Page({
     judges: [],
     /** 本届总裁判（null = 未任命）：显示与撤销用 */
     chiefJudge: null,
+    /** 总裁判候选面板：wx.showActionSheet 最多 6 项，成员一多就选不到人 */
+    chiefOpen: false,
+    chiefKeyword: '',
+    chiefCandidates: [],
     filteredJudges: [],
     judgeKeyword: '',
     // 批量指派（B9c）：一批人一次派到多个场次
@@ -449,7 +453,9 @@ Page({
         const sizes = result.heats.map((row) => row.entryKeys.length).join(' / ');
         this.update({
           busy: false,
-          notice: `${result.rounds === 'heat_final' ? '已分' : '已分'} ${result.heats.length} ${result.rounds === 'heat_final' ? '组预赛' : '枪决赛'}（人数 ${sizes}）`,
+          notice: result.rounds === 'heat_final'
+            ? `已分 ${result.heats.length} 组预赛（人数 ${sizes}）`
+            : `已分 ${result.heats.length} 枪（人数 ${sizes}）`,
         });
       }
       await this.reload({ eventKey: this.data.activeEventKey, sessionKey: this.data.editSessionKey });
@@ -680,25 +686,41 @@ Page({
     return undefined;
   },
 
-  /** 任命本届总裁判：从已加载的本校成员里选一个 */
-  onAppointChiefJudge() {
+  /**
+   * 打开总裁判候选面板。
+   *
+   * 不用 wx.showActionSheet：它最多 6 项，本校成员一多就选不到人（点「任命」
+   * 直接没有反应）。改成可搜索的列表，与「指派裁判」同一套交互。
+   */
+  onOpenChief() {
     if (this.data.busy) return undefined;
-    const candidates = this.data.judges || [];
-    if (!candidates.length) {
-      this.update({ error: '还没有可选的成员，请先刷新' });
+    if (this.data.chiefOpen) {
+      this.update({ chiefOpen: false });
       return undefined;
     }
-    const pick = (row) => {
-      if (!row) return undefined;
-      return this.submitChiefJudge(row.userId);
-    };
-    if (typeof wx === 'undefined' || typeof wx.showActionSheet !== 'function') {
-      return pick(candidates[0]);
-    }
-    return wx.showActionSheet({
-      itemList: candidates.slice(0, 10).map((row) => `${row.name}${row.collegeName ? ` · ${row.collegeName}` : ''}`),
-      success: (res) => pick(candidates[res.tapIndex]),
+    this.update({
+      chiefOpen: true,
+      chiefKeyword: '',
+      chiefCandidates: (this.data.judges || []).slice(0, 20),
     });
+    return undefined;
+  },
+
+  async onChiefKeyword(event) {
+    const chiefKeyword = event.detail.value;
+    this.update({ chiefKeyword });
+    try {
+      const result = await this.client().listMeetJudgeCandidates({ keyword: chiefKeyword });
+      this.update({ chiefCandidates: (result.items || []).slice(0, 20) });
+    } catch (err) {
+      this.update({ chiefCandidates: [] });
+    }
+    return undefined;
+  },
+
+  onPickChief(event) {
+    const userId = event.currentTarget.dataset.userId;
+    if (userId) this.submitChiefJudge(userId);
   },
 
   async submitChiefJudge(userId) {

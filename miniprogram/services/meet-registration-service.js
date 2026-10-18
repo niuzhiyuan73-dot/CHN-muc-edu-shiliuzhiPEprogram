@@ -175,6 +175,8 @@ async function submitMeetInterest(payload = {}, ctx) {
 
     const event = await loadEvent(tx, fresh, payload.eventKey);
     if (!event.ok) return refused(event.message);
+    // 抽签之后不再收新意向：正式名单已提交不了，收进来只会堆一批永远处理不了的记录
+    if (event.doc.heatDraw || event.doc.bracket) return refused('该项目已经抽签，报名已截止');
 
     // D17：没有本院学籍不能报名
     const member = fresh.schoolMember;
@@ -660,6 +662,7 @@ async function listMeetEntries(payload = {}, ctx) {
 }
 
 module.exports = {
+  registrationWindow,
   submitMeetInterest,
   withdrawMeetInterest,
   getMyMeetParticipation,

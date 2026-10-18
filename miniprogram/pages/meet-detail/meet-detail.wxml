@@ -24,7 +24,9 @@
       <view class="meet-meta">项目组别：{{meet.eventCount}} 项</view>
       <view wx:if="{{meet.registration && meet.registration.openAt}}" class="meet-meta">
         报名：{{meet.registration.openAt}} 至 {{meet.registration.closeAt}}
+        <text wx:if="{{meet.registration.late}}">（补报中，{{meet.registration.lateEndText}} 截止）</text>
       </view>
+      <view wx:if="{{registrationClosed}}" class="meet-meta meet-meta-strong">报名已截止</view>
     </view>
 
     <view class="meet-section-title">项目清单</view>
@@ -70,6 +72,7 @@
             data-event-key="{{item.eventKey}}"
             catchtap="onWithdrawInterest"
           >已报名 · 撤回</view>
+          <view wx:elif="{{item.drawn}}" class="meet-event-state">已抽签</view>
           <view
             wx:else
             class="meet-event-btn"
@@ -108,8 +111,8 @@
       </view>
     </block>
 
-    <!-- 学院部长入口 -->
-    <block wx:if="{{isRegistration}}">
+    <!-- 学院部长入口：只给学院部长与管理员，普通会员点进去只会拿到「只有学院部长可以提交」 -->
+    <block wx:if="{{canLeadCollege && (isRegistration || registrationClosed)}}">
       <view class="meet-college-link" bindtap="onOpenCollege">进入学院报名工作台 ›</view>
     </block>
 
@@ -118,6 +121,37 @@
       <view wx:if="{{canManage}}" class="meet-college-link" bindtap="onOpenSchedule">赛程编排与裁判指派 ›</view>
       <view class="meet-college-link" bindtap="onOpenScore">裁判任务与成绩发布 ›</view>
       <view class="meet-college-link" bindtap="onOpenStanding">学院总榜与我的荣誉 ›</view>
+
+      <!-- 补报窗口（D27）：报名截止后临时放开一段时间，名单仍由学院部长提交 -->
+      <block wx:if="{{canManage && meet.status !== 'finished'}}">
+        <view class="meet-college-link" bindtap="onToggleLate">{{lateOpen ? '收起补报设置' : '开放补报窗口 ›'}}</view>
+        <view wx:if="{{lateOpen}}" class="card meet-publish">
+          <view class="meet-hint">补报期间学院部长仍可提交名单，已抽签的项目不接受新增</view>
+          <view class="meet-field">
+            <text class="meet-label">开始</text>
+            <view class="meet-time">
+              <picker mode="date" value="{{lateStartDate}}" data-field="lateStartDate" bindchange="onLateDate">
+                <view class="meet-time-part">{{lateStartDate || '选日期'}}</view>
+              </picker>
+              <picker mode="time" value="{{lateStartTime}}" data-field="lateStartTime" bindchange="onLateTime">
+                <view class="meet-time-part">{{lateStartTime}}</view>
+              </picker>
+            </view>
+          </view>
+          <view class="meet-field">
+            <text class="meet-label">截止</text>
+            <view class="meet-time">
+              <picker mode="date" value="{{lateEndDate}}" data-field="lateEndDate" bindchange="onLateDate">
+                <view class="meet-time-part">{{lateEndDate || '选日期'}}</view>
+              </picker>
+              <picker mode="time" value="{{lateEndTime}}" data-field="lateEndTime" bindchange="onLateTime">
+                <view class="meet-time-part">{{lateEndTime}}</view>
+              </picker>
+            </view>
+          </view>
+          <button class="btn btn-primary" bindtap="onSubmitLateWindow" disabled="{{busy}}">开放补报</button>
+        </view>
+      </block>
       <!-- 成绩改为点项目弹出；这里只在「已出成绩」索引取不到时留一个重试入口 -->
       <view wx:if="{{resultsError}}" class="meet-error" bindtap="loadResultIndex">{{resultsError}} · 点击重试</view>
       <button wx:if="{{canManage && meet.status !== 'finished'}}" class="btn btn-ghost" bindtap="onFinish" disabled="{{busy}}">结束运动会</button>
@@ -139,6 +173,7 @@
           </picker>
         </view>
         <button class="btn btn-primary" bindtap="onPublish" disabled="{{busy}}">发布报名</button>
+        <button class="btn btn-ghost" bindtap="onOpenBasic" disabled="{{busy}}">编辑基本信息</button>
         <button class="btn btn-ghost" bindtap="onOpenSetup" disabled="{{busy}}">继续配置项目</button>
         <button class="btn btn-ghost meet-danger" bindtap="onDelete" disabled="{{busy}}">删除草稿</button>
       </view>

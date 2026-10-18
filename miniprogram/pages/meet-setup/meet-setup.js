@@ -66,6 +66,8 @@ Page({
     schoolId: '',
     meetId: '',
     isContinue: false,
+    /** 带 meetId 且 step=1 进入：改草稿基本信息，保存走 updateMeetDraft */
+    editBasics: false,
     step: 1,
 
     // 基本信息
@@ -88,17 +90,39 @@ Page({
   onLoad(options = {}) {
     this.unloaded = false;
     const meetId = String(options.meetId || '');
+    // 带 step=1 进入 = 改草稿基本信息（详情页「编辑基本信息」）：仍从第一步开始，
+    // 但保存时走 updateMeetDraft 而不是 createSportsMeet。
+    const editBasics = String(options.step || '') === '1';
     const now = new Date();
     this.update({
       schoolId: session.getSchoolId() || 'muc',
       meetId,
       isContinue: Boolean(meetId),
-      step: meetId ? 2 : 1,
+      editBasics: Boolean(meetId) && editBasics,
+      step: meetId && !editBasics ? 2 : 1,
       year: String(now.getFullYear()),
       startDate: this.dateAfter(30),
       endDate: this.dateAfter(31),
     });
-    return this.loadTemplates();
+    return (meetId && editBasics ? this.loadMeetBasics(meetId) : Promise.resolve())
+      .then(() => this.loadTemplates());
+  },
+
+  /** 改草稿时回填基本信息（名称 / 年份 / 起止 / 地点） */
+  async loadMeetBasics(meetId) {
+    try {
+      const result = await meet.forScope({ schoolId: this.data.schoolId, meetId }).getSportsMeet({ meetId });
+      const doc = result.meet || {};
+      this.update({
+        name: doc.name || '',
+        year: doc.year ? String(doc.year) : this.data.year,
+        startDate: doc.startDate || this.data.startDate,
+        endDate: doc.endDate || this.data.endDate,
+        location: doc.location || '',
+      });
+    } catch (err) {
+      this.update({ error: (err && err.message) || '读取草稿失败' });
+    }
   },
 
   onUnload() {
@@ -185,13 +209,23 @@ Page({
   async onNext() {
     if (this.data.busy) return undefined;
     this.update({ busy: true, error: '' });
+    const basics = {
+      name: this.data.name,
+      startDate: this.data.startDate,
+      endDate: this.data.endDate,
+      location: this.data.location,
+    };
     try {
+      // 改草稿：同一个向导第一步，保存口径不同（updateMeetDraft 只接受草稿期）
+      if (this.data.meetId) {
+        await meet.forScope({ schoolId: this.data.schoolId, meetId: this.data.meetId })
+          .updateMeetDraft(basics);
+        this.update({ busy: false, step: 2, notice: '基本信息已保存' });
+        return undefined;
+      }
       const created = await meet.forScope({ schoolId: this.data.schoolId }).createSportsMeet({
-        name: this.data.name,
+        ...basics,
         year: Number(this.data.year),
-        startDate: this.data.startDate,
-        endDate: this.data.endDate,
-        location: this.data.location,
       });
       this.update({
         busy: false,
@@ -200,8 +234,9 @@ Page({
         notice: '草稿已建立，选中的项目会立即保存',
       });
     } catch (err) {
-      this.update({ busy: false, error: (err && err.message) || '创建失败' });
+      this.update({ busy: false, error: (err && err.message) || (this.data.meetId ? '保存失败' : '创建失败') });
     }
+    return undefined;
   },
 
   // ---------- 第二步：选项目 ----------

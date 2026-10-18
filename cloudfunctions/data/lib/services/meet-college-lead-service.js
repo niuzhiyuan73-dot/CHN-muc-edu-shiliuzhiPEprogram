@@ -152,9 +152,19 @@ async function listMeetCollegeLeads(payload = {}, ctx) {
     ctx.repo.colleges.listBySchool(fresh.schoolId),
   ]);
   const nameOf = new Map(colleges.map((doc) => [doc.collegeId, doc.name]));
-  const items = leads
-    .filter((doc) => doc.schoolId === fresh.schoolId && isActiveMeetLead(doc))
-    .map((doc) => ({ ...summaryOf(doc), collegeName: nameOf.get(doc.collegeId) || doc.collegeId }))
+  const active = leads.filter((doc) => doc.schoolId === fresh.schoolId && isActiveMeetLead(doc));
+  // 姓名一并给出：页面上只显示 userId 时，管理员根本看不出这位部长是谁
+  const personName = new Map();
+  for (const doc of active) {
+    const user = await ctx.repo.users.getById(doc.userId);
+    personName.set(doc.userId, (user && (user.realName || user.nickName)) || doc.userId);
+  }
+  const items = active
+    .map((doc) => ({
+      ...summaryOf(doc),
+      name: personName.get(doc.userId) || doc.userId,
+      collegeName: nameOf.get(doc.collegeId) || doc.collegeId,
+    }))
     .sort((a, b) => String(a.collegeId).localeCompare(String(b.collegeId)));
   return ok({ items, message: '' });
 }

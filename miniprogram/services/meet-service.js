@@ -37,6 +37,7 @@ const {
 const { ADVANCE_MODE, MEET_FORMAT, FORMAT_LABEL } = require('./meet-advance.js');
 const { buildMeetContext, freshMeetContext } = require('./meet-context.js');
 const { schoolMemberKey } = require('../utils/school.js');
+const { registrationWindow } = require('./meet-registration-service.js');
 const { meetReadable, canManageMeet, isActiveMeetLead } = require('./meet-permission.js');
 const { meetCollegeLeadKey } = require('../utils/meet-scope.js');
 
@@ -100,6 +101,31 @@ function intOf(value, min, max, label) {
   if (!Number.isInteger(num)) return { ok: false, message: `${label}必须是整数` };
   if (num < min || num > max) return { ok: false, message: `${label}应在 ${min}–${max} 之间` };
   return { ok: true, value: num };
+}
+
+/**
+ * 报名窗口的展示口径：把「现在还能不能报名」算在服务端。
+ *
+ * 从前只下发 openAt / closeAt 原文（还是 `2026-10-01T00:00` 这种 ISO 串），
+ * 页面只能原样打印——截止之后仍然显示「我要报名」「可报名」「报名中」，
+ * 点了才收到「当前不在报名时间内」。这里一次算好：
+ *   open        现在是否处于报名窗口内（含补报窗口）
+ *   late        命中的是补报窗口
+ *   openAtText  给人看的时间（去掉 ISO 的 T）
+ */
+function registrationView(meet, now) {
+  const reg = meet && meet.registration;
+  if (!reg || !reg.openAt || !reg.closeAt) return null;
+  const state = registrationWindow(meet, now);
+  const lateEnd = meet.lateWindow && meet.lateWindow.closeAt
+    ? String(meet.lateWindow.closeAt).replace('T', ' ') : '';
+  return {
+    openAt: String(reg.openAt).replace('T', ' '),
+    closeAt: String(reg.closeAt).replace('T', ' '),
+    open: Boolean(state.open),
+    late: Boolean(state.late),
+    lateEndText: lateEnd,
+  };
 }
 
 /** 对外摘要：不把内部字段（版本、创建人等）全抛给页面。 */
@@ -167,6 +193,8 @@ function eventSummary(doc) {
     advance: doc.advance || null,
     scored: doc.scored,
     allowFinalOnly: doc.rounds === 'final',
+    // 已抽签 / 已排签表：该项目不再接受新的正式报名，详情页据此收起「我要报名」
+    drawn: Boolean(doc.heatDraw || doc.bracket),
   };
 }
 
@@ -692,7 +720,15 @@ async function listSportsMeets(payload = {}, ctx) {
     limit,
     // 页面据此决定要不要显示「发起运动会」——权限由服务端算，客户端不自己猜。
     permissions: { canManage },
-    items: items.slice(offset, offset + limit).map(meetSummary),
+    items: items.slice(offset, offset + limit).map((doc) => {
+      const view = registrationView(doc, ctx.now);
+      const base = meetSummary(doc);
+      // 报名窗口已关但届次还挂在「报名中」：列表标签如实改成「报名已截止」，
+      // 否则用户会以为还能报（服务端窗口判断在 registrationWindow）。
+      return view && !view.open && doc.status === MEET_STATUS.REGISTRATION
+        ? { ...base, statusLabel: '报名已截止', registration: view, registrationOpen: false }
+        : { ...base, registration: view, registrationOpen: view ? view.open : false };
+    }),
   });
 }
 
@@ -717,9 +753,11 @@ async function getSportsMeet(payload = {}, ctx) {
   const collegeId = lead && isActiveMeetLead(lead) && lead.userId === fresh.actorId ? lead.collegeId : '';
 
   return ok({
-    meet: meetSummary(met),
+    // registration 换成人话版（open / 文本时间），页面不必再自己比时间
+    meet: { ...meetSummary(met), registration: registrationView(met, fresh.now) },
     events: await listEventsOf(ctx.repo, fresh),
-    permissions: { canManage, collegeId },
+    // canLeadCollege 决定「学院报名工作台」入口给谁看：部长与管理员，其他人不必看到
+    permissions: { canManage, collegeId, canLeadCollege: Boolean(collegeId) || canManage },
   });
 }
 

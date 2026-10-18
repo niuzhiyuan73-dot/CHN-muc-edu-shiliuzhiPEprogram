@@ -25,6 +25,16 @@ Page({
     canManage: false,
     isDraft: false,
     isRegistration: false,
+    /** 报名窗口已关（届次还在报名期，但时间过了）：显示「报名已截止」而不是报名按钮 */
+    registrationClosed: false,
+    /** 能不能进学院报名工作台：学院部长或管理员 */
+    canLeadCollege: false,
+    /** 补报窗口面板（D27）：管理员在报名截止后临时开一段时间 */
+    lateOpen: false,
+    lateStartDate: '',
+    lateStartTime: '08:00',
+    lateEndDate: '',
+    lateEndTime: '20:00',
     interests: [],
     myEntries: [],
     pendingEntries: [],
@@ -88,7 +98,11 @@ Page({
     try {
       const result = await this.client().getSportsMeet({ meetId: this.data.meetId });
       const canManage = Boolean(result.permissions && result.permissions.canManage);
-      const isRegistration = result.meet.status === 'registration';
+      // 报名期 = 届次在报名中 **且** 时间窗口还开着；只判状态会让截止后仍显示报名按钮
+      const windowState = result.meet.registration || null;
+      const inWindow = windowState ? Boolean(windowState.open) : true;
+      const isRegistration = result.meet.status === 'registration' && inWindow;
+      const registrationClosed = result.meet.status === 'registration' && !inWindow;
       this.update({
         loading: false,
         meet: result.meet,
@@ -96,6 +110,8 @@ Page({
         canManage,
         isDraft: result.meet.status === 'draft',
         isRegistration,
+        registrationClosed,
+        canLeadCollege: Boolean(result.permissions && result.permissions.canLeadCollege),
       });
       if (isRegistration) await this.loadParticipation();
       if (result.meet.status !== 'draft') await this.loadResultIndex();
@@ -322,6 +338,52 @@ Page({
   /** 学院部长入口 */
   onOpenCollege() {
     return wx.navigateTo({ url: `/pages/meet-college/meet-college?meetId=${this.data.meetId}` });
+  },
+
+  /** 编辑草稿基本信息：复用创建向导的第一步（带 meetId 时预填并改为更新） */
+  onOpenBasic() {
+    return wx.navigateTo({ url: `/pages/meet-setup/meet-setup?meetId=${this.data.meetId}&step=1` });
+  },
+
+  /** 展开/收起补报窗口面板 */
+  onToggleLate() {
+    const now = new Date();
+    const date = (offset) => {
+      const d = new Date(now.getTime() + offset * 86400000);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
+    this.update({
+      lateOpen: !this.data.lateOpen,
+      lateStartDate: this.data.lateStartDate || date(0),
+      lateEndDate: this.data.lateEndDate || date(1),
+    });
+  },
+
+  onLateDate(event) {
+    const field = event.currentTarget.dataset.field;
+    if (field) this.update({ [field]: event.detail.value });
+  },
+
+  onLateTime(event) {
+    const field = event.currentTarget.dataset.field;
+    if (field) this.update({ [field]: event.detail.value });
+  },
+
+  /** 开补报窗口：仍由学院部长提交名单，这里只放开时间 */
+  async onSubmitLateWindow() {
+    if (this.data.busy) return undefined;
+    this.update({ busy: true, error: '', notice: '' });
+    try {
+      await this.client().openMeetLateWindow({
+        openAt: `${this.data.lateStartDate}T${this.data.lateStartTime}`,
+        closeAt: `${this.data.lateEndDate}T${this.data.lateEndTime}`,
+      });
+      this.update({ busy: false, lateOpen: false, notice: '补报窗口已开放' });
+      return this.reload();
+    } catch (err) {
+      this.update({ busy: false, error: (err && err.message) || '开放失败' });
+      return undefined;
+    }
   },
 
   onOpenSetup() {

@@ -5,11 +5,6 @@
 <import src="../../templates/member-view.wxml" />
 
 <view class="page-container {{themeClass}}">
-  <template
-    is="memberView"
-    data="{{...view, loading: loading, error: error, hasMore: hasMore, switching: switching, showSwitch: showSwitch, switchValue: switchValue}}"
-  />
-
   <!-- 设置身份：只有「看别人 + 服务端给了可授予档位」时才出现。
        放在这里而不是共享模板里——「我的」页看的是自己，不该有这张卡。 -->
   <view wx:if="{{identity.canGrant}}" class="card entry-card" bindtap="onGrantIdentity">
@@ -19,4 +14,10 @@
     </view>
     <view class="entry-card-arrow">›</view>
   </view>
+
+  <template
+    is="memberView"
+    data="{{...view, loading: loading, error: error, hasMore: hasMore, switching: switching, showSwitch: showSwitch, switchValue: switchValue}}"
+  />
+
 </view>

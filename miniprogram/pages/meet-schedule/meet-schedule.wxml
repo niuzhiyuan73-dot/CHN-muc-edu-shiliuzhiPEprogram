@@ -24,9 +24,27 @@
             <view class="meet-row-meta">{{chiefJudge && chiefJudge.status === 'active' ? chiefJudge.name : '未任命'}}</view>
           </view>
           <view class="meet-actions">
-            <view class="meet-btn is-primary" bindtap="onAppointChiefJudge">{{chiefJudge && chiefJudge.status === 'active' ? '改派' : '任命'}}</view>
+            <view class="meet-btn is-primary" bindtap="onOpenChief">{{chiefJudge && chiefJudge.status === 'active' ? '改派' : '任命'}}</view>
             <view wx:if="{{chiefJudge && chiefJudge.status === 'active'}}" class="meet-btn" bindtap="onRevokeChiefJudge">撤销</view>
           </view>
+        </view>
+
+        <view wx:if="{{chiefOpen}}" class="meet-editor">
+          <input class="meet-search" placeholder="搜索姓名或学院" value="{{chiefKeyword}}" bindinput="onChiefKeyword" />
+          <view wx:if="{{chiefCandidates.length === 0}}" class="meet-hint">没有匹配的本校成员</view>
+          <scroll-view scroll-y class="meet-judge-list">
+            <view
+              wx:for="{{chiefCandidates}}"
+              wx:key="userId"
+              class="meet-judge-pick"
+              data-user-id="{{item.userId}}"
+              bindtap="onPickChief"
+            >
+              <text class="meet-judge-name">{{item.name}}</text>
+              <text class="meet-judge-college">{{item.collegeName}}</text>
+              <text class="meet-judge-add-btn">任命</text>
+            </view>
+          </scroll-view>
         </view>
       </view>
 

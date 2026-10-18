@@ -27,6 +27,7 @@
     <view wx:if="{{filteredColleges.length === 0}}" class="empty-state">
       <view class="empty-state-text">没有匹配的学院</view>
     </view>
+    <view wx:if="{{switchFromCollegeId}}" class="meet-link" bindtap="onCancelCollege">取消切换，回到本院</view>
     <view
       wx:for="{{filteredColleges}}"
       wx:key="collegeId"
@@ -42,6 +43,36 @@
   <view wx:if="{{loading}}" class="loading">正在加载…</view>
 
   <block wx:elif="{{!needCollege}}">
+    <view wx:if="{{byAdmin}}" class="card meet-row">
+      <view class="meet-row-head">
+        <view class="meet-row-main">
+          <view class="meet-row-name">{{collegeName || collegeId}} · 学院部长</view>
+          <view class="meet-row-meta">{{currentLead ? currentLead.name + '（可在下方任命改派）' : '未任命，学院无法自主提交名单'}}</view>
+        </view>
+        <view class="meet-actions">
+          <view class="meet-btn is-primary" bindtap="onAppointLead">{{leadOpen ? '收起' : (currentLead ? '更换部长' : '任命部长')}}</view>
+          <view wx:if="{{currentLead}}" class="meet-btn" bindtap="onRevokeLead">撤销</view>
+        </view>
+      </view>
+
+      <view wx:if="{{leadOpen}}" class="meet-pool">
+        <input class="meet-search" placeholder="搜索姓名或学院" value="{{leadKeyword}}" bindinput="onLeadKeyword" />
+        <view wx:if="{{leadCandidates.length === 0}}" class="meet-pool-empty">没有匹配的本校成员</view>
+        <view
+          wx:for="{{leadCandidates}}"
+          wx:for-item="person"
+          wx:key="userId"
+          class="meet-person"
+          data-user-id="{{person.userId}}"
+          bindtap="onPickLead"
+        >
+          <text class="meet-person-name">{{person.name}}</text>
+          <text class="meet-person-gender">{{person.collegeName}}</text>
+          <text class="meet-person-check">任命</text>
+        </view>
+      </view>
+    </view>
+
     <view wx:if="{{rows.length === 0}}" class="empty-state">
       <view class="empty-state-icon">📋</view>
       <view class="empty-state-text">本届还没有项目</view>
@@ -58,12 +89,13 @@
             · 意向 {{item.applicants}}
           </view>
         </view>
-        <view class="meet-row-tag {{item.closed ? 'is-closed' : ''}}">{{item.closed ? '已提交' : '可报名'}}</view>
+        <view class="meet-row-tag {{item.closed ? 'is-closed' : ''}}">{{item.closed ? '已提交' : (registrationClosed ? '已截止' : '可报名')}}</view>
       </view>
 
       <!-- 选人面板 -->
       <view wx:if="{{activeEventKey === item.eventKey}}" class="meet-pool">
-        <view class="meet-pool-hint">
+        <view wx:if="{{activeClosed}}" class="meet-warn">本院该项目已提交名单，如需修改请先在下方撤回</view>
+        <view wx:else class="meet-pool-hint">
           需 {{activeEvent.members > 0 ? activeEvent.members + ' 人' : '人数不限'}}，已选 {{picked.length}} 人（只列已提交意向的学生）
         </view>
         <view wx:if="{{applicants.length === 0}}" class="meet-pool-empty">还没有学生提交参赛意向</view>
@@ -79,7 +111,7 @@
           <text class="meet-person-gender">{{person.gender === 'female' ? '女' : person.gender === 'male' ? '男' : ''}}</text>
           <text class="meet-person-check">{{person.checked ? '✓' : ''}}</text>
         </view>
-        <button class="btn btn-primary" bindtap="onSubmitEntry" disabled="{{busy}}">提交本院名单</button>
+        <button wx:if="{{!activeClosed}}" class="btn btn-primary" bindtap="onSubmitEntry" disabled="{{busy}}">提交本院名单</button>
       </view>
     </view>
 

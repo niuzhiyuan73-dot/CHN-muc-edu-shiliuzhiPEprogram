@@ -60,3 +60,9 @@
 .meet-sheet-row-side { flex-shrink: 0; text-align: right; }
 .meet-sheet-row-text { font-size: 28rpx; font-weight: 600; color: #222; }
 .meet-sheet-row-points { margin-top: 4rpx; font-size: 22rpx; color: #888; }
+
+/* 补报窗口的日期/时间选择：两段并排，点哪段开哪个 picker */
+.meet-time { display: flex; align-items: center; gap: 12rpx; }
+.meet-time-part { padding: 8rpx 16rpx; border-radius: 8rpx; background: #f5f6f8; font-size: 26rpx; color: #222; }
+/* 「报名已截止」这种结论性提示要比普通 meta 重 */
+.meet-meta-strong { color: #b23a2e; font-weight: 600; }

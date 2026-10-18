@@ -26,7 +26,7 @@ const {
 const { schoolMemberKey, SCHOOL_MEMBER_STATUS } = require('../utils/school.js');
 const { MEET_SCORE_TYPE, getTemplate, HEAT_MODE } = require('./meet-event-catalog.js');
 const { buildMeetContext, freshMeetContext } = require('./meet-context.js');
-const { meetReadable, canManageMeet } = require('./meet-permission.js');
+const { meetReadable, canManageMeet, isChiefJudge } = require('./meet-permission.js');
 
 const { touchEvent, liveMeet, unchanged } = require('./meet-consistency.js');
 

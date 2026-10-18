@@ -14,6 +14,7 @@
     <view class="meet-section-title">我的裁判任务</view>
     <view wx:if="{{tasks.length === 0}}" class="empty-state">
       <view class="empty-state-text">还没有指派给你的场次</view>
+      <view class="meet-hint">裁判由赛事管理员在「赛程编排」页指派；如果你刚被指派，下拉刷新即可看到</view>
     </view>
     <view wx:for="{{tasks}}" wx:key="sessionKey" class="card meet-row">
       <view class="meet-row-head" data-session-key="{{item.sessionKey}}" bindtap="onOpenSession">

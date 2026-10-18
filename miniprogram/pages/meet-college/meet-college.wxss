@@ -28,3 +28,10 @@
 .meet-college-item { display: flex; justify-content: space-between; align-items: center; padding: 22rpx 24rpx; margin-bottom: 12rpx; }
 .meet-college-name { font-size: 28rpx; color: #222; }
 .meet-college-id { font-size: 22rpx; color: #999; }
+
+/* 报名已截止 / 已提交等提示与轻按钮（本页样式作用域独立，需各自定义） */
+.meet-warn { margin-top: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: #fdf6e3; color: #8a5a00; font-size: 24rpx; }
+.meet-actions { display: flex; gap: 12rpx; margin-top: 14rpx; }
+.meet-btn { padding: 14rpx 24rpx; text-align: center; border-radius: 10rpx; background: #f2f3f5; font-size: 24rpx; color: #444; }
+.meet-btn.is-primary { background: #b23a2e; color: #fff; }
+.meet-college-lead { display: flex; align-items: center; justify-content: space-between; }
