@@ -136,9 +136,16 @@
           <button class="btn btn-primary" bindtap="onSaveProcedure" disabled="{{busy}}">保存赛制</button>
         </view>
 
-        <!-- 批量指派：一批裁判一次派到多个场次 -->
+        <!-- 批量指派：一批裁判一次派到多个场次。
+             还没抽签就没有场次可派，按钮置灰并说明原因——原先能点，点了才被服务端拒绝。 -->
         <view class="meet-actions">
-          <view class="meet-btn is-primary" data-event-key="{{item.eventKey}}" bindtap="onOpenBulk">批量派裁判</view>
+          <view
+            wx:if="{{item.sessions.length > 0}}"
+            class="meet-btn is-primary"
+            data-event-key="{{item.eventKey}}"
+            bindtap="onOpenBulk"
+          >批量派裁判</view>
+          <view wx:else class="meet-btn is-disabled">抽签后派裁判</view>
         </view>
 
         <view wx:if="{{bulkOpen && activeEventKey === item.eventKey}}" class="meet-editor">

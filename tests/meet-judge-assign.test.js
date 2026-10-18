@@ -336,3 +336,92 @@ test('裁判 ≥5 人时给出风险提示，3 人时不给（Q2：只提示、�
   assert.equal(published.ok, false);
   assert.match(published.message, /没有收齐/);
 });
+
+/**
+ * 开赛与录分的耦合（F9）
+ * ============================================================
+ * 「开赛」原先只由赛程页的按钮触发，而录分不看届次状态：裁判能直接录分，
+ * 届次却停在「赛程已发布」。现在首次录分即视为开赛。
+ */
+
+/** 把预赛/决赛都排上时间与场地，再发布赛程（届次转为 scheduled） */
+async function publishReadySchedule(world) {
+  for (const [index, sessionKey] of [...world.heats, world.final].entries()) {
+    const session = await world.repo.sportsMeetSessions.getById(sessionKey);
+    const saved = await schedule.saveMeetSession({
+      eventKey: world.eventKey,
+      round: session.round,
+      index: session.index,
+      startAt: `2026-10-24T${String(8 + index).padStart(2, '0')}:00`,
+      venue: '田径场',
+    }, world.admin);
+    assert.equal(saved.ok, true, saved.message);
+  }
+  const published = await schedule.publishMeetSchedule({}, world.admin);
+  assert.equal(published.ok, true, published.message);
+  assert.equal(published.data.meet.status, 'scheduled');
+}
+
+/** 取某场次的第一条参赛记录，供录分使用 */
+async function firstEntryOf(world, sessionKey) {
+  const session = await world.repo.sportsMeetSessions.getById(sessionKey);
+  return { session, entryKey: (session.entryKeys || [])[0] };
+}
+
+test('首次录分即开赛：届次与场次都从「未开始」推进到「进行中」', async () => {
+  const world = await makeWorld();
+  await publishReadySchedule(world);
+  const assigned = await schedule.assignMeetJudges({ judgeIds: ['u_j1'], eventKey: world.eventKey }, world.admin);
+  assert.equal(assigned.ok, true, assigned.message);
+
+  const { entryKey, session } = await firstEntryOf(world, world.heats[0]);
+  assert.equal(session.status, 'scheduled', '抽签后的场次还没开始');
+
+  const saved = await score.saveMeetJudgeScore(
+    { sessionKey: world.heats[0], entryKey, rawText: '275.20' },
+    await ctxOf(world.repo, 'u_j1', world.meetId));
+  assert.equal(saved.ok, true, saved.message);
+
+  const meet = await world.repo.sportsMeets.getById(world.meetId);
+  assert.equal(meet.status, 'running', '录了第一条成绩，届次就应进入「进行中」');
+  const after = await world.repo.sportsMeetSessions.getById(world.heats[0]);
+  assert.equal(after.status, 'running');
+  assert.ok(after.startedAt, '场次要记下开赛时间');
+});
+
+test('已开赛的届次再录分：状态不变、版本号不重复自增', async () => {
+  const world = await makeWorld();
+  await publishReadySchedule(world);
+  await schedule.assignMeetJudges({ judgeIds: ['u_j1'], eventKey: world.eventKey }, world.admin);
+
+  const first = await firstEntryOf(world, world.heats[0]);
+  await score.saveMeetJudgeScore(
+    { sessionKey: world.heats[0], entryKey: first.entryKey, rawText: '275.20' },
+    await ctxOf(world.repo, 'u_j1', world.meetId));
+  const started = await world.repo.sportsMeets.getById(world.meetId);
+
+  await score.saveMeetJudgeScore(
+    { sessionKey: world.heats[0], entryKey: first.entryKey, rawText: '275.30' },
+    await ctxOf(world.repo, 'u_j1', world.meetId));
+  const again = await world.repo.sportsMeets.getById(world.meetId);
+
+  assert.equal(again.status, 'running');
+  assert.equal(again.version, started.version, '已在进行中，不该再抬版本');
+});
+
+test('已结束的届次不会被录分「重新开赛」', async () => {
+  const world = await makeWorld();
+  await publishReadySchedule(world);
+  await schedule.assignMeetJudges({ judgeIds: ['u_j1'], eventKey: world.eventKey }, world.admin);
+
+  const finished = await world.repo.sportsMeets.getById(world.meetId);
+  await world.repo.sportsMeets.set(world.meetId, { ...finished, status: 'finished' });
+
+  const { entryKey } = await firstEntryOf(world, world.heats[0]);
+  await score.saveMeetJudgeScore(
+    { sessionKey: world.heats[0], entryKey, rawText: '275.20' },
+    await ctxOf(world.repo, 'u_j1', world.meetId));
+
+  const meet = await world.repo.sportsMeets.getById(world.meetId);
+  assert.equal(meet.status, 'finished', '只允许 scheduled → running，不倒退也不复活');
+});

@@ -62,6 +62,39 @@ const ROW_STATUS = Object.freeze({ RESULT: 'result', VOID: 'void' });
 const isAlive = (doc) => Boolean(doc && doc.status && doc.status !== MEET_STATUS.DELETED);
 
 /**
+ * 首次录分即视为开赛（F9）。
+ *
+ * 【为什么开赛挂在录分上】
+ * 原先「开赛」只由赛程页的「开始比赛」按钮触发，而录分本身不校验届次状态：
+ * 裁判可以直接在「赛程已发布」的届次里录分，届次却一直停在 scheduled，
+ * 列表页看不出比赛已经开始，管理员也以为还要再点一次开赛。两条路各走各的，
+ * 迟早对不上。现在让开赛成为录分的自然副作用：
+ *   · 届次 scheduled → running；
+ *   · 场次仍 scheduled → running，并记 startedAt。
+ *
+ * 【只前进不后退】
+ * 只在 scheduled 上动手：registration / finished / archived 一律不改。
+ * 已结束的届次不该还有新成绩（发布与更正另有判断），这里不替它开口子。
+ */
+async function startMeetByScore(tx, ctx, session) {
+  const now = toIso(ctx.now);
+  const meet = ctx.meet;
+  if (meet && meet.status === MEET_STATUS.SCHEDULED) {
+    await tx.sportsMeets.set(ctx.meetId, {
+      ...meet,
+      status: MEET_STATUS.RUNNING,
+      updatedAt: now,
+      version: (meet.version || 1) + 1,
+    });
+  }
+  if (session && session.status === 'scheduled') {
+    await tx.sportsMeetSessions.set(session._id, {
+      ...session, status: 'running', startedAt: now, updatedAt: now,
+    });
+  }
+}
+
+/**
  * 裁判人数过多的风险提示（Q2：汇总维持「去极值平均」，但人数 ≥5 时要说清后果）。
  *
  * 3 人去极值后只剩中间值，等价于「取中位数」，与手计时规则一致。5 人以上时
@@ -368,6 +401,8 @@ async function saveMeetJudgeScore(payload = {}, ctx) {
       updatedAt: now,
     };
     await tx.sportsMeetScores.set(key, doc);
+    // 写下第一条成绩就意味着比赛开始了：顺手把届次与场次从「未开始」推进到「进行中」
+    await startMeetByScore(tx, ctx, session);
     await touchEvent(tx, session.eventKey);
     return ok({ score: { entryKey, sessionKey, judgeId, text: normalized.text, state: doc.state } });
   });
@@ -404,6 +439,8 @@ async function submitMeetJudgeScore(payload = {}, ctx) {
     if (current.state === SCORE_STATE.SUBMITTED) return ok({ entryKey, sessionKey, state: current.state });
     const now = toIso(ctx.now);
     await tx.sportsMeetScores.set(key, { ...current, state: SCORE_STATE.SUBMITTED, updatedAt: now });
+    // 存量数据可能先有草稿分、届次仍是 scheduled（开赛前录的）：提交这一步补上开赛
+    await startMeetByScore(tx, fresh, session);
     await touchEvent(tx, session.eventKey);
     return ok({ entryKey, sessionKey, state: SCORE_STATE.SUBMITTED });
   });

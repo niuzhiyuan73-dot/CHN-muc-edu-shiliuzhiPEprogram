@@ -308,10 +308,15 @@ Page({
     if (this.data.busy) return;
     const eventKey = (event.currentTarget.dataset.eventKey || '').trim();
     if (!eventKey) return;
+    const row = this.data.items.find(item => item.eventKey === eventKey);
+    // 没有场次就没有可派的裁判：模板已把按钮置灰，这里再兜一道（旧版缓存/直达调用）
+    if (!row || !(row.sessions || []).length) {
+      this.update({ error: '该项目还没有抽签分组，先抽签再派裁判' });
+      return;
+    }
     const sameEvent = this.data.activeEventKey === eventKey;
     if (!sameEvent) {
-      const row = this.data.items.find(item => item.eventKey === eventKey);
-      this.pickSession(eventKey, row && row.sessions[0]);
+      this.pickSession(eventKey, row.sessions[0]);
     }
     this.update({
       activeEventKey: eventKey,
