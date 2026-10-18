@@ -94,10 +94,31 @@ function canSubmitForCollege(ctx, leadDoc, collegeId) {
   return canLeadCollegeMeet(ctx, leadDoc, collegeId);
 }
 
-/** 能不能审核 / 发布结果：校级管理员及以上，或本届被任命的总裁判（B4）。 */
+/**
+ * 是不是**本届**在任的总裁判（B4）。
+ *
+ * 总裁判随届任命（`sportsMeets` 上的 chiefJudge 字段），只在本届有效：换一届要
+ * 重新任命。判定四件事缺一不可——记录在任、就是本人、同一届、同校。
+ */
+function isChiefJudge(ctx, meet) {
+  const chief = meet && meet.chiefJudge;
+  return Boolean(chief && chief.status === 'active' && chief.userId === ctx.actorId
+    && chief.schoolId === ctx.schoolId && chief.meetId === ctx.meetId);
+}
+
+/**
+ * 能不能审核 / 发布结果 / 重排：校级管理员及以上，或本届被任命的总裁判（B4）。
+ *
+ * options.chiefJudge 传当届的 chiefJudge 记录（不是布尔量）：调用方在事务内刚
+ * 读过 meet，直接透传即可；不传就等于「只认管理员」。
+ */
 function canPublishMeetResult(ctx, options = {}) {
   if (canManageMeet(ctx)) return true;
-  const chief = options.chiefJudge;
+  // 缺省取上下文里的当届记录（meet-context 已把 sportsMeets 文档放进 ctx.meet）：
+  // 调用方不必逐个记得传，少一处漏传就是「总裁判点不动」。
+  const chief = options.chiefJudge !== undefined
+    ? options.chiefJudge
+    : (ctx.meet && ctx.meet.chiefJudge);
   return Boolean(chief && chief.status === 'active' && chief.userId === ctx.actorId
     && chief.schoolId === ctx.schoolId && chief.meetId === ctx.meetId);
 }
@@ -110,6 +131,7 @@ module.exports = {
   meetReadable,
   canManageMeet,
   isActiveMeetLead,
+  isChiefJudge,
   canLeadCollegeMeet,
   canSubmitForCollege,
   canPublishMeetResult,

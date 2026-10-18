@@ -30,19 +30,6 @@
       <view wx:if="{{errors.title}}" class="field-error">{{errors.title}}</view>
 
       <view class="field-row">
-        <view class="field-label">分类</view>
-        <picker
-          mode="selector"
-          range="{{categories}}"
-          value="{{categoryIndex}}"
-          bindchange="onPickCategory"
-        >
-          <view class="field-value">{{form.category}} ›</view>
-        </picker>
-      </view>
-      <view wx:if="{{errors.category}}" class="field-error">{{errors.category}}</view>
-
-      <view class="field-row">
         <view class="field-label">置顶</view>
         <switch checked="{{form.pinned}}" color="#2f6fed" bindchange="onTogglePinned" />
       </view>

@@ -1,11 +1,10 @@
 <!--
   公告列表
-  数据形状见 services/announcement-view.js 的 loadAnnouncementListView。
+  数据形状见 services/announcement-view.js 的 loadSchoolAnnouncementListView。
   这一页不判权限：视图模型给每行的 canArchive 恒为假，不会冒出管理按钮。
 
-  公告是**跨协会聚合**的：顶部横着一栏协会标签（.assoc-tabs），选哪个协会就
-  只看哪个协会；下面再按分类筛选。根容器挂上当前协会的主题类
-  （.assoc-pkb / .assoc-tt / .assoc-bd），标签与内容便自动取该协会的配色。
+  公告是**本校一个通道**：没有协会标签，也没有「通知 / 赛事 / 战报」分类标签
+  （2026-10-18 起只有管理员能发全校公告）。根容器挂当前协会的主题类只为配色。
 -->
 <view class="page-container">
 
@@ -18,42 +17,8 @@
   </view>
 
   <block wx:else>
-    <!-- 当前协会主题类：整块（协会标签 + 分类标签 + 公告）随协会上色 -->
     <view class="{{view.themeClass}}">
 
-      <!-- ========== 协会标签：横向一栏，选哪个看哪个 ========== -->
-      <view class="assoc-tabs">
-        <view
-          wx:for="{{view.associationTabs}}"
-          wx:key="associationId"
-          class="assoc-tab {{item.active ? 'is-active' : ''}}"
-          data-association="{{item.associationId}}"
-          bindtap="onSwitchAssociation"
-        >
-          <text>{{item.label}}</text>
-          <text wx:if="{{item.count > 0}}" class="tab-count">{{item.count}}</text>
-        </view>
-      </view>
-
-      <!-- ========== 分类标签 ========== -->
-      <view class="pool-tabs {{switching ? 'is-switching' : ''}}">
-        <view
-          wx:for="{{view.tabs}}"
-          wx:key="tab"
-          class="pool-tab {{item.active ? 'is-active' : ''}}"
-          data-tab="{{item.tab}}"
-          bindtap="onSwitchTab"
-        >
-          <view class="pool-tab-label">
-            {{item.label}}
-            <text wx:if="{{item.count > 0}}" class="tab-count">{{item.count}}</text>
-          </view>
-        </view>
-      </view>
-
-      <!-- ========== 当前协会的公告 ========== -->
-
-      <!-- 当前分类下一条都没有时，给一句话而不是留白 -->
       <view wx:if="{{view.visibleCount === 0}}" class="card">
         <view class="empty-note">{{view.emptyText}}</view>
       </view>
@@ -61,7 +26,6 @@
       <view wx:else class="card">
         <view wx:for="{{view.rows}}" wx:for-item="notice" wx:key="id" class="notice-row">
           <view class="notice-head">
-            <text class="tag notice-category">{{notice.category}}</text>
             <text wx:if="{{notice.pinned}}" class="tag notice-pin">置顶</text>
             <text class="notice-date">{{notice.publishText}}</text>
           </view>

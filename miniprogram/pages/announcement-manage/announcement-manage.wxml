@@ -37,7 +37,6 @@
 
       <view wx:for="{{view.rows}}" wx:key="id" class="notice-row {{item.archived ? 'is-archived' : ''}}">
         <view class="notice-head">
-          <text class="tag notice-category">{{item.category}}</text>
           <text wx:if="{{item.pinned}}" class="tag notice-pin">置顶</text>
           <text class="tag {{item.archived ? 'is-revoked' : 'is-active'}} notice-status">{{item.statusLabel}}</text>
           <text class="notice-date">{{item.publishText}}</text>

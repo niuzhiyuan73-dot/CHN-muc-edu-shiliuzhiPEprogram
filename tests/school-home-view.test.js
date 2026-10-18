@@ -2,7 +2,8 @@
  * B4-b：学校维度首页装载器（school-home-view）
  * ============================================================
  * 守的是：
- *   1. 首页按「当前浏览学校」跨协会聚合公告 / 近期赛事 / 概况；
+ *   1. 首页按「当前浏览学校」聚合公告 / 近期赛事 / 概况（公告 2026-10-18 起是
+ *      学校级一条通道，只取一次；赛事与概况仍按协会汇总）；
  *   2. 游客只看公告（§11.8），赛事与概况不取；
  *   3. 跨校只读浏览得到真实空聚合，不编数字、不展示静态演示内容；
  *   4. 分页循环取完，不把第一页当全集；单协会读失败跳过，不拖垮整页。
@@ -46,20 +47,20 @@ test('sortUpcoming —— 只留近期、开赛时间升序、按 limit 截断',
 
 test('announcementRow / eventRow —— 渲染字段齐备，无 undefined 泄露', () => {
   const assoc = { id: 'pkb', shortName: '匹克球', logoGlyph: '匹' };
+  // 公告是学校级的一条通道：不再带协会标注与分类
   const a = announcementRow(
-    { announcementId: 'ann_1', title: 't', content: '', category: '', pinned: false, publishTime: '2026-10-01T00:00:00Z' },
-    assoc
+    { announcementId: 'ann_1', title: 't', content: '', pinned: false, publishTime: '2026-10-01T00:00:00Z' }
   );
   const e = eventRow(
     { eventId: 'ev_1', title: 't', statusLabel: '报名中', isOngoing: false, startTime: null, location: '', quotaText: '', mySignup: null },
     assoc
   );
-  for (const row of [a, e]) {
-    assert.ok(!JSON.stringify(row).includes('undefined'), '渲染行里出现 undefined');
-    assert.strictEqual(row.association, 'pkb');
-    assert.strictEqual(row.associationName, '匹克球');
-    assert.strictEqual(row.associationGlyph, '匹');
-  }
+  assert.ok(!JSON.stringify([a, e]).includes('undefined'), '渲染行里出现 undefined');
+  assert.strictEqual(a.id, 'ann_1');
+  assert.strictEqual(a.association, undefined, '公告不带协会标注');
+  assert.strictEqual(e.association, 'pkb');
+  assert.strictEqual(e.associationName, '匹克球');
+  assert.strictEqual(e.associationGlyph, '匹');
   assert.strictEqual(e.signedUp, false);
 });
 
@@ -74,10 +75,11 @@ test('聚合 —— 民大首页：公告置顶在前、近期赛事、概况数
   assert.strictEqual(view.loggedIn, true);
   assert.ok(view.announcements.rows.length > 0);
   assert.strictEqual(view.announcements.rows[0].pinned, true, '置顶公告排在最前');
-  // 民大三个协会各自的演示公告之和：匹克球 5 + 乒乓 4 + 羽球 3
-  assert.strictEqual(view.announcements.total, 12, '演示公告按协会汇总');
+  // 公告是学校级的一条通道：民大演示 5 条，不按协会重复
+  assert.strictEqual(view.announcements.total, 5, '演示公告按学校一份');
   for (const row of view.announcements.rows) {
-    assert.ok(row.id && row.title && row.associationName, '每条公告带编号、标题与协会标注');
+    assert.ok(row.id && row.title, '每条公告带编号与标题');
+    assert.strictEqual(row.associationName, undefined, '公告不再标注所属协会');
   }
 
   // 报名中的赛事：各协会汇总后默认只展示前 3 条（home-view 的 DEFAULT_EVENT_LIMIT）
@@ -167,14 +169,15 @@ test('聚合 —— 公告超过单页限量时如实带 hasMore，赛事数循�
   assert.strictEqual(view.summary.matchCount, 5 * 3);
 });
 
-test('聚合 —— 单协会读失败跳过，其余协会照常聚合', async () => {
+test('聚合 —— 单协会读失败跳过，其余协会照常聚合（公告不受影响）', async () => {
   const announcements = [{
-    announcementId: 'a1', title: 'tt 公告', content: '', category: '通知',
+    announcementId: 'a1', title: '停训通知', content: '',
     pinned: false, publishTime: '2026-10-01T00:00:00Z',
   }];
-  const client = fakeClient({ announcements, failAssociations: ['pkb', 'bd'] });
+  const client = fakeClient({ announcements, failAssociations: ['tt', 'bd'] });
   const view = await loadSchoolHomeView({ schoolId: 'muc', viewerId: 'u06', client });
 
-  assert.strictEqual(view.announcements.total, 1, '只有 tt 的公告');
-  assert.strictEqual(view.announcements.rows[0].associationName, '民大乒乓');
+  // 公告走第一个协会的客户端一次取全（它是学校级集合），tt / bd 失败与它无关
+  assert.strictEqual(view.announcements.total, 1);
+  assert.strictEqual(view.announcements.rows[0].title, '停训通知');
 });

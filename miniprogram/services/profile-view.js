@@ -198,8 +198,11 @@ async function loadSchoolMemberView(api, options = {}) {
       avatarText: (nameDisplay.nickName || '?').slice(0, 1),
       avatarUrl: data.user.avatarUrl || '',
       college: data.user.college || '',
+      collegeId: data.user.collegeId || '',
       studentId: data.user.studentId || '',
       roleLabel: data.user.permissionLabel || '',
+      // 机器可读的权限档（设置身份用，模板只拿它做比较，不自己拼规则）
+      permission: data.user.permission || '',
       statusLabel: '正常',
       joinDateText: '',
       points: data.user.points || 0,

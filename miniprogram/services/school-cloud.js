@@ -229,6 +229,9 @@ function forMeet(input) {
     drawMeetHeats: payload => request('drawMeetHeats', payload),
     advanceMeetEvent: payload => request('advanceMeetEvent', payload),
     drawMeetBracket: payload => request('drawMeetBracket', payload),
+    resetMeetDraw: payload => request('resetMeetDraw', payload),
+    appointMeetChiefJudge: payload => request('appointMeetChiefJudge', payload),
+    revokeMeetChiefJudge: payload => request('revokeMeetChiefJudge', payload),
     setMeetMatchWinner: payload => request('setMeetMatchWinner', payload),
     getMeetBracket: payload => request('getMeetBracket', payload),
     // 学院总榜与个人荣誉（B8）

@@ -97,6 +97,9 @@ async function listSessions(repo, ctx) {
   const docs = await repo.forMeet(scopeOf(ctx)).sportsMeetSessions.list();
   return docs
     .filter((doc) => doc.schoolId === ctx.schoolId && doc.meetId === ctx.meetId)
+    // 重抽时旧场次被标成 voidedAt（仓储没有 remove）：读取端统一过滤，
+    // 赛程页 / 录分任务 / 场次清单都不会看到已作废的场次。
+    .filter((doc) => !doc.voidedAt)
     .sort((a, b) => {
       const ta = Number.isFinite(Date.parse(String(a.startAt || '').replace(' ', 'T')))
         ? Date.parse(String(a.startAt).replace(' ', 'T')) : Number.MAX_SAFE_INTEGER;
@@ -674,6 +677,11 @@ async function getMeetSchedule(payload = {}, ctx) {
 
   return ok({
     meet: { meetId: meet._id, status: meet.status, name: meet.name },
+    // 发布/更正/判定胜负的资格（管理员 + 本届总裁判），与「能不能编排」分开：
+    // 总裁判不编排赛程，但要能在录分页发布成绩。
+    canPublish: isAdmin || isChiefJudge(ctx, meet),
+    // 本届总裁判（未任命为 null）：赛程页据此显示「现任：某某」与撤销入口
+    chiefJudge: meet.chiefJudge || null,
     items,
     canManage: isAdmin,
   });

@@ -274,10 +274,8 @@ Page({
     return wx.navigateTo({ url: `/pages/event-detail/event-detail?eventId=${encodeURIComponent(eventId)}` });
   },
 
-  /** 点公告的一条：跨协会的先切过去，再看该协会的公告列表 */
-  onOpenAnnouncement(event) {
-    const association = event.currentTarget.dataset.association;
-    this.switchTo(association);
+  /** 点公告的一条：公告是学校级的一条通道，不必先切协会 */
+  onOpenAnnouncement() {
     return wx.navigateTo({ url: '/pages/announcements/announcements' });
   },
 });

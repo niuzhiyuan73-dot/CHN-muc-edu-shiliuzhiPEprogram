@@ -140,6 +140,10 @@ const SCHOOL_WRITE_ACTIONS = [
   'advanceMeetEvent',
   'drawMeetBracket',
   'setMeetMatchWinner',
+  // 重排与总裁判（M3）
+  'resetMeetDraw',
+  'appointMeetChiefJudge',
+  'revokeMeetChiefJudge',
 ];
 
 const SCHOOL_WRITE_ACTION_SET = new Set(SCHOOL_WRITE_ACTIONS);

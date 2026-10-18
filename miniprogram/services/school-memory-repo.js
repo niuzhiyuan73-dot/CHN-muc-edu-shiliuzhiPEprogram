@@ -66,7 +66,9 @@ function createSchoolMemoryRepo(seed = {}) {
       'sportsMeetCollegeLeads',
     ];
     // 只按学校（不带协会）判归属的集合：学院目录 / 身份 / 校级角色是学校级的。
-    const SCHOOL_SCOPED = ['colleges', 'schoolMembers', 'schoolRoles', 'sportsMeetCollegeLeads'];
+    // `announcements` 2026-10-18 起也归到这一档：公告只有管理员能发，且发的是
+    // 全校信息，不该因为发布时正停在哪家协会而只在那家协会可见。
+    const SCHOOL_SCOPED = ['colleges', 'schoolMembers', 'schoolRoles', 'sportsMeetCollegeLeads', 'announcements'];
     repo.forScope = input => {
       const scope = schoolScope(input);
       const result = { scope };

@@ -21,45 +21,21 @@
  * 为 false，公开列表恒不下发管理按钮——公开页不该因为看的人恰好是管理员
  * 就冒出下架按钮。
  *
- * 【公开列表为什么跨协会、按协会标签切换】
- * 公告页回答的是「最近各协会都发了什么」——把全部启用协会的公告都取出来，
- * 顶部横着一栏协会标签，选哪个协会就只看哪个协会，谁的公告都不会被藏住
- * （§11.3）。取数按「学校 + 协会」逐个范围各取一次（association-space 的
- * forScope），不在异步等待期间读全局当前协会。
+ * 【公开列表为什么不再分协会与分类】
+ * 2026-10-18 起公告只有管理员能发，发的是全校信息；协会维度与「通知 / 赛事 /
+ * 战报」分类都已从界面移除。repo 里 announcements 也移进了 SCHOOL_ONLY 档，
+ * 一次查询就拿到本校全部公告，不再逐协会各取一次（那样会把同一条公告重复
+ * 显示三遍）。分类字段仍留在数据里，只是不再展示、不再参与筛选。
  * ============================================================
  */
 
-const { ANNOUNCEMENT_CATEGORIES, ANNOUNCEMENT_STATUS } = require('../utils/constants.js');
+const { ANNOUNCEMENT_STATUS } = require('../utils/constants.js');
 const { activeAssociations } = require('../utils/associations.js');
 const { formatDateTime } = require('../utils/format.js');
 const { DEFAULT_CATEGORY } = require('./announcement.js');
 const { brandOf } = require('./branding.js');
 const scope = require('./association-scope.js');
 const space = require('./association-space.js');
-
-/** 「全部」标签：不分分类 */
-const ALL_TAB = 'all';
-
-/** 合法的分类标签，用来把非法入参挡回「全部」 */
-const VALID_TABS = [ALL_TAB, ...ANNOUNCEMENT_CATEGORIES];
-
-/**
- * 组装分类标签栏，并给每个标签标上条数。
- * 条数是按「全部公告」算的，不随当前标签变化——否则切一次标签，
- * 别的分类就全变成 0，看着像数据丢了。
- *
- * @param {Array<Object>} rows 全部公告行
- * @param {string} activeTab
- * @returns {Array<Object>}
- */
-function categoryTabs(rows, activeTab) {
-  const countOf = (category) => rows.filter((row) => row.category === category).length;
-  const tabs = [{ tab: ALL_TAB, label: '全部', count: rows.length }];
-  for (const category of ANNOUNCEMENT_CATEGORIES) {
-    tabs.push({ tab: category, label: category, count: countOf(category) });
-  }
-  return tabs.map((tab) => ({ ...tab, active: tab.tab === activeTab }));
-}
 
 /**
  * 学校维度公告摘要（school-announcement-service.announcementSummary）→ 页面行。
@@ -88,88 +64,40 @@ function schoolAnnouncementRow(summary, withManage = false) {
 }
 
 /**
- * 公开公告列表——跨全部启用协会聚合，顶部一栏协会标签切换。
+ * 公开公告列表——**本校全部公告**，一个通道、不分协会、不分分类。
  *
  * 【返回值形状】
- *   activeAssociation 当前选中的协会 id
- *   themeClass        当前协会的主题类（挂到根容器，标签与内容随协会上色）
- *   associationTabs   协会标签（每个启用协会一个），
- *                     带 associationId / label / glyph / count / active
- *   tabs              分类标签（计数按当前协会算，不随当前分类变化）
- *   rows              当前协会、当前分类下的公告
- *   total             当前协会的公告总数（不随当前分类变化）
- *   visibleCount      当前分类下实际展示的条数
+ *   themeClass     当前协会的主题类（只用于配色，不影响取数）
+ *   rows           已发布公告，置顶优先 → 发布时间倒序
+ *   total          公告总条数
+ *   visibleCount   实际展示条数（当前与 total 相同，保留字段兼容空态判断）
+ *   emptyText      一条都没有时的文案
  *
  * @param {Object} [options]
  * @param {string} options.schoolId 当前学校
- * @param {string} [options.tab] 当前分类，非法值退回「全部」
- * @param {string} [options.association] 当前协会，非法值退回全局所在协会
+ * @param {string} [options.association] 当前协会，仅用于主题配色
  * @returns {Promise<Object>}
  */
 async function loadSchoolAnnouncementListView(options = {}) {
-  const { schoolId, tab = ALL_TAB, association } = options;
-  const activeTab = VALID_TABS.includes(tab) ? tab : ALL_TAB;
-  const fallback = scope.getAssociation();
-
-  const groups = [];
-  for (const assoc of activeAssociations()) {
-    const api = space.forScope({ schoolId, association: assoc.id });
-    // 显式只要「已发布」：listSchoolAnnouncements 对有管理权的人返回全量
-    // （含已下架，供审计），而公开列表不该因为看的人恰好是管理员就把已下架的
-    // 内容摆出来——范围由这里收口，不靠查看者身份碰巧不是管理员。
-    const result = await api.listSchoolAnnouncements({ status: ANNOUNCEMENT_STATUS.PUBLISHED });
-    // 服务端已按「置顶优先 → 发布时间倒序」排好（复用 sortAnnouncements），这里不再重排
-    const rows = (result.announcements || []).map((summary) => ({
-      ...schoolAnnouncementRow(summary),
-      association: assoc.id,
-      associationName: assoc.shortName,
-      associationGlyph: assoc.logoGlyph,
-    }));
-    groups.push({
-      associationId: assoc.id,
-      label: assoc.sportName,
-      glyph: assoc.logoGlyph,
-      themeClass: brandOf(assoc.id).rootClass,
-      rows,
-    });
-  }
-
-  // 选中的协会：入参合法就用它；否则跟随全局所在协会；再不行退回第一个。
-  const has = (id) => groups.some((group) => group.associationId === id);
-  const activeAssociation = has(association)
-    ? association
-    : has(fallback)
-      ? fallback
-      : groups[0]
-        ? groups[0].associationId
-        : '';
-
-  const current = groups.find((group) => group.associationId === activeAssociation) || null;
-  const scopedRows = current ? current.rows : [];
-  const rows =
-    activeTab === ALL_TAB
-      ? scopedRows
-      : scopedRows.filter((row) => row.category === activeTab);
-
-  const associationTabs = groups.map((group) => ({
-    associationId: group.associationId,
-    label: group.label,
-    glyph: group.glyph,
-    count: group.rows.length,
-    active: group.associationId === activeAssociation,
-  }));
+  const { schoolId, association } = options;
+  // 协会在这里只决定配色与客户端绑定范围（公告按学校取，与协会无关）。
+  // 全局当前协会可能尚未初始化（首屏、测试夹具），退回第一个启用协会，
+  // 否则 schoolScope 会直接抛「必须提供有效的 association」。
+  const current = association || scope.getAssociation() || (activeAssociations()[0] || {}).id;
+  const api = space.forScope({ schoolId, association: current });
+  // 显式只要「已发布」：listSchoolAnnouncements 对有管理权的人返回全量
+  // （含已下架，供审计），而公开列表不该因为看的人恰好是管理员就把已下架的
+  // 内容摆出来——范围由这里收口，不靠查看者身份碰巧不是管理员。
+  const result = await api.listSchoolAnnouncements({ status: ANNOUNCEMENT_STATUS.PUBLISHED });
+  // 服务端已按「置顶优先 → 发布时间倒序」排好（复用 sortAnnouncements），这里不再重排
+  const rows = (result.announcements || []).map((summary) => schoolAnnouncementRow(summary));
 
   return {
-    activeAssociation,
-    themeClass: current ? current.themeClass : '',
-    associationTabs,
-    activeTab,
-    tabs: categoryTabs(scopedRows, activeTab),
+    themeClass: brandOf(current).rootClass,
     rows,
-    total: scopedRows.length,
+    total: rows.length,
     visibleCount: rows.length,
-    emptyText:
-      activeTab === ALL_TAB ? '这个协会暂时还没有公告' : `「${activeTab}」分类下暂时没有公告`,
+    emptyText: '还没有发布公告',
   };
 }
 
@@ -222,9 +150,6 @@ async function loadSchoolAnnouncementManageView(options = {}) {
 }
 
 module.exports = {
-  ALL_TAB,
-  VALID_TABS,
-  categoryTabs,
   schoolAnnouncementRow,
   loadSchoolAnnouncementListView,
   loadSchoolAnnouncementManageView,

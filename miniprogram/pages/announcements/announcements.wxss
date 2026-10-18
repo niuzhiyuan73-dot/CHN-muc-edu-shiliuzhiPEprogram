@@ -1,57 +1,8 @@
 /*
  * 公告列表样式
- * 标签栏（.pool-tabs）、卡片（.card）、标签（.tag）都在 app.wxss 里，与其它页共用。
+ * 卡片（.card）、标签（.tag）在 app.wxss 里，与其它页共用。
+ * 协会标签与分类标签已移除（2026-10-18）：公告是本校一个通道。
  */
-
-/* ==================== 标签上的条数 ==================== */
-/* 做成小圆点挂在文字后面，扫一眼就知道每个分类有多少条 */
-.tab-count {
-  display: inline-block;
-  min-width: 32rpx;
-  height: 32rpx;
-  line-height: 32rpx;
-  padding: 0 8rpx;
-  margin-left: 6rpx;
-  border-radius: 16rpx;
-  font-size: var(--font-xs);
-  text-align: center;
-  background: var(--color-primary);
-  color: #ffffff;
-}
-
-/* ==================== 协会标签 ==================== */
-/* 顶部横向一栏。选哪个协会就只看哪个协会，谁的公告都不会被压在下面。
-   根容器挂 .assoc-<id>，这里的 var() 就取当前协会的颜色。 */
-
-.assoc-tabs {
-  display: flex;
-  gap: var(--space-xs);
-  margin-bottom: var(--space-sm);
-}
-
-.assoc-tab {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-xs) 0;
-  border-radius: var(--radius-md);
-  font-size: var(--font-sm);
-  font-weight: 600;
-  color: var(--color-text-secondary);
-  background: var(--color-divider);
-}
-
-.assoc-tab.is-active {
-  background: var(--color-primary);
-  color: #ffffff;
-}
-
-/* 选中标签的底色就是协会主色，条数小圆点要反白，否则和底色糊在一起 */
-.assoc-tab.is-active .tab-count {
-  background: rgba(255, 255, 255, 0.25);
-  color: #ffffff;
-}
 
 /* ==================== 一条公告 ==================== */
 
@@ -71,14 +22,8 @@
   flex-wrap: wrap;
 }
 
-.notice-category {
-  background: var(--color-primary-light);
-  color: var(--color-primary);
-}
-
-/* 置顶用暖色，和普通分类一眼就能分开 */
+/* 置顶用暖色，扫一眼就能和普通公告分开 */
 .notice-pin {
-  margin-left: var(--space-xs);
   background: #fef3c7;
   color: #b45309;
 }

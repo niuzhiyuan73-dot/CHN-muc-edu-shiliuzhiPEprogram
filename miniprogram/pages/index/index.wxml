@@ -47,12 +47,11 @@
         class="notice-item"
         wx:for="{{view.announcements.rows}}"
         wx:key="id"
-        data-association="{{item.association}}"
         bindtap="onOpenAnnouncement"
       >
         <view class="notice-head">
           <text class="tag {{item.pinned ? 'tag-danger' : 'tag-primary'}}">
-            {{item.pinned ? '置顶' : item.category}}
+            {{item.pinned ? '置顶' : '公告'}}
           </text>
           <text class="notice-title">{{item.title}}</text>
         </view>

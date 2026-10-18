@@ -14,14 +14,17 @@
  * 糟得多，所以进来先判一道，不给表单。发布权给平台管理员与本校校级管理员
  * （会话布尔量 canManageSchool，与服务端 canPublishAnnouncement 同源）。
  *
+ * 【为什么没有分类选择】
+ * 公告只有一个通道，分类（通知 / 赛事 / 战报）已从界面移除，不再让人选一个
+ * 不影响任何展示的字段。落库时固定填默认分类，兼容旧校验。
+ *
  * 【requestId 是什么】
  * 学校维度发布接口按 requestId 派生稳定编号：同一次提交重试（网络重发、
  * 连点）落到同一条；改了内容却复用同号则被拒。所以每次提交现生成一个。
  * ============================================================
  */
 
-const { ANNOUNCEMENT_CATEGORIES } = require('../../utils/constants.js');
-const { TITLE_MAX, CONTENT_MAX } = require('../../services/announcement.js');
+const { TITLE_MAX, CONTENT_MAX, DEFAULT_CATEGORY } = require('../../services/announcement.js');
 const { isMock } = require('../../services/runtime-mode.js');
 const { currentThemeClass } = require('../../services/branding.js');
 const schoolSession = require('../../services/school-session.js');
@@ -46,16 +49,17 @@ Page({
     /** 没有发布权时的原因，非空就在页面上顶掉整张表单 */
     blockReason: '',
 
-    /** 分类选择器的数据源与当前下标 */
-    categories: ANNOUNCEMENT_CATEGORIES,
-    categoryIndex: 0,
-
+    /**
+     * 分类已从界面移除（2026-10-18：公告只剩一个通道，只有管理员可发）。
+     * 表单仍带一个固定的值，因为旧模块 validateAnnouncement 要求白名单内的分类；
+     * 它不展示、不参与筛选，只作为历史字段落库。
+     */
     /** 输入长度上限，交给 maxlength 属性 */
     titleMax: TITLE_MAX,
     contentMax: CONTENT_MAX,
 
-    /** 表单本体 */
-    form: { title: '', content: '', category: ANNOUNCEMENT_CATEGORIES[0], pinned: false },
+    /** 表单本体（category 固定为默认档，见上面的说明） */
+    form: { title: '', content: '', category: DEFAULT_CATEGORY, pinned: false },
     /** 逐字段的错误提示 */
     errors: {},
     /** 整体错误提示 */
@@ -128,13 +132,6 @@ Page({
 
   onInputContent(event) {
     this.setField('content', event.detail.value);
-  },
-
-  onPickCategory(event) {
-    const category = this.data.categories[Number(event.detail.value)];
-    if (!category) return;
-    this.setData({ categoryIndex: Number(event.detail.value) });
-    this.setField('category', category);
   },
 
   onTogglePinned(event) {

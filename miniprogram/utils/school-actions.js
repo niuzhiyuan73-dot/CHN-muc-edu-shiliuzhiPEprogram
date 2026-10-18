@@ -114,6 +114,8 @@ const SCHOOL_MEET_ACTIONS = Object.freeze([
   // 学院总榜与个人荣誉（B8）
   'getMeetStandings',            'getMyMeetHonors',
   'drawMeetBracket',             'setMeetMatchWinner',          'getMeetBracket',
+  // 重排与总裁判（M3）：抽错了能重抽，本届可指定一名总裁判
+  'resetMeetDraw',               'appointMeetChiefJudge',       'revokeMeetChiefJudge',
 ]);
 
 /**

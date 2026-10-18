@@ -63,8 +63,8 @@
         >录完这场，去下一场 ›</view>
       </view>
 
-    <!-- 管理员：汇总与发布 -->
-    <block wx:if="{{canManage}}">
+    <!-- 管理员与本届总裁判：汇总与发布（总裁判不编排，但要能发布与更正） -->
+    <block wx:if="{{canPublish}}">
       <view class="meet-section-title">汇总与发布</view>
       <button class="btn btn-primary" bindtap="onPublishAll" disabled="{{busy}}">发布全部已完成成绩</button>
       <view class="meet-hint">逐项目发布；未完成项目会列出原因，已发布结果不会重复发布。</view>
@@ -123,7 +123,7 @@
               </view>
               <view wx:if="{{!item.heatDrawn}}" class="meet-hint">还没有抽签分组，请到「赛程编排」页设置赛制并分组。</view>
               <button
-                wx:else
+                wx:elif="{{canManage}}"
                 class="btn btn-ghost"
                 data-event-key="{{item.eventKey}}"
                 bindtap="onAdvance"

@@ -1,7 +1,7 @@
 /** 独立的双校试点目录，不自动写入云端，也不接管现有页面。 */
 const {
   COLLEGES, MATCH_TYPE, MATCH_STATUS, MATCH_COMPETITION, MATCH_OUTCOME,
-  EVENT_STATUS, EVENT_LEVEL, ANNOUNCEMENT_STATUS, SIGNUP_STATUS,
+  EVENT_STATUS, EVENT_LEVEL, ANNOUNCEMENT_STATUS, ANNOUNCEMENT_CATEGORIES, SIGNUP_STATUS,
   EVENT_FORMAT, EVENT_BRONZE_MODE, EVENT_PLACEMENT_MODE, DEFAULT_GF_RESET,
 } = require('../utils/constants.js');
 const { allAssociations } = require('../utils/associations.js');
@@ -141,11 +141,13 @@ const DEMO_CONTENT_NOW = new Date('2026-03-01T09:00:00Z');
 /** 民大匹克球协会：既有用例（首页 / 榜单 / 公告）默认落在这里。 */
 const DEMO_CONTENT_SCOPE = Object.freeze({ schoolId: 'muc', association: 'pkb' });
 /** 发布者取自种子用户里已存在的账号，台账里「谁发的」才追溯得到。 */
-const CONTENT_ANNOUNCER = Object.freeze({ _id: 'demo_platform_admin', nickName: '平台管理员' });
 const CONTENT_PUBLISHERS = Object.freeze({
   muc: Object.freeze({ _id: 'demo_muc_admin', nickName: '民大模拟管理员' }),
   buaa: Object.freeze({ _id: 'demo_buaa_admin', nickName: '北航模拟管理员' }),
 });
+
+/** 规格里出现的学校（去重）：公告按学校各造一份，不能按协会重复造。 */
+const distinctSchoolsOf = (specs) => [...new Set(specs.map((spec) => spec.schoolId))];
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -159,13 +161,6 @@ function builtRecordOf(built, what) {
 const DEMO_CONTENT_SPECS = Object.freeze([
   {
     schoolId: 'muc', association: 'pkb', venue: '民大体育馆',
-    announcements: [
-      { rawId: 'welcome', title: '民大匹克球协会公告栏开通', content: '协会公告、赛事与战报都会在这里发布，请留意。', category: '通知', pinned: true },
-      { rawId: 'singles-open', title: '男子单打公开赛报名本周六截止', content: '面向全校男会员，名额有限，先到先得。', category: '赛事', pinned: false },
-      { rawId: 'first-report', title: '春季杯首场战报', content: '名次已录入，等级分同步更新。', category: '战报', pinned: false },
-      { rawId: 'holiday-court', title: '五一假期场地开放时间调整', content: '假期内 1 号场与 2 号场全天开放，3 号场检修。', category: '通知', pinned: false },
-      { rawId: 'gear-pickup', title: '新会员队服与球拍领取说明', content: '凭学生证到体育馆器材室领取，每人限一套。', category: '通知', pinned: false },
-    ],
     events: [
       // 报名（signups）：报名中的赛事给 2～6 人，取本范围流水里出现过的会员；
       // 已结束赛事的 signups 必须覆盖 results——名次页与详情页的姓名全靠这条链，
@@ -203,12 +198,6 @@ const DEMO_CONTENT_SPECS = Object.freeze([
   },
   {
     schoolId: 'muc', association: 'tt', venue: '民大乒乓球馆',
-    announcements: [
-      { rawId: 'tt-welcome', title: '民大乒乓球协会训练安排', content: '每周二、四 19:00 常规训练，请提前十分钟到场。', category: '通知', pinned: true },
-      { rawId: 'tt-points-open', title: '乒乓球单打积分赛报名开始', content: '本月积分赛开放报名，限 32 人。', category: '赛事', pinned: false },
-      { rawId: 'tt-report', title: '上周积分赛战报', content: '四强出炉，等级分榜前五名次有变动。', category: '战报', pinned: false },
-      { rawId: 'tt-court-adjust', title: '乒乓球馆场地调整通知', content: '3 号台检修，请使用 1、2、4 号台。', category: '通知', pinned: false },
-    ],
     events: [
       { rawId: 'tt-points-cup', title: '民大乒乓球单打积分赛', startOffsetDays: 10, quota: 32,
         signups: ['u04', 'u08', 'u12', 'u22', 'u23'] },
@@ -232,11 +221,6 @@ const DEMO_CONTENT_SPECS = Object.freeze([
   },
   {
     schoolId: 'muc', association: 'bd', venue: '民大羽毛球馆',
-    announcements: [
-      { rawId: 'bd-recruit', title: '民大羽毛球协会新赛季招新', content: '欢迎零基础同学加入，每周三晚有教练带训。', category: '通知', pinned: true },
-      { rawId: 'bd-doubles-open', title: '羽毛球双打联赛报名开始', content: '自由组队，每队 2 人，限 16 队。', category: '赛事', pinned: false },
-      { rawId: 'bd-gear', title: '羽毛球协会器材借用说明', content: '球拍与羽毛球可在器材室登记借用，当日归还。', category: '通知', pinned: false },
-    ],
     events: [
       { rawId: 'bd-doubles-invite', title: '民大羽毛球双打邀请赛', startOffsetDays: 21, quota: 32,
         signups: ['u07', 'u12', 'u19', 'u21'] },
@@ -252,12 +236,6 @@ const DEMO_CONTENT_SPECS = Object.freeze([
   },
   {
     schoolId: 'buaa', association: 'pkb', venue: '北航学院路体育馆',
-    announcements: [
-      { rawId: 'buaa-recruit', title: '北航匹克球协会秋季招新', content: '面向全体在校生招募新会员，11 月 1 日前到体育部登记。', category: '通知', pinned: true },
-      { rawId: 'buaa-freshman-cup', title: '北航新生杯匹克球赛报名', content: '新生杯开始报名，各院系限报 4 人。', category: '赛事', pinned: false },
-      { rawId: 'buaa-court-open', title: '体育馆匹克球场地开放调整', content: '工作日 18:00–22:00 开放，周末全天开放。', category: '通知', pinned: false },
-      { rawId: 'buaa-report', title: '校队选拔赛战报', content: '选拔结束，六名队员进入校队集训名单。', category: '战报', pinned: false },
-    ],
     events: [
       { rawId: 'buaa-freshman', title: '北航新生杯匹克球赛', startOffsetDays: 9, quota: 32,
         signups: ['demo_buaa_member', 'demo_buaa_member_2', 'demo_buaa_member_3', 'demo_buaa_leader'] },
@@ -281,10 +259,6 @@ const DEMO_CONTENT_SPECS = Object.freeze([
   },
   {
     schoolId: 'buaa', association: 'tt', venue: '北航沙河校区乒乓球室',
-    announcements: [
-      { rawId: 'buaa-tt-training', title: '北航乒乓球协会周末训练', content: '周六 15:00 沙河校区乒乓球室，器材自备。', category: '通知', pinned: true },
-      { rawId: 'buaa-tt-open', title: '北航乒乓球积分赛报名', content: '积分赛开放报名，前八名计入校队选拔。', category: '赛事', pinned: false },
-    ],
     events: [
       { rawId: 'buaa-tt-cup', title: '北航乒乓球公开赛', startOffsetDays: 15, quota: 24,
         signups: ['demo_buaa_member', 'demo_buaa_leader', 'demo_buaa_admin', 'demo_buaa_member_2'] },
@@ -297,20 +271,49 @@ const DEMO_CONTENT_SPECS = Object.freeze([
   },
 ]);
 
-/** 某范围的公告：分类覆盖 / 置顶 / 标题都按规格走。 */
-function demoAnnouncementDocs(spec, now) {
-  const scope = { schoolId: spec.schoolId, association: spec.association };
+/**
+ * 演示公告：**按学校一份**。
+ *
+ * 2026-10-18 起公告只有平台/校级管理员能发，且是全校一个通道——协会维度与
+ * 「通知 / 赛事 / 战报」分类都已从界面移除。旧种子按协会各写一份（匹克球 5 条、
+ * 乒乓 4 条、羽毛球 3 条），看起来像协会负责人还在发通知，也让「管理台账 5 条、
+ * 公开列表 12 条」对不上。这里改成每个学校一份、由该校管理员署名的通知。
+ */
+const DEMO_SCHOOL_ANNOUNCEMENTS = Object.freeze({
+  muc: [
+    { rawId: 'muc-registration', title: '第 59 届田径运动会报名开启', content: '报名截止前由各学院部长提交正式名单，逾期不再受理。', category: '通知', pinned: true },
+    { rawId: 'muc-court-check', title: '体育馆场地检修通知', content: '本周四 1 号场地面翻新，训练请改用 2、3 号场。', category: '通知', pinned: false },
+    { rawId: 'muc-training-plan', title: '秋季学期训练安排', content: '各协会的训练时段已排定，可在协会空间查看具体时间。', category: '通知', pinned: false },
+    { rawId: 'muc-team-trial', title: '校队选拔报名开始', content: '面向全校在册学生，选拔分为技术与体能两项。', category: '赛事', pinned: false },
+    { rawId: 'muc-injury-talk', title: '运动伤害防护讲座', content: '下周三 19:00 在体育馆会议室，校医院医生主讲。', category: '通知', pinned: false },
+  ],
+  buaa: [
+    { rawId: 'buaa-welcome', title: '北航秋季体育活动月启动', content: '各协会活动安排已发布，欢迎报名参加。', category: '通知', pinned: true },
+    { rawId: 'buaa-court-open', title: '学院路体育馆开放时间调整', content: '工作日 18:00–22:00 开放，周末全天开放。', category: '通知', pinned: false },
+    { rawId: 'buaa-freshman', title: '新生杯各项赛事报名', content: '各院系限报 4 人，报名请通过学院部长提交。', category: '赛事', pinned: false },
+    { rawId: 'buaa-team-notice', title: '校队集训名单公示', content: '名单已在校队公告栏公示，请入选同学按时参加集训。', category: '通知', pinned: false },
+  ],
+});
+
+function demoAnnouncementDocs(schoolId, now) {
+  // 公告只有管理员能发、且是**学校级**的一条通道：演示种子按学校各一份，
+  // 不再按协会分桶。协会字段仍写当前默认协会，仅作溯源（读取只看学校）。
+  const scope = { schoolId, association: DEMO_CONTENT_SCOPE.association };
   const at = iso(now);
-  return spec.announcements.map(({ rawId, ...form }) => ({
-    ...builtRecordOf(buildAnnouncementRecord(form, { actor: CONTENT_ANNOUNCER, now }), '公告'),
-    _id: schoolAnnouncementKey(rawId, scope),
-    schoolId: scope.schoolId, association: scope.association,
-    status: ANNOUNCEMENT_STATUS.PUBLISHED,
-    publishTime: at,
-    fingerprint: JSON.stringify([form.title, form.content, form.category, Boolean(form.pinned)]),
-    revision: 1,
-    updatedAt: at,
-  }));
+  const publisher = CONTENT_PUBLISHERS[schoolId] || CONTENT_PUBLISHERS.muc;
+  return (DEMO_SCHOOL_ANNOUNCEMENTS[schoolId] || []).map(({ rawId, ...form }) => {
+    const withCategory = { ...form, category: form.category || ANNOUNCEMENT_CATEGORIES[0] };
+    return {
+      ...builtRecordOf(buildAnnouncementRecord(withCategory, { actor: publisher, now }), '公告'),
+      _id: schoolAnnouncementKey(rawId, scope),
+      schoolId, association: scope.association,
+      status: ANNOUNCEMENT_STATUS.PUBLISHED,
+      publishTime: at,
+      fingerprint: JSON.stringify([withCategory.title, withCategory.content, withCategory.category, Boolean(withCategory.pinned)]),
+      revision: 1,
+      updatedAt: at,
+    };
+  });
 }
 
 /**
@@ -641,8 +644,10 @@ function createSchoolDemoContent() {
   // 一起落种子，读取端「评级落库」因此对演示数据同样成立。
   const settleState = new Map();
   const ratingAccumulator = new Map();
+  for (const schoolId of distinctSchoolsOf(DEMO_CONTENT_SPECS)) {
+    content.announcements.push(...demoAnnouncementDocs(schoolId, now));
+  }
   for (const spec of DEMO_CONTENT_SPECS) {
-    content.announcements.push(...demoAnnouncementDocs(spec, now));
     content.events.push(...demoEventDocs(spec, now));
     content.matches.push(...demoMatchDocs(spec, now, settleState, ratingAccumulator));
     content.eventSignups.push(...demoSignupDocs(spec, now));

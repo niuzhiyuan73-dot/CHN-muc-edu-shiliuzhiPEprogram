@@ -16,6 +16,20 @@
     </view>
 
     <block wx:else>
+      <!-- 本届总裁判：与校级管理员同档的发布/更正/判定/重排权（B4），本届结束自动卸任 -->
+      <view class="card meet-row">
+        <view class="meet-row-head">
+          <view class="meet-row-main">
+            <view class="meet-row-name">总裁判</view>
+            <view class="meet-row-meta">{{chiefJudge && chiefJudge.status === 'active' ? chiefJudge.name : '未任命'}}</view>
+          </view>
+          <view class="meet-actions">
+            <view class="meet-btn is-primary" bindtap="onAppointChiefJudge">{{chiefJudge && chiefJudge.status === 'active' ? '改派' : '任命'}}</view>
+            <view wx:if="{{chiefJudge && chiefJudge.status === 'active'}}" class="meet-btn" bindtap="onRevokeChiefJudge">撤销</view>
+          </view>
+        </view>
+      </view>
+
       <view wx:for="{{items}}" wx:key="eventKey" class="card meet-row">
         <view class="meet-row-head" data-event-key="{{item.eventKey}}" bindtap="onOpenEvent">
           <view class="meet-row-main">
@@ -43,6 +57,12 @@
             bindtap="onDraw"
           >{{item.scoreType === 'versus' ? '编排签表' : '抽签分组'}}</view>
           <view wx:else class="meet-btn is-disabled">单场项目</view>
+          <view
+            wx:if="{{item.sessions.length > 0}}"
+            class="meet-btn"
+            data-event-key="{{item.eventKey}}"
+            bindtap="onResetDraw"
+          >重新抽签</view>
         </view>
 
         <!-- 赛制编辑面板 -->

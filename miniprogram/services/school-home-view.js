@@ -52,18 +52,19 @@ function sortUpcoming(rows, limit) {
     .slice(0, limit);
 }
 
-/** 整形一条公告（与旧栈 home-view.buildAnnouncementRow 同形状）。 */
-function announcementRow(item, assoc) {
+/**
+ * 整形一条公告。
+ *
+ * 公告是**学校级**的一条通道（2026-10-18 起只有管理员能发），不再标注「属于哪个
+ * 协会」，也不再带分类标签——首页与公告页看到的是同一份列表。
+ */
+function announcementRow(item) {
   return {
     id: item.announcementId,
     title: item.title || '',
     content: item.content || '',
-    category: item.category || '通知',
     pinned: Boolean(item.pinned),
     dateText: formatDate(item.publishTime),
-    association: assoc.id,
-    associationName: assoc.shortName,
-    associationGlyph: assoc.logoGlyph,
   };
 }
 
@@ -85,8 +86,9 @@ function eventRow(event, assoc) {
 }
 
 /**
- * 取某协会的公告首页（服务端每页限量 50、无 offset，首页展示只需第一页）。
- * 返回排序后的首页与是否还有更多；协会空间读不到时抛错，由调用方跳过该协会。
+ * 取本校公告首页（服务端每页限量 50、无 offset，首页展示只需第一页）。
+ * 公告集合是学校级的，**只取一次**——按协会各取一次会把同一条公告重复三遍。
+ * 读不到时抛错，由调用方退化成「暂无公告」。
  */
 async function collectAnnouncements(api) {
   const page = await api.listSchoolAnnouncements({ limit: PAGE_LIMIT });
@@ -129,11 +131,24 @@ async function loadSchoolHomeView(options = {}) {
   const eventLimit = Number.isInteger(options.eventLimit) ? options.eventLimit : DEFAULT_EVENT_LIMIT;
   const client = options.client || require('./association-space.js');
 
+  // 公告：学校级一条通道，只取一次（按协会各取一次会把同一条公告重复三遍）
+  const primaryAssociation = (allAssociations()[0] || {}).id || '';
+  const announcementApi = client.forScope({ schoolId, association: primaryAssociation });
+  let announcementPage = { announcements: [], hasMore: false };
+  try {
+    announcementPage = await collectAnnouncements(announcementApi);
+  } catch (err) {
+    // 公告读不到不该拖垮赛事与概况：首页公告退化成「暂无公告」
+    console.warn(`[home] 读取 ${schoolId} 公告失败`, err);
+  }
+  // 服务端已按置顶优先 + 时间倒序排好，这里不再重排
+  const announcementDocs = announcementPage.announcements.map((item) => announcementRow(item));
+  const announcementsHasMore = announcementPage.hasMore;
+
   const perAssociation = await Promise.all(allAssociations().map(async (assoc) => {
     const scope = { schoolId, association: assoc.id };
     const api = client.forScope(scope);
     try {
-      const announcementPage = await collectAnnouncements(api);
       let events = [];
       let matchTotal = 0;
       let seasonText = '';
@@ -147,37 +162,18 @@ async function loadSchoolHomeView(options = {}) {
         ]);
         events = eventDocs;
         matchTotal = Number((matches && matches.total) || 0);
-        seasonText = `第 ${Number((season && season.season && season.season.seasonNumber) || 1)} 赛季`;
+        seasonText = `第 ${Number((season && season.season && season.seasonNumber) || 1)} 赛季`;
         memberCount = Number((members && members.total) || 0);
       }
-      return {
-        assoc: getAssociation(assoc.id),
-        announcements: announcementPage.announcements.map((item) => ({ item, assoc: getAssociation(assoc.id) })),
-        announcementsHasMore: announcementPage.hasMore,
-        events,
-        matchTotal,
-        seasonText,
-        memberCount,
-      };
+      return { assoc: getAssociation(assoc.id), events, matchTotal, seasonText, memberCount };
     } catch (err) {
       // 该校未启用此协会 / 无读取权限：该协会视为空，不冒充成功
       console.warn(`[home] 读取 ${schoolId}/${assoc.id} 首页数据失败`, err);
-      return { assoc: null, announcements: [], announcementsHasMore: false, events: [], matchTotal: 0, seasonText: '', memberCount: 0 };
+      return { assoc: null, events: [], matchTotal: 0, seasonText: '', memberCount: 0 };
     }
   }));
 
   const readable = perAssociation.filter((row) => row.assoc !== null);
-  // 公告聚合：置顶优先、发布时间倒序（与各协会列表同口径）
-  const announcementDocs = readable
-    .flatMap((row) => row.announcements)
-    .sort((a, b) => {
-      const pin = Number(Boolean(b.item.pinned)) - Number(Boolean(a.item.pinned));
-      if (pin !== 0) return pin;
-      return timeValue(b.item.publishTime) - timeValue(a.item.publishTime);
-    })
-    .map(({ item, assoc }) => announcementRow(item, assoc));
-  // 任一协会还有更多公告（服务端单页限量 50，跨协会取并集后如实带上标记）
-  const announcementsHasMore = readable.some((row) => row.announcementsHasMore);
 
   // 近期赛事聚合：报名中 / 进行中，开赛时间升序。筛选在整形前做——
   // eventRow 只带展示字段（isOngoing），isSignup 判据来自原始 DTO。

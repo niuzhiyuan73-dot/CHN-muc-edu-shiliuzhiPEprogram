@@ -6,14 +6,14 @@ const { buildMeetContext } = require('./meet-context.js');
 const { meetRequestScope } = require('../utils/meet-scope.js');
 const {
   LEGACY_SCHOOL_ID, schoolScope, schoolKey,
-  schoolMemberKey, schoolRoleKey, schoolMembershipKey,
+  schoolMemberKey, schoolMembershipKey,
 } = require('../utils/school.js');
-const { ROLE, COLLEGES } = require('../utils/constants.js');
+const { COLLEGES } = require('../utils/constants.js');
 const {
   SCHOOL_IDENTITY_ACTIONS, SCHOOL_SPACE_ACTIONS, SCHOOL_EXCHANGE_ACTIONS,
   SCHOOL_MEET_ACTIONS, pickActions,
 } = require('../utils/school-actions.js');
-const { MEMBER_SEED, ASSOC_ROLE_SEED } = require('./seed.js');
+const { MEMBER_SEED } = require('./seed.js');
 const exchange = require('./exchange-service.js');
 const groupService = require('./association-group-service.js');
 const memberService = require('./association-member-service.js');
@@ -92,16 +92,17 @@ const DEMO_ACTORS = Object.freeze([
  * 把旧版演示账号（u01–u24）接进学校维度。
  *
  * 【为什么需要】
- * 旧版账号（`seed.js`）只在 mock.js 那一套台账里存在；学校维度的页面
- * （协会空间 / 学校身份）与它们互不相识，演示时必须先去「学校身份」页换成
- * 一个 S2 体验身份（demo_muc_admin 之类）才能进协会空间。这里把这批账号
- * 一次性登记成**民大**的在册会员，于是改 `mock.js` 的
- * DEFAULT_CURRENT_USER_ID 就能直接换演示身份，不必再切体验身份。
+ * 旧版账号（`seed.js`）只在旧台账里存在；学校维度的页面（协会空间 / 学校身份）
+ * 与它们互不相识。这里把这批账号一次性登记成**民大**的在册会员，作为演示数据
+ * 里的人（赛事报名名单、比赛对阵、排行榜都靠他们撑起来）。
  *
- * 角色与旧版对齐：
- *   · u01 是旧版全局管理员 → 在民大落成校管理员（schoolRole admin）；
- *   · ASSOC_ROLE_SEED 登记的各协会负责人 / 学院负责人 → 落成对应协会的
- *     membership（leader / staff）；u02 的学院负责人身份只在默认协会 pkb 成立。
+ * 【2026-10-18 起不再给它们任何管理角色】
+ * 从前 u01 被落成校管理员、ASSOC_ROLE_SEED 里的负责人被落成协会 leader/staff，
+ * 于是「谁能管」有两个来源：一是演示身份切换器（DEMO_ACTORS 里的 demo_muc_admin
+ * 等），二是这批旧种子角色。结果是成员列表里同时出现两个管理员、切换身份改了
+ * 权限却仍被旧角色放行。现在权限只有**一个**来源：账号级角色（schoolRoles）与
+ * 协会 membership，而带角色的账号都由切换器给出、在 DEMO_ACTORS 里列得出来。
+ * 旧账号只保留「在册会员」身份，和普通同学一样。
  *
  * @param {Object} seed createSchoolDemoSeed() 产出的种子（会被就地补写）
  */
@@ -118,27 +119,6 @@ function attachLegacyMembers(seed) {
     collegeId: collegeIdOf.get(item.college) || '', studentId: '2023' + String(index + 1).padStart(4, '0'),
     status: 'active', simulated: true,
   })));
-  seed.schoolRoles = seed.schoolRoles.concat([{
-    _id: schoolRoleKey('u01', LEGACY_SCHOOL_ID), userId: 'u01', schoolId: LEGACY_SCHOOL_ID,
-    role: 'admin', status: 'active', simulated: true,
-  }]);
-  const memberships = [];
-  for (const [association, roles] of Object.entries(ASSOC_ROLE_SEED)) {
-    for (const [userId, role] of Object.entries(roles)) {
-      memberships.push({
-        _id: schoolMembershipKey(userId, { schoolId: LEGACY_SCHOOL_ID, association }),
-        userId, schoolId: LEGACY_SCHOOL_ID, association,
-        role: role === ROLE.ADMIN ? 'leader' : 'staff', status: 'active', simulated: true,
-      });
-    }
-  }
-  // u02 的学院负责人身份只在默认协会（pkb）成立，与旧版 scopeSeedRoles 同口径。
-  memberships.push({
-    _id: schoolMembershipKey('u02', { schoolId: LEGACY_SCHOOL_ID, association: 'pkb' }),
-    userId: 'u02', schoolId: LEGACY_SCHOOL_ID, association: 'pkb',
-    role: 'staff', status: 'active', simulated: true,
-  });
-  seed.memberships = seed.memberships.concat(memberships);
 }
 
 /**
@@ -209,8 +189,8 @@ function reset(options = {}) {
   seed.users.push({ _id: 'demo_platform_admin', openId: 'mock_openid_platform_admin', nickName: '平台管理员',
     platformStatus: 'active', platformRole: 'admin', simulated: true });
   // 学院负责人演示身份：民大 c02（民族学与社会学学院）在册会员 + pkb 的 staff 角色。
-  // 旧种子里的 staff 身份（ASSOC_ROLE_SEED / u02）都不带 collegeId，推导后只算普通会员；
-  // 这一个显式落 collegeId，才能演示「只替本学院交名单 / 排阵」的边界。
+  // 旧种子带的管理角色已全部撤掉（见 attachLegacyMembers 的说明），要演示
+  // 「只替本学院交名单 / 排阵」只能靠这个显式落 collegeId 的账号。
   //
   // 【为什么落在 c02 而不是演示账号扎堆的 c01】
   // c01（中华民族共同体学院）只有三个演示账号，且都没写性别；学院赛排阵要按小项

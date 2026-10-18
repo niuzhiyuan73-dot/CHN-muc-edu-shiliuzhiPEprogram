@@ -48,6 +48,8 @@ Page({
     canManage: false,
     items: [],
     judges: [],
+    /** 本届总裁判（null = 未任命）：显示与撤销用 */
+    chiefJudge: null,
     filteredJudges: [],
     judgeKeyword: '',
     // 批量指派（B9c）：一批人一次派到多个场次
@@ -185,6 +187,7 @@ Page({
       this.update({
         loading: false,
         canManage: schedule.canManage,
+        chiefJudge: schedule.chiefJudge || null,
         items,
         judges,
         filteredJudges: this.filterJudges(judges, this.data.judgeKeyword),
@@ -638,6 +641,88 @@ Page({
 
   onOpenScore() {
     return wx.navigateTo({ url: `/pages/meet-score/meet-score?meetId=${this.data.meetId}` });
+  },
+
+  /* ---------- M3：重排与总裁判 ---------- */
+
+  /**
+   * 重抽本项目：清空分组 / 签表，让管理员改完赛制再抽一次。
+   *
+   * 为什么要有：组数、每组人数是现场才知道的准数（报名 37 人、按 32 人抽错很常见），
+   * 原先抽错之后无路可走。服务端会拒绝「已发布成绩」或「已录分」的项目，页面先确认
+   * 一次再发，避免误触把整组安排清掉。
+   */
+  async onResetDraw(event) {
+    if (this.data.busy) return undefined;
+    const eventKey = event.currentTarget.dataset.eventKey;
+    const item = this.data.items.find((row) => row.eventKey === eventKey);
+    if (!eventKey || !item) return undefined;
+
+    const confirmed = typeof wx !== 'undefined' && wx.showModal
+      ? await new Promise((resolve) => wx.showModal({
+        title: '重新抽签',
+        content: `将清空「${item.name}」的全部分组与排期，之后可改赛制再抽一次。已发布的成绩或已录的分数会让该操作被拒绝。`,
+        confirmText: '重抽',
+        success: (res) => resolve(Boolean(res.confirm)),
+        fail: () => resolve(false),
+      }))
+      : true;
+    if (!confirmed) return undefined;
+
+    this.update({ busy: true, error: '', notice: '' });
+    try {
+      const result = await this.client().resetMeetDraw({ eventKey });
+      await this.reload({ eventKey: '', sessionKey: '' });
+      this.update({ busy: false, notice: `已清空 ${result.clearedSessions} 个场次，可重新抽签` });
+    } catch (err) {
+      this.update({ busy: false, error: (err && err.message) || '重抽失败' });
+    }
+    return undefined;
+  },
+
+  /** 任命本届总裁判：从已加载的本校成员里选一个 */
+  onAppointChiefJudge() {
+    if (this.data.busy) return undefined;
+    const candidates = this.data.judges || [];
+    if (!candidates.length) {
+      this.update({ error: '还没有可选的成员，请先刷新' });
+      return undefined;
+    }
+    const pick = (row) => {
+      if (!row) return undefined;
+      return this.submitChiefJudge(row.userId);
+    };
+    if (typeof wx === 'undefined' || typeof wx.showActionSheet !== 'function') {
+      return pick(candidates[0]);
+    }
+    return wx.showActionSheet({
+      itemList: candidates.slice(0, 10).map((row) => `${row.name}${row.collegeName ? ` · ${row.collegeName}` : ''}`),
+      success: (res) => pick(candidates[res.tapIndex]),
+    });
+  },
+
+  async submitChiefJudge(userId) {
+    this.update({ busy: true, error: '', notice: '' });
+    try {
+      await this.client().appointMeetChiefJudge({ userId });
+      await this.reload({ eventKey: this.data.activeEventKey, sessionKey: this.data.editSessionKey });
+      this.update({ busy: false, notice: '已任命总裁判' });
+    } catch (err) {
+      this.update({ busy: false, error: (err && err.message) || '任命失败' });
+    }
+  },
+
+  async onRevokeChiefJudge() {
+    if (this.data.busy) return undefined;
+    this.update({ busy: true, error: '', notice: '' });
+    try {
+      await this.client().revokeMeetChiefJudge({});
+      await this.reload({ eventKey: this.data.activeEventKey, sessionKey: this.data.editSessionKey });
+      this.update({ busy: false, notice: '已撤销总裁判' });
+    } catch (err) {
+      this.update({ busy: false, error: (err && err.message) || '撤销失败' });
+    }
+    return undefined;
   },
 
   onProcAdvanceMode(event) {

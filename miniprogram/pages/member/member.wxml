@@ -9,4 +9,14 @@
     is="memberView"
     data="{{...view, loading: loading, error: error, hasMore: hasMore, switching: switching, showSwitch: showSwitch, switchValue: switchValue}}"
   />
+
+  <!-- 设置身份：只有「看别人 + 服务端给了可授予档位」时才出现。
+       放在这里而不是共享模板里——「我的」页看的是自己，不该有这张卡。 -->
+  <view wx:if="{{identity.canGrant}}" class="card entry-card" bindtap="onGrantIdentity">
+    <view class="entry-card-main">
+      <view class="entry-card-title">设置身份</view>
+      <view class="entry-card-hint">当前：{{identity.label}} · 仅影响本校权限</view>
+    </view>
+    <view class="entry-card-arrow">›</view>
+  </view>
 </view>

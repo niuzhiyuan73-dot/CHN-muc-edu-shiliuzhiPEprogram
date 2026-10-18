@@ -4192,9 +4192,10 @@ const TT_ANNOUNCEMENTS = [
   { title: '乒乓团体赛战报', content: '名次已出。', category: '战报', pinned: false },
 ];
 
-test('公告列表页 —— 本校成员能看，顶部协会标签，默认看当前协会且绝无管理按钮', async () => {
+test('公告列表页 —— 本校成员能看本校全部公告，一个通道、绝无管理按钮', async () => {
   const fx = announcementFixture();
   try {
+    // 两个「协会范围」发布出来的公告，2026-10-18 起都落在本校一个通道里
     await fx.seed('pkb', PKB_ANNOUNCEMENTS);
     await fx.seed('tt', TT_ANNOUNCEMENTS);
     fx.to('demo_muc_member');
@@ -4204,23 +4205,19 @@ test('公告列表页 —— 本校成员能看，顶部协会标签，默认看
 
     assert.strictEqual(page.data.loading, false);
     assert.strictEqual(page.data.error, '');
-    // 顶部一栏协会标签：每个启用协会一个，按注册表次序
-    assert.deepStrictEqual(
-      page.data.view.associationTabs.map((tab) => tab.associationId),
-      ['pkb', 'tt', 'bd']
-    );
-    // 没指定时停在全局所在协会，只展示它的公告
-    assert.strictEqual(page.data.view.activeAssociation, 'pkb');
-    assert.strictEqual(page.data.view.total, 6);
+    // 协会标签与分类标签都已移除
+    assert.strictEqual(page.data.view.associationTabs, undefined);
+    assert.strictEqual(page.data.view.tabs, undefined);
+    // 公开列表 = 两批种子之和（同属本校），置顶的排最前
+    assert.strictEqual(page.data.view.total, PKB_ANNOUNCEMENTS.length + TT_ANNOUNCEMENTS.length);
     assert.strictEqual(page.data.view.rows[0].pinned, true);
-    // 公开页的每一行都不带管理按钮——装载器给的是 withManage: false
     for (const row of page.data.view.rows) assert.strictEqual(row.canArchive, false);
   } finally {
     fx.restore();
   }
 });
 
-test('公告列表页 —— 点协会标签只看该协会，分类计数跟着换', async () => {
+test('公告列表页 —— 切协会看的是同一份公告（公告归学校，不归协会）', async () => {
   const fx = announcementFixture();
   try {
     await fx.seed('pkb', PKB_ANNOUNCEMENTS);
@@ -4229,51 +4226,27 @@ test('公告列表页 —— 点协会标签只看该协会，分类计数跟着
 
     const page = instantiate(announcementsConfig);
     await page.onLoad();
+    const before = page.data.view.rows.map((row) => row.id);
 
-    await page.onSwitchAssociation({ currentTarget: { dataset: { association: 'tt' } } });
+    require('../miniprogram/services/association-scope.js').setAssociation('tt');
+    await page.refresh.call(page);
 
-    assert.strictEqual(page.data.view.activeAssociation, 'tt');
-    assert.strictEqual(page.data.view.total, 4);
-    for (const row of page.data.view.rows) assert.strictEqual(row.association, 'tt');
-    assert.strictEqual(page.data.view.tabs[0].count, 4);
+    assert.deepStrictEqual(page.data.view.rows.map((row) => row.id), before, '换协会不该改变公告内容');
   } finally {
     fx.restore();
   }
 });
 
-test('公告列表页 —— 点分类标签整页换成该分类，别的分类计数不归零', async () => {
+test('公告列表页 —— 一条都没有时给空态文案', async () => {
   const fx = announcementFixture();
   try {
-    await fx.seed('pkb', PKB_ANNOUNCEMENTS);
     fx.to('demo_muc_member');
 
     const page = instantiate(announcementsConfig);
     await page.onLoad();
 
-    await page.onSwitchTab({ currentTarget: { dataset: { tab: '赛事' } } });
-
-    assert.strictEqual(page.data.view.activeTab, '赛事');
-    assert.strictEqual(page.data.view.visibleCount, 2);
-    for (const row of page.data.view.rows) assert.strictEqual(row.category, '赛事');
-    assert.strictEqual(page.data.view.tabs.find((t) => t.tab === '通知').count, 2);
-  } finally {
-    fx.restore();
-  }
-});
-
-test('公告列表页 —— 重复点当前标签不做无谓的重新加载', async () => {
-  const fx = announcementFixture();
-  try {
-    await fx.seed('pkb', PKB_ANNOUNCEMENTS);
-    fx.to('demo_muc_member');
-
-    const page = instantiate(announcementsConfig);
-    await page.onLoad();
-
-    const before = page.data.view;
-    await page.onSwitchTab({ currentTarget: { dataset: { tab: page.data.view.activeTab } } });
-
-    assert.strictEqual(page.data.view, before);
+    assert.strictEqual(page.data.view.visibleCount, 0);
+    assert.match(page.data.view.emptyText, /还没有发布公告/);
   } finally {
     fx.restore();
   }

@@ -38,7 +38,7 @@ const {
   splitIntoGroups, assignLanes, groupStageStandings, groupKnockoutStandings,
 } = require('./meet-advance.js');
 const { freshMeetContext } = require('./meet-context.js');
-const { meetReadable, canManageMeet, canPublishMeetResult } = require('./meet-permission.js');
+const { meetReadable, canManageMeet, canPublishMeetResult, isChiefJudge } = require('./meet-permission.js');
 
 const { unchanged, liveMeet } = require('./meet-consistency.js');
 
@@ -201,6 +201,8 @@ async function drawMeetHeats(payload = {}, ctx) {
         index: i,
         roundLabel: labelOf(i),
         entryKeys: buckets[i - 1],
+        // 重抽后同一个主键写回：把上一次的作废标记清掉，否则场次在读取端仍被过滤
+        voidedAt: null,
         // 分道项目才记道次：1 号种子居中最优道，之后左右交替（Q7）。
         // 用对象而非 Map——要直接落库，Map 过不了 JSON 序列化。
         lanes: heatMode === HEAT_MODE.LANE ? assignLanes(buckets[i - 1]) : null,
@@ -664,6 +666,8 @@ async function drawMeetBracket(payload = {}, ctx) {
         roundLabel: match.roundLabel,
         entryKeys: match.entryKeys,
         winnerEntryKey: match.winnerEntryKey,
+        // 见 drawMeetHeats：重抽时同一主键复活
+        voidedAt: null,
         startAt: (current && current.startAt) || '',
         endAt: (current && current.endAt) || '',
         venue: (current && current.venue) || '',
@@ -703,6 +707,8 @@ async function drawMeetBracket(payload = {}, ctx) {
         roundLabel: match.roundLabel,
         entryKeys: match.entryKeys,
         winnerEntryKey: match.winnerEntryKey,
+        // 见 drawMeetHeats：重抽时同一主键复活
+        voidedAt: null,
       })),
     });
   });
@@ -801,6 +807,8 @@ async function setMeetMatchWinner(payload = {}, ctx) {
         status: (current && current.status) || 'scheduled',
         entryKeys: match.entryKeys,
         winnerEntryKey: match.winnerEntryKey,
+        // 见 drawMeetHeats：重抽时同一主键复活
+        voidedAt: null,
         updatedAt: now,
       });
     }
@@ -911,8 +919,88 @@ async function getMeetBracket(payload = {}, ctx) {
   });
 }
 
+/**
+ * 重抽：清空本项目的分组/签表，让管理员改完赛制再抽一次（M3）。
+ *
+ * 【为什么要这个动作】
+ * 组数、每组人数、跑道数都是现场才知道准数的（临时发现报名 37 人、按 32 人抽了）。
+ * 原先抽错之后无路可走：`setMeetEventProcedure` 拒绝改结构还提示「请先删除场次」，
+ * 而没有删除场次的动作——管理员只能改库。
+ *
+ * 【谁能重抽】
+ * 校级管理员及以上，或本届在任总裁判（与发布成绩同一档：他们最常发现抽错）。
+ *
+ * 【为什么不是真删】
+ * 仓储只提供 set，没有 remove；直接把文档抹掉需要两边适配器一起改，收益不如风险。
+ * 这里把场次标成 `voidedAt`：读取端（赛程页 / 任务列表 / 场次清单）统一过滤，
+ * 重新抽签时同一个主键写回并把 `voidedAt` 清空，等于原地复活。
+ *
+ * 【什么情况下不许重抽】
+ * 该项目已有成绩发布，或已有裁判录过分：重排会让已录的成绩对不上人。
+ */
+async function resetMeetDraw(payload = {}, ctx) {
+  if (!meetReadable(ctx) || !ctx.meetId) return refused('请先登录');
+  const eventKey = String(payload.eventKey || '').trim();
+  if (!eventKey) return refused('请指定项目组别');
+  const scope = { schoolId: ctx.schoolId, meetId: ctx.meetId };
+
+  const [meet, event, sessions, publications, scores] = await Promise.all([
+    ctx.repo.forMeet(scope).sportsMeets.getById(ctx.meetId),
+    ctx.repo.forMeet(scope).sportsMeetEvents.getById(eventKey),
+    ctx.repo.forMeet(scope).sportsMeetSessions.list(),
+    ctx.repo.forMeet(scope).sportsMeetPublications.list(),
+    ctx.repo.forMeet(scope).sportsMeetScores.list(),
+  ]);
+  if (!event || event.meetId !== ctx.meetId) return refused('项目组别不存在或不属于本届运动会');
+  if (!canManageMeet(ctx) && !isChiefJudge(ctx, meet)) {
+    return refused('只有校级管理员及以上或本届总裁判可以重排');
+  }
+
+  const own = sessions.filter((doc) => doc.eventKey === eventKey && !doc.voidedAt);
+  if (own.length === 0) return refused('该项目还没有场次，先抽签');
+  if (publications.some((doc) => doc.eventKey === eventKey)) {
+    return refused('该项目已经发布过成绩，不能再重排');
+  }
+  if (scores.some((row) => row.eventKey === eventKey)) {
+    return refused('该项目已有裁判录分，不能再重排');
+  }
+
+  return ctx.repo.transaction(async (tx) => {
+    const fresh = await freshMeetContext(tx, ctx);
+    if (!liveMeet(fresh)) return refused('运动会不存在或已删除');
+    const currentEvent = await tx.sportsMeetEvents.getById(eventKey);
+    if (!currentEvent) return refused('项目组别不存在或不属于本届运动会');
+    if (!canManageMeet(fresh) && !isChiefJudge(fresh, await tx.sportsMeets.getById(fresh.meetId))) {
+      return refused('只有校级管理员及以上或本届总裁判可以重排');
+    }
+    const now = toIso(fresh.now);
+
+    for (const doc of own) {
+      await tx.sportsMeetSessions.set(doc._id, {
+        ...doc,
+        entryKeys: [],
+        winnerEntryKey: '',
+        // 场次上原有的时间/场地/裁判一并作废：重抽后分组变了，原来的安排已无意义
+        startAt: '', endAt: '', venue: '',
+        status: 'scheduled',
+        voidedAt: now,
+        updatedAt: now,
+      });
+    }
+    await tx.sportsMeetEvents.set(eventKey, {
+      ...currentEvent,
+      heatDraw: null,
+      bracket: null,
+      revision: Number(currentEvent.revision || 0) + 1,
+      updatedAt: now,
+    });
+    return ok({ eventKey, clearedSessions: own.length });
+  });
+}
+
 module.exports = {
   drawMeetHeats,
+  resetMeetDraw,
   advanceMeetEvent,
   drawMeetBracket,
   setMeetMatchWinner,

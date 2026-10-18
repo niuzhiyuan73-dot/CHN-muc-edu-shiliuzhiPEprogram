@@ -5,7 +5,9 @@
  * 首页。旧栈因此把它收归**全局管理员**（见 `announcement.canPublish`）。本模块在
  * 学校维度下重新核对这条口径，只做**归属**与**权限来源**的适配，内容校验与
  * 落库规则一字不改复用旧栈纯模块（`announcement.js`，同一把尺子）：
- *   · 公告主记录绑定 `schoolId + association`，读写先过 `belongsToSchoolScope`；
+ *   · 公告主记录只绑 `schoolId`（2026-10-18 起移到 repo 的 SCHOOL_ONLY 档），
+ *     发布时仍记下当时所在协会仅作溯源，读取与下架都只看学校——公告是全校信息，
+ *     不该因为发布时停在哪家协会而只在那家协会可见；
  *   · 发布权给**平台管理员**（跨校）与**本校校级管理员**（`canSchoolAction`
  *     的 `manageSchool`，见 canPublishAnnouncement）；协会负责人与学院负责人
  *     仍不能发——公告是发全校的，没有「某个协会的公告」这一说；
@@ -37,7 +39,7 @@ const { isPlatformAdminCtx, canSchoolAction } = require('./school-permission.js'
 const { legacyActorOf } = require('./school-actor.js');
 const { buildAnnouncementRecord, sortAnnouncements } = require('./announcement.js');
 const {
-  schoolKey, belongsToSchoolScope, schoolAnnouncementKey,
+  schoolKey, schoolAnnouncementKey,
 } = require('../utils/school.js');
 const {
   ANNOUNCEMENT_STATUS, ANNOUNCEMENT_STATUS_LABEL, ANNOUNCEMENT_CATEGORIES,
@@ -147,7 +149,13 @@ async function publishSchoolAnnouncement(payload = {}, ctx) {
   if (typeof token !== 'string' || !REQUEST_ID_PATTERN.test(token)) return ok(refused('发布请求编号无效'));
 
   const actor = legacyActorOf(ctx, { actorCollege: '' });
-  const built = buildAnnouncementRecord(payload, { actor, now: ctx.now });
+  // 分类已从界面移除（公告只剩一个通道），但旧模块的校验仍要求白名单值，
+  // 所以缺省补成第一档而不是让整条发布失败。
+  const withCategory = {
+    ...payload,
+    category: payload.category || ANNOUNCEMENT_CATEGORIES[0],
+  };
+  const built = buildAnnouncementRecord(withCategory, { actor, now: ctx.now });
   if (!built.ok) return ok(refused(built.firstError, { errors: built.errors }));
   const { title, content, category, pinned } = built.record;
   const fingerprint = JSON.stringify([title, content, category, pinned]);
@@ -196,7 +204,9 @@ async function archiveSchoolAnnouncement(payload = {}, ctx) {
     if (!canPublishAnnouncement(fresh)) return refused('只有平台管理员或本校校级管理员可以管理公告');
 
     const doc = await tx.announcements.getById(payload.announcementId);
-    if (!isAnnouncementDoc(doc) || !belongsToSchoolScope(doc, fresh)) return refused('找不到这条公告');
+    // 公告是**学校级**的：只要求同校，不再要求「当前协会一致」。
+    // 否则管理员在民大匹克球协会页下架自己刚在乒乓球协会页发的通知会失败。
+    if (!isAnnouncementDoc(doc) || doc.schoolId !== fresh.schoolId) return refused('找不到这条公告');
     if (doc.status === ANNOUNCEMENT_STATUS.ARCHIVED) return refused('这条公告已经下架了');
 
     const at = iso(fresh.now);

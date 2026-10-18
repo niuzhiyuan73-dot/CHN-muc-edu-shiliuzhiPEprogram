@@ -36,6 +36,7 @@ const {
 } = require('./meet-event-catalog.js');
 const { ADVANCE_MODE, MEET_FORMAT, FORMAT_LABEL } = require('./meet-advance.js');
 const { buildMeetContext, freshMeetContext } = require('./meet-context.js');
+const { schoolMemberKey } = require('../utils/school.js');
 const { meetReadable, canManageMeet, isActiveMeetLead } = require('./meet-permission.js');
 const { meetCollegeLeadKey } = require('../utils/meet-scope.js');
 
@@ -116,6 +117,8 @@ function meetSummary(doc) {
     // 避免任何分享/截图把未发布的届次当成对外信息。
     isDraft: doc.status === MEET_STATUS.DRAFT,
     registration: doc.registration || null,
+    // 本届总裁判（未任命为 null）：页面据此显示「现任：某某」与撤销入口
+    chiefJudge: doc.chiefJudge || null,
     eventCount: doc.eventCount || 0,
     createdAt: doc.createdAt || '',
     updatedAt: doc.updatedAt || '',
@@ -266,7 +269,9 @@ async function setMeetEventProcedure(payload = {}, ctx) {
   const procedure = procedureOf(template, payload);
   if (!procedure.ok) return refused(procedure.message);
 
-  const ownSessions = sessions.filter((doc) => doc.eventKey === eventKey);
+  // 作废场次（重抽留下的）不算「已排场次」：否则重抽之后仍改不了赛制，
+  // 又把管理员锁回那个「请先删除场次」的死路。
+  const ownSessions = sessions.filter((doc) => doc.eventKey === eventKey && !doc.voidedAt);
   if (publications.some((doc) => doc.eventKey === eventKey)) {
     return refused('该项目已经发布过成绩，不能再改赛制');
   }
@@ -282,7 +287,7 @@ async function setMeetEventProcedure(payload = {}, ctx) {
       || (procedure.format || '') !== (event.format || '')
       || JSON.stringify(procedure.groups || null) !== JSON.stringify(event.groups || null);
     if (structural) {
-      return refused('该项目已经排了场次，不能再改赛制；如需重排请先删除场次');
+      return refused('该项目已经排了场次，不能再改赛制；如需重排请先在赛程页「重新抽签」');
     }
   }
 
@@ -815,9 +820,79 @@ async function finishSportsMeet(payload = {}, ctx) {
       finishedAt: now,
       updatedAt: now,
       version: (current.version || 1) + 1,
+      // N5：本届收口即卸任总裁判。总裁判的权限是「本届的」，不清掉会让下一届
+      // 的发布权凭空留在上一届的总裁判手里。
+      chiefJudge: current.chiefJudge && current.chiefJudge.status === 'active'
+        ? { ...current.chiefJudge, status: 'revoked', revokedAt: now, revokedBy: 'meet-finished' }
+        : (current.chiefJudge || null),
     };
     await tx.sportsMeets.set(fresh.meetId, next);
     return ok({ meet: meetSummary(next), finished: true });
+  });
+}
+
+/**
+ * 任命本届**总裁判**（B4）。
+ *
+ * 交给谁：本校在册、账号有效的成员。总裁判在本届内与校级管理员拥有同等的
+ * 发布/更正/判定胜负/重排权限（`canPublishMeetResult`），但**不能**发起或删除
+ * 运动会、不能再任命别人——权限来自 canManageMeet 与 chiefJudge 两条互不替代的判据。
+ *
+ * 只保留一名：同一届再任命即改派，旧的总裁判记录被覆盖（不并行两个总裁判）。
+ */
+async function appointMeetChiefJudge(payload = {}, ctx) {
+  if (!ctx.meetId) return refused('请指定运动会');
+  const userId = String(payload.userId || '').trim();
+  if (!userId) return refused('请选择总裁判');
+
+  return ctx.repo.transaction(async (tx) => {
+    const fresh = await freshMeetContext(tx, ctx);
+    if (!canManageMeet(fresh)) return refused('只有校级管理员及以上可以任命总裁判');
+    const meet = await tx.sportsMeets.getById(fresh.meetId);
+    if (!isAlive(meet) || meet.schoolId !== fresh.schoolId) return refused('运动会不存在或已删除');
+    if (meet.status === MEET_STATUS.FINISHED) return refused('运动会已结束，不能再任命总裁判');
+
+    const user = await tx.users.getById(userId);
+    if (!user || user.platformStatus !== 'active') return refused('该账号不可用');
+    const member = await tx.schoolMembers.getById(schoolMemberKey(userId, fresh.schoolId));
+    if (!member || member.status !== 'active') return refused('对方没有本校有效身份');
+
+    const at = fresh.now instanceof Date ? fresh.now.toISOString() : String(fresh.now);
+    const next = {
+      ...meet,
+      chiefJudge: {
+        userId, schoolId: fresh.schoolId, meetId: fresh.meetId,
+        name: user.nickName || user.realName || userId,
+        status: 'active', appointedBy: fresh.actorId, appointedAt: at,
+      },
+      updatedAt: at,
+      version: (meet.version || 1) + 1,
+    };
+    await tx.sportsMeets.set(fresh.meetId, next);
+    return ok({ chiefJudge: next.chiefJudge });
+  });
+}
+
+/** 撤销本届总裁判。留记录（status=revoked），便于事后解释「谁在任过」。 */
+async function revokeMeetChiefJudge(payload = {}, ctx) {
+  if (!ctx.meetId) return refused('请指定运动会');
+  return ctx.repo.transaction(async (tx) => {
+    const fresh = await freshMeetContext(tx, ctx);
+    if (!canManageMeet(fresh)) return refused('只有校级管理员及以上可以撤销总裁判');
+    const meet = await tx.sportsMeets.getById(fresh.meetId);
+    if (!isAlive(meet) || meet.schoolId !== fresh.schoolId) return refused('运动会不存在或已删除');
+    const chief = meet.chiefJudge;
+    if (!chief || chief.status !== 'active') return refused('本届没有在任的总裁判');
+
+    const at = fresh.now instanceof Date ? fresh.now.toISOString() : String(fresh.now);
+    const next = {
+      ...meet,
+      chiefJudge: { ...chief, status: 'revoked', revokedBy: fresh.actorId, revokedAt: at },
+      updatedAt: at,
+      version: (meet.version || 1) + 1,
+    };
+    await tx.sportsMeets.set(fresh.meetId, next);
+    return ok({ chiefJudge: next.chiefJudge });
   });
 }
 
@@ -853,4 +928,6 @@ module.exports = {
   listSportsEventTemplates,
   finishSportsMeet,
   deleteSportsMeet,
+  appointMeetChiefJudge,
+  revokeMeetChiefJudge,
 };

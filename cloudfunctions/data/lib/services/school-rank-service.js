@@ -505,6 +505,9 @@ async function getSchoolMemberProfile(payload = {}, ctx) {
       studentId: (memberDoc && memberDoc.studentId) || '',
       points: Number(member.points || 0),
       permissionLabel: permissionLabelOf(role, membership),
+      // 权限档位的机器可读值（schoolAdmin / associationLeader / collegeLeader / 空）：
+      // 他人主页的「设置身份」要判断对方当前已经是哪一档，才能给出「取消」而不是重复授予。
+      permission: permissionOf(role, membership),
       role: legacyRoleOf({ schoolRole: role, membership, actor: member, isPlatformAdmin: member.platformRole === 'admin' }),
     },
     projects,

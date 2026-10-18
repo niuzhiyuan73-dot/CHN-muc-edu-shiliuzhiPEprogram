@@ -14,11 +14,14 @@ const SCHOOL_COLLECTIONS = ['schools', 'schoolAssociations', 'colleges', 'school
   ...MEET_COLLECTIONS,
   // 学院部长授权：**学校级**常设角色，不随届次、也不挂协会，故按 SCHOOL_ONLY 处理。
   'sportsMeetCollegeLeads'];
-const SCHOOL_ONLY = ['colleges', 'schoolMembers', 'schoolRoles', 'sportsMeetCollegeLeads'];
+// 学校级集合：只按 schoolId 判归属，写入不注入 association。
+// 公告 2026-10-18 起并入这一档——只有管理员能发、发的是全校信息，
+// 不能因为发布时当前协会不同而只在那家协会可见。
+const SCHOOL_ONLY = ['colleges', 'schoolMembers', 'schoolRoles', 'sportsMeetCollegeLeads', 'announcements'];
 const SCOPED_COLLECTIONS = [
   'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
   ...SCHOOL_ONLY, 'schoolAssociations', 'memberships',
-  'matches', 'events', 'eventSignups', 'announcements', 'collegeEvents', 'collegeEntries',
+  'matches', 'events', 'eventSignups', 'collegeEvents', 'collegeEntries',
   'ties', 'lineups', 'liveScores', 'seasons', 'rankings',
   // 协会空间小组 / 通知 / 训练均按「学校 + 协会」双维度范围，写入即校验归属。
   'associationGroups', 'associationGroupMembers',

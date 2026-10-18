@@ -65,7 +65,8 @@ function contentOf(schoolId, association) {
 test('演示内容 —— 每个范围的记录都绑定自己的「学校 + 协会」，形状可被服务读出来', () => {
   const content = createSchoolDemoContent();
 
-  assert.equal(content.announcements.length, 18);
+  // 公告 2026-10-18 起是学校级一条通道：民大 5 条 + 北航 4 条（不再按协会各造一份）
+  assert.equal(content.announcements.length, 9);
   assert.equal(content.events.length, 9);
   assert.equal(content.matches.length, 39);
   // 报名记录条数也是契约：改了要同步 docs/mock演示账号.md §7.1 与本节断言
@@ -146,21 +147,21 @@ test('演示报名 —— signupCount 就是有效报名条数，已结束赛事
   }
 });
 
-test('差异性 —— 各协会的公告条数与标题不同，跨校内容也不同', () => {
+test('差异性 —— 公告按学校一份，赛事与比赛按协会不同，跨校内容也不同', () => {
   const pkb = contentOf('muc', 'pkb');
   const tt = contentOf('muc', 'tt');
   const bd = contentOf('muc', 'bd');
   const buaa = contentOf('buaa', 'pkb');
 
-  // 条数刻意拉开：5 / 4 / 3
-  assert.deepEqual(
-    [pkb.announcements.length, tt.announcements.length, bd.announcements.length], [5, 4, 3]);
+  // 公告归学校：种子里只造一份（muc/pkb 这个桶），tt / bd 不再各自一份。
+  // 「换协会读到的仍是同一份」由服务端学校级读取保证，见 school-announcement-view 测试。
+  assert.equal(pkb.announcements.length, 5, '民大 5 条');
+  assert.deepEqual([tt.announcements.length, bd.announcements.length], [0, 0], '公告不再按协会分桶');
   assert.deepEqual([pkb.events.length, tt.events.length, bd.events.length], [3, 2, 1]);
 
-  // 标题两两不重复：切协会一眼看出不是同一批数据
-  const titles = [...pkb.announcements, ...tt.announcements, ...bd.announcements]
-    .map(doc => doc.title);
-  assert.equal(new Set(titles).size, titles.length, '协会之间的公告标题不能重复');
+  // 公告标题不重复：一条公告只有一条，不会因为多个协会而重复出现
+  const titles = pkb.announcements.map(doc => doc.title);
+  assert.equal(new Set(titles).size, titles.length, '公告标题不能重复');
 
   // 跨校：北航有自己的整套内容，且与民大不重名
   assert.equal(buaa.announcements.length, 4);
@@ -209,14 +210,15 @@ describe('schoolMock.reset() —— 默认挂上演示内容', () => {
     assert.ok(view.me && view.me.rank > 0);
   });
 
-  test('别的协会读的是自己的内容，不是匹克球那套', async () => {
+  test('别的协会读的是自己的榜单；公告是全校一份，两处读到的一样', async () => {
     const pkb = schoolMock.forAssociationSpace(SCOPE);
     const tt = schoolMock.forAssociationSpace({ schoolId: 'muc', association: 'tt' });
 
+    // 公告 2026-10-18 起是学校级一条通道：换协会不该换内容、也不该重复
     const pkbTitles = (await pkb.listSchoolAnnouncements({})).announcements.map(doc => doc.title);
     const ttTitles = (await tt.listSchoolAnnouncements({})).announcements.map(doc => doc.title);
-    assert.equal(ttTitles.length, 4, '乒乓协会也有自己的公告');
-    assert.ok(ttTitles.every(title => !pkbTitles.includes(title)), '两个协会的公告不重名');
+    assert.deepEqual(ttTitles, pkbTitles, '同校两个协会读到同一份公告');
+    assert.equal(new Set(ttTitles).size, ttTitles.length, '同一份公告不该重复出现');
 
     // 榜单按范围隔离：两个协会各有人，但榜单内容不是同一份
     // （同一个人可以同时是两个协会的会员，所以只守「各有自己的人」与「不是同一张榜」）
@@ -226,7 +228,7 @@ describe('schoolMock.reset() —— 默认挂上演示内容', () => {
     const pkbIds = pkbBoard.rows.map(row => row.userId);
 
     assert.ok(ttIds.length > 0 && pkbIds.length > 0);
-    assert.ok(ttIds.includes('u04'), '乒乓榜上应有乒乓协会的负责人 u04');
+    assert.ok(ttIds.includes('u04'), 'u04 只在乒乓协会打过比赛，应出现在乒乓榜');
     assert.ok(!pkbIds.includes('u04'), 'u04 不在匹克球榜上（他只在乒乓协会有比赛）');
     assert.ok(pkbIds.includes('u03') && !ttIds.includes('u03'), 'u03 只在匹克球协会有比赛');
     assert.notDeepEqual(ttIds.slice().sort(), pkbIds.slice().sort(), '两张榜单不是同一份');

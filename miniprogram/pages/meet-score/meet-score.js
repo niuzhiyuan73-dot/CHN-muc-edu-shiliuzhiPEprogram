@@ -39,6 +39,8 @@ Page({
     schoolId: '',
     meetId: '',
     canManage: false,
+    /** 能不能发布/更正成绩：管理员 + 本届总裁判（总裁判只发布，不编排） */
+    canPublish: false,
     tasks: [],
     events: [],
     // 当前打开的录分场次
@@ -120,6 +122,7 @@ Page({
       this.update({
         loading: false,
         canManage: Boolean(schedule.canManage),
+        canPublish: Boolean(schedule.canPublish),
         tasks: tasks.items,
         events: schedule.items.map((row) => this.decorateEvent(row)),
       });

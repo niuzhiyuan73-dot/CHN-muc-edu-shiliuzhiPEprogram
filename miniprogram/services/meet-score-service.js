@@ -214,6 +214,9 @@ async function getMeetSessionScores(payload = {}, ctx) {
     ctx.repo.forMeet(scope).sportsMeetJudgeAssignments.list(),
   ]);
   if (!session || session.meetId !== ctx.meetId) return refused('场次不存在或不属于本届运动会');
+  // 重抽之后旧场次被作废（voidedAt）：它不是「不存在」，但不能再录分——
+  // 说清楚原因，别让裁判以为点错了场次。
+  if (session.voidedAt) return refused('该场次已因重新抽签作废，请刷新后从任务列表进入新场次');
   const doc = event.find((row) => row._id === session.eventKey);
   // 胜负项目没有分数可录：让裁判看到「这场由谁判胜」，而不是把他带到录分框前再报错
   if (doc && doc.scoreType === MEET_SCORE_TYPE.VERSUS) {
@@ -313,6 +316,9 @@ async function saveMeetJudgeScore(payload = {}, ctx) {
     if (!meetReadable(ctx) || !liveMeet(ctx)) return refused('账号或运动会已失效');
     const session = await tx.sportsMeetSessions.getById(sessionKey);
     if (!session || session.meetId !== ctx.meetId) return refused('场次不存在或不属于本届运动会');
+  // 重抽之后旧场次被作废（voidedAt）：它不是「不存在」，但不能再录分——
+  // 说清楚原因，别让裁判以为点错了场次。
+  if (session.voidedAt) return refused('该场次已因重新抽签作废，请刷新后从任务列表进入新场次');
     const event = await tx.sportsMeetEvents.getById(session.eventKey);
     if (!event) return refused('项目组别不存在');
     if (event.scoreType === MEET_SCORE_TYPE.VERSUS) {

@@ -390,47 +390,37 @@ test('退出登录把统一会话与学校范围一起清掉', async () => {
   assert.strictEqual(schoolSession.getSchoolId(), '', '浏览学校不复用上一人的');
 });
 
-test('切换协会后按新协会重解能力 —— 协会负责人不该被当成会员', async () => {
-  // u04 王浩然：pkb 普通会员、tt 协会负责人、bd 学院负责人（见 docs/mock演示账号.md）。
-  // 登录快照里的角色是切协会之前写下的；切换后必须按新协会重解，否则他在 tt 会
-  // 被当成会员，连本协会比赛的裁判都指派不了。
+test('切换协会后按新协会重解能力 —— 学院/协会角色不跨协会', async () => {
+  // 2026-10-18：旧种子给 u01–u24 落的那批管理角色已撤掉（权限只由演示身份切换器
+  // 给出的账号承载），所以这里改用「学院负责人」演示身份：
+  // demo_muc_college_leader 在 pkb 是 staff + c02，切到别的协会就是普通会员。
+  // 守的仍是同一件事：登录快照里的角色是切协会之前写下的，切换后必须按新协会重解。
   appConfig.globalData = {
     dataSource: DATA_SOURCE.MOCK,
     cloudEnvId: '',
     userInfo: {
-      _id: 'u04',
-      nickName: '王浩然',
+      _id: 'demo_muc_college_leader',
+      nickName: '学院负责人',
       role: ROLE.MEMBER,
       status: USER_STATUS.ACTIVE,
     },
     systemInfo: null,
   };
-  // S2 的「当前微信身份」也要是 u04——两套身份来源必须一致（B3 的前提）。
-  await appConfig.switchDemoActor('u04');
-  assert.strictEqual(appConfig.globalData.userInfo._id, 'u04');
+  await appConfig.switchDemoActor('demo_muc_college_leader');
+  assert.strictEqual(appConfig.globalData.userInfo._id, 'demo_muc_college_leader');
 
   appConfig.setAssociation('pkb');
   await flush();
-  assert.strictEqual(appConfig.globalData.userInfo.role, ROLE.MEMBER, 'pkb 里是普通会员');
+  assert.strictEqual(appConfig.globalData.userInfo.role, ROLE.STAFF, 'pkb 里是学院负责人');
 
   appConfig.setAssociation('tt');
   await flush();
-  assert.strictEqual(
-    appConfig.globalData.userInfo.role,
-    ROLE.ADMIN,
-    'tt 里是协会负责人（有效角色即管理员）'
-  );
-  assert.strictEqual(
-    appConfig.globalData.userInfo.isGlobalAdmin,
-    false,
-    '协会负责人不是全局管理员'
-  );
+  assert.strictEqual(appConfig.globalData.userInfo.role, ROLE.MEMBER, 'tt 里只是普通会员');
+  assert.strictEqual(appConfig.globalData.userInfo.isGlobalAdmin, false, '学院负责人不是全局管理员');
 
   appConfig.setAssociation('bd');
   await flush();
-  // bd 里 u04 的 staff 档没有落学院（S2 口径：学院负责人必须绑定学院），
-  // 权限档推导为普通会员——切协会不能把别的协会的角色带过来。
-  assert.strictEqual(appConfig.globalData.userInfo.role, ROLE.MEMBER, 'bd 里不带学院的 staff 不算学院负责人');
+  assert.strictEqual(appConfig.globalData.userInfo.role, ROLE.MEMBER, 'bd 里也不带学院负责人身份');
 
   // 复位，别把协会状态漏给后续用例
   appConfig.setAssociation(defaultAssociationId());
