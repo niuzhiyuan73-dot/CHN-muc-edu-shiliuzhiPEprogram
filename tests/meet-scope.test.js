@@ -31,13 +31,15 @@ const {
 
 const SCOPE = { schoolId: 'muc', meetId: 'mt_muc_abc' };
 
-test('运动会集合清单为 12 个，与决策文档 §8 一致', () => {
-  assert.strictEqual(MEET_COLLECTIONS.length, 12);
+test('运动会集合清单为 14 个（B8 增加总榜与荣誉）', () => {
+  assert.strictEqual(MEET_COLLECTIONS.length, 14);
   assert.deepStrictEqual([...MEET_COLLECTIONS], [
     'sportsMeets', 'sportsMeetEvents', 'sportsMeetColleges', 'sportsMeetInterests',
     'sportsMeetEntries', 'sportsMeetSessions', 'sportsMeetJudgeAssignments',
     'sportsMeetScores', 'sportsMeetPublications', 'sportsMeetResultRows',
     'sportsMeetQuotaUsage', 'sportsMeetParticipantClaims',
+    // B8：学院总榜快照与个人荣誉
+    'sportsMeetStandings', 'sportsMeetHonors',
   ]);
 });
 

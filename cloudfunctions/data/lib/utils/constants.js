@@ -733,6 +733,9 @@ const COLLECTION = {
   SPORTS_MEET_PUBLICATIONS: 'sports_meet_publications',
   SPORTS_MEET_RESULT_ROWS: 'sports_meet_result_rows',
   SPORTS_MEET_QUOTA_USAGE: 'sports_meet_quota_usage',
+  // B8：学院总榜快照（一院一条）与个人荣誉（一人一项目一条）
+  SPORTS_MEET_STANDINGS: 'sports_meet_standings',
+  SPORTS_MEET_HONORS: 'sports_meet_honors',
   SPORTS_MEET_PARTICIPANT_CLAIMS: 'sports_meet_participant_claims',
   // 学院部长授权：一院一条（_id = 学校 + 学院），常设角色、不随届次失效。
   SPORTS_MEET_COLLEGE_LEADS: 'sports_meet_college_leads',

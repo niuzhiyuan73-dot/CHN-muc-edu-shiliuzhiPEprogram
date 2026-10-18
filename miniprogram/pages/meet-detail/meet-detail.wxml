@@ -106,6 +106,7 @@
     <block wx:if="{{canManage && !isDraft}}">
       <view class="meet-college-link" bindtap="onOpenSchedule">赛程编排与裁判指派 ›</view>
       <view class="meet-college-link" bindtap="onOpenScore">录分与成绩发布 ›</view>
+      <view class="meet-college-link" bindtap="onOpenStanding">学院总榜与我的荣誉 ›</view>
     </block>
 
     <block wx:if="{{canManage && isDraft}}">

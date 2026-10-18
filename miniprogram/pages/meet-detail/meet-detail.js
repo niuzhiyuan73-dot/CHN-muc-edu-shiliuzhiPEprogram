@@ -163,6 +163,11 @@ Page({
     }
   },
 
+  /** 学院总榜与我的荣誉（B8） */
+  onOpenStanding() {
+    return wx.navigateTo({ url: `/pages/meet-standing/meet-standing?meetId=${this.data.meetId}` });
+  },
+
   /** 赛程编排（管理员） */
   onOpenSchedule() {
     return wx.navigateTo({ url: `/pages/meet-schedule/meet-schedule?meetId=${this.data.meetId}` });

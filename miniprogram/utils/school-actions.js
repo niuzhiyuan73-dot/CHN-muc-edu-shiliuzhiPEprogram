@@ -109,6 +109,8 @@ const SCHOOL_MEET_ACTIONS = Object.freeze([
   'getMeetResultPreview',          'publishMeetResults',          'getPublishedResults',
   // 预赛晋级与赛制名次（B8a）
   'drawMeetHeats',               'advanceMeetEvent',
+  // 学院总榜与个人荣誉（B8）
+  'getMeetStandings',            'getMyMeetHonors',
   'drawMeetBracket',             'setMeetMatchWinner',          'getMeetBracket',
 ]);
 

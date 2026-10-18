@@ -143,6 +143,8 @@ const MANIFEST = [
   // 后者要读写场次。两端必须同一份，否则晋级口径会在云端与本地给出不同的人。
   'services/meet-advance.js',
   'services/meet-advance-service.js',
+  // 运动会 B8：学院总榜与个人荣誉（只读；累加在发布事务里完成）
+  'services/meet-standing-service.js',
 ];
 
 /**

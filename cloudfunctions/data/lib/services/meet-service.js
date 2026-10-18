@@ -572,7 +572,10 @@ async function configureMeetEvent(payload = {}, ctx) {
     await tx.sportsMeets.set(fresh.meetId, {
       ...meet, eventCount: count, updatedAt: now, version: (meet.version || 1) + 1,
     });
-    return ok({ event: eventSummary(doc), eventCount: count });
+    // 摘要必须带上主键：调用方（页面「继续配置」回填、演示种子）都靠它指回
+    // 这条项目组别。doc 是本地对象、没有 _id，直接喂给 eventSummary 会得到
+    // 一个 eventKey 为 undefined 的摘要——B9 演示种子第一个撞上。
+    return ok({ event: eventSummary({ ...doc, _id: key }), eventCount: count });
   });
 }
 

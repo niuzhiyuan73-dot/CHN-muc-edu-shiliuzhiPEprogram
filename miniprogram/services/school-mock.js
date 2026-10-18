@@ -32,6 +32,8 @@ const meetRegistrationService = require('./meet-registration-service.js');
 const meetScheduleService = require('./meet-schedule-service.js');
 const meetScoreService = require('./meet-score-service.js');
 const meetAdvanceService = require('./meet-advance-service.js');
+const meetStandingService = require('./meet-standing-service.js');
+const { createMeetDemoRecords } = require('./meet-seed.js');
 
 /**
  * 协会空间处理器集合。
@@ -56,6 +58,7 @@ const meetHandlers = Object.freeze(
   pickActions([
     meetService, meetLeadService, meetRegistrationService, meetScheduleService, meetScoreService,
     meetAdvanceService,
+    meetStandingService,
   ], SCHOOL_MEET_ACTIONS),
 );
 
@@ -80,6 +83,9 @@ const DEMO_ACTORS = Object.freeze([
   // 申请**（见 school-seed.demoTransferApplication），另一位「民大会员」保持干净，
   // 专门用来当场演示「提交转校申请」。同样追加在末尾，不动既有下标。
   { id: 'demo_muc_member_2', label: '民大会员二' },
+  // 运动会演示裁判（B9）：张裁判——演示「我的任务」逐场录分。
+  // 同追加在末尾：页面与用例按**下标**选演示身份，重排会打乱既有演示。
+  { id: 'm_j1', label: '张裁判（运动会演示）' },
 ]);
 
 /**
@@ -149,6 +155,30 @@ function defaultActorId() {
 
 let actorId = DEMO_ACTORS[0].id;
 /**
+ * 运动会演示数据的装载进度。
+ *
+ * 【为什么是异步的】
+ * 演示届不是手写的文档，而是**驱动真实服务链路**跑出来的（见 meet-seed.js）——
+ * 报名、抽签、录分、发布、更正全都走一遍，记录才与服务端口径一致。服务调用
+ * 全是异步，reset() 却是同步的，所以这里「点发起火、不等待」：装载承诺挂在
+ * 模块级变量上，forMeet 的每个动作先 await 它再执行。装载失败只记日志——
+ * 运动会接口退回「本届为空」，不拖垮身份 / 空间 / 交流另外三面。
+ */
+let meetDemoReady = Promise.resolve();
+
+/**
+ * 把运动会演示记录并进仓储。
+ *
+ * 与 withDemoContent 同进退：要干净台账的用例（数条数的夹具）传
+ * `{ withDemoContent: false }`，运动会演示数据一并跳过。
+ */
+async function loadMeetDemo(targetRepo) {
+  const records = await createMeetDemoRecords();
+  for (const [key, docs] of Object.entries(records)) {
+    for (const doc of docs) await targetRepo[key].set(doc._id, doc);
+  }
+}
+/**
  * 模拟的「当前微信身份」OpenID（B3）。真实设备上 OpenID 由微信给出，换设备即换
  * OpenID；模拟端把它做成一个可变状态：默认空串，客户端按 actorId 解析（与从前
  * 行为一致）。`simulateNewWechat` 把它拨到一个尚无账号的新 OpenID，从而演示
@@ -205,6 +235,12 @@ function reset(options = {}) {
   repo = createSchoolMemoryRepo(seed);
   actorId = defaultActorId();
   wechatOpenId = '';
+  meetDemoReady = options.withDemoContent === false
+    ? Promise.resolve()
+    : loadMeetDemo(repo).catch((err) => {
+      // 演示数据装载失败不该让另外三面也用不了：记下来，运动会接口按空数据走。
+      console.error('运动会演示数据装载失败', err);
+    });
 }
 reset();
 /** 旧版演示账号编号（u01–u24）也已接入 S2，可作演示身份切换（B3）。 */
@@ -279,6 +315,9 @@ function forMeet(input) {
   const binding = actorBinding();
   const boundRepo = repo;
   return Object.freeze(Object.fromEntries(Object.entries(meetHandlers).map(([name, handler]) => [name, async payload => {
+    // 演示数据就绪前，运动会动作一律等待——否则「届列表」会先返回空，
+    // 用户看到一届都没有，其实只是种子还没跑完。
+    await meetDemoReady;
     const ctx = await buildMeetContext({ repo: boundRepo, ...binding, scope });
     const result = await handler(payload || {}, ctx);
     if (!result.ok) throw new Error(result.message);

@@ -35,6 +35,9 @@ const MEET_COLLECTIONS = Object.freeze([
   'sportsMeetResultRows',
   'sportsMeetQuotaUsage',
   'sportsMeetParticipantClaims',
+  // B8：学院总榜快照与个人荣誉
+  'sportsMeetStandings',
+  'sportsMeetHonors',
 ]);
 
 /** 运动会状态机（发布/归档一律显式流转，不靠字段拼凑）。 */
@@ -189,6 +192,19 @@ function meetParticipantCounterKey(meetId, userId) {
   return `mtcnt:${part(meetId, '运动会')}:${part(userId, '用户')}`;
 }
 
+/**
+ * 个人荣誉：一条参赛记录一条（不是一人一条）。
+ *
+ * 用 entryKey 而不是 userId 做主键段，两个原因：
+ *   · 队伍项目一条记录对应多名队员，按人拆条会让「4×100 接力第 1 名」产生 4 条
+ *     几乎相同的荣誉，还得保证它们同时更新；
+ *   · 无痕更正时要按 entryKey 覆盖/作废，按人做主键会多一步反查。
+ * 代价是「我的荣誉」要按 userIds 过滤一届的荣誉（上限约 800 条），读取端可接受。
+ */
+function meetHonorKey(meetId, entryKey) {
+  return `mth:${part(meetId, '运动会')}:${rawPart(entryKey, '参赛记录')}`;
+}
+
 /** 参赛名额序号：单人 s1/s2、多人协作组 g1/g2、队伍 t1（一院一队）。 */
 function meetEntrySlot(entryForm, index) {
   const prefix = entryForm === 'team' ? 't' : entryForm === 'group' ? 'g' : 's';
@@ -231,7 +247,16 @@ function meetResultRowKey(publicationKey, entryKey) {
   return `mtrow:${rawPart(publicationKey, '结果发布')}:${rawPart(entryKey, '参赛记录')}`;
 }
 
-/** 学院总榜快照：一届一院一条（规模大时才落地，正式结果仍是事实来源）。 */
+/**
+ * 学院总榜快照：一届一院一条，B8 起正式启用。
+ *
+ * 为什么不在读取时实时聚合：一届的结果行可能上千（40 学院 × 90+ 项目组别 ×
+ * 每项若干记录），每次打开总榜都全量扫一遍既慢又贵。发布成绩本身是低频写操作，
+ * 把累加放进那个事务，总榜读到的就是一份现成的快照。
+ *
+ * 注意：正式结果行仍是事实来源。快照与结果行不一致时，以结果行为准——
+ * 快照只是加速读取的派生数据，不能反过来当成原始记录。
+ */
 function meetStandingKey(meetId, collegeId) {
   return `mtb:${part(meetId, '运动会')}:${part(collegeId, '学院')}`;
 }
@@ -287,11 +312,12 @@ module.exports = {
   meetQuotaKey,
   meetClaimKey,
   meetParticipantCounterKey,
+  meetStandingKey,
+  meetHonorKey,
   meetEntrySlot,
   meetSessionKey,
   meetJudgeKey,
   meetScoreKey,
   meetPublicationKey,
   meetResultRowKey,
-  meetStandingKey,
 };

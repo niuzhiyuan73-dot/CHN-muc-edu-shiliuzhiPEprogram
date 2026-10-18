@@ -34,7 +34,8 @@
 
 const {
   MEET_STATUS,
-  meetScoreKey, meetJudgeKey, meetPublicationKey, meetResultRowKey, listAliveEvents,
+  meetScoreKey, meetJudgeKey, meetPublicationKey, meetResultRowKey, meetStandingKey,
+  meetHonorKey, listAliveEvents,
 } = require('../utils/meet-scope.js');
 const { MEET_SCORE_TYPE } = require('./meet-event-catalog.js');
 const { normalizeMeasure, formatMeasure } = require('./meet-measure.js');
@@ -668,6 +669,17 @@ async function publishMeetResults(payload = {}, ctx) {
       ...(isVersus ? { format } : {}),
       ...(official ? {} : { advance: event.advance || null }),
     };
+    // rows 摘要随发布存档：下次重发时要靠它把旧学院的分减回去。
+    // 不存档的话，「无痕更正」发一次就把学院总分翻一倍——结果行被同主键覆盖，
+    // 旧值无从得知，而总榜是累加出来的。
+    const rowDigest = rows.map((row) => ({
+      entryKey: row.entryKey,
+      collegeId: row.collegeId,
+      userIds: Array.isArray(row.userIds) ? [...row.userIds] : [],
+      rank: row.rank,
+      points: row.points,
+      status: row.status,
+    }));
     await tx.sportsMeetPublications.set(publicationKey, {
       schoolId: fresh.schoolId, meetId: fresh.meetId, eventKey,
       version, status: 'published', rules,
@@ -680,6 +692,7 @@ async function publishMeetResults(payload = {}, ctx) {
       official,
       rowCount: rows.length,
       voidCount: rows.filter((row) => row.status === ROW_STATUS.VOID).length,
+      rows: rowDigest,
       publishedBy: fresh.actorId, publishedAt: now,
       reason: String(payload.reason || '').slice(0, 100),
     });
@@ -690,6 +703,78 @@ async function publishMeetResults(payload = {}, ctx) {
         ...row,
         updatedAt: now,
       });
+    }
+
+    // 学院总分与个人荣誉：**只在正式成绩发布时**更新。
+    // 预赛的名次是组内排名，不是奖牌名次，计进去会让总榜出现一批假金牌。
+    if (official) {
+      const delta = new Map();
+      const bump = (collegeId, sign, row) => {
+        const key = String(collegeId || '');
+        if (!key) return;
+        const cur = delta.get(key) || { points: 0, gold: 0, silver: 0, bronze: 0 };
+        cur.points += sign * Number(row.points || 0);
+        if (Number(row.rank) === 1) cur.gold += sign;
+        if (Number(row.rank) === 2) cur.silver += sign;
+        if (Number(row.rank) === 3) cur.bronze += sign;
+        delta.set(key, cur);
+      };
+      // 旧行先减、新行后加：净额为 0 的学院一次都不用写
+      const oldRows = Array.isArray(latest && latest.rows) ? latest.rows : [];
+      for (const row of oldRows) bump(row.collegeId, -1, row);
+      for (const row of rowDigest) bump(row.collegeId, 1, row);
+
+      for (const [collegeId, change] of delta) {
+        const key = meetStandingKey(fresh.meetId, collegeId);
+        const doc = await tx.sportsMeetStandings.getById(key);
+        const base = doc || {
+          _id: key, schoolId: fresh.schoolId, meetId: fresh.meetId, collegeId,
+          total: 0, gold: 0, silver: 0, bronze: 0, createdAt: now, updatedAt: now,
+        };
+        await tx.sportsMeetStandings.set(key, {
+          ...base,
+          total: Number(base.total || 0) + change.points,
+          gold: Number(base.gold || 0) + change.gold,
+          silver: Number(base.silver || 0) + change.silver,
+          bronze: Number(base.bronze || 0) + change.bronze,
+          updatedAt: now,
+        });
+      }
+
+      // 旧版有、新版没有的记录（例如报名被撤回、被排除出签表）：
+      // 荣誉必须一并作废，否则「我的荣誉」会一直挂着一个已不成立的第一名。
+      const liveKeys = new Set(rowDigest.map((row) => row.entryKey));
+      for (const row of oldRows) {
+        if (liveKeys.has(row.entryKey)) continue;
+        await tx.sportsMeetHonors.set(meetHonorKey(fresh.meetId, row.entryKey), {
+          _id: meetHonorKey(fresh.meetId, row.entryKey),
+          schoolId: fresh.schoolId, meetId: fresh.meetId, eventKey,
+          entryKey: row.entryKey, collegeId: row.collegeId,
+          userIds: Array.isArray(row.userIds) ? [...row.userIds] : [],
+          rank: null, points: 0, version, publishedAt: now, updatedAt: now,
+        });
+      }
+
+      // 荣誉一条参赛记录一条；不再得奖的记录直接覆盖成「无名次」，
+      // 而不是留着旧名次——那会让「我的荣誉」显示一个已经作废的第一名。
+      for (const row of rowDigest) {
+        const key = meetHonorKey(fresh.meetId, row.entryKey);
+        const worth = row.status === ROW_STATUS.RESULT && Number(row.rank) > 0;
+        await tx.sportsMeetHonors.set(key, {
+          _id: key,
+          schoolId: fresh.schoolId,
+          meetId: fresh.meetId,
+          eventKey,
+          entryKey: row.entryKey,
+          collegeId: row.collegeId,
+          userIds: Array.isArray(row.userIds) ? [...row.userIds] : [],
+          rank: worth ? row.rank : null,
+          points: worth ? row.points : 0,
+          version,
+          publishedAt: now,
+          updatedAt: now,
+        });
+      }
     }
     // 多枪项目的发布键是 'all'，没有对应指派记录，要回到各场次上取人数
     const publishWarning = judgeCountWarning(aggregateFinal

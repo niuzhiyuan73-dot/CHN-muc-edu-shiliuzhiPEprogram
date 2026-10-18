@@ -29,9 +29,9 @@
 const {
   MEET_STATUS, MEET_INTEREST_STATUS, MEET_ENTRY_STATUS,
   meetEventKey, meetInterestKey, meetEntryKey, meetQuotaKey, meetClaimKey,
-  meetParticipantCounterKey, listAliveEvents, meetEntrySlot,
+  meetParticipantCounterKey, meetCollegeKey, listAliveEvents, meetEntrySlot,
 } = require('../utils/meet-scope.js');
-const { schoolMemberKey, SCHOOL_MEMBER_STATUS } = require('../utils/school.js');
+const { schoolMemberKey, collegeKey, SCHOOL_MEMBER_STATUS } = require('../utils/school.js');
 const { buildMeetContext, freshMeetContext } = require('./meet-context.js');
 const {
   meetReadable, canManageMeet, canLeadCollegeMeet, isActiveMeetLead,
@@ -125,6 +125,34 @@ async function loadEvent(tx, ctx, eventKey) {
   return { ok: true, doc };
 }
 
+/**
+ * 落下「本届学院范围」的一行（D82）。
+ *
+ * 【为什么报名动作要顺带写这个】
+ * 决策文档 §8 把 sportsMeetColleges 定义为「本届学院范围及当届名称快照」，
+ * 用来做两件事：总榜按参与范围展示（报了名就算参与，未得分显示 0），
+ * 以及列表页按学院筛选。B9 整体验收时发现**没有任何服务写这个集合**——
+ * 总榜因此只会显示原始学院编号，学院筛选也永远筛不出东西。
+ *
+ * 【为什么学院名要快照】
+ * 学院改名不应让历史榜单跟着漂移（12.4）。所以这里存的是写入那一刻的
+ * 学院名，之后 colleges 里怎么改都不影响已产生的榜单。
+ *
+ * 幂等：同一学院第二次报名不重写（保留首次快照时间）。
+ */
+async function touchCollegeScope(tx, { schoolId, meetId, collegeId, now }) {
+  if (!collegeId) return;
+  const key = meetCollegeKey(meetId, collegeId);
+  const current = await tx.sportsMeetColleges.getById(key);
+  if (current && current.schoolId === schoolId) return;
+  const college = await tx.colleges.getById(collegeKey(schoolId, collegeId));
+  await tx.sportsMeetColleges.set(key, {
+    schoolId, meetId, collegeId,
+    name: (college && college.name) || collegeId,
+    at: now,
+  });
+}
+
 // ---------------------------------------------------------------- 学生端
 
 /** 学生提交参赛意向（不占名额，D10） */
@@ -173,6 +201,10 @@ async function submitMeetInterest(payload = {}, ctx) {
       updatedAt: now,
     };
     await tx.sportsMeetInterests.set(key, doc);
+    // D82：只要报名了一个人就算参与——本届学院范围从这里落下第一行
+    await touchCollegeScope(tx, {
+      schoolId: fresh.schoolId, meetId: fresh.meetId, collegeId: member.collegeId, now,
+    });
     return ok({ interest: doc, created: true });
   });
 }
@@ -423,6 +455,12 @@ async function submitMeetCollegeEntry(payload = {}, ctx) {
         });
       }
     }
+
+    // 正式名单也要落学院范围：代报路径下部长可能没交过意向，
+    // 只靠意向 Hook 会漏掉「第一个动作就是提交名单」的学院。
+    await touchCollegeScope(tx, {
+      schoolId: fresh.schoolId, meetId: fresh.meetId, collegeId, now,
+    });
 
     return ok({ entry, collegeId, byAdmin: resolved.byAdmin });
   });

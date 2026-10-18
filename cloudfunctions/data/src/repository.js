@@ -139,6 +139,8 @@ const COLLECTIONS = {
   sportsMeetPublications: COLLECTION.SPORTS_MEET_PUBLICATIONS,
   sportsMeetResultRows: COLLECTION.SPORTS_MEET_RESULT_ROWS,
   sportsMeetQuotaUsage: COLLECTION.SPORTS_MEET_QUOTA_USAGE,
+  sportsMeetStandings: COLLECTION.SPORTS_MEET_STANDINGS,
+  sportsMeetHonors: COLLECTION.SPORTS_MEET_HONORS,
   sportsMeetParticipantClaims: COLLECTION.SPORTS_MEET_PARTICIPANT_CLAIMS,
   // 学院部长授权：学校级、一院一条，不属于任何一届运动会。
   sportsMeetCollegeLeads: COLLECTION.SPORTS_MEET_COLLEGE_LEADS,

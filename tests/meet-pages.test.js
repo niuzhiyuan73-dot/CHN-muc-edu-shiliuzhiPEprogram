@@ -19,7 +19,7 @@ const path = require('node:path');
 const ROOT = path.join(__dirname, '..');
 const MINI = path.join(ROOT, 'miniprogram');
 
-const PAGES = ['meet-list', 'meet-detail', 'meet-setup', 'meet-college', 'meet-schedule', 'meet-score'];
+const PAGES = ['meet-list', 'meet-detail', 'meet-setup', 'meet-college', 'meet-schedule', 'meet-score', 'meet-standing'];
 
 /** 抓住 Page(配置)：页面文件在 require 时调用 Page()。 */
 function loadPage(name) {
@@ -48,7 +48,7 @@ function handlersOf(name) {
   return [...names];
 }
 
-test('运动会六个页面都已注册，且 js/json/wxml/wxss 齐备', () => {
+test('运动会七个页面都已注册，且 js/json/wxml/wxss 齐备', () => {
   const app = JSON.parse(fs.readFileSync(path.join(MINI, 'app.json'), 'utf8'));
   for (const name of PAGES) {
     assert.ok(app.pages.includes(`pages/${name}/${name}`), `${name} 未在 app.json 注册`);
@@ -96,7 +96,8 @@ test('列表页加载、搜索、分页与详情跳转都接到服务层', () =>
 test('详情页与向导页的关键动作存在', () => {
   const detail = loadPage('meet-detail');
   for (const method of ['reload', 'onPublish', 'onDelete', 'onOpenSetup', 'onOpenAtChange', 'onCloseAtChange',
-    'onInterest', 'onWithdrawInterest', 'onReview', 'onOpenCollege', 'onOpenSchedule', 'onOpenScore']) {
+    'onInterest', 'onWithdrawInterest', 'onReview', 'onOpenCollege', 'onOpenSchedule', 'onOpenScore',
+    'onOpenStanding']) {
     assert.equal(typeof detail[method], 'function', `详情页缺少 ${method}`);
   }
   const setup = loadPage('meet-setup');
@@ -121,6 +122,11 @@ test('详情页与向导页的关键动作存在', () => {
     'onOpenBulk', 'onToggleBulkJudge', 'onToggleBulkSession', 'onBulkAllSessions',
     'onBulkDateInput', 'onSubmitBulk']) {
     assert.equal(typeof schedulePage[method], 'function', `赛程编排页缺少 ${method}`);
+  }
+
+  const standingPage = loadPage('meet-standing');
+  for (const method of ['reload', 'onOpenDetail']) {
+    assert.equal(typeof standingPage[method], 'function', `总榜页缺少 ${method}`);
   }
 
   const scorePage = loadPage('meet-score');

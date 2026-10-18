@@ -1,0 +1,66 @@
+<!--
+  学院总榜 + 我的荣誉。分数由发布成绩时累加，本页只读。
+  名次已由服务端按竞赛排名（1,2,2,4）算好，页面不重排。
+-->
+<view class="page-container">
+
+  <view wx:if="{{loading}}" class="loading">正在加载…</view>
+
+  <view wx:elif="{{error}}" class="empty-state">
+    <view class="empty-state-icon">⚠️</view>
+    <view class="empty-state-text">{{error}}</view>
+    <button class="btn btn-primary" bindtap="reload">重试</button>
+  </view>
+
+  <block wx:else>
+    <view class="meet-head">
+      <view class="meet-title">{{meetName || '学院总榜'}}</view>
+      <view class="meet-link" bindtap="onOpenDetail">运动会详情 ›</view>
+    </view>
+
+    <!-- 还没发布正式成绩时明确说「未发布」，不要显示一张空表让人以为加载失败 -->
+    <view wx:if="{{!published && board.length === 0}}" class="empty-state">
+      <view class="empty-state-icon">🏆</view>
+      <view class="empty-state-text">还没有发布正式成绩，总榜暂未生成</view>
+    </view>
+
+    <block wx:else>
+      <view class="meet-section-title">学院总榜</view>
+      <view class="card meet-table">
+        <view class="meet-tr meet-th">
+          <text class="meet-rank">名次</text>
+          <text class="meet-college">学院</text>
+          <text class="meet-total">总分</text>
+          <text class="meet-medal">奖牌</text>
+        </view>
+        <view wx:for="{{board}}" wx:key="collegeId" class="meet-tr">
+          <text class="meet-rank">{{item.rank}}</text>
+          <text class="meet-college">{{item.collegeName}}</text>
+          <text class="meet-total">{{item.total}}</text>
+          <text class="meet-medal">{{item.gold || item.silver || item.bronze ? (item.gold ? '金' + item.gold : '') + (item.silver ? ' 银' + item.silver : '') + (item.bronze ? ' 铜' + item.bronze : '') : '—'}}</text>
+        </view>
+      </view>
+
+      <!-- 我的荣誉：未参赛的人显示空态，不是报错 -->
+      <view class="meet-section-title">我的荣誉</view>
+      <view wx:if="{{myTotal === 0}}" class="empty-state">
+        <view class="empty-state-text">你在这届还没有获得名次</view>
+      </view>
+      <block wx:else>
+        <view class="card meet-summary">
+          <view class="meet-summary-item"><text class="meet-summary-num">{{mySummary.gold}}</text><text class="meet-summary-label">金</text></view>
+          <view class="meet-summary-item"><text class="meet-summary-num">{{mySummary.silver}}</text><text class="meet-summary-label">银</text></view>
+          <view class="meet-summary-item"><text class="meet-summary-num">{{mySummary.bronze}}</text><text class="meet-summary-label">铜</text></view>
+          <view class="meet-summary-item"><text class="meet-summary-num">{{mySummary.points}}</text><text class="meet-summary-label">积分</text></view>
+        </view>
+        <view wx:for="{{myHonors}}" wx:key="eventKey" class="card meet-honor">
+          <view class="meet-honor-main">
+            <view class="meet-honor-name">{{item.name}}{{item.group === 'male' ? ' · 男子' : item.group === 'female' ? ' · 女子' : ''}}</view>
+            <view class="meet-honor-meta">{{item.points}} 分</view>
+          </view>
+          <view class="meet-honor-rank rank-{{item.rank}}">第 {{item.rank}} 名</view>
+        </view>
+      </block>
+    </block>
+  </block>
+</view>

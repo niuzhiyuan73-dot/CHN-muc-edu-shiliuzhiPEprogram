@@ -32,7 +32,8 @@
     "pages/meet-setup/meet-setup",
     "pages/meet-college/meet-college",
     "pages/meet-schedule/meet-schedule",
-    "pages/meet-score/meet-score"
+    "pages/meet-score/meet-score",
+    "pages/meet-standing/meet-standing"
   ],
   "window": {
     "backgroundTextStyle": "dark",
