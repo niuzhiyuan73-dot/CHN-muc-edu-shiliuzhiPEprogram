@@ -406,7 +406,7 @@ function createSchoolHandlers({ claimKey }) {
   }
 
   /**
-   * 当前身份在本范围下的会话。除「能不能审 / 能不能管协会 / 能授哪些权限」外，
+   * 当前身份在本范围下的会话。除「能不能审 / 能不能管协会 / 能不能管本校 / 能授哪些权限」外，
    * 还下发**操作者本人的权限档位**（`permission` / `permissionLabel`）与
    * **能不能管自己的学院**（`canManageCollege`）。
    *
@@ -418,9 +418,14 @@ function createSchoolHandlers({ claimKey }) {
    * 也推不出来。这里把权限档位与派生的 `canManageCollege` 一并下发，让
    * 判定回到 `canSchoolAction(ctx, 'manageCollege', ...)` 这一把尺子，页面照着用。
    *
+   * 【为什么还要 canManageSchool】
+   * 公告发布/下架的门槛是「平台管理员 + 本校校级管理员」。公告页原先自己拿
+   * `isPlatformAdmin` 判，校级管理员被挡在门外；补一个与 `manageSchool` 同源的
+   * 布尔量，页面不再自己拼权限（也顺带覆盖了将来校务设置等同类入口）。
+   *
    * 【只读不下发权限】
-   * 浏览外校时 `account` 为 null、权限档位留空、`canManageCollege` 为假——
-   * 「看得到外校名单」不能被当成「管得了外校」。
+   * 浏览外校时 `account` 为 null、权限档位留空、`canManageCollege` /
+   * `canManageSchool` 为假——「看得到外校名单」不能被当成「管得了外校」。
    *
    * @param {Object} _payload
    * @param {Object} ctx
@@ -451,6 +456,11 @@ function createSchoolHandlers({ claimKey }) {
       // 学院负责人只在本学院上有权；平台管理员跨校也可管。口径与 canSchoolAction 同源。
       canManageCollege: manageable ? canSchoolAction(ctx, 'manageCollege',
         { schoolId: ctx.schoolId, association: ctx.association, collegeId }) : false,
+      // 能不能管**本校**的校级事务（公告发布与下架、校务设置）。平台管理员与校级管理员为真。
+      // 公告页原先自己拿 isPlatformAdmin 判，把校级管理员挡在门外；判定收回服务端这把尺子，
+      // 页面照着布尔量走，避免两处口径分叉。
+      canManageSchool: manageable ? canSchoolAction(ctx, 'manageSchool',
+        { schoolId: ctx.schoolId, association: ctx.association }) : false,
       isPlatformAdmin: isPlatformAdminCtx(ctx),
       canReview: canSchoolAction(ctx, 'reviewMembers', ctx),
       canManageAssociation: canSchoolAction(ctx, 'manageAssociation', ctx),

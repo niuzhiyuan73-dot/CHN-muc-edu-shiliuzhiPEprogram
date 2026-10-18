@@ -138,3 +138,46 @@ test('详情页与向导页的关键动作存在', () => {
     assert.equal(typeof scorePage[method], 'function', `录分页缺少 ${method}`);
   }
 });
+
+
+test('底部操作报错弹出可见提示，选择状态可供 WXML 直接索引', () => {
+  const {updateMeetPage}=require('../miniprogram/utils/meet-ui.js');
+  const previous=global.wx, messages=[];
+  global.wx={showModal:opts=>messages.push(opts.content)};
+  const page={data:{},setData(values){Object.assign(this.data,values);}};
+  try {
+    updateMeetPage(page,{error:'晋级容量不足',bulkJudges:['j1','j2']});
+    assert.deepEqual(messages,['晋级容量不足']);
+    assert.equal(page.data.bulkJudgesSelected.j2,true);
+    updateMeetPage(page,{bulkJudges:['j1']});
+    assert.equal(page.data.bulkJudgesSelected.j2,undefined);
+  } finally {global.wx=previous;}
+});
+
+
+test('录分提交携带代录裁判，并保留其他未提交输入', async () => {
+  const config=loadPage('meet-score'), calls=[];
+  const page={...config,data:{...config.data,activeSessionKey:'session',scoringJudgeId:'judge',drafts:{a:'12.30',b:'13.40'}}};
+  page.setData=values=>Object.assign(page.data,values);
+  page.client=()=>({saveMeetJudgeScore:async p=>calls.push(p),submitMeetJudgeScore:async p=>calls.push(p)});
+  page.openSession=async()=>{page.data.drafts={a:'12.30',b:''};};
+  await page.onSubmitScore({currentTarget:{dataset:{entryKey:'a'}}});
+  assert.equal(calls.length,2);
+  assert.equal(calls[0].judgeId,'judge');
+  assert.equal(calls[1].judgeId,'judge');
+  assert.equal(page.data.drafts.b,'13.40');
+});
+
+test('WXML 选择状态不使用数组方法，标签正确闭合', () => {
+  for(const name of PAGES){
+    const source=fs.readFileSync(path.join(MINI,'pages',name,name+'.wxml'),'utf8').replace(/<!--[\s\S]*?-->/g,'');
+    assert.equal(/\.indexOf\(/.test(source),false,name);
+    const stack=[];
+    for(const tag of source.matchAll(/<\/?[a-zA-Z][\w-]*(?:[^>"']|"[^"]*"|'[^']*')*>/g)){
+      const text=tag[0], type=/^<\/?([\w-]+)/.exec(text)[1];
+      if(text.startsWith('</')) assert.equal(stack.pop(),type,name+': '+text);
+      else if(!text.endsWith('/>'))stack.push(type);
+    }
+    assert.deepEqual(stack,[],name);
+  }
+});

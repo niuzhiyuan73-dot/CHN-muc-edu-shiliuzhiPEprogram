@@ -10,6 +10,7 @@
  */
 
 const meet = require('../../services/meet.js');
+const { updateMeetPage } = require('../../utils/meet-ui.js');
 const session = require('../../services/school-session.js');
 
 const PAGE_SIZE = 20;
@@ -56,6 +57,12 @@ Page({
     return this.reload();
   },
 
+  onHide() { this.needsRefresh = true; },
+
+  onShow() {
+    if (this.needsRefresh) { this.needsRefresh = false; return this.reload(); }
+  },
+
   onUnload() {
     this.unloaded = true;
   },
@@ -66,7 +73,7 @@ Page({
   },
 
   update(values) {
-    if (!this.unloaded) this.setData(values);
+    updateMeetPage(this, values);
   },
 
   client() {

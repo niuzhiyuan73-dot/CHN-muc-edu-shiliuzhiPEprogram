@@ -24,7 +24,8 @@
         <view class="meet-row-tag">{{item.status === 'running' ? '进行中' : '待开始'}}</view>
       </view>
 
-      <view wx:if="{{activeSessionKey === item.sessionKey}}" class="meet-editor">
+      </view>
+      <view wx:if="{{activeSessionKey}}" id="meet-score-editor" class="meet-editor">
         <!-- 同项目多场次：预赛各组、多枪决赛。切场次不必退回任务列表 -->
         <scroll-view wx:if="{{eventSessions.length > 1}}" scroll-x class="meet-rounds">
           <view
@@ -37,21 +38,23 @@
           >{{rnd.displayLabel}}</view>
         </scroll-view>
 
-        <view wx:if="{{!canEnterSession}}" class="meet-warn">你没有被指派到这个项目，不能录入成绩</view>
+        <view class="meet-hint">本场裁判：{{sessionJudgeNames}}</view>
+        <picker wx:if="{{canManage && scoringJudges.length}}" range="{{scoringJudges}}" range-key="name" value="{{scoringJudgeIndex}}" bindchange="onPickScoringJudge"><view class="meet-hint">代录裁判：{{scoringJudges[scoringJudgeIndex].name}}（点击切换）</view></picker>
+        <view wx:if="{{!canEnterSession}}" class="meet-warn">你没有被指派到这个场次，不能录入成绩</view>
         <view wx:if="{{scoreItems.length === 0}}" class="meet-hint">该场次还没有通过审核的参赛记录</view>
         <view wx:for="{{scoreItems}}" wx:for-item="row" wx:key="entryKey" class="meet-score-row">
           <!-- 道次：分道项目才有，裁判按道点名与记录 -->
-          <view class="meet-score-college">{{row.lane ? row.lane + '道 ' : ''}}{{row.collegeId}}</view>
+          <view class="meet-score-college">{{row.lane ? row.lane + '道 ' : ''}}{{row.collegeName || row.collegeId}} · {{row.memberText}}</view>
           <input
             class="meet-score-input"
-            type="digit"
+            type="text"
             placeholder="成绩"
-            value="{{drafts[row.entryKey] || (row.myScore ? row.myScore.text : '')}}"
+            value="{{drafts[row.entryKey]}}"
             data-entry-key="{{row.entryKey}}"
             bindinput="onScoreInput"
           />
           <view class="meet-score-state">{{row.myScore ? (row.myScore.state === 'submitted' ? '已提交' : '草稿') : '未录'}}</view>
-          <view class="meet-score-submit" data-entry-key="{{row.entryKey}}" bindtap="onSubmitScore">提交</view>
+          <view wx:if="{{canEnterSession}}" class="meet-score-submit" data-entry-key="{{row.entryKey}}" bindtap="onSubmitScore">提交</view>
         </view>
         <view
           wx:if="{{sessionIndex >= 0 && sessionIndex < eventSessions.length - 1}}"
@@ -59,11 +62,12 @@
           bindtap="onNextSession"
         >录完这场，去下一场 ›</view>
       </view>
-    </view>
 
     <!-- 管理员：汇总与发布 -->
     <block wx:if="{{canManage}}">
       <view class="meet-section-title">汇总与发布</view>
+      <button class="btn btn-primary" bindtap="onPublishAll" disabled="{{busy}}">发布全部已完成成绩</button>
+      <view class="meet-hint">逐项目发布；未完成项目会列出原因，已发布结果不会重复发布。</view>
       <view wx:for="{{events}}" wx:key="eventKey" class="card meet-row">
         <view class="meet-row-head" data-event-key="{{item.eventKey}}" bindtap="onOpenEvent">
           <view class="meet-row-main">
@@ -107,7 +111,9 @@
           </block>
 
           <!-- 数值型项目：预赛抽签 / 晋级 / 逐场次发布 -->
-          <block wx:else>
+          <block wx:if="{{item.scoreType !== 'versus'}}">
+            <view wx:for="{{item.sessions}}" wx:for-item="slot" wx:key="sessionKey" data-session-key="{{slot.sessionKey}}" bindtap="onOpenSession" class="meet-hint">代录成绩：{{slot.roundLabel}} {{slot.index}} ›</view>
+
             <block wx:if="{{item.rounds === 'heat_final'}}">
               <view class="meet-hint">
                 <block wx:if="{{item.heatDrawn}}">
@@ -151,14 +157,14 @@
               </view>
               <view wx:for="{{preview.items}}" wx:for-item="row" wx:key="entryKey" class="meet-preview-row">
                 <view class="meet-preview-college" data-entry-key="{{row.entryKey}}" bindtap="onToggleVoid">
-                  {{row.lane ? row.lane + '道 ' : ''}}{{row.collegeId}}{{row.text === '未收齐' ? '（未收齐）' : ''}}
+                  {{row.lane ? row.lane + '道 ' : ''}}{{row.collegeName || row.collegeId}} · {{row.memberText}}{{row.text === '未收齐' ? '（未收齐）' : ''}}
                 </view>
                 <view class="meet-preview-value">{{row.text}}</view>
-                <view class="meet-preview-void {{voidKeys.indexOf(row.entryKey) >= 0 ? 'is-void' : ''}}">
-                  {{voidKeys.indexOf(row.entryKey) >= 0 ? '记无成绩' : '标无成绩'}}
+                <view data-entry-key="{{row.entryKey}}" bindtap="onToggleVoid" class="meet-preview-void {{voidKeysSelected[row.entryKey] ? 'is-void' : ''}}">
+                  {{voidKeysSelected[row.entryKey] ? '记无成绩' : '标无成绩'}}
                 </view>
               </view>
-              <button class="btn btn-primary" bindtap="onPublish" disabled="{{busy}}">发布本场成绩</button>
+              <button class="btn btn-primary" bindtap="onPublish" disabled="{{busy}}">{{item.aggregated ? '发布本项目全部成绩' : '发布本场成绩'}}</button>
             </block>
           </block>
         </view>

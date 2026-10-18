@@ -223,6 +223,8 @@ function forMeet(input) {
     getMeetResultPreview: payload => request('getMeetResultPreview', payload),
     publishMeetResults: payload => request('publishMeetResults', payload),
     getPublishedResults: payload => request('getPublishedResults', payload),
+    listMeetPublishedResults: payload => request('listMeetPublishedResults', payload),
+    finishSportsMeet: payload => request('finishSportsMeet', payload),
     // 预赛晋级与赛制名次（B8a）
     drawMeetHeats: payload => request('drawMeetHeats', payload),
     advanceMeetEvent: payload => request('advanceMeetEvent', payload),

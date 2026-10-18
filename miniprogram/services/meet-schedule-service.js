@@ -28,12 +28,14 @@ const { MEET_SCORE_TYPE, getTemplate, HEAT_MODE } = require('./meet-event-catalo
 const { buildMeetContext, freshMeetContext } = require('./meet-context.js');
 const { meetReadable, canManageMeet } = require('./meet-permission.js');
 
+const { touchEvent, liveMeet, unchanged } = require('./meet-consistency.js');
+
 const ok = (data) => ({ ok: true, data });
 const refused = (message, extra = {}) => ({ ok: false, message, ...extra });
 
 const ROUND_LABEL = Object.freeze({ final: '决赛', heat: '预赛', rr: '循环赛' });
 /** 赛制轮次用 `r1`、`r2`… 表示；`rf` 不单独存在，最后一轮仍记作 `r<总轮数>`。 */
-const BRACKET_ROUND = /^r[1-9]$/;
+const BRACKET_ROUND = /^[rg][1-9]$/;
 const SESSION_STATUS = Object.freeze({ SCHEDULED: 'scheduled', RUNNING: 'running', FINISHED: 'finished' });
 /** 成绩状态：与 meet-score-service 的 SCORE_STATE.SUBMITTED 同值（这里不反向依赖那个模块）。 */
 const SCORE_SUBMITTED = 'submitted';
@@ -134,6 +136,7 @@ async function saveMeetSession(payload = {}, ctx) {
 
   return ctx.repo.transaction(async (tx) => {
     const fresh = await freshMeetContext(tx, ctx);
+    if (!liveMeet(fresh)) return refused('运动会不存在或已删除');
     if (!canManageMeet(fresh)) return refused('只有校级管理员及以上可以编排赛程');
     const meet = await tx.sportsMeets.getById(fresh.meetId);
     if (!isAliveMeet(meet) || meet.schoolId !== fresh.schoolId) return refused('运动会不存在或已删除');
@@ -165,6 +168,7 @@ async function saveMeetSession(payload = {}, ctx) {
       createdAt: current ? (current.createdAt || now) : now,
       updatedAt: now,
     };
+    await touchEvent(tx, eventKey);
     await tx.sportsMeetSessions.set(key, doc);
     return ok({ session: sessionSummary(doc) });
   });
@@ -228,14 +232,17 @@ async function publishMeetSchedule(payload = {}, ctx) {
 
   return ctx.repo.transaction(async (tx) => {
     const fresh = await freshMeetContext(tx, ctx);
+    if (!liveMeet(fresh)) return refused('运动会不存在或已删除');
     if (!canManageMeet(fresh)) return refused('只有校级管理员及以上可以发布赛程');
     const meet = await tx.sportsMeets.getById(fresh.meetId);
     if (!isAliveMeet(meet) || meet.schoolId !== fresh.schoolId) return refused('运动会不存在或已删除');
     if (meet.status === MEET_STATUS.DRAFT) return refused('请先发布报名，再发布赛程');
+    if (meet.status === MEET_STATUS.FINISHED) return refused('运动会已结束，不能重新发布赛程');
+    if (!await unchanged(tx, 'sportsMeetEvents', events) || !await unchanged(tx, 'sportsMeetSessions', sessions)) return refused('赛程已变化，请刷新后重试');
 
     const now = toIso(fresh.now);
     const next = {
-      ...meet, status: MEET_STATUS.SCHEDULED, schedulePublishedAt: now, updatedAt: now,
+      ...meet, status: meet.status === MEET_STATUS.RUNNING ? MEET_STATUS.RUNNING : MEET_STATUS.SCHEDULED, schedulePublishedAt: now, updatedAt: now,
       version: (meet.version || 1) + 1,
     };
     await tx.sportsMeets.set(fresh.meetId, next);
@@ -249,6 +256,7 @@ async function assignMeetJudge(payload = {}, ctx) {
 
   return ctx.repo.transaction(async (tx) => {
     const fresh = await freshMeetContext(tx, ctx);
+    if (!liveMeet(fresh)) return refused('运动会不存在或已删除');
     if (!canManageMeet(fresh)) return refused('只有校级管理员及以上可以指派裁判');
 
     const sessionKey = String(payload.sessionKey || '').trim();
@@ -260,7 +268,7 @@ async function assignMeetJudge(payload = {}, ctx) {
     const member = await tx.schoolMembers.getById(schoolMemberKey(judgeId, fresh.schoolId));
     const judge = await tx.users.getById(judgeId);
     if (!member || member.status !== SCHOOL_MEMBER_STATUS.ACTIVE
-      || !judge || judge.platformStatus !== 'active') {
+      || !judge || judge.platformStatus !== 'active' || judge.primarySchoolId !== fresh.schoolId) {
       return refused('只能指派本校在册且账号有效的成员担任裁判');
     }
 
@@ -280,6 +288,7 @@ async function assignMeetJudge(payload = {}, ctx) {
       assignedAt: current ? (current.assignedAt || now) : now,
       updatedAt: now,
     };
+    await touchEvent(tx, session.eventKey);
     await tx.sportsMeetJudgeAssignments.set(key, doc);
     // 在场次文档上维护**裁判名单**（不是只维护一个计数）。
     // 计数会漂移：两个人同时指派时都读到 0、都写 1，实际却有两个裁判；
@@ -362,7 +371,7 @@ async function assignMeetJudges(payload = {}, ctx) {
   }
 
   // 每批事务的场次上限：场次 * (人数 + 1) <= 写预算
-  const perBatch = Math.max(1, Math.floor(JUDGE_WRITE_BUDGET / (valid.length + 1)));
+  const perBatch = Math.max(1, Math.floor(JUDGE_WRITE_BUDGET / (valid.length + 2)));
   let created = 0;
   let existed = 0;
   const done = [];
@@ -370,8 +379,19 @@ async function assignMeetJudges(payload = {}, ctx) {
     const batch = targets.slice(offset, offset + perBatch);
     const result = await ctx.repo.transaction(async (tx) => {
       const fresh = await freshMeetContext(tx, ctx);
+    if (!liveMeet(fresh)) return refused('运动会不存在或已删除');
       if (!canManageMeet(fresh)) return refused('只有校级管理员及以上可以指派裁判');
       const now = toIso(fresh.now);
+      // 必须在任何写入前完成整批校验；返回 refused 不会回滚之前已经写入的数据。
+      for (const judgeId of valid) {
+        const member = await tx.schoolMembers.getById(schoolMemberKey(judgeId, fresh.schoolId));
+        const user = await tx.users.getById(judgeId);
+        if (!member || member.status !== 'active' || !user || user.platformStatus !== 'active' || user.primarySchoolId !== fresh.schoolId) return refused('裁判资格已变化，请刷新后重试');
+      }
+      for (const target of batch) {
+        const current = await tx.sportsMeetSessions.getById(target._id);
+        if (!current || current.meetId !== fresh.meetId || current.schoolId !== fresh.schoolId) return refused('场次已变化，请刷新后重试');
+      }
       let batchCreated = 0;
       let batchExisted = 0;
       for (const session of batch) {
@@ -401,13 +421,14 @@ async function assignMeetJudges(payload = {}, ctx) {
           if (!ids.includes(judgeId)) ids.push(judgeId);
           batchCreated += 1;
         }
+        await touchEvent(tx, current.eventKey);
         await tx.sportsMeetSessions.set(session._id, {
           ...current, judgeIds: ids, judgeCount: ids.length, updatedAt: now,
         });
       }
       return ok({ created: batchCreated, existed: batchExisted });
     });
-    if (!result.ok) return result;
+    if (!result.ok) return refused(`已完成 ${done.length} 个场次；${result.message}。刷新后可重试，已完成指派不会重复。`, { completedSessions: done });
     created += result.data.created;
     existed += result.data.existed;
     for (const session of batch) done.push(session._id);
@@ -507,6 +528,7 @@ async function removeMeetJudge(payload = {}, ctx) {
 
   return ctx.repo.transaction(async (tx) => {
     const fresh = await freshMeetContext(tx, ctx);
+    if (!liveMeet(fresh)) return refused('运动会不存在或已删除');
     if (!canManageMeet(fresh)) return refused('只有校级管理员及以上可以撤销指派');
 
     const sessionKey = String(payload.sessionKey || '').trim();
@@ -527,6 +549,7 @@ async function removeMeetJudge(payload = {}, ctx) {
     });
     const session = await tx.sportsMeetSessions.getById(sessionKey);
     if (session) {
+      await touchEvent(tx, session.eventKey);
       const ids = (Array.isArray(session.judgeIds) ? session.judgeIds : [])
         .filter((id) => id !== judgeId);
       await tx.sportsMeetSessions.set(sessionKey, {
@@ -546,11 +569,13 @@ async function startMeetEvent(payload = {}, ctx) {
 
   return ctx.repo.transaction(async (tx) => {
     const fresh = await freshMeetContext(tx, ctx);
+    if (!liveMeet(fresh)) return refused('运动会不存在或已删除');
     if (!canManageMeet(fresh)) return refused('只有校级管理员及以上可以开始比赛');
 
     const sessionKey = String(payload.sessionKey || '').trim();
     const session = await tx.sportsMeetSessions.getById(sessionKey);
     if (!session || session.meetId !== fresh.meetId) return refused('场次不存在或不属于本届运动会');
+    if (fresh.meet.status === MEET_STATUS.FINISHED) return refused('运动会已结束，不能重新开赛');
     if (!session.startAt || !session.venue) return refused('该场次还没配齐时间与场地');
 
     // 判「有没有裁判」只能点读场次文档——事务内不能查指派表。
@@ -563,6 +588,7 @@ async function startMeetEvent(payload = {}, ctx) {
     await tx.sportsMeetSessions.set(sessionKey, {
       ...session, status: SESSION_STATUS.RUNNING, startedAt: now, updatedAt: now,
     });
+    await touchEvent(tx, session.eventKey);
     const meet = await tx.sportsMeets.getById(fresh.meetId);
     if (meet && meet.status !== MEET_STATUS.RUNNING) {
       await tx.sportsMeets.set(fresh.meetId, {
@@ -594,6 +620,17 @@ async function getMeetSchedule(payload = {}, ctx) {
     list.push(row.judgeId);
     judgesOf.set(row.sessionKey, list);
   }
+  // 裁判姓名：场次文档上只有 judgeIds 名单（要落库、开赛要判长度），姓名在这里
+  // 解析一次带上页面。页面若直接显示 ID，管理员就看不到自己派了谁——用户反馈。
+  const judgeNames = new Map();
+  const allJudgeIds = new Set();
+  for (const list of judgesOf.values()) for (const judgeId of list) allJudgeIds.add(judgeId);
+  for (const judgeId of allJudgeIds) {
+    const user = await ctx.repo.users.getById(judgeId);
+    judgeNames.set(judgeId, (user && (user.realName || user.nickName)) || judgeId);
+  }
+  const judgesSummary = (sessionKey) => (judgesOf.get(sessionKey) || [])
+    .map((judgeId) => ({ judgeId, name: judgeNames.get(judgeId) || judgeId }));
 
   const items = events.map((event) => {
     const own = sessions.filter((doc) => doc.eventKey === event._id);
@@ -626,6 +663,8 @@ async function getMeetSchedule(payload = {}, ctx) {
       sessions: own.map((doc) => ({
         ...sessionSummary(doc),
         judgeIds: judgesOf.get(doc._id) || [],
+        // 已选裁判（姓名版）：撤销按钮按 judgeId 指回来，名单长度供页面计数
+        judges: judgesSummary(doc._id),
         judgeCount: (judgesOf.get(doc._id) || []).length,
         // D55：不做冲突检测，只把「同时间同裁判」标出来提示
         warning: (judgesOf.get(doc._id) || []).length === 0 ? '未指派裁判' : '',
@@ -683,18 +722,21 @@ async function listMeetJudgeCandidates(payload = {}, ctx) {
   const members = await ctx.repo.schoolMembers.listBySchool(ctx.schoolId);
   const active = members.filter((doc) => doc.status === SCHOOL_MEMBER_STATUS.ACTIVE);
   const items = [];
+  const users = new Map();
+  for (let i = 0; i < active.length; i += 20) {
+    await Promise.all(active.slice(i, i + 20).map(async member => users.set(member.userId, await ctx.repo.users.getById(member.userId))));
+  }
+  const colleges = new Map((await ctx.repo.colleges.listBySchool(ctx.schoolId)).map(row => [row.collegeId, row]));
   for (const member of active) {
-    const user = await ctx.repo.users.getById(member.userId);
-    if (!user || user.platformStatus !== 'active') continue;
+    const user = users.get(member.userId);
+    if (!user || user.platformStatus !== 'active' || user.primarySchoolId !== ctx.schoolId) continue;
     // 账号上的姓名是 nickName / realName，不是 name。只读 name 会让所有人
     // 都显示「未命名」——管理员根本无从挑选。
     const realName = user.realName || '';
     const nickName = user.nickName || '';
     const name = realName || nickName || '未命名';
     const collegeId = member.collegeId || '';
-    const college = collegeId ? await ctx.repo.colleges.getById(
-      require('../utils/school.js').collegeKey(ctx.schoolId, collegeId),
-    ) : null;
+    const college = colleges.get(collegeId);
     const haystack = `${name}${realName}${nickName}${collegeId}${(college && college.name) || ''}`;
     if (keyword && !haystack.includes(keyword)) continue;
     items.push({
@@ -704,7 +746,8 @@ async function listMeetJudgeCandidates(payload = {}, ctx) {
   }
   items.sort((a, b) => String(a.collegeName).localeCompare(String(b.collegeName))
     || String(a.name).localeCompare(String(b.name)));
-  return ok({ items: items.slice(0, 100), total: items.length });
+  const offset = Math.max(0, Math.trunc(Number(payload.offset) || 0));
+  return ok({ items: items.slice(offset, offset + 100), total: items.length, hasMore: offset + 100 < items.length });
 }
 
 module.exports = {

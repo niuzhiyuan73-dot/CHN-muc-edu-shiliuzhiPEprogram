@@ -28,7 +28,18 @@ const { meetRequestScope } = require('../utils/meet-scope.js');
  */
 function forScope(scope) {
   const target = meetRequestScope(scope);
-  return identity.isMockNow() ? loadSchoolMock().forMeet(target) : cloud.forMeet(target);
+  const client = identity.isMockNow() ? loadSchoolMock().forMeet(target) : cloud.forMeet(target);
+  // 运动会页面统一通过 try/catch 呈现失败；通用云端写守卫返回 ok:false 时不能当作成功。
+  return Object.freeze(Object.fromEntries(Object.entries(client).map(([name, method]) => [name, async (...args) => {
+    const result = await method(...args);
+    if (result && result.ok === false) {
+      const error = new Error(result.message || result.firstError || '操作失败，请稍后重试');
+      error.details = result;
+      throw error;
+    }
+    return result;
+  }])));
+
 }
 
 module.exports = { forScope };

@@ -259,7 +259,7 @@ test('N4：只能撤换已提交成绩的裁判', async () => {
     && doc.sessionKey === sessionKey && doc.state === 'submitted'), '已提交的分数应保留');
 });
 
-test('录分入口：同项目任一场次被指派即可录（批量指派后的常态）', async () => {
+test('录分入口：同项目可查看，仅本场指派后可录分', async () => {
   const world = await makeWorld();
   // 只派第 1 个预赛组
   await schedule.assignMeetJudges(
@@ -271,7 +271,7 @@ test('录分入口：同项目任一场次被指派即可录（批量指派后�
 
   const view2 = await score.getMeetSessionScores(
     { sessionKey: world.heats[1] }, await ctxOf(world.repo, 'u_j1', world.meetId));
-  assert.equal(view2.data.canEnter, true, '同项目其他场次被指派也应能录');
+  assert.equal(view2.data.canEnter, false, '查看同项目不等于获得本场录分权限');
 
   // 完全没被指派的人仍不能录
   const view3 = await score.getMeetSessionScores(

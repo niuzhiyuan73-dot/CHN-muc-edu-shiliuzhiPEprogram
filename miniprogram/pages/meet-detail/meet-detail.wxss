@@ -5,7 +5,10 @@
 .meet-status-running { background: #e8f5ec; color: #1f7a3d; }
 .meet-meta { margin-top: 8rpx; font-size: 24rpx; color: var(--color-text-secondary, #666); }
 .meet-section-title { margin: 24rpx 0 12rpx; font-size: 26rpx; font-weight: 600; color: var(--color-text-secondary, #555); }
+.meet-section-hint { margin: -6rpx 0 12rpx; font-size: 22rpx; color: #999; }
 .meet-event { display: flex; justify-content: space-between; align-items: center; padding: 20rpx 24rpx; margin-bottom: 12rpx; }
+/* 可点项目：给一个按压反馈，否则用户不知道这一行能点（WXSS 不支持 :active，用 hover-class） */
+.meet-event-pressed { background: #f7f7f7; }
 .meet-event-name { font-size: 28rpx; font-weight: 500; }
 .meet-event-tags { margin-top: 8rpx; display: flex; gap: 8rpx; flex-wrap: wrap; }
 .meet-tag { padding: 2rpx 12rpx; border-radius: 8rpx; font-size: 20rpx; background: var(--color-bg-subtle, #f5f6f8); color: #666; }
@@ -28,3 +31,32 @@
 .meet-review.is-ok { background: #e8f5ec; color: #1f7a3d; }
 .meet-review.is-no { background: #fdece9; color: #b23a2e; }
 .meet-college-link { margin: 20rpx 0 4rpx; text-align: center; font-size: 24rpx; color: #b23a2e; }
+
+/* 「已出成绩」标记：只给已发布的项目打，充当可点提示 */
+.meet-tag.is-result { background: #fdece9; color: #b23a2e; }
+
+/* 成绩弹层：一次只看一个项目（原先全部平铺在页面底部，项目一多要滚很久） */
+.meet-sheet-mask {
+  position: fixed; left: 0; right: 0; top: 0; bottom: 0;
+  z-index: 100; display: flex; align-items: flex-end;
+  background: rgba(0, 0, 0, 0.45);
+}
+.meet-sheet {
+  width: 100%; display: flex; flex-direction: column;
+  background: #fff; border-radius: 24rpx 24rpx 0 0;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.meet-sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 24rpx 24rpx 8rpx; }
+.meet-sheet-title { flex: 1; min-width: 0; font-size: 32rpx; font-weight: 600; }
+.meet-sheet-close { padding: 6rpx 0 6rpx 20rpx; font-size: 24rpx; color: #888; }
+/* scroll-view 必须有确定高度才会滚动（弹性布局里的 flex:1 在部分基础库不生效） */
+.meet-sheet-body { height: 62vh; padding: 0 24rpx 24rpx; box-sizing: border-box; }
+.meet-sheet-round { padding-top: 16rpx; }
+.meet-sheet-round-title { font-size: 24rpx; font-weight: 500; color: #b23a2e; }
+.meet-sheet-row { display: flex; justify-content: space-between; align-items: flex-start; padding: 16rpx 0; border-bottom: 1rpx solid #f2f2f2; }
+.meet-sheet-row-main { flex: 1; min-width: 0; padding-right: 16rpx; }
+.meet-sheet-row-name { font-size: 26rpx; color: #222; }
+.meet-sheet-row-meta { margin-top: 4rpx; font-size: 22rpx; color: #999; word-break: break-all; }
+.meet-sheet-row-side { flex-shrink: 0; text-align: right; }
+.meet-sheet-row-text { font-size: 28rpx; font-weight: 600; color: #222; }
+.meet-sheet-row-points { margin-top: 4rpx; font-size: 22rpx; color: #888; }

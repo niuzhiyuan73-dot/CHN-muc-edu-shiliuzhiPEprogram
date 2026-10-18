@@ -23,6 +23,7 @@
  */
 
 const meet = require('../../services/meet.js');
+const { updateMeetPage } = require('../../utils/meet-ui.js');
 const session = require('../../services/school-session.js');
 const { meetEventKey } = require('../../utils/meet-scope.js');
 
@@ -105,7 +106,7 @@ Page({
   },
 
   update(values) {
-    if (!this.unloaded) this.setData(values);
+    updateMeetPage(this, values);
   },
 
   dateAfter(days) {

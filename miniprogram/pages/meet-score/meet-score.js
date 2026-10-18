@@ -20,6 +20,7 @@
  */
 
 const meet = require('../../services/meet.js');
+const { updateMeetPage } = require('../../utils/meet-ui.js');
 const session = require('../../services/school-session.js');
 
 /** 晋级口径的中文名（只用于显示，判定一律在服务端） */
@@ -44,6 +45,9 @@ Page({
     activeSessionKey: '',
     scoreItems: [],
     drafts: {},
+    scoringJudges: [],
+    scoringJudgeIndex: 0,
+    scoringJudgeId: '',
     // 同项目的全部场次（B9c：录分时在组/枪之间切换）
     eventSessions: [],
     sessionIndex: -1,
@@ -66,12 +70,18 @@ Page({
     return this.reload();
   },
 
+  onHide() { this.needsRefresh = true; },
+
+  onShow() {
+    if (this.needsRefresh) { this.needsRefresh = false; return this.reload(); }
+  },
+
   onUnload() {
     this.unloaded = true;
   },
 
   update(values) {
-    if (!this.unloaded) this.setData(values);
+    updateMeetPage(this, values);
   },
 
   client() {
@@ -156,22 +166,33 @@ Page({
   // ---------- 裁判：录分 ----------
 
   async onOpenSession(event) {
+    if (this.data.busy) return;
     const sessionKey = event.currentTarget.dataset.sessionKey;
     return this.openSession(sessionKey);
   },
 
-  async openSession(sessionKey) {
+  async openSession(sessionKey, judgeId = '') {
     if (!sessionKey) return undefined;
     this.update({ busy: true, error: '', notice: '', activeEventKey: '', preview: null });
     try {
-      const result = await this.client().getMeetSessionScores({ sessionKey });
+      let result = await this.client().getMeetSessionScores({ sessionKey, judgeId });
+      const judges = (result.session && result.session.judges) || [];
+      if (this.data.canManage && !judgeId && judges.length) {
+        judgeId = judges[0].judgeId;
+        result = await this.client().getMeetSessionScores({ sessionKey, judgeId });
+      }
       this.update({
         busy: false,
         activeSessionKey: sessionKey,
+        scoringJudges: judges,
+        scoringJudgeId: judgeId,
+        scoringJudgeIndex: Math.max(0, judges.findIndex(row => row.judgeId === judgeId)),
         scoreItems: result.items,
         canEnterSession: Boolean(result.canEnter),
-        drafts: {},
+        drafts: Object.fromEntries(result.items.map(row => [row.entryKey, row.myScore ? row.myScore.text : ''])),
+        sessionJudgeNames: ((result.session && result.session.judges) || []).map(row => row.name).join('、') || '未指派',
       });
+      if (typeof wx !== 'undefined' && wx.pageScrollTo) wx.pageScrollTo({selector: '#meet-score-editor', duration: 200});
       return this.loadEventSessions(sessionKey, result.session && result.session.eventKey);
     } catch (err) {
       this.update({ busy: false, error: (err && err.message) || '任务加载失败' });
@@ -206,6 +227,7 @@ Page({
   },
 
   onPickScoreSession(event) {
+    if (this.data.busy) return;
     const sessionKey = event.currentTarget.dataset.sessionKey;
     if (!sessionKey || sessionKey === this.data.activeSessionKey) return undefined;
     return this.openSession(sessionKey);
@@ -213,9 +235,15 @@ Page({
 
   /** 下一场：录完这场直接过去 */
   onNextSession() {
+    if (this.data.busy) return;
     const next = this.data.eventSessions[this.data.sessionIndex + 1];
     if (!next) return undefined;
     return this.openSession(next.sessionKey);
+  },
+
+  onPickScoringJudge(event) {
+    const row = this.data.scoringJudges[Number(event.detail.value)];
+    if (row && !this.data.busy) return this.openSession(this.data.activeSessionKey, row.judgeId);
   },
 
   onScoreInput(event) {
@@ -236,10 +264,14 @@ Page({
     this.update({ busy: true, error: '', notice: '' });
     try {
       const sessionKey = this.data.activeSessionKey;
-      await this.client().saveMeetJudgeScore({ sessionKey, entryKey, rawText });
-      await this.client().submitMeetJudgeScore({ sessionKey, entryKey });
+      const judgeId = this.data.scoringJudgeId;
+      await this.client().saveMeetJudgeScore({ sessionKey, entryKey, judgeId, rawText, allowResubmit: true });
+      await this.client().submitMeetJudgeScore({ sessionKey, entryKey, judgeId });
       this.update({ busy: false, notice: '已提交' });
-      return this.onOpenSession({ currentTarget: { dataset: { sessionKey } } });
+      const drafts = { ...this.data.drafts };
+      await this.openSession(sessionKey, judgeId);
+      if (this.data.activeSessionKey === sessionKey) this.update({ drafts });
+      return undefined;
     } catch (err) {
       this.update({ busy: false, error: (err && err.message) || '提交失败' });
       return undefined;
@@ -337,6 +369,39 @@ Page({
     }
   },
 
+  async onPublishAll() {
+    if (this.data.busy) return;
+    this.update({ busy: true, error: '', notice: '' });
+    const published = [];
+    const failed = [];
+    try {
+      // 每个项目单独调用，避免整届评分放在单次云函数内超时或超过事务预算。
+      const existing = await this.client().listMeetPublishedResults({ metadataOnly: true });
+      const done = new Set((existing.items || []).flatMap(row => row.rounds.map(round => `${row.eventKey}|${round.sessionKey}`)));
+      for (const item of this.data.events) {
+        const targets = item.scoreType === 'versus' || item.rounds === 'final'
+          ? [{ sessionKey: '', roundLabel: '全部' }]
+          : item.sessions;
+        if (!targets.length) failed.push(`${item.name}：还没有场次`);
+        for (const target of targets) {
+          if (target.sessionKey ? done.has(`${item.eventKey}|${target.sessionKey}`)
+            : (existing.items || []).some(row => row.eventKey === item.eventKey && row.rounds.some(round => round.official))) continue;
+          try {
+            await this.client().publishMeetResults({ eventKey: item.eventKey, sessionKey: target.sessionKey });
+            published.push(item.name);
+          } catch (err) {
+            failed.push(`${item.name} ${target.roundLabel || ''}：${err.message || '发布失败'}`);
+          }
+        }
+      }
+      this.update({ notice: `已发布 ${published.length} 份成绩`, error: failed.length ? `已发布 ${published.length} 份；以下未发布：\n${failed.join('\n')}` : '' });
+    } catch (err) {
+      this.update({ error: err.message || '读取发布状态失败' });
+    } finally {
+      this.update({ busy: false });
+    }
+  },
+
   // ---------- 管理员：晋级（分组/签表在赛程编排页完成） ----------
 
   async onAdvance(event) {
@@ -360,12 +425,12 @@ Page({
     if (!sessionKey || !entryKey) return;
     this.update({ busy: true, error: '', notice: '' });
     try {
-      await this.client().setMeetMatchWinner({ sessionKey, winnerEntryKey: entryKey });
+      const changed = await this.client().setMeetMatchWinner({ sessionKey, winnerEntryKey: entryKey });
       const bracket = await this.client().getMeetBracket({
         eventKey: this.data.activeEventKey,
       });
       await this.refreshEvents();
-      this.update({ busy: false, bracket: this.decorateBracket(bracket) });
+      this.update({ busy: false, bracket: this.decorateBracket(bracket), notice: changed.expanded ? '同分出线已扩充签表，请到赛程页安排新增场次的时间、场地和裁判' : '胜负已记录' });
     } catch (err) {
       this.update({ busy: false, error: (err && err.message) || '判定失败' });
     }

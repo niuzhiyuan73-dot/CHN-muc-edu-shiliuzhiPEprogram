@@ -232,7 +232,7 @@ test('无成绩：不参与名次、学院 0 分，绝不会按 0 秒排第一�
 
   const result = await score.publishMeetResults(
     { eventKey: sprint, voidEntryKeys: [c] }, world.admin);
-  assert.equal(result.ok, false, 'c03 一条分数都没有，应被判为「没收齐」而不是静默当无成绩');
+  assert.equal(result.ok, true, '管理员明确标无成绩后，无需伪造一条数值才能发布');
 
   // 给 c03 录一个无效尝试：先正常录，再标无成绩
   for (const judgeId of ['u_j1', 'u_j2', 'u_j3']) {
@@ -362,4 +362,60 @@ test('已提交的分数不能悄悄覆盖（需显式重提）', async () => {
     { sessionKey, entryKey: a, judgeId: 'u_j1', rawText: '12.20' }, world.admin);
   assert.equal(overwrite.ok, false);
   assert.match(overwrite.message, /已提交/);
+});
+
+
+test('裁判保存后被停用，使用旧上下文提交仍被拒绝', async () => {
+  const world = await makeWorld();
+  const judge = await ctxOf(world.repo,'u_j1',world.meetId);
+  const sessionKey = sessionOf(world.meetId,world.sprint);
+  const entryKey = await entryOf(world,world.sprint,'c01');
+  assert.equal((await score.saveMeetJudgeScore({sessionKey,entryKey,rawText:'12.30'},judge)).ok,true);
+  const user = await world.repo.users.getById('u_j1');
+  await world.repo.users.set('u_j1',{...user,platformStatus:'inactive'});
+  assert.equal((await score.submitMeetJudgeScore({sessionKey,entryKey},judge)).ok,false);
+});
+
+test('普通成员可看发布成绩，公开名单不回退显示真实姓名', async () => {
+  const world = await makeWorld();
+  const sessionKey = sessionOf(world.meetId,world.sprint);
+  for (const college of COL) {
+    const entryKey = await entryOf(world,world.sprint,college);
+    for (const judgeId of ['u_j1','u_j2','u_j3']) await giveScore(world,sessionKey,entryKey,judgeId,'12.30');
+  }
+  const user = await world.repo.users.getById('u_a');
+  await world.repo.users.set('u_a',{...user,realName:'不能公开的真名',nickName:''});
+  assert.equal((await score.publishMeetResults({eventKey:world.sprint},world.admin)).ok,true);
+  const member = await ctxOf(world.repo,'u_b',world.meetId);
+  const listed = await score.listMeetPublishedResults({},member);
+  assert.equal(listed.ok,true,listed.message);
+  assert.equal(listed.data.items.length,1);
+  assert.equal(JSON.stringify(listed).includes('不能公开的真名'),false);
+  const privateView = await score.getMeetSessionScores({sessionKey},member);
+  assert.equal(privateView.data.items.length,0);
+});
+
+
+test('发布时检测事务前快照过期，不写出混合版本成绩', async () => {
+  const world=await makeWorld();
+  const sessionKey=sessionOf(world.meetId,world.sprint);
+  for(const college of COL){
+    const entryKey=await entryOf(world,world.sprint,college);
+    for(const judgeId of ['u_j1','u_j2','u_j3'])await giveScore(world,sessionKey,entryKey,judgeId,'12.30');
+  }
+  const transaction=world.repo.transaction;
+  let intercepted=false;
+  world.repo.transaction=async fn=>{
+    if(!intercepted){
+      intercepted=true;
+      const event=await world.repo.sportsMeetEvents.getById(world.sprint);
+      await world.repo.sportsMeetEvents.set(world.sprint,{...event,revision:Number(event.revision||0)+1});
+    }
+    return transaction(fn);
+  };
+  const result=await score.publishMeetResults({eventKey:world.sprint},world.admin);
+  assert.equal(result.ok,false);
+  assert.match(result.message,/变化/);
+  assert.equal((await world.repo.sportsMeetPublications.list()).length,0);
+  assert.equal((await world.repo.sportsMeetStandings.list()).length,0);
 });

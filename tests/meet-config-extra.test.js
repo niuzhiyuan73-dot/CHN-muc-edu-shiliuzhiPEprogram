@@ -274,3 +274,30 @@ test('小组+淘汰：小组赛打完自动出线，淘汰赛打完自动出名�
   // 团体项目 ×2：18 / 14 / 12 / 12
   assert.deepEqual(rows.map((row) => row.points).sort((a, b) => b - a), [18, 14, 12, 12]);
 });
+
+
+test('小组边界同分全部出线时扩充淘汰签表，六队不会被截成两队', async () => {
+  const world = await makeWorld();
+  const {repo,meetId,admin}=world;
+  const eventKey=meetEventKey(meetId,'tug-of-war','mixed');
+  await meetService.configureMeetEvent({templateId:'tug-of-war',group:'mixed',format:'group_knockout',groups:{count:2,advancePerGroup:1}},admin);
+  const event=await repo.sportsMeetEvents.getById(eventKey);
+  await repo.sportsMeetEvents.set(eventKey,{...event,bracket:{format:'group_knockout',size:2,totalRounds:1,groups:{count:2,advancePerGroup:1},groupEntries:{1:['a','b','c'],2:['d','e','f']}}});
+  for (const [group, keys] of [[1,['a','b','c']],[2,['d','e','f']]]) {
+    for (let i=0;i<3;i++) {
+      const key=meetSessionKey(meetId,eventKey,'g'+group,i+1);
+      await repo.sportsMeetSessions.set(key,{schoolId:SCHOOL,meetId,eventKey,round:'g'+group,index:i+1,entryKeys:[keys[i],keys[(i+1)%3]],winnerEntryKey:''});
+    }
+  }
+  const finalKey=meetSessionKey(meetId,eventKey,'r1',1);
+  await repo.sportsMeetSessions.set(finalKey,{schoolId:SCHOOL,meetId,eventKey,round:'r1',index:1,entryKeys:[null,null],winnerEntryKey:''});
+  const groups=(await repo.sportsMeetSessions.list()).filter(row=>row.round.startsWith('g'));
+  for (const match of groups) {
+    const result=await advance.setMeetMatchWinner({sessionKey:match._id,winnerEntryKey:match.entryKeys[0]},admin);
+    assert.equal(result.ok,true,result.message);
+  }
+  const updated=await repo.sportsMeetEvents.getById(eventKey);
+  assert.equal(updated.bracket.size,8);
+  const first=(await repo.sportsMeetSessions.list()).filter(row=>row.eventKey===eventKey && row.round==='r1');
+  assert.deepEqual(first.flatMap(row=>row.entryKeys).filter(Boolean).sort(),['a','b','c','d','e','f']);
+});

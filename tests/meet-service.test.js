@@ -334,3 +334,26 @@ test('协议 2 的 meet 分支：不带 association 也能分发', async () => {
   assert.equal(space.ok, false);
   assert.match(space.message, /指定学校和项目/);
 });
+
+
+test('云端发布面包含公开成绩和结束运动会动作',()=>{
+  const cloud=require('../miniprogram/services/school-cloud.js');
+  const surface=cloud.forMeet({schoolId:'muc',meetId:'test'});
+  assert.equal(typeof surface.listMeetPublishedResults,'function');
+  assert.equal(typeof surface.finishSportsMeet,'function');
+});
+
+
+test('运动会门面将云写守卫失败重新抛给页面，避免假成功',async()=>{
+  const identity=require('../miniprogram/services/school-identity.js');
+  const cloud=require('../miniprogram/services/school-cloud.js');
+  const facade=require('../miniprogram/services/meet.js');
+  const oldMock=identity.isMockNow,oldMeet=cloud.forMeet;
+  try {
+    identity.isMockNow=()=>false;
+    cloud.forMeet=()=>({publishMeetResults:async()=>({ok:false,message:'成绩没收齐'}),getSportsMeet:async()=>({meet:{name:'测试'}})});
+    const client=facade.forScope({schoolId:'muc',meetId:'test'});
+    await assert.rejects(()=>client.publishMeetResults({}),/成绩没收齐/);
+    assert.equal((await client.getSportsMeet({})).meet.name,'测试');
+  } finally {identity.isMockNow=oldMock;cloud.forMeet=oldMeet;}
+});

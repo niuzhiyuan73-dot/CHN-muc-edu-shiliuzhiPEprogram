@@ -107,6 +107,8 @@ const SCHOOL_MEET_ACTIONS = Object.freeze([
   // 录分与发布（B7）
   'getMeetSessionScores',        'saveMeetJudgeScore',          'submitMeetJudgeScore',
   'getMeetResultPreview',          'publishMeetResults',          'getPublishedResults',
+  // 成绩公示与届次收口（试用反馈）：任何成员可读本届已发布成绩；管理员结束运动会
+  'listMeetPublishedResults',      'finishSportsMeet',
   // 预赛晋级与赛制名次（B8a）
   'drawMeetHeats',               'advanceMeetEvent',
   // 学院总榜与个人荣誉（B8）

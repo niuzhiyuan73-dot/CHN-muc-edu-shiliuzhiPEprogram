@@ -3,8 +3,8 @@
  *
  * 守的是：
  *   1. 公告主记录钉在 `schoolId + association` 上，跨校读不到、写不进；
- *   2. 发布权收归**平台管理员**——校级 / 协会 / 学院负责人都不能发（复用旧栈
- *      announcement.canPublish 同一把尺子，只把「全局管理员」换成账号级身份）；
+ *   2. 发布权给**平台管理员 + 本校校级管理员**——协会 / 学院负责人与普通会员
+ *      不能发（2026-10-18 变更：原先只给平台管理员，校级管理员被挡在门外）；
  *   3. 内容校验、落库记录、排序全部复用旧栈（validateAnnouncement /
  *      buildAnnouncementRecord / sortAnnouncements），不另抄一份；
  *   4. 会员只见「已发布」，平台管理员可见含已下架的管理台账；
@@ -54,21 +54,32 @@ async function publish(repo, token, extra = {}, opts = {}) {
 
 /* ------------------------------------------------------------ 发布 */
 
-test('发布：仅平台管理员可发，校管理员 / 会员被拒；发布落在已发布', async () => {
+test('发布：平台管理员与本校校级管理员可发，协会负责人 / 会员被拒', async () => {
   const repo = fixture();
 
   const byMember = await call(repo, 'publishSchoolAnnouncement', { requestId: 'r1', ...valid() },
     { actor: 'demo_muc_member' });
   assert.equal(byMember.ok, false);
-  assert.match(byMember.message, /平台管理员/);
+  assert.match(byMember.message, /校级管理员/);
 
-  // 校管理员也不行：公告是发给全校的「定盘子」信息，只归账号级全局管理员。
+  // 2026-10-18 口径变更：本校校级管理员可以发（原先只有平台管理员能发）
   const bySchoolAdmin = await call(repo, 'publishSchoolAnnouncement', { requestId: 'r1', ...valid() },
     { actor: 'demo_muc_admin' });
-  assert.equal(bySchoolAdmin.ok, false);
-  assert.match(bySchoolAdmin.message, /平台管理员/);
+  assert.equal(bySchoolAdmin.ok, true, bySchoolAdmin.message);
+  assert.equal(bySchoolAdmin.announcement.publisherName, '民大模拟管理员');
 
-  const byPlatform = await call(repo, 'publishSchoolAnnouncement', { requestId: 'r1', ...valid() });
+  // 协会负责人仍不行：公告是发全校的，没有「某个协会的公告」这一说
+  const byLeader = await call(repo, 'publishSchoolAnnouncement', { requestId: 'r2', ...valid() },
+    { actor: 'demo_buaa_leader', schoolId: 'buaa' });
+  assert.equal(byLeader.ok, false);
+  assert.match(byLeader.message, /校级管理员/);
+
+  // 但不能借入口越界：民大管理员给北航发不出去（跨校只读）
+  const crossSchool = await call(repo, 'publishSchoolAnnouncement', { requestId: 'r3', ...valid() },
+    { actor: 'demo_muc_admin', schoolId: 'buaa' });
+  assert.equal(crossSchool.ok, false);
+
+  const byPlatform = await call(repo, 'publishSchoolAnnouncement', { requestId: 'r4', ...valid() });
   assert.equal(byPlatform.ok, true, byPlatform.message);
   assert.equal(byPlatform.announcement.status, ANNOUNCEMENT_STATUS.PUBLISHED);
   assert.equal(byPlatform.announcement.canArchive, true);
@@ -131,24 +142,20 @@ test('列表：会员只见已发布、管理员可见下架；分类过滤与�
 
 /* ------------------------------------------------------------ 下架 */
 
-test('下架：仅平台管理员；重复下架被拒；找不到为拒', async () => {
+test('下架：平台管理员与本校校级管理员可下架；重复下架被拒；找不到为拒', async () => {
   const repo = fixture();
   const one = await publish(repo, 'r1');
 
   const byMember = await call(repo, 'archiveSchoolAnnouncement', { announcementId: one.announcementId },
     { actor: 'demo_muc_member' });
   assert.equal(byMember.ok, false);
-  assert.match(byMember.message, /平台管理员/);
+  assert.match(byMember.message, /校级管理员/);
 
+  // 校管理员能下架本校公告（与发布同一门槛，2026-10-18）
   const bySchoolAdmin = await call(repo, 'archiveSchoolAnnouncement', { announcementId: one.announcementId },
     { actor: 'demo_muc_admin' });
-  assert.equal(bySchoolAdmin.ok, false);
-  assert.match(bySchoolAdmin.message, /平台管理员/);
-
-  const done = await call(repo, 'archiveSchoolAnnouncement', { announcementId: one.announcementId });
-  assert.equal(done.ok, true, done.message);
-  assert.equal(done.announcement.status, ANNOUNCEMENT_STATUS.ARCHIVED);
-  assert.equal(done.announcement.revision, 2);
+  assert.equal(bySchoolAdmin.ok, true, bySchoolAdmin.message);
+  assert.equal(bySchoolAdmin.announcement.status, ANNOUNCEMENT_STATUS.ARCHIVED);
 
   const twice = await call(repo, 'archiveSchoolAnnouncement', { announcementId: one.announcementId });
   assert.equal(twice.ok, false);

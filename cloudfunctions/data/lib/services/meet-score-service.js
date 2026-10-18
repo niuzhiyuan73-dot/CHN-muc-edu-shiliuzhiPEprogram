@@ -44,6 +44,8 @@ const {
 } = require('./meet-advance.js');
 const { matchesOf, roundNoOf } = require('./meet-advance-service.js');
 const { buildMeetContext, freshMeetContext } = require('./meet-context.js');
+const { collegeKey } = require('../utils/school.js');
+const { unchanged, touchEvent, liveMeet } = require('./meet-consistency.js');
 const { meetReadable, canManageMeet, canPublishMeetResult } = require('./meet-permission.js');
 
 const ok = (data) => ({ ok: true, data });
@@ -149,6 +151,50 @@ function summarizeScores(entries, scores, judgeIds, eventKey, sessionKey) {
   return { values, missing };
 }
 
+/**
+ * 参赛记录的展示标签：学院名 + 学生姓名（工作视图用）。
+ *
+ * 【为什么服务端算而不是页面拼】
+ * 页面只有 userIds 与 collegeId，逐个查账号再拼字符串，等于把「姓名怎么取」
+ * 这份逻辑复制到每个页面。集中在这里，录分页与预览页永远是同一个口径。
+ *
+ * 【姓名取 realName || nickName】
+ * 录分与预览是给执裁人和管理员的工作视图，场上对人对不出昵称。公开成绩单
+ * （listMeetPublishedResults）才按 D95 只显示昵称——两个口径分开，别混。
+ */
+async function entryLabels(ctx, entries) {
+  const collegeIds = [...new Set(entries.map((doc) => doc.collegeId).filter(Boolean))];
+  const userIds = [...new Set(entries.flatMap(
+    (doc) => (Array.isArray(doc.userIds) ? doc.userIds : []),
+  ))];
+  const [colleges, users] = await Promise.all([
+    Promise.all(collegeIds.map((collegeId) => ctx.repo.colleges.getById(
+      collegeKey(ctx.schoolId, collegeId),
+    ))),
+    Promise.all(userIds.map((userId) => ctx.repo.users.getById(userId))),
+  ]);
+  const collegeName = new Map();
+  collegeIds.forEach((collegeId, index) => {
+    collegeName.set(collegeId, (colleges[index] && colleges[index].name) || collegeId);
+  });
+  const memberName = new Map();
+  userIds.forEach((userId, index) => {
+    const user = users[index];
+    memberName.set(userId, (user && (user.realName || user.nickName)) || userId);
+  });
+  const labels = new Map();
+  for (const entry of entries) {
+    const names = (Array.isArray(entry.userIds) ? entry.userIds : [])
+      .map((userId) => memberName.get(userId) || userId);
+    labels.set(entry._id, {
+      collegeId: entry.collegeId,
+      collegeName: collegeName.get(entry.collegeId) || entry.collegeId,
+      memberText: names.join('、'),
+    });
+  }
+  return labels;
+}
+
 /** 我的裁判任务里，某个场次需要录哪些参赛记录 */
 async function getMeetSessionScores(payload = {}, ctx) {
   if (!meetReadable(ctx) || !ctx.meetId) return refused('请先登录');
@@ -187,6 +233,9 @@ async function getMeetSessionScores(payload = {}, ctx) {
   }
 
   const isAdmin = canManageMeet(ctx);
+  const docEvent = doc || {};
+  if (!isAdmin && !assignments.some(row => row.status === 'active' && row.judgeId === ctx.actorId
+    && sessions.some(item => item._id === row.sessionKey && item.eventKey === session.eventKey))) return ok({ session: {sessionKey, eventKey: session.eventKey}, items: [], canEnter: false });
   // 预赛分组的场次只列本组的人：把全项目的人都摆到「预赛第 2 组」的录分页上，
   // 裁判必然会录错行。没有 entryKeys 的场次（直接决赛）才是全项目。
   const assigned = Array.isArray(session.entryKeys) && session.entryKeys.length > 0
@@ -195,15 +244,22 @@ async function getMeetSessionScores(payload = {}, ctx) {
   // 道次来自场次上的 lanes 映射（Q7）。没有道次的项目（长跑、田赛）记 0，
   // 排序时排到最后，不影响录分。
   const lanes = (session.lanes && typeof session.lanes === 'object') ? session.lanes : {};
+  const labels = await entryLabels(ctx, entries.filter(row => row.eventKey === session.eventKey));
   const own = entries
     .filter((doc) => doc.eventKey === session.eventKey && doc.status === 'approved'
-      && (!assigned || assigned.has(doc._id)))
+      && (assigned ? assigned.has(doc._id) : docEvent.rounds !== 'heat_final'))
     .map((doc) => {
       const mine = scores.find((row) => row.entryKey === doc._id
-        && row.sessionKey === sessionKey && row.judgeId === ctx.actorId);
+        && row.sessionKey === sessionKey && row.judgeId === (isAdmin && payload.judgeId ? String(payload.judgeId) : ctx.actorId));
+      const label = labels.get(doc._id) || {};
       return {
         entryKey: doc._id,
         collegeId: doc.collegeId,
+        // 学院名与学生姓名：录分页原先只显示 collegeId（「c01」），裁判在场上
+        // 根本对不出人。姓名取 realName||nickName——这是给执裁人的工作视图，
+        // 不是公开资料页（D95 的昵称口径只约束公开列表，见 listMeetPublishedResults）。
+        collegeName: label.collegeName || doc.collegeId,
+        memberText: label.memberText || '',
         userIds: doc.userIds,
         lane: Number(lanes[doc._id]) || 0,
         myScore: mine ? { text: mine.rawText, state: mine.state } : null,
@@ -222,14 +278,25 @@ async function getMeetSessionScores(payload = {}, ctx) {
     .map((doc) => doc._id));
   const assignedInEvent = assignments.some((doc) => doc.status === 'active'
     && doc.judgeId === ctx.actorId && eventSessions.has(doc.sessionKey));
+  // 本场已选裁判（姓名版）：录分页要能看到这场有谁执裁
+  const judgeNames = new Map();
+  for (const row of assignments.filter((doc) => doc.status === 'active'
+    && doc.sessionKey === sessionKey)) {
+    const user = await ctx.repo.users.getById(row.judgeId);
+    judgeNames.set(row.judgeId, (user && (user.realName || user.nickName)) || row.judgeId);
+  }
+  const judges = assignments
+    .filter((doc) => doc.status === 'active' && doc.sessionKey === sessionKey)
+    .map((doc) => ({ judgeId: doc.judgeId, name: judgeNames.get(doc.judgeId) || doc.judgeId }));
 
   return ok({
     session: {
       sessionKey, eventKey: session.eventKey, round: session.round,
-      startAt: session.startAt, venue: session.venue, judgeCount: session.judgeCount || 0,
+      startAt: session.startAt, venue: session.venue, judgeCount: judges.length,
+      judges,
     },
     items: own,
-    canEnter: isAdmin || Boolean(assignment && assignment.status === 'active') || assignedInEvent,
+    canEnter: isAdmin || Boolean(assignment && assignment.status === 'active'),
   });
 }
 
@@ -242,6 +309,8 @@ async function saveMeetJudgeScore(payload = {}, ctx) {
   if (!sessionKey || !entryKey) return refused('请指定场次与参赛记录');
 
   return ctx.repo.transaction(async (tx) => {
+    ctx = await freshMeetContext(tx, ctx);
+    if (!meetReadable(ctx) || !liveMeet(ctx)) return refused('账号或运动会已失效');
     const session = await tx.sportsMeetSessions.getById(sessionKey);
     if (!session || session.meetId !== ctx.meetId) return refused('场次不存在或不属于本届运动会');
     const event = await tx.sportsMeetEvents.getById(session.eventKey);
@@ -253,6 +322,11 @@ async function saveMeetJudgeScore(payload = {}, ctx) {
     if (!entry || entry.eventKey !== session.eventKey || entry.status !== 'approved') {
       return refused('参赛记录不存在或未通过审核');
     }
+    if ((Array.isArray(session.entryKeys) && session.entryKeys.length > 0
+      && !session.entryKeys.includes(entryKey))
+      || (event.rounds === 'heat_final' && !(session.entryKeys || []).length)) {
+      return refused('该参赛记录不在本场名单中，请先完成分组或晋级');
+    }
     // 只有被指派的裁判（或管理员代录 D70）可以录分
     const assignment = await tx.sportsMeetJudgeAssignments.getById(
       meetJudgeKey(ctx.meetId, sessionKey, ctx.actorId),
@@ -261,9 +335,12 @@ async function saveMeetJudgeScore(payload = {}, ctx) {
     if (!isAdmin && !(assignment && assignment.status === 'active')) {
       return refused('你不是该场次的裁判');
     }
-    const judgeId = isAdmin && !(assignment && assignment.status === 'active')
-      ? String(payload.judgeId || ctx.actorId)
-      : ctx.actorId;
+    const judgeId = isAdmin && payload.judgeId ? String(payload.judgeId) : ctx.actorId;
+    const scoringJudge = await tx.sportsMeetJudgeAssignments.getById(meetJudgeKey(ctx.meetId, sessionKey, judgeId));
+    if (!scoringJudge || !['active', 'revoked'].includes(scoringJudge.status)) return refused('代录必须选择本场已指派的裁判');
+    const publication = await tx.sportsMeetPublications.getById(meetPublicationKey(ctx.meetId, event._id,
+      event.rounds === 'final' ? 'all' : sessionKey));
+    if (publication && !isAdmin) return refused('成绩已发布，仅管理员可以更正并重新发布');
 
     const key = meetScoreKey(entryKey, sessionKey, judgeId);
     const current = await tx.sportsMeetScores.getById(key);
@@ -285,6 +362,7 @@ async function saveMeetJudgeScore(payload = {}, ctx) {
       updatedAt: now,
     };
     await tx.sportsMeetScores.set(key, doc);
+    await touchEvent(tx, session.eventKey);
     return ok({ score: { entryKey, sessionKey, judgeId, text: normalized.text, state: doc.state } });
   });
 }
@@ -297,14 +375,30 @@ async function submitMeetJudgeScore(payload = {}, ctx) {
   if (!sessionKey || !entryKey) return refused('请指定场次与参赛记录');
 
   // 管理员代录时（D70）可以替某个裁判提交；裁判本人只能提交自己的
-  const judgeId = canManageMeet(ctx) && payload.judgeId ? String(payload.judgeId) : ctx.actorId;
-
   return ctx.repo.transaction(async (tx) => {
+    const fresh = await freshMeetContext(tx, ctx);
+    if (!meetReadable(fresh) || !liveMeet(fresh)) return refused('账号或运动会已失效');
+    const isAdmin = canManageMeet(fresh);
+    const judgeId = isAdmin && payload.judgeId ? String(payload.judgeId) : fresh.actorId;
+    const session = await tx.sportsMeetSessions.getById(sessionKey);
+    const entry = await tx.sportsMeetEntries.getById(entryKey);
+    if (!session || session.meetId !== fresh.meetId || session.schoolId !== fresh.schoolId
+      || !entry || entry.eventKey !== session.eventKey || entry.status !== 'approved'
+      || ((session.entryKeys || []).length && !session.entryKeys.includes(entryKey))) return refused('场次或参赛名单已变化');
+    const assignment = await tx.sportsMeetJudgeAssignments.getById(meetJudgeKey(fresh.meetId, sessionKey, judgeId));
+    if (!assignment || (!isAdmin && assignment.status !== 'active')) return refused('你不是该场次的有效裁判');
+    const event = await tx.sportsMeetEvents.getById(session.eventKey);
+    if (!event || (event.rounds === 'heat_final' && !(session.entryKeys || []).length)) return refused('请先完成分组或晋级');
+    const publication = await tx.sportsMeetPublications.getById(meetPublicationKey(fresh.meetId, event._id,
+      event.rounds === 'final' ? 'all' : sessionKey));
+    if (publication && !isAdmin) return refused('成绩已发布，仅管理员可以更正并重新发布');
     const key = meetScoreKey(entryKey, sessionKey, judgeId);
     const current = await tx.sportsMeetScores.getById(key);
-    if (!current) return refused('请先填写成绩');
+    if (!current || current.schoolId !== fresh.schoolId || current.meetId !== fresh.meetId) return refused('请先填写成绩');
+    if (current.state === SCORE_STATE.SUBMITTED) return ok({ entryKey, sessionKey, state: current.state });
     const now = toIso(ctx.now);
     await tx.sportsMeetScores.set(key, { ...current, state: SCORE_STATE.SUBMITTED, updatedAt: now });
+    await touchEvent(tx, session.eventKey);
     return ok({ entryKey, sessionKey, state: SCORE_STATE.SUBMITTED });
   });
 }
@@ -421,6 +515,7 @@ async function getMeetResultPreview(payload = {}, ctx) {
     .filter((doc) => doc.status === 'active' && doc.sessionKey === row._id).length);
   const warning = judgeCountWarning(judgeCounts.length ? Math.max(...judgeCounts) : judgeIds.length);
 
+  const previewLabels = await entryLabels(ctx, approved);
   return ok({
     event: { eventKey, name: event.name, group: event.group, scoreType: event.scoreType, order: event.order },
     sessionKey,
@@ -434,16 +529,22 @@ async function getMeetResultPreview(payload = {}, ctx) {
     judgeIds,
     versus: false,
     missing: missing.map((doc) => ({ entryKey: doc._id, collegeId: doc.collegeId })),
-    items: approved.map((doc) => ({
-      entryKey: doc._id,
-      collegeId: doc.collegeId,
-      userIds: doc.userIds,
-      lane: Number((session && session.lanes && session.lanes[doc._id]) || 0),
-      value: values.get(doc._id),
-      text: values.get(doc._id) === null
-        ? '未收齐'
-        : formatMeasure(event.scoreType, values.get(doc._id)),
-    })),
+    items: approved.map((doc) => {
+      const label = previewLabels.get(doc._id) || {};
+      return {
+        entryKey: doc._id,
+        collegeId: doc.collegeId,
+        // 预览同样要能对上人：原先只显示学院编号（用户反馈「成绩页面显示为编号」）
+        collegeName: label.collegeName || doc.collegeId,
+        memberText: label.memberText || '',
+        userIds: doc.userIds,
+        lane: Number((session && session.lanes && session.lanes[doc._id]) || 0),
+        value: values.get(doc._id),
+        text: values.get(doc._id) === null
+          ? '未收齐'
+          : formatMeasure(event.scoreType, values.get(doc._id)),
+      };
+    }),
   });
 }
 
@@ -470,9 +571,9 @@ async function publishMeetResults(payload = {}, ctx) {
   if (!eventKey) return refused('请指定项目组别');
 
   const scope = scopeOf(ctx);
-  const [meet, event, entries, scores, sessions, assignments, publications] = await Promise.all([
+  const event = await ctx.repo.forMeet(scope).sportsMeetEvents.getById(eventKey);
+  const [meet, entries, scores, sessions, assignments, publications] = await Promise.all([
     ctx.repo.sportsMeets.getById(ctx.meetId),
-    ctx.repo.forMeet(scope).sportsMeetEvents.getById(eventKey),
     ctx.repo.forMeet(scope).sportsMeetEntries.list(),
     ctx.repo.forMeet(scope).sportsMeetScores.list(),
     ctx.repo.forMeet(scope).sportsMeetSessions.list(),
@@ -595,14 +696,14 @@ async function publishMeetResults(payload = {}, ctx) {
         const scoped = Array.isArray(row.entryKeys) && row.entryKeys.length > 0
           ? approved.filter((doc) => row.entryKeys.includes(doc._id))
           : approved;
-        const summary = summarizeScores(scoped, scores, judgeIds, eventKey, row._id);
+        const summary = summarizeScores(scoped.filter(entry => !voidKeys.has(entry._id)), scores, judgeIds, eventKey, row._id);
         for (const [key, value] of summary.values) values.set(key, value);
         missing.push(...summary.missing);
       }
       if (noJudge.length > 0) {
         return refused(`以下场次还没有指派裁判：${noJudge.join('、')}`);
       }
-      const unassigned = approved.filter((doc) => !values.has(doc._id));
+      const unassigned = approved.filter((doc) => !voidKeys.has(doc._id) && !values.has(doc._id));
       if (unassigned.length > 0) {
         return refused(`还有 ${unassigned.length} 条参赛记录没有编入任何一枪，请先分组`);
       }
@@ -617,7 +718,7 @@ async function publishMeetResults(payload = {}, ctx) {
         .map((doc) => doc.judgeId);
       if (judgeIds.length === 0) return refused('该场次还没有指派裁判');
 
-      const summary = summarizeScores(approved, scores, judgeIds, eventKey, sessionKey);
+      const summary = summarizeScores(approved.filter(entry => !voidKeys.has(entry._id)), scores, judgeIds, eventKey, sessionKey);
       if (summary.missing.length > 0) {
         return refused(`还有 ${summary.missing.length} 条参赛记录没有收齐裁判成绩`, {
           missing: summary.missing.map((doc) => doc._id),
@@ -654,10 +755,17 @@ async function publishMeetResults(payload = {}, ctx) {
   return ctx.repo.transaction(async (tx) => {
     const fresh = await freshMeetContext(tx, ctx);
     if (!canPublishMeetResult(fresh)) return refused('只有校级管理员及以上或本届总裁判可以发布成绩');
+    if (!liveMeet(fresh)) return refused('运动会不存在或已删除');
+    if (!await unchanged(tx, 'sportsMeetEvents', [event])
+      || !await unchanged(tx, 'sportsMeetSessions', ownSessions)
+      || !await unchanged(tx, 'sportsMeetEntries', approved)
+      || !await unchanged(tx, 'sportsMeetScores', scores.filter(row => row.eventKey === eventKey))
+      || !await unchanged(tx, 'sportsMeetJudgeAssignments', assignments.filter(row => row.eventKey === eventKey))) return refused('报名、裁判或成绩已变化，请刷新后重试');
     const latest = await tx.sportsMeetPublications.getById(publicationKey);
-    if (current && (!latest || latest.version !== current.version)) {
+    if ((latest ? latest.version : null) !== (current ? current.version : null)) {
       return refused('发布状态已变化，请刷新后重试');
     }
+    await touchEvent(tx, eventKey);
     const now = toIso(fresh.now);
     const version = (latest ? Number(latest.version) || 0 : 0) + 1;
     const rules = {
@@ -804,6 +912,8 @@ async function publishMeetResults(payload = {}, ctx) {
  */
 async function getPublishedResults(payload = {}, ctx) {
   if (!meetReadable(ctx) || !ctx.meetId) return refused('请先登录');
+  const parent = await ctx.repo.sportsMeets.getById(ctx.meetId);
+  if (!isAlive(parent) || parent.schoolId !== ctx.schoolId || (parent.status === 'draft' && !canManageMeet(ctx))) return refused('运动会不存在或尚未发布');
   const scope = scopeOf(ctx);
   const eventKey = String(payload.eventKey || '').trim();
   if (!eventKey) return refused('请指定项目组别');
@@ -818,6 +928,28 @@ async function getPublishedResults(payload = {}, ctx) {
   if (mine.length === 0) return ok({ published: false, eventKey, rounds: [] });
 
   const labelOf = new Map(sessions.map((doc) => [doc._id, doc.roundLabel || doc.round]));
+  // 与 listMeetPublishedResults 同一套口径：学院名取当届快照、学生名只显示昵称
+  const collegeName = new Map();
+  for (const row of await ctx.repo.forMeet(scope).sportsMeetColleges.list()) {
+    if (row && row.schoolId === ctx.schoolId) collegeName.set(row.collegeId, row.name || row.collegeId);
+  }
+  const nickOf = new Map();
+  for (const userId of [...new Set(rows.flatMap((row) => (Array.isArray(row.userIds) ? row.userIds : [])))]) {
+    const user = await ctx.repo.users.getById(userId);
+    nickOf.set(userId, (user && user.nickName) || '未设置昵称');
+  }
+  const rowLabel = (row) => ({
+    entryKey: row.entryKey,
+    collegeId: row.collegeId,
+    collegeName: collegeName.get(row.collegeId) || row.collegeId,
+    memberText: (Array.isArray(row.userIds) ? row.userIds : [])
+      .map((userId) => nickOf.get(userId) || userId).join('、'),
+    rank: row.rank,
+    value: row.value,
+    text: row.value === null || row.value === undefined ? '—' : formatMeasure(event.scoreType, row.value),
+    points: row.points,
+    status: row.status,
+  });
   const rounds = mine
     .sort((a, b) => Number(a.official ? 1 : 0) - Number(b.official ? 1 : 0)
       || String(a.sessionKey).localeCompare(String(b.sessionKey)))
@@ -831,10 +963,7 @@ async function getPublishedResults(payload = {}, ctx) {
       reason: doc.reason || '',
       items: rows
         .filter((row) => row.publicationKey === doc._id && row.version === doc.version)
-        .map((row) => ({
-          entryKey: row.entryKey, collegeId: row.collegeId, userIds: row.userIds,
-          rank: row.rank, points: row.points, status: row.status,
-        })),
+        .map(rowLabel),
     }));
 
   const official = rounds.find((row) => row.official) || null;
@@ -854,6 +983,116 @@ async function getPublishedResults(payload = {}, ctx) {
   });
 }
 
+/**
+ * 本届已发布成绩（任何本校成员可读）——成绩公示的取数口。
+ *
+ * 【为什么单独一个动作，而不是让页面循环调 getPublishedResults】
+ * 一届可能有 120 个项目组别，逐个项目调一遍既是 120 次云函数调用，也让页面
+ * 自己拼顺序。这里一次读全届，按项目目录顺序返回，没有发布记录的项目不出现
+ * （D79：只算已发布项目，未发布不当成 0 分结果）。
+ *
+ * 【两个口径】
+ *   · 学院名取**当届快照**（sportsMeetColleges）：学院改名不让历史成绩单漂移，
+ *     与总榜同一来源；
+ *   · 学生名只显示**昵称**（D95 公开口径）。执裁工作视图（录分/预览）才显示
+ *     姓名，两者刻意分开——公开成绩单不是通讯录。
+ */
+async function listMeetPublishedResults(payload = {}, ctx) {
+  if (!meetReadable(ctx) || !ctx.meetId) return refused('请先登录');
+  const scope = scopeOf(ctx);
+
+  const [meet, events, publications, rows, sessions, scopeRows] = await Promise.all([
+    ctx.repo.sportsMeets.getById(ctx.meetId),
+    listAliveEvents(ctx.repo.forMeet(scope).sportsMeetEvents),
+    ctx.repo.forMeet(scope).sportsMeetPublications.list(),
+    ctx.repo.forMeet(scope).sportsMeetResultRows.list(),
+    ctx.repo.forMeet(scope).sportsMeetSessions.list(),
+    ctx.repo.forMeet(scope).sportsMeetColleges.list(),
+  ]);
+  if (!isAlive(meet) || meet.schoolId !== ctx.schoolId || (meet.status === 'draft' && !canManageMeet(ctx))) return refused('运动会不存在或尚未发布');
+
+  const byEvent = new Map();
+  for (const doc of publications) {
+    const list = byEvent.get(doc.eventKey) || [];
+    list.push(doc);
+    byEvent.set(doc.eventKey, list);
+  }
+  if (byEvent.size === 0) return ok({ meetId: ctx.meetId, meetName: meet.name || '', published: false, items: [] });
+
+  const publishedEvents = events.filter(event => byEvent.has(event._id));
+  const offset = Math.max(0, Math.trunc(Number(payload.offset) || 0));
+  const limit = Math.min(20, Math.max(1, Math.trunc(Number(payload.limit) || 10)));
+  const selectedEvents = payload.metadataOnly ? publishedEvents : publishedEvents.slice(offset, offset + limit);
+  const selectedKeys = new Set(selectedEvents.map(event => event._id));
+  const currentVersions = new Map(publications.map(doc => [doc._id, doc.version]));
+  const selectedRows = payload.metadataOnly ? [] : rows.filter(row => selectedKeys.has(row.eventKey) && currentVersions.get(row.publicationKey) === row.version);
+  const collegeName = new Map();
+  for (const row of scopeRows) {
+    if (row && row.schoolId === ctx.schoolId) collegeName.set(row.collegeId, row.name || row.collegeId);
+  }
+  // 行里存了 userIds 快照，不需要再读报名名单；昵称按行里的用户解析一次
+  const nickOf = new Map();
+  const userIds = [...new Set(selectedRows.flatMap((row) => (Array.isArray(row.userIds) ? row.userIds : [])))];
+  for (let i = 0; i < userIds.length; i += 20) {
+    await Promise.all(userIds.slice(i, i + 20).map(async userId => {
+      const user = await ctx.repo.users.getById(userId);
+      nickOf.set(userId, (user && user.nickName) || '未设置昵称');
+    }));
+  }
+  const labelOf = new Map(sessions.map((doc) => [doc._id, doc.roundLabel || doc.round]));
+
+  const items = [];
+  for (const event of selectedEvents) {
+    const own = byEvent.get(event._id);
+    if (!own || own.length === 0) continue;
+    const rounds = own
+      .sort((a, b) => Number(a.official ? 1 : 0) - Number(b.official ? 1 : 0)
+        || String(a.sessionKey).localeCompare(String(b.sessionKey)))
+      .map((doc) => ({
+        sessionKey: doc.sessionKey,
+        round: doc.round,
+        roundLabel: doc.roundLabel || labelOf.get(doc.sessionKey) || '',
+        official: Boolean(doc.official),
+        version: doc.version,
+        publishedAt: doc.publishedAt,
+        reason: doc.reason || '',
+        items: selectedRows
+          .filter((row) => row.publicationKey === doc._id && row.version === doc.version)
+          .sort((a, b) => (Number(a.rank) || 99) - (Number(b.rank) || 99))
+          .map((row) => ({
+            entryKey: row.entryKey,
+            collegeId: row.collegeId,
+            collegeName: collegeName.get(row.collegeId) || row.collegeId,
+            memberText: (Array.isArray(row.userIds) ? row.userIds : [])
+              .map((userId) => nickOf.get(userId) || userId).join('、'),
+            rank: row.rank,
+            value: row.value,
+            text: row.value === null || row.value === undefined
+              ? '—'
+              : formatMeasure(event.scoreType, row.value),
+            points: row.points,
+            status: row.status,
+          })),
+      }));
+    items.push({
+      eventKey: event._id,
+      name: event.name,
+      group: event.group,
+      scoreType: event.scoreType,
+      scored: event.scored,
+      rounds,
+    });
+  }
+
+  return ok({
+    meetId: ctx.meetId,
+    meetName: meet.name || '',
+    published: true,
+    total: publishedEvents.length, offset, limit, hasMore: offset + limit < publishedEvents.length,
+    items,
+  });
+}
+
 module.exports = {
   getMeetSessionScores,
   saveMeetJudgeScore,
@@ -861,6 +1100,7 @@ module.exports = {
   getMeetResultPreview,
   publishMeetResults,
   getPublishedResults,
+  listMeetPublishedResults,
   // 纯函数导出给测试与 B8 复用
   averageOf,
   pointsOf,

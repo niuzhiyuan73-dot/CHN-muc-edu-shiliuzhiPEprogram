@@ -225,15 +225,16 @@ Page({
 
   /**
    * 重算所有管理入口。能力来自 S2 会话（getSchoolIdentitySession）：
-   * 会员审核入口看 canReview，公告管理入口看 isPlatformAdmin（发布权已收归
-   * 平台管理员）。会话尚未取到时一律不显示——不拿旧栈 role 当授权依据。
+   * 会员审核入口看 canReview，公告管理入口看 canManageSchool（平台管理员与
+   * 本校校级管理员，与服务端 canPublishAnnouncement 同源）。会话尚未取到时
+   * 一律不显示——不拿旧栈 role 当授权依据。
    */
   syncEntries() {
     const user = this.currentUser();
     // 会话能力只在已登录时有效：退出后即使 this.session 还留着旧值也不显示入口
     const session = user ? this.session : null;
     const canReviewNow = Boolean(session && session.canReview);
-    const canPublishNow = Boolean(session && session.isPlatformAdmin);
+    const canPublishNow = Boolean(session && (session.canManageSchool || session.isPlatformAdmin));
 
     this.setData({
       loggedIn: Boolean(user),

@@ -32,7 +32,7 @@ const COUNTS = { pkb: 5, tt: 4, bd: 3 };
 
 const api = (association = 'pkb') => space.forScope({ schoolId: SCHOOL_ID, association });
 
-/** 平台管理员：公告的发布 / 下架只认这一个账号级身份 */
+/** 平台管理员：账号级身份，跨校可发；校级管理员只在本校可发（2026-10-18） */
 beforeEach(() => {
   schoolMock.reset();
   schoolMock.setDemoActor('demo_platform_admin');
@@ -168,7 +168,7 @@ describe('学校公告管理视图 —— 防泄漏', () => {
     assert.match(view.blockedText, /登录/);
   });
 
-  test('已登录但没有平台管理员身份：提示权限，而不是把台账交出去', async () => {
+  test('已登录但没有管理身份（普通会员）：提示权限，而不是把台账交出去', async () => {
     schoolMock.setDemoActor('demo_muc_member');
     const view = await loadSchoolAnnouncementManageView({ ...PKB, loggedIn: true });
 
@@ -177,13 +177,13 @@ describe('学校公告管理视图 —— 防泄漏', () => {
     assert.match(view.blockedText, /权限/);
   });
 
-  test('学校管理员也不是平台管理员：公告是全局内容，校管理员管不到', async () => {
+  test('学校管理员能拿到本校台账（2026-10-18 起公告归平台 + 校级管理员）', async () => {
     schoolMock.setDemoActor('demo_muc_admin');
     const view = await loadSchoolAnnouncementManageView({ ...PKB, loggedIn: true });
 
-    assert.strictEqual(view.allowed, false);
-    assert.deepStrictEqual(view.rows, []);
-    assert.match(view.blockedText, /权限/);
+    assert.strictEqual(view.allowed, true);
+    assert.strictEqual(view.blockedText, '');
+    assert.strictEqual(view.total, COUNTS.pkb);
   });
 
   test('即便公告已被下架，无权者仍一条都看不到', async () => {

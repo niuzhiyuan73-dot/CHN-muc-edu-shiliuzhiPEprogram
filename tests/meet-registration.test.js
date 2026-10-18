@@ -375,3 +375,19 @@ test('申请人池只列本院意向，带姓名与性别', async () => {
   assert.deepEqual(pool.data.items.map((row) => row.userId).sort(), ['u_s1', 'u_s2']);
   assert.equal(pool.data.items.find((row) => row.userId === 'u_s2').gender, 'female');
 });
+
+
+test('撤回前一名额后补报名，不覆盖仍有效的后一条名单', async () => {
+  const {repo, meetId} = await makeWorld();
+  const eventKey = eventKeyOf(meetId, 'sprint-100m', 'male');
+  for (const id of ['u_s1', 'u_s3']) assert.equal((await interest(repo,id,meetId,eventKey)).ok,true);
+  const first = await submit(repo,'u_lead',meetId,{eventKey,userIds:['u_s1']});
+  const second = await submit(repo,'u_lead',meetId,{eventKey,userIds:['u_s3']});
+  const before = await repo.sportsMeetEntries.getById(second.data.entry._id);
+  assert.equal((await reg.withdrawMeetCollegeEntry({entryKey:first.data.entry._id}, await ctxOf(repo,'u_lead',meetId))).ok,true);
+  const third = await submit(repo,'u_lead',meetId,{eventKey,userIds:['u_s1']});
+  assert.equal(third.ok,true,third.message);
+  assert.notEqual(third.data.entry._id,second.data.entry._id);
+  assert.notEqual(third.data.entry._id,first.data.entry._id);
+  assert.deepEqual(await repo.sportsMeetEntries.getById(second.data.entry._id),before);
+});

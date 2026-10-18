@@ -11,8 +11,8 @@
  *
  * 【没有发布权为什么不让进】
  * 用户可能绕过管理页直接从小程序码进来。填完再被拒，比一开始就说清楚
- * 糟得多，所以进来先判一道，不给表单。发布权只有平台管理员有——取自学校
- * 维度身份会话（isPlatformAdmin），与旧栈的「全局管理员」同一口径。
+ * 糟得多，所以进来先判一道，不给表单。发布权给平台管理员与本校校级管理员
+ * （会话布尔量 canManageSchool，与服务端 canPublishAnnouncement 同源）。
  *
  * 【requestId 是什么】
  * 学校维度发布接口按 requestId 派生稳定编号：同一次提交重试（网络重发、
@@ -73,7 +73,11 @@ Page({
       console.error('[announcement-edit] 读取学校身份失败', err);
     }
 
-    const allowed = Boolean(session && session.isPlatformAdmin);
+    // 发布权：平台管理员 + 本校校级管理员。会话的 canManageSchool 与
+    // 服务端 canPublishAnnouncement 同源（平台管理员为真、校级管理员为真、
+    // 协会/学院负责人为假）；再并上 isPlatformAdmin，避免演示账号切到外校只读
+    // 时（readOnly 会清空 canManageSchool）把平台管理员也挡掉。
+    const allowed = Boolean(session && (session.canManageSchool || session.isPlatformAdmin));
     this.setData({ blockReason: this.describeBlock(allowed, session), themeClass: currentThemeClass() });
   },
 

@@ -9,6 +9,7 @@
  */
 
 const meet = require('../../services/meet.js');
+const { updateMeetPage } = require('../../utils/meet-ui.js');
 const session = require('../../services/school-session.js');
 
 Page({
@@ -29,6 +30,9 @@ Page({
     pendingEntries: [],
     openAt: '',
     closeAt: '',
+    // 成绩不再平铺在页面底部：点哪个项目取哪个项目，弹层里看
+    resultsError: '',
+    resultPopup: { visible: false, eventKey: '', title: '', loading: false, error: '', rounds: [] },
   },
 
   onLoad(options = {}) {
@@ -43,6 +47,12 @@ Page({
     return this.reload();
   },
 
+  onHide() { this.needsRefresh = true; },
+
+  onShow() {
+    if (this.needsRefresh) { this.needsRefresh = false; return this.reload(); }
+  },
+
   onUnload() {
     this.unloaded = true;
   },
@@ -53,7 +63,7 @@ Page({
   },
 
   update(values) {
-    if (!this.unloaded) this.setData(values);
+    updateMeetPage(this, values);
   },
 
   today() {
@@ -72,6 +82,9 @@ Page({
 
   async reload() {
     this.update({ loading: true, error: '' });
+    // 成绩缓存与「已出成绩」索引都随整页刷新作废：可能刚发布了新成绩
+    this.resultCache = new Map();
+    this.resultIndexLoaded = false;
     try {
       const result = await this.client().getSportsMeet({ meetId: this.data.meetId });
       const canManage = Boolean(result.permissions && result.permissions.canManage);
@@ -85,9 +98,137 @@ Page({
         isRegistration,
       });
       if (isRegistration) await this.loadParticipation();
+      if (result.meet.status !== 'draft') await this.loadResultIndex();
     } catch (err) {
       this.update({ loading: false, error: (err && err.message) || '加载失败' });
     }
+  },
+
+  /**
+   * 只取「哪些项目已发布成绩」的元数据，给项目清单打「已出成绩」标记。
+   *
+   * 不在这里取行：一届最多 120 个项目组别，一次全取会把整届成绩都塞进页面，
+   * 也就是原先「全部平铺在底部」的来源。行改成点开某项目时才取（D79 只认已发布）。
+   */
+  async loadResultIndex() {
+    if (this.resultIndexLoaded) return undefined;
+    try {
+      const meta = await this.client().listMeetPublishedResults({ metadataOnly: true });
+      this.resultIndex = new Set((meta.items || []).map((row) => row.eventKey));
+      this.resultIndexLoaded = true;
+      this.update({
+        resultsError: '',
+        events: this.data.events.map((row) => ({ ...row, hasResult: this.resultIndex.has(row.eventKey) })),
+      });
+    } catch (err) {
+      this.update({ resultsError: (err && err.message) || '成绩状态加载失败' });
+    }
+    return undefined;
+  },
+
+  groupLabelOf(group) {
+    return group === 'male' ? '男子' : group === 'female' ? '女子' : '混合';
+  },
+
+  /** 点项目：弹层只看这一个项目的成绩（同项目再次点开命中缓存） */
+  onOpenEventResult(event) {
+    if (this.data.isDraft) return undefined;
+    const eventKey = event.currentTarget.dataset.eventKey;
+    if (!eventKey) return undefined;
+    const row = this.data.events.find((item) => item.eventKey === eventKey) || null;
+    const cached = this.resultCache && this.resultCache.get(eventKey);
+    this.update({
+      resultPopup: {
+        visible: true,
+        eventKey,
+        title: row ? `${row.name} · ${this.groupLabelOf(row.group)}` : '',
+        loading: !cached,
+        error: '',
+        rounds: cached ? cached : [],
+      },
+    });
+    if (cached) return undefined;
+    return this.fetchEventResult(eventKey);
+  },
+
+  async fetchEventResult(eventKey) {
+    const isStale = () => !this.data.resultPopup.visible || this.data.resultPopup.eventKey !== eventKey;
+    try {
+      const result = await this.client().getPublishedResults({ eventKey });
+      const rounds = this.decorateRounds(result.rounds || []);
+      this.resultCache = this.resultCache || new Map();
+      this.resultCache.set(eventKey, rounds);
+      // 连着点两个项目时，慢的那个响应不能盖掉后来的（按 eventKey 判活）
+      if (isStale()) return undefined;
+      this.update({ resultPopup: { ...this.data.resultPopup, loading: false, error: '', rounds } });
+    } catch (err) {
+      if (isStale()) return undefined;
+      this.update({
+        resultPopup: { ...this.data.resultPopup, loading: false, error: (err && err.message) || '成绩加载失败' },
+      });
+    }
+    return undefined;
+  },
+
+  /**
+   * 弹层里的场次整理：名次升序 + 同名场次补序号。
+   *
+   * 两个已知的接口口径差异，都在展示层收口：
+   *   · `getPublishedResults` 的行**不按名次排**（只有列表接口排），这里补；
+   *   · 预赛各组的 `roundLabel` 都叫「预赛」（advance-service 的 labelOf 只按轮次，
+   *     不带组号），一次弹层里会出现两个「预赛」。同名场次按出现顺序补「第 N 场」。
+   */
+  decorateRounds(rounds) {
+    const labelCount = new Map();
+    for (const round of rounds) {
+      const label = round.roundLabel || '';
+      labelCount.set(label, (labelCount.get(label) || 0) + 1);
+    }
+    const seen = new Map();
+    return rounds.map((round) => {
+      const label = round.roundLabel || '';
+      const total = labelCount.get(label) || 0;
+      let displayLabel = label;
+      if (total > 1) {
+        const nth = (seen.get(label) || 0) + 1;
+        seen.set(label, nth);
+        displayLabel = `${label}（第 ${nth} 场）`;
+      }
+      return {
+        ...round,
+        roundLabel: displayLabel,
+        items: (round.items || []).slice()
+          .sort((a, b) => (Number(a.rank) || 99) - (Number(b.rank) || 99)),
+      };
+    });
+  },
+
+  onRetryEventResult() {
+    const { eventKey } = this.data.resultPopup;
+    if (!eventKey) return undefined;
+    this.update({ resultPopup: { ...this.data.resultPopup, loading: true, error: '' } });
+    return this.fetchEventResult(eventKey);
+  },
+
+  onCloseResult() {
+    this.update({
+      resultPopup: { visible: false, eventKey: '', title: '', loading: false, error: '', rounds: [] },
+    });
+  },
+
+  /** 弹层内部点击不关闭（遮罩才关闭） */
+  onStopBubble() { return undefined; },
+
+  async onFinish() {
+    if (this.data.busy) return;
+    this.update({ busy: true });
+    try {
+      await this.client().finishSportsMeet({});
+      await this.reload();
+      this.update({ notice: '运动会已结束' });
+    } catch (err) {
+      this.update({ error: err.message || '结束失败' });
+    } finally { this.update({ busy: false }); }
   },
 
   /** 报名期：我的意向/入选状态 + 管理员视角的待审队列 */

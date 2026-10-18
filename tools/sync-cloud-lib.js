@@ -38,6 +38,8 @@ const DEST_ROOT = path.join(ROOT, 'cloudfunctions', 'data', 'lib');
 
 /** 需要同步到云函数的纯模块，路径相对 miniprogram/ */
 const MANIFEST = [
+  'services/meet-consistency.js',
+  'services/meet-time.js',
   // 纯计算与常量
   'utils/constants.js',
   'utils/associations.js',

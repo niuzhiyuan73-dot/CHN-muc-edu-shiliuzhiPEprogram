@@ -1,3 +1,4 @@
+const { parseMeetTime } = require('./meet-time.js');
 /**
  * 运动会报名主链（B5）
  * ============================================================
@@ -44,6 +45,7 @@ const refused = (message, extra = {}) => ({ ok: false, message, ...extra });
 
 /** 4.2 默认：个人项目每人最多 2 项（D35），团体与接力不计入 */
 const PERSONAL_LIMIT = 2;
+const { touchEvent } = require('./meet-consistency.js');
 
 const isActiveInterest = (doc) => Boolean(doc && doc.status === MEET_INTEREST_STATUS.PENDING);
 /**
@@ -65,11 +67,12 @@ function toIso(now) {
  * 补报窗口（D27）：校管理员开的 lateWindow 覆盖同一判断，仍由部长提交。
  */
 function registrationWindow(meet, now) {
-  const at = now instanceof Date ? now.getTime() : Date.parse(now);
+  if (!meet || ['deleted', 'finished', 'draft'].includes(meet.status)) return { open: false, late: false };
+  const at = now instanceof Date ? now.getTime() : parseMeetTime(now);
   const within = (window) => {
     if (!window || !window.openAt || !window.closeAt) return false;
-    const open = Date.parse(window.openAt);
-    const close = Date.parse(window.closeAt);
+    const open = parseMeetTime(window.openAt);
+    const close = parseMeetTime(window.closeAt);
     if (!Number.isFinite(open) || !Number.isFinite(close)) return false;
     return at >= open && at <= close;
   };
@@ -364,6 +367,7 @@ async function submitMeetCollegeEntry(payload = {}, ctx) {
     const event = await loadEvent(tx, fresh, payload.eventKey);
     if (!event.ok) return refused(event.message);
 
+    if (event.doc.heatDraw || event.doc.bracket) return refused('该项目已经抽签，请在抽签前完成正式报名');
     const resolved = await resolveCollege(fresh, payload);
     if (!resolved.ok) return refused(resolved.message);
     const collegeId = resolved.collegeId;
@@ -381,6 +385,8 @@ async function submitMeetCollegeEntry(payload = {}, ctx) {
       if (!member || member.status !== SCHOOL_MEMBER_STATUS.ACTIVE) {
         return refused('名单包含非本校在册学生');
       }
+      const student = await tx.users.getById(userId);
+      if (!student || student.platformStatus !== 'active' || student.primarySchoolId !== fresh.schoolId) return refused('名单包含账号已停用或已转校的学生');
       if (member.collegeId !== collegeId) return refused('名单包含其他学院的学生');
       // D37：同一项目组别只报一次。先判重、再判意向——否则重复提交会被
       // 「未提交意向」误导（入选后意向状态已变成 selected）。
@@ -406,8 +412,14 @@ async function submitMeetCollegeEntry(payload = {}, ctx) {
       }
     }
 
-    const slot = meetEntrySlot(event.doc.entryForm, quota.used + quota.pending + 1);
-    const key = meetEntryKey(fresh.meetId, event.doc._id, collegeId, slot);
+    let serial = Math.max(Number(quota.doc && quota.doc.lastSlot || 0), quota.used + quota.pending) + 1;
+    let slot = meetEntrySlot(event.doc.entryForm, serial);
+    let key = meetEntryKey(fresh.meetId, event.doc._id, collegeId, slot);
+    while (await tx.sportsMeetEntries.getById(key)) {
+      serial += 1;
+      slot = meetEntrySlot(event.doc.entryForm, serial);
+      key = meetEntryKey(fresh.meetId, event.doc._id, collegeId, slot);
+    }
     const now = toIso(fresh.now);
 
     const entry = {
@@ -428,10 +440,11 @@ async function submitMeetCollegeEntry(payload = {}, ctx) {
       rejectReason: '',
       updatedAt: now,
     };
+    await touchEvent(tx, event.doc._id);
     await tx.sportsMeetEntries.set(key, entry);
     await tx.sportsMeetQuotaUsage.set(meetQuotaKey(fresh.meetId, event.doc._id, collegeId), {
       schoolId: fresh.schoolId, meetId: fresh.meetId, eventKey: event.doc._id, collegeId,
-      used: quota.used, pending: quota.pending + 1, updatedAt: now,
+      used: quota.used, pending: quota.pending + 1, lastSlot: serial, updatedAt: now,
     });
 
     for (const userId of userIds) {
@@ -478,7 +491,7 @@ async function withdrawMeetCollegeEntry(payload = {}, ctx) {
     if (!entry || entry.meetId !== fresh.meetId || entry.schoolId !== fresh.schoolId) {
       return refused('名单不存在或不属于本届运动会');
     }
-    if (entry.status === MEET_ENTRY_STATUS.WITHDRAWN) return refused('该名单已撤回');
+    if (!isLiveEntry(entry)) return refused('该名单已撤回或驳回');
 
     const resolved = await resolveCollege(fresh, { collegeId: entry.collegeId });
     if (!resolved.ok) return refused(resolved.message);
@@ -498,6 +511,7 @@ async function withdrawMeetCollegeEntry(payload = {}, ctx) {
  * 撤回与驳回共用一份逻辑：两处各写一遍必然漏掉其中一项（最常见是漏减 personal）。
  */
 async function releaseEntry(tx, ctx, entry, nextStatus) {
+  await touchEvent(tx, entry.eventKey);
   const now = toIso(ctx.now);
   await tx.sportsMeetEntries.set(entry._id, {
     ...entry, status: nextStatus, updatedAt: now,
@@ -507,6 +521,7 @@ async function releaseEntry(tx, ctx, entry, nextStatus) {
   const wasApproved = entry.status === MEET_ENTRY_STATUS.APPROVED;
   await tx.sportsMeetQuotaUsage.set(meetQuotaKey(ctx.meetId, entry.eventKey, entry.collegeId), {
     schoolId: ctx.schoolId, meetId: ctx.meetId, eventKey: entry.eventKey, collegeId: entry.collegeId,
+    lastSlot: Number(quota.doc && quota.doc.lastSlot || 0),
     used: Math.max(0, quota.used - (wasApproved ? 1 : 0)),
     pending: Math.max(0, quota.pending - (wasApproved ? 0 : 1)),
     updatedAt: now,
@@ -547,6 +562,7 @@ async function reviewMeetEntry(payload = {}, ctx) {
   return ctx.repo.transaction(async (tx) => {
     const fresh = await freshMeetContext(tx, ctx);
     if (!canManageMeet(fresh)) return refused('只有校级管理员及以上可以审核名单');
+    if (!fresh.meet || ['deleted','finished'].includes(fresh.meet.status)) return refused('运动会已结束或不存在，不能审核名单');
 
     const key = String(payload.entryKey || '').trim();
     const entry = await tx.sportsMeetEntries.getById(key);
@@ -565,9 +581,11 @@ async function reviewMeetEntry(payload = {}, ctx) {
       return ok({ entryKey: key, status: MEET_ENTRY_STATUS.REJECTED });
     }
 
+    await touchEvent(tx, entry.eventKey);
     const quota = await quotaOf(tx, fresh.meetId, entry.eventKey, entry.collegeId);
     await tx.sportsMeetQuotaUsage.set(meetQuotaKey(fresh.meetId, entry.eventKey, entry.collegeId), {
       schoolId: fresh.schoolId, meetId: fresh.meetId, eventKey: entry.eventKey, collegeId: entry.collegeId,
+      lastSlot: Number(quota.doc && quota.doc.lastSlot || 0),
       used: quota.used + 1, pending: Math.max(0, quota.pending - 1), updatedAt: now,
     });
     await tx.sportsMeetEntries.set(key, {
@@ -589,7 +607,8 @@ async function openMeetLateWindow(payload = {}, ctx) {
     const openAt = String(payload.openAt || '').trim();
     const closeAt = String(payload.closeAt || '').trim();
     if (!openAt || !closeAt) return refused('请填写补报窗口的开始与结束时间');
-    if (Date.parse(closeAt) <= Date.parse(openAt)) return refused('补报结束必须晚于开始');
+    if (!Number.isFinite(parseMeetTime(openAt)) || !Number.isFinite(parseMeetTime(closeAt))) return refused('请填写有效的补报开始与结束时间');
+    if (parseMeetTime(closeAt) <= parseMeetTime(openAt)) return refused('补报结束必须晚于开始');
 
     const now = toIso(fresh.now);
     await tx.sportsMeets.set(fresh.meetId, {

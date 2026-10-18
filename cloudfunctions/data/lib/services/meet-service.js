@@ -1,3 +1,5 @@
+const { parseMeetTime } = require('./meet-time.js');
+const { unchanged } = require('./meet-consistency.js');
 /**
  * 运动会：草稿、项目运行时配置与报名发布（B4）
  * ============================================================
@@ -87,7 +89,7 @@ function dateOf(value, label) {
 function timeOf(value, label) {
   const text = String(value == null ? '' : value).trim();
   if (!TIME_PATTERN.test(text)) return { ok: false, message: `${label}格式应为 YYYY-MM-DDTHH:mm` };
-  const time = Date.parse(text.length === 16 ? `${text}:00Z` : `${text}Z`);
+  const time = parseMeetTime(text);
   if (!Number.isFinite(time)) return { ok: false, message: `${label}不是有效时间` };
   return { ok: true, value: text, time };
 }
@@ -264,16 +266,35 @@ async function setMeetEventProcedure(payload = {}, ctx) {
   const procedure = procedureOf(template, payload);
   if (!procedure.ok) return refused(procedure.message);
 
-  if (sessions.some((doc) => doc.eventKey === eventKey)) {
-    return refused('该项目已经排了场次，不能再改赛制；如需重排请先删除场次');
-  }
+  const ownSessions = sessions.filter((doc) => doc.eventKey === eventKey);
   if (publications.some((doc) => doc.eventKey === eventKey)) {
     return refused('该项目已经发布过成绩，不能再改赛制');
   }
+  if (ownSessions.length > 0) {
+    // 已抽签/排期之后，**结构**（轮次、分批口径、赛制）一动，已排的场次就作废，
+    // 仍然拒绝。但「每组晋级数」是例外：它不改变分组与场次，只决定谁进决赛——
+    // 而 8 道分 4 组、每组晋 3 会凑出 12 人超过决赛容量，发现时必须能改，
+    // 否则管理员会被锁死在一个跑不起来的配置上（抽签时的校验见 drawMeetHeats）。
+    const structural = procedure.rounds !== event.rounds
+      || procedure.heatMode !== (event.heatMode || null)
+      || procedure.heatCapacity !== (Number(event.heatCapacity) || 0)
+      || procedure.laneCount !== (Number(event.laneCount) || 0)
+      || (procedure.format || '') !== (event.format || '')
+      || JSON.stringify(procedure.groups || null) !== JSON.stringify(event.groups || null);
+    if (structural) {
+      return refused('该项目已经排了场次，不能再改赛制；如需重排请先删除场次');
+    }
+  }
 
+  const heatCount = ownSessions.filter(row => row.round === 'heat').length;
+  if (procedure.advance && heatCount && procedure.advance.mode === ADVANCE_MODE.PER_HEAT
+      && heatCount * procedure.advance.count > procedure.heatCapacity) {
+    return refused('各组晋级人数合计超过决赛容量，请减少晋级人数或改用总成绩晋级');
+  }
   return ctx.repo.transaction(async (tx) => {
     const fresh = await freshMeetContext(tx, ctx);
     if (!canManageMeet(fresh)) return refused('只有校级管理员及以上可以设置赛制');
+    if (!await unchanged(tx, 'sportsMeetEvents', [event])) return refused('项目数据已变化，请刷新后重试');
     const meet = await tx.sportsMeets.getById(fresh.meetId);
     if (!isAlive(meet) || meet.schoolId !== fresh.schoolId) return refused('运动会不存在或已删除');
     const current = await tx.sportsMeetEvents.getById(eventKey);
@@ -282,6 +303,7 @@ async function setMeetEventProcedure(payload = {}, ctx) {
     const now = fresh.now instanceof Date ? fresh.now.toISOString() : String(fresh.now);
     const next = {
       ...current,
+      revision: Number(current.revision || 0) + 1,
       rounds: procedure.rounds,
       heatMode: procedure.heatMode,
       heatCapacity: procedure.heatCapacity,
@@ -475,6 +497,15 @@ function procedureOf(template, payload = {}) {
       return { ok: false, message: '每组人数上限应为 2–50 的整数' };
     }
     heatCapacity = value;
+  }
+
+  // 晋级数与分批口径的联动（用户反馈：8 个跑道分 4 组，每组晋级 3 会凑出
+  // 12 人，决赛只有 8 道）。这里先挡「每组晋级数 > 每组可上场人数」——
+  // 一组总共那么多人，晋级数比它还大根本选不出人来；「组数 × 每组晋级 ≤
+  // 每批人数」要等抽签时组数已知再校验（见 drawMeetHeats）。
+  if (advance && heatMode && advance.count > heatCapacity) {
+    const unit = heatMode === HEAT_MODE.LANE ? '跑道数' : '每组人数上限';
+    return { ok: false, message: `每组晋级人数不能超过${unit} ${heatCapacity} 人` };
   }
 
   return {
@@ -719,6 +750,77 @@ async function listSportsEventTemplates(payload = {}, ctx) {
   });
 }
 
+/**
+ * 结束运动会：把届次推到「已结束」。
+ *
+ * 【为什么要有这个动作】
+ * 之前状态机里有 finished 却没有入口：成绩全部发完之后，届次一直挂在
+ * 「进行中」，列表里分不清哪届已经收尾。结束同时是一次**收口检查**——
+ * 要求每个项目组别都已有正式发布成绩（D79：只算已发布项目），缺谁点名谁。
+ *
+ * 【为什么结束后还能更正】
+ * D88 明确「本校校管理员可发更正；必须同步学院积分与个人荣誉」。积分与
+ * 荣誉本来就在发布事务里同步累加，所以结束不锁发布——锁了更正反而违反
+ * 已确认裁决。结束只改状态与时间戳。
+ *
+ * 幂等：已结束的届次再点一次返回成功，不重复写。
+ */
+async function finishSportsMeet(payload = {}, ctx) {
+  if (!meetReadable(ctx) || !ctx.meetId) return refused('请先登录');
+  const scope = { schoolId: ctx.schoolId, meetId: ctx.meetId };
+
+  // 事务内不能查集合，「哪些项目还没发布」在事务外读一次快照。
+  const [meet, events, publications, entries] = await Promise.all([
+    ctx.repo.sportsMeets.getById(ctx.meetId),
+    listAliveEvents(ctx.repo.forMeet(scope).sportsMeetEvents),
+    ctx.repo.forMeet(scope).sportsMeetPublications.list(),
+    ctx.repo.forMeet(scope).sportsMeetEntries.list(),
+  ]);
+  if (!isAlive(meet) || meet.schoolId !== ctx.schoolId) return refused('运动会不存在或已删除');
+  if (!canManageMeet(ctx)) return refused('只有校级管理员及以上可以结束运动会');
+  if (meet.status === MEET_STATUS.DRAFT) return refused('筹备中的运动会不能结束，请先发布报名');
+  if (meet.status === MEET_STATUS.FINISHED) {
+    return ok({ meet: meetSummary(meet), finished: false }); // 幂等
+  }
+
+  const official = new Set(
+    publications.filter((doc) => doc.official === true).map((doc) => doc.eventKey),
+  );
+  const participating = new Set(entries.filter(row => row.status === 'approved' || row.status === 'pending_review').map(row => row.eventKey));
+  const missing = events.filter((doc) => participating.has(doc._id) && !official.has(doc._id)).map((doc) => doc.name);
+  if (missing.length > 0) {
+    const shown = missing.slice(0, 8).join('、');
+    return refused(
+      `还有 ${missing.length} 个项目没有发布成绩：${shown}${missing.length > 8 ? ' 等' : ''}`,
+      { missing },
+    );
+  }
+
+  return ctx.repo.transaction(async (tx) => {
+    const fresh = await freshMeetContext(tx, ctx);
+    if (!canManageMeet(fresh)) return refused('只有校级管理员及以上可以结束运动会');
+    const current = await tx.sportsMeets.getById(fresh.meetId);
+    if (!isAlive(current) || current.schoolId !== fresh.schoolId) {
+      return refused('运动会不存在或已删除');
+    }
+    if (current.status === MEET_STATUS.FINISHED) {
+      return ok({ meet: meetSummary(current), finished: false });
+    }
+    if (!await unchanged(tx, 'sportsMeetEvents', events)
+      || !await unchanged(tx, 'sportsMeetPublications', publications)) return refused('成绩数据已变化，请刷新后重试');
+    const now = fresh.now instanceof Date ? fresh.now.toISOString() : String(fresh.now);
+    const next = {
+      ...current,
+      status: MEET_STATUS.FINISHED,
+      finishedAt: now,
+      updatedAt: now,
+      version: (current.version || 1) + 1,
+    };
+    await tx.sportsMeets.set(fresh.meetId, next);
+    return ok({ meet: meetSummary(next), finished: true });
+  });
+}
+
 /** 删除：本批只允许删草稿；已发布的一律走后续批次的撤销流程（B8）。 */
 async function deleteSportsMeet(payload = {}, ctx) {
   if (!ctx.meetId) return refused('请指定运动会');
@@ -749,5 +851,6 @@ module.exports = {
   listSportsMeets,
   getSportsMeet,
   listSportsEventTemplates,
+  finishSportsMeet,
   deleteSportsMeet,
 };

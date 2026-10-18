@@ -87,7 +87,9 @@
               <text class="meet-form-unit">{{proc.heatMode === 'lane' ? '人/队（组数按报名数自动算）' : '人（组数按报名人数自动算）'}}</text>
             </view>
             <view wx:if="{{proc.rounds === 'heat_final'}}" class="meet-form-row">
-              <text class="meet-form-label">每组晋级</text>
+              <text class="meet-form-label">晋级方式</text>
+              <picker range="{{advanceModes}}" range-key="label" value="{{proc.advanceModeIndex}}" bindchange="onProcAdvanceMode"><view>{{advanceModes[proc.advanceModeIndex].label}}</view></picker>
+              <text class="meet-form-label">{{proc.advanceModeIndex === 0 ? '每组晋级' : '晋级总数'}}</text>
               <input class="meet-num" type="number" value="{{proc.advanceCount}}" data-field="advanceCount" bindinput="onProcInput" />
               <text class="meet-form-unit">人</text>
             </view>
@@ -103,17 +105,20 @@
 
         <view wx:if="{{bulkOpen && activeEventKey === item.eventKey}}" class="meet-editor">
           <view class="meet-form-label">选裁判（{{bulkJudges.length}} 人）</view>
+          <input class="meet-search" placeholder="搜索姓名或学院" value="{{bulkKeyword}}" bindinput="onBulkKeyword" />
+          <view class="meet-hint">已选：{{bulkJudgeNames || '尚未选择'}}</view>
           <view class="meet-chips">
             <view
-              wx:for="{{filteredJudges}}"
+              wx:for="{{filteredBulkJudges}}"
               wx:for-item="judge"
               wx:key="userId"
-              class="meet-chip {{bulkJudges.indexOf(judge.userId) >= 0 ? 'is-on' : ''}}"
+              class="meet-chip {{bulkJudgesSelected[judge.userId] ? 'is-on' : ''}}"
               data-user-id="{{judge.userId}}"
               bindtap="onToggleBulkJudge"
             >{{judge.name}}</view>
           </view>
 
+          <view wx:if="{{bulkHasMore}}" bindtap="onMoreBulkJudges" class="meet-hint">加载更多裁判</view>
           <view class="meet-form-label">派到哪些场次</view>
           <view class="meet-actions">
             <view class="meet-btn" bindtap="onBulkAllSessions">本项目全部场次</view>
@@ -123,7 +128,7 @@
               wx:for="{{item.sessions}}"
               wx:for-item="rnd"
               wx:key="sessionKey"
-              class="meet-chip {{bulkSessions.indexOf(rnd.sessionKey) >= 0 ? 'is-on' : ''}}"
+              class="meet-chip {{bulkSessionsSelected[rnd.sessionKey] ? 'is-on' : ''}}"
               data-session-key="{{rnd.sessionKey}}"
               bindtap="onToggleBulkSession"
             >{{rnd.displayLabel}}</view>
@@ -178,14 +183,15 @@
 
           <view wx:if="{{current}}" class="meet-judges">
             <view class="meet-judges-title">裁判（{{current.judgeIds.length}} 人）</view>
-            <view wx:for="{{current.judgeIds}}" wx:for-item="judgeId" wx:key="*this" class="meet-judge">
-              <text>{{judgeId}}</text>
-              <text class="meet-judge-remove" data-session-key="{{current.sessionKey}}" data-judge-id="{{judgeId}}" bindtap="onRemoveJudge">撤销</text>
+            <view wx:for="{{current.judges}}" wx:for-item="judge" wx:key="judgeId" class="meet-judge">
+              <text>{{judge.name}}</text>
+              <text class="meet-judge-remove" data-session-key="{{current.sessionKey}}" data-judge-id="{{judge.judgeId}}" bindtap="onRemoveJudge">撤销</text>
             </view>
 
             <!-- 搜索 + 直接点人指派：不再用 picker，避免「搜完还要再点一次」 -->
             <input class="meet-search" placeholder="搜索姓名或学院" value="{{judgeKeyword}}" bindinput="onJudgeKeyword" />
             <scroll-view scroll-y class="meet-judge-list">
+              <view wx:if="{{judgeHasMore}}" bindtap="onMoreJudges" class="meet-hint">加载更多裁判</view>
               <view wx:if="{{filteredJudges.length === 0}}" class="meet-hint">没有匹配的本校成员</view>
               <view
                 wx:for="{{filteredJudges}}"

@@ -28,12 +28,21 @@
     </view>
 
     <view class="meet-section-title">项目清单</view>
+    <view wx:if="{{!isDraft}}" class="meet-section-hint">点项目查看该项目的成绩</view>
     <view wx:if="{{events.length === 0}}" class="empty-state">
       <view class="empty-state-icon">📋</view>
       <view class="empty-state-text">还没有选择项目</view>
     </view>
 
-    <view wx:for="{{events}}" wx:key="eventKey" class="card meet-event">
+    <!-- 点项目弹成绩：成绩不再平铺在页面底部，避免一届上百项目滚不完 -->
+    <view
+      wx:for="{{events}}"
+      wx:key="eventKey"
+      class="card meet-event"
+      hover-class="{{isDraft ? '' : 'meet-event-pressed'}}"
+      data-event-key="{{item.eventKey}}"
+      bindtap="onOpenEventResult"
+    >
       <view class="meet-event-main">
         <view class="meet-event-name">{{item.name}}</view>
         <view class="meet-event-tags">
@@ -44,26 +53,28 @@
           <text class="meet-tag" wx:else>{{item.rounds === 'heat_final' ? '预赛+决赛' : '直接决赛'}}</text>
           <text class="meet-tag" wx:if="{{item.heatCapacity}}">{{item.heatMode === 'lane' ? '每批' : '每批最多'}} {{item.heatCapacity}}</text>
           <text class="meet-tag" wx:if="{{!item.scored}}">不计分</text>
+          <text class="meet-tag is-result" wx:if="{{item.hasResult}}">已出成绩 ›</text>
         </view>
       </view>
       <view class="meet-event-side">
         <view class="meet-event-limit">每院 {{item.limitUnlimited ? '不限' : item.perCollegeLimit}}{{item.entryForm === 'single' ? '人' : item.entryForm === 'team' ? '队' : '组'}}</view>
         <view class="meet-event-members" wx:if="{{item.membersUnlimited}}">每组人数不限</view>
         <view class="meet-event-members" wx:elif="{{item.members > 1}}">每组 {{item.members}} 人</view>
-        <!-- 学生报名：意向不占名额；已入选后不能再撤（D10／D19） -->
+        <!-- 学生报名：意向不占名额；已入选后不能再撤（D10／D19）。
+             用 catchtap 阻止冒泡，否则点报名会同时打开成绩弹层 -->
         <block wx:if="{{isRegistration}}">
           <view wx:if="{{item.myInterestStatus === 'selected'}}" class="meet-event-state">已在正式名单</view>
           <view
             wx:elif="{{item.myInterestStatus === 'pending'}}"
             class="meet-event-btn is-pending"
             data-event-key="{{item.eventKey}}"
-            bindtap="onWithdrawInterest"
+            catchtap="onWithdrawInterest"
           >已报名 · 撤回</view>
           <view
             wx:else
             class="meet-event-btn"
             data-event-key="{{item.eventKey}}"
-            bindtap="onInterest"
+            catchtap="onInterest"
           >我要报名</view>
         </block>
       </view>
@@ -103,13 +114,16 @@
     </block>
 
     <!-- 管理员：赛程编排与录分发布 -->
-    <block wx:if="{{canManage && !isDraft}}">
-      <view class="meet-college-link" bindtap="onOpenSchedule">赛程编排与裁判指派 ›</view>
-      <view class="meet-college-link" bindtap="onOpenScore">录分与成绩发布 ›</view>
+    <block wx:if="{{!isDraft}}">
+      <view wx:if="{{canManage}}" class="meet-college-link" bindtap="onOpenSchedule">赛程编排与裁判指派 ›</view>
+      <view class="meet-college-link" bindtap="onOpenScore">裁判任务与成绩发布 ›</view>
       <view class="meet-college-link" bindtap="onOpenStanding">学院总榜与我的荣誉 ›</view>
+      <!-- 成绩改为点项目弹出；这里只在「已出成绩」索引取不到时留一个重试入口 -->
+      <view wx:if="{{resultsError}}" class="meet-error" bindtap="loadResultIndex">{{resultsError}} · 点击重试</view>
+      <button wx:if="{{canManage && meet.status !== 'finished'}}" class="btn btn-ghost" bindtap="onFinish" disabled="{{busy}}">结束运动会</button>
     </block>
 
-    <block wx:if="{{canManage && isDraft}}">
+<block wx:if="{{canManage && isDraft}}">
       <view class="meet-section-title">发布报名</view>
       <view class="card meet-publish">
         <view class="meet-field">
@@ -132,4 +146,35 @@
 
     <view wx:elif="{{canManage && !isDraft}}" class="meet-hint">已发布报名，项目配置已锁定（改规则需后续批次的能力）。</view>
   </block>
+
+  <!-- 成绩弹层：只装被点开的那一个项目；点遮罩关闭，点面板不关 -->
+  <view wx:if="{{resultPopup.visible}}" class="meet-sheet-mask" bindtap="onCloseResult">
+    <view class="meet-sheet" catchtap="onStopBubble">
+      <view class="meet-sheet-head">
+        <view class="meet-sheet-title">{{resultPopup.title}}</view>
+        <view class="meet-sheet-close" bindtap="onCloseResult">关闭</view>
+      </view>
+      <scroll-view scroll-y class="meet-sheet-body">
+        <view wx:if="{{resultPopup.loading}}" class="meet-hint">正在加载成绩…</view>
+        <view wx:elif="{{resultPopup.error}}" class="meet-error" bindtap="onRetryEventResult">{{resultPopup.error}} · 点击重试</view>
+        <view wx:elif="{{resultPopup.rounds.length === 0}}" class="meet-hint">该项目还没有发布成绩</view>
+        <block wx:else>
+          <view wx:for="{{resultPopup.rounds}}" wx:for-item="round" wx:key="sessionKey" class="meet-sheet-round">
+            <view class="meet-sheet-round-title">{{round.roundLabel}} · {{round.official ? '正式名次' : '预赛成绩（不计学院分）'}}</view>
+            <view wx:if="{{round.items.length === 0}}" class="meet-hint">该场次没有成绩行</view>
+            <view wx:for="{{round.items}}" wx:for-item="row" wx:key="entryKey" class="meet-sheet-row">
+              <view class="meet-sheet-row-main">
+                <view class="meet-sheet-row-name">{{row.rank ? '第 ' + row.rank + ' 名' : '无成绩'}} · {{row.collegeName}}</view>
+                <view wx:if="{{row.memberText}}" class="meet-sheet-row-meta">{{row.memberText}}</view>
+              </view>
+              <view class="meet-sheet-row-side">
+                <view class="meet-sheet-row-text">{{row.text}}</view>
+                <view class="meet-sheet-row-points">{{row.points}} 分</view>
+              </view>
+            </view>
+          </view>
+        </block>
+      </scroll-view>
+    </view>
+  </view>
 </view>

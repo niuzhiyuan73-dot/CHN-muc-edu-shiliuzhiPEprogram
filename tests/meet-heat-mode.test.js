@@ -394,3 +394,29 @@ test('分道项目抽签即定道次：8 人占满 8 条道、1 号居中最优�
     { sessionKey: meetSessionKey(meetId, long, 'final', 1) }, admin);
   assert.equal(longView.data.items.every((row) => row.lane === 0), true, '无道次记 0');
 });
+
+
+test('八道正常晋级容量校验，同分超额全部保留并分配备用道次', async () => {
+  const world = await makeWorld();
+  await meetService.configureMeetEvent({templateId:'sprint-100m',group:'male',rounds:'heat_final',heatCapacity:8,perCollegeLimit:8,advance:{mode:'per_heat',count:4}},world.admin);
+  await meetService.publishMeetRegistration(WINDOW,world.admin);
+  const eventKey = meetEventKey(world.meetId,'sprint-100m','male');
+  await world.enrollMany(eventKey,STUDENTS.c01,'u_l1');
+  await world.enrollMany(eventKey,STUDENTS.c02.slice(0,2),'u_l2');
+  const insufficient = await advance.drawMeetHeats({eventKey,heatCount:1},world.admin);
+  assert.equal(insufficient.ok,false);
+  const drawn = await advance.drawMeetHeats({eventKey},world.admin);
+  assert.equal(drawn.ok,true,drawn.message);
+  const scope = require('../miniprogram/utils/meet-scope.js');
+  const heats = (await world.repo.sportsMeetSessions.list()).filter(row=>row.eventKey===eventKey && row.round==='heat');
+  for (const heat of heats) {
+    const publicationKey = scope.meetPublicationKey(world.meetId,eventKey,heat._id);
+    await world.repo.sportsMeetPublications.set(publicationKey,{schoolId:SCHOOL,meetId:world.meetId,eventKey,sessionKey:heat._id,version:1});
+    for (const entryKey of heat.entryKeys) await world.repo.sportsMeetResultRows.set(scope.meetResultRowKey(publicationKey,entryKey),{schoolId:SCHOOL,meetId:world.meetId,eventKey,publicationKey,version:1,entryKey,value:1230,status:'result'});
+  }
+  const advanced = await advance.advanceMeetEvent({eventKey},world.admin);
+  assert.equal(advanced.ok,true,advanced.message);
+  assert.equal(advanced.data.entryKeys.length,10,'同分额外晋级不受八道限制');
+  const final = await world.repo.sportsMeetSessions.getById(meetSessionKey(world.meetId,eventKey,'final',1));
+  assert.equal(new Set(Object.values(final.lanes)).size,10);
+});

@@ -895,7 +895,7 @@ test('我的页 —— 访客看不到公告管理入口', async () => {
 });
 
 test('我的页 —— 平台管理员看到公告管理入口，点进去跳转公告管理页', async () => {
-  // 公告发布权已收归平台管理员（M3-a）；校管理员没有这个入口
+  // 公告管理权 = 平台管理员 + 本校校级管理员（2026-10-18 起校级管理员也能发）
   const fx = spaceFixture();
   try {
     fx.to('demo_platform_admin');
@@ -915,11 +915,30 @@ test('我的页 —— 平台管理员看到公告管理入口，点进去跳转
   }
 });
 
-test('我的页 —— 校管理员看不到公告管理入口：发布权在平台管理员', async () => {
+test('我的页 —— 校管理员也看到公告管理入口：本校公告由校级管理员发', async () => {
   const fx = spaceFixture();
   try {
     fx.to('demo_muc_admin');
     app.globalData.userInfo = fakeMember({ _id: 'demo_muc_admin', role: 2 });
+
+    const page = instantiate(profileConfig);
+    await page.onLoad({});
+
+    assert.strictEqual(page.data.adminEntry.visible, true);
+    assert.ok(page.data.adminEntry.hint, '入口卡上要写清楚点进去是干什么的');
+  } finally {
+    fx.restore();
+  }
+});
+
+test('我的页 —— 协会负责人看不到公告管理入口：公告是全校事务', async () => {
+  const fx = spaceFixture();
+  const schoolSession = require('../miniprogram/services/school-session');
+  try {
+    // 切到北航范围，让「北航协会负责人」成为本校在册身份——否则测的就成了跨校只读
+    schoolSession.setSchoolId('buaa');
+    fx.to('demo_buaa_leader');
+    app.globalData.userInfo = fakeMember({ _id: 'demo_buaa_leader', role: 1 });
 
     const page = instantiate(profileConfig);
     await page.onLoad({});
@@ -4296,7 +4315,7 @@ test('公告管理页 —— 没有学校身份的访客被整页挡住，一条
   }
 });
 
-test('公告管理页 —— 普通会员被整页挡住：公告只由平台管理员管理', async () => {
+test('公告管理页 —— 普通会员被整页挡住：公告只由平台管理员与校级管理员管理', async () => {
   const fx = announcementFixture();
   try {
     await fx.seed('pkb', PKB_ANNOUNCEMENTS);
@@ -4321,6 +4340,26 @@ test('发布公告页 —— 普通会员填不了表，整页只给一句提示
     await page.onLoad();
 
     assert.match(page.data.blockReason, /权限/);
+  } finally {
+    fx.restore();
+  }
+});
+
+test('公告管理页 —— 校级管理员看到台账，也能进发布页填表（2026-10-18 放宽）', async () => {
+  const fx = announcementFixture();
+  try {
+    await fx.seed('pkb', PKB_ANNOUNCEMENTS);
+    fx.to('demo_muc_admin');
+
+    const manage = instantiate(announcementManageConfig);
+    await manage.onLoad();
+    assert.strictEqual(manage.data.view.allowed, true);
+    assert.strictEqual(manage.data.view.total, 6);
+    assert.strictEqual(manage.data.view.rows[0].canArchive, true);
+
+    const edit = instantiate(announcementEditConfig);
+    await edit.onLoad();
+    assert.strictEqual(edit.data.blockReason, '', '校级管理员应拿到表单');
   } finally {
     fx.restore();
   }

@@ -24,6 +24,7 @@
 
 const meet = require('../../services/meet.js');
 const session = require('../../services/school-session.js');
+const { showError, showNotice, updateMeetPage } = require('../../utils/meet-ui.js');
 
 const ROUND_LABEL = { final: '决赛', heat: '预赛', rr: '循环赛' };
 const ADVANCE_LABEL = { per_heat: '每组前 N', overall: '总成绩前 N', hybrid: '混合晋级' };
@@ -54,6 +55,10 @@ Page({
     bulkJudges: [],
     bulkSessions: [],
     bulkDate: '',
+    // 批量面板的裁判搜索与已选摘要（试用反馈：面板里搜不了人、选了没提示）
+    bulkKeyword: '',
+    filteredBulkJudges: [],
+    bulkJudgeNames: '',
     // 展开的行与它正在编辑的场次
     activeEventKey: '',
     editStartAt: '',
@@ -79,6 +84,11 @@ Page({
     },
     advanceLabel: ADVANCE_LABEL,
     formatLabel: FORMAT_LABEL,
+    advanceModes: [
+      { value: 'per_heat', label: '每组前 N' },
+      { value: 'overall', label: '总成绩前 N' },
+      { value: 'hybrid', label: '混合晋级' },
+    ],
   },
 
   onLoad(options = {}) {
@@ -90,12 +100,19 @@ Page({
     return this.reload();
   },
 
+  onHide() { this.needsRefresh = true; },
+
+  onShow() {
+    if (this.needsRefresh) { this.needsRefresh = false; return this.reload(); }
+  },
+
   onUnload() {
+    clearTimeout(this.candidateTimer);
     this.unloaded = true;
   },
 
   update(values) {
-    if (!this.unloaded) this.setData(values);
+    updateMeetPage(this, values);
   },
 
   client() {
@@ -142,6 +159,7 @@ Page({
       if (schedule.canManage) {
         const candidates = await this.client().listMeetJudgeCandidates({});
         judges = candidates.items;
+        this.update({judgeHasMore: Boolean(candidates.hasMore), bulkHasMore: Boolean(candidates.hasMore)});
       }
       const items = schedule.items.map((item) => ({
         ...item,
@@ -170,6 +188,8 @@ Page({
         items,
         judges,
         filteredJudges: this.filterJudges(judges, this.data.judgeKeyword),
+        filteredBulkJudges: this.filterJudges(judges, this.data.bulkKeyword),
+        bulkJudgeNames: this.judgeNamesOf(this.data.bulkJudges),
         activeEventKey: current ? eventKey : '',
         editSessionKey: current ? sessionKey : '',
         current,
@@ -201,6 +221,15 @@ Page({
     return judges.filter((row) => `${row.name}${row.collegeName || ''}${row.collegeId || ''}`.includes(needle));
   },
 
+  /** 已选裁判的姓名串：chips 之外再给一行文字摘要，选中状态不只靠颜色 */
+  judgeNamesOf(judgeIds) {
+    const names = (judgeIds || []).map((id) => {
+      const judge = this.data.judges.find((row) => row.userId === id);
+      return judge ? judge.name : id;
+    });
+    return names.join('、');
+  },
+
   // ---------- 赛制设置（报名截止后） ----------
 
   async onOpenProcedure(event) {
@@ -222,6 +251,7 @@ Page({
         rounds: item.rounds || 'final',
         heatCapacity: item.heatCapacity || item.laneCount || 8,
         advanceCount: (item.advance && item.advance.count) || 3,
+        advanceModeIndex: Math.max(0, this.data.advanceModes.findIndex(row => row.value === (item.advance && item.advance.mode))),
         format: item.format || 'single_elim',
         groupCount: (item.groups && item.groups.count) || 2,
         advancePerGroup: (item.groups && item.groups.advancePerGroup) || 2,
@@ -261,13 +291,30 @@ Page({
    * 「连续几个项目同一批裁判」是学生运动会的常态。逐个场次、逐个裁判地派，
    * 一个上午的赛程要几十次点击，漏派一场那场就开不了赛。所以这里一次选多人、
    * 一次选多场，服务端按写预算拆事务后全部完成。
+   *
+   * 【为什么必须带上 eventKey】
+   * 面板的显示条件是 `bulkOpen && activeEventKey === item.eventKey`，而按钮挂在
+   * 每个项目行上。早先只翻 `bulkOpen`，点在未展开的项目上时 activeEventKey 还是
+   * 空的——按钮像坏了一样「点了没反应」（试用反馈）。现在点谁就把谁展开。
    */
-  onOpenBulk() {
+  onOpenBulk(event) {
+    if (this.data.busy) return;
+    const eventKey = (event.currentTarget.dataset.eventKey || '').trim();
+    if (!eventKey) return;
+    const sameEvent = this.data.activeEventKey === eventKey;
+    if (!sameEvent) {
+      const row = this.data.items.find(item => item.eventKey === eventKey);
+      this.pickSession(eventKey, row && row.sessions[0]);
+    }
     this.update({
-      bulkOpen: !this.data.bulkOpen,
+      activeEventKey: eventKey,
+      bulkOpen: sameEvent ? !this.data.bulkOpen : true,
       bulkJudges: [],
       bulkSessions: [],
       bulkDate: '',
+      bulkKeyword: '',
+      filteredBulkJudges: this.data.judges,
+      bulkJudgeNames: '',
       error: '',
       notice: '',
     });
@@ -279,7 +326,16 @@ Page({
     const picked = this.data.bulkJudges.includes(userId)
       ? this.data.bulkJudges.filter((id) => id !== userId)
       : [...this.data.bulkJudges, userId];
-    this.update({ bulkJudges: picked });
+    this.update({ bulkJudges: picked, bulkJudgeNames: this.judgeNamesOf(picked) });
+  },
+
+  onBulkKeyword(event) {
+    const bulkKeyword = event.detail.value;
+    this.update({
+      bulkKeyword,
+      filteredBulkJudges: this.filterJudges(this.data.judges, bulkKeyword),
+    });
+    this.queueCandidateSearch('bulk');
   },
 
   onToggleBulkSession(event) {
@@ -325,10 +381,14 @@ Page({
         bulkOpen: false,
         bulkJudges: [],
         bulkSessions: [],
-        notice: `已指派 ${result.judgeIds.length} 名裁判到 ${result.sessionCount} 个场次${existed}`,
+        bulkJudgeNames: '',
+        notice: '',
+        error: '',
       });
+      showNotice(`已指派 ${result.judgeIds.length} 名裁判到 ${result.sessionCount} 个场次${existed}`);
     } catch (err) {
-      this.update({ busy: false, error: (err && err.message) || '指派失败' });
+      this.update({ busy: false });
+      showError((err && err.message) || '指派失败');
     }
   },
 
@@ -351,7 +411,7 @@ Page({
         payload.groups = { count: proc.groupCount, advancePerGroup: proc.advancePerGroup };
       }
     } else if (proc.rounds === 'heat_final') {
-      payload.advance = { mode: 'per_heat', count: proc.advanceCount };
+      payload.advance = { mode: this.data.advanceModes[proc.advanceModeIndex || 0].value, count: proc.advanceCount };
     }
 
     this.update({ busy: true, error: '', notice: '' });
@@ -368,7 +428,7 @@ Page({
   async onDraw(event) {
     if (this.data.busy) return;
     const eventKey = event.currentTarget.dataset.eventKey;
-    const versus = event.currentTarget.dataset.versus === '1'
+    const versus = event.currentTarget.dataset.versus === 1 || event.currentTarget.dataset.versus === '1'
       || event.currentTarget.dataset.versus === true;
     if (!eventKey) return;
     this.update({ busy: true, error: '', notice: '' });
@@ -488,7 +548,32 @@ Page({
       judgeKeyword,
       filteredJudges: this.filterJudges(this.data.judges, judgeKeyword),
     });
+    this.queueCandidateSearch('judge');
   },
+
+  queueCandidateSearch(kind) {
+    clearTimeout(this.candidateTimer);
+    this.candidateTimer = setTimeout(() => this.loadCandidates(kind, false), 400);
+  },
+
+  async loadCandidates(kind, append) {
+    const bulk = kind === 'bulk';
+    const keyword = bulk ? this.data.bulkKeyword : this.data.judgeKeyword;
+    const field = bulk ? 'filteredBulkJudges' : 'filteredJudges';
+    const previous = append ? this.data[field] : [];
+    const requestId = (this.candidateRequestId || 0) + 1;
+    this.candidateRequestId = requestId;
+    try {
+      const result = await this.client().listMeetJudgeCandidates({keyword, offset: previous.length});
+      if (this.unloaded || this.candidateRequestId !== requestId || keyword !== (bulk ? this.data.bulkKeyword : this.data.judgeKeyword)) return;
+      const merged = new Map(this.data.judges.map(row => [row.userId, row]));
+      for (const row of result.items) merged.set(row.userId, row);
+      this.update({[field]: previous.concat(result.items), judges: [...merged.values()], [bulk ? 'bulkHasMore' : 'judgeHasMore']: Boolean(result.hasMore)});
+    } catch(err) { this.update({error: err.message || '搜索裁判失败'}); }
+  },
+
+  onMoreJudges() { return this.loadCandidates('judge', true); },
+  onMoreBulkJudges() { return this.loadCandidates('bulk', true); },
 
   /** 点候选人即指派：不再经过 picker，避免「搜索完还要再点一次才刷新」 */
   async onAssignJudge(event) {
@@ -553,5 +638,9 @@ Page({
 
   onOpenScore() {
     return wx.navigateTo({ url: `/pages/meet-score/meet-score?meetId=${this.data.meetId}` });
+  },
+
+  onProcAdvanceMode(event) {
+    this.update({ proc: { ...this.data.proc, advanceModeIndex: Number(event.detail.value) } });
   },
 });
