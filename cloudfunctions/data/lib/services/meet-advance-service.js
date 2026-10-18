@@ -35,7 +35,7 @@ const { MEET_SCORE_TYPE, HEAT_MODE, getTemplate } = require('./meet-event-catalo
 const {
   ADVANCE_MODE, DEFAULT_LANE_COUNT, MEET_FORMAT, bracketTotalRounds, bracketRoundLabel,
   advanceFromHeats, bracketStandings, roundRobinRounds, roundRobinStandings,
-  distribute, groupStageStandings, groupKnockoutStandings,
+  splitIntoGroups, assignLanes, groupStageStandings, groupKnockoutStandings,
 } = require('./meet-advance.js');
 const { freshMeetContext } = require('./meet-context.js');
 const { meetReadable, canManageMeet, canPublishMeetResult } = require('./meet-permission.js');
@@ -72,30 +72,6 @@ function seedOf(payload, now) {
   const given = Number(payload.seed);
   if (Number.isFinite(given) && given > 0) return Math.floor(given) % 2147483647;
   return Number(now instanceof Date ? now.getTime() : Date.now()) % 2147483647;
-}
-
-/**
- * 把参赛记录分到若干预赛组。
- *
- * 种子按「一列一个」放（1 号进第 1 组、2 号进第 2 组…），其余随机洗牌后
- * 依次补进当前人数最少的组。这样既保证强手不挤在同一组，也保证各组人数
- * 最多差 1——人数不均会让「每组前 N 晋级」变成对人多那组不公。
- */
-function splitIntoHeats(entryKeys, heatCount, seeds, random) {
-  const buckets = Array.from({ length: heatCount }, () => []);
-  const seedSet = new Set(seeds);
-  seeds.forEach((key, index) => {
-    if (buckets[index % heatCount]) buckets[index % heatCount].push(key);
-  });
-  const rest = shuffle(random, entryKeys.filter((key) => !seedSet.has(key)));
-  for (const key of rest) {
-    let target = 0;
-    for (let i = 1; i < heatCount; i += 1) {
-      if (buckets[i].length < buckets[target].length) target = i;
-    }
-    buckets[target].push(key);
-  }
-  return buckets;
 }
 
 /**
@@ -162,7 +138,9 @@ async function drawMeetHeats(payload = {}, ctx) {
   const seed = seedOf(payload, ctx.now);
   let buckets;
   try {
-    buckets = splitIntoHeats(entryKeys, heatCount, seeds, createSeededRandom(seed));
+    // 同院尽量不同组（编排规则）：学院信息来自参赛记录的学籍快照
+    const collegeOf = new Map(approved.map((doc) => [doc._id, doc.collegeId]));
+    buckets = splitIntoGroups(entryKeys, heatCount, seeds, createSeededRandom(seed), collegeOf);
   } catch (err) {
     return refused((err && err.message) || '分组失败');
   }
@@ -190,6 +168,9 @@ async function drawMeetHeats(payload = {}, ctx) {
         index: i,
         roundLabel: labelOf(i),
         entryKeys: buckets[i - 1],
+        // 分道项目才记道次：1 号种子居中最优道，之后左右交替（Q7）。
+        // 用对象而非 Map——要直接落库，Map 过不了 JSON 序列化。
+        lanes: heatMode === HEAT_MODE.LANE ? assignLanes(buckets[i - 1]) : null,
         startAt: (current && current.startAt) || '',
         endAt: (current && current.endAt) || '',
         venue: (current && current.venue) || '',
@@ -524,7 +505,8 @@ async function drawMeetBracket(payload = {}, ctx) {
     // 小组数与出线数在创建项目时就定好（event.groups），这里只负责落位。
     const groupCount = Number((event.groups && event.groups.count) || 2);
     const advancePerGroup = Number((event.groups && event.groups.advancePerGroup) || 2);
-    const buckets = distribute(entryKeys, groupCount, seeds, createSeededRandom(seed));
+    const collegeOf = new Map(approved.map((doc) => [doc._id, doc.collegeId]));
+    const buckets = splitIntoGroups(entryKeys, groupCount, seeds, createSeededRandom(seed), collegeOf);
     groupEntries = {};
     buckets.forEach((keys, index) => { groupEntries[index + 1] = keys; });
 

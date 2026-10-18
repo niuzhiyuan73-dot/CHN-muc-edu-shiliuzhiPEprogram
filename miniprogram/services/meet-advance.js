@@ -331,28 +331,101 @@ function roundRobinStandings({ entries = [], matches = [] } = {}) {
 }
 
 /**
- * 把参赛者分成 n 个容器：种子先一组一个，其余洗牌后补进人数最少的容器。
- * 预赛分组与小组赛分组是同一件事，只是名字不同——共用一份实现。
+ * 把参赛者分到若干组。
+ *
+ * 三条约束同时成立：
+ *   1. **同单位尽量不同组**（编排规则原文：「同一单位的运动员尽量避免排在同一组」）。
+ *      同院内战既消耗自己，也让「每组前 N 晋级」变成对人多那组不公；
+ *   2. 各组人数最多差 1——人数不均同样会让每组前 N 失衡；
+ *   3. 种子一列一个（1 号进第 1 组、2 号进第 2 组），强手不挤在一组。
+ *
+ * 预赛分组与小组赛分组是同一件事，只是名字不同，所以共用这一份实现——
+ * 各写一份迟早会在「同院要不要分散」这种边界上分叉。
+ *
+ * @param {string[]} entryKeys 参赛记录主键
+ * @param {number} bucketCount 组数
+ * @param {string[]} seeds 种子（可空）
+ * @param {Function} random 随机源；缺省按原顺序（测试需要可复现）
+ * @param {Map<string,string>} [collegeOf] entryKey → collegeId；缺省则不做同院分散
  */
-function distribute(entries, bucketCount, seeds, random) {
-  const buckets = Array.from({ length: bucketCount }, () => []);
-  const seedSet = new Set(seeds || []);
-  (seeds || []).forEach((key, index) => {
-    if (buckets[index % bucketCount]) buckets[index % bucketCount].push(key);
+function splitIntoGroups(entryKeys, bucketCount, seeds, random, collegeOf) {
+  const count = Math.max(1, Math.floor(Number(bucketCount) || 1));
+  const buckets = Array.from({ length: count }, () => []);
+  const seedList = (seeds || []).filter(Boolean);
+  const seedSet = new Set(seedList);
+  seedList.forEach((key, index) => {
+    if (buckets[index % count]) buckets[index % count].push(key);
   });
-  const rest = (entries || []).filter((key) => !seedSet.has(key));
-  // 洗牌用调用方传进来的随机源；没有就按原顺序（测试里需要可复现）
+
+  const rest = (entryKeys || []).filter((key) => !seedSet.has(key));
   const pool = typeof random === 'function'
     ? rest.map((key) => ({ key, r: random() })).sort((a, b) => a.r - b.r).map((row) => row.key)
     : rest;
+
   for (const key of pool) {
-    let target = 0;
-    for (let i = 1; i < bucketCount; i += 1) {
-      if (buckets[i].length < buckets[target].length) target = i;
+    const college = collegeOf ? collegeOf.get(key) : '';
+    // 第一轮：找「还没有本院队员」的组里人数最少的
+    let target = -1;
+    if (college) {
+      for (let i = 0; i < count; i += 1) {
+        if (buckets[i].some((other) => collegeOf.get(other) === college)) continue;
+        if (target < 0 || buckets[i].length < buckets[target].length) target = i;
+      }
+    }
+    // 每个组都有本院队员（或没有学院信息）：**先比本院人数，再比总人数**。
+    // 只比总人数会让同院扎堆——某一组先被塞进两个同院的人，后面就一直往那儿补。
+    if (target < 0) {
+      target = 0;
+      for (let i = 1; i < count; i += 1) {
+        const mine = (bucket) => (college
+          ? bucket.filter((key) => collegeOf.get(key) === college).length
+          : 0);
+        const myI = mine(buckets[i]);
+        const myTarget = mine(buckets[target]);
+        if (myI < myTarget || (myI === myTarget && buckets[i].length < buckets[target].length)) {
+          target = i;
+        }
+      }
     }
     buckets[target].push(key);
   }
   return buckets;
+}
+
+/**
+ * 种子道次序列：1 号种子居中最优道，之后左右交替。
+ *
+ * 8 道 → [4,5,3,6,2,7,1,8]；6 道 → [3,4,2,5,1,6]。
+ * 这是田径编排的标准做法（中间道次受弯道影响最小），不是随机分配。
+ */
+function seedLaneOrder(count) {
+  const total = Math.max(0, Math.floor(Number(count) || 0));
+  if (total === 0) return [];
+  const mid = Math.floor((total + 1) / 2);
+  const lanes = [];
+  for (let step = 0; lanes.length < total && step <= total; step += 1) {
+    // step 0 取中间；之后奇数步向右、偶数步向左，逐步加大距离
+    const offset = step === 0 ? 0 : Math.ceil(step / 2);
+    const lane = step % 2 === 1 ? mid + offset : mid - offset;
+    if (lane >= 1 && lane <= total && !lanes.includes(lane)) lanes.push(lane);
+  }
+  return lanes;
+}
+
+/**
+ * 给一个分道组分配道次。
+ *
+ * 入参顺序即种子顺序（1 号在前），返回 `{ entryKey: lane }`。
+ * 用普通对象而不是 Map：它要直接落库到云开发，Map 过不了 JSON 序列化。
+ */
+function assignLanes(entryKeys) {
+  const keys = (entryKeys || []).filter(Boolean);
+  const order = seedLaneOrder(keys.length);
+  const lanes = {};
+  keys.forEach((key, index) => {
+    if (order[index]) lanes[key] = order[index];
+  });
+  return lanes;
 }
 
 /**
@@ -433,7 +506,9 @@ module.exports = {
   bracketStandings,
   roundRobinRounds,
   roundRobinStandings,
-  distribute,
+  splitIntoGroups,
+  seedLaneOrder,
+  assignLanes,
   groupStageStandings,
   groupKnockoutStandings,
 };

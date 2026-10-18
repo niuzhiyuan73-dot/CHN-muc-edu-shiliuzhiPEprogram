@@ -191,6 +191,9 @@ async function getMeetSessionScores(payload = {}, ctx) {
   const assigned = Array.isArray(session.entryKeys) && session.entryKeys.length > 0
     ? new Set(session.entryKeys)
     : null;
+  // 道次来自场次上的 lanes 映射（Q7）。没有道次的项目（长跑、田赛）记 0，
+  // 排序时排到最后，不影响录分。
+  const lanes = (session.lanes && typeof session.lanes === 'object') ? session.lanes : {};
   const own = entries
     .filter((doc) => doc.eventKey === session.eventKey && doc.status === 'approved'
       && (!assigned || assigned.has(doc._id)))
@@ -201,9 +204,12 @@ async function getMeetSessionScores(payload = {}, ctx) {
         entryKey: doc._id,
         collegeId: doc.collegeId,
         userIds: doc.userIds,
+        lane: Number(lanes[doc._id]) || 0,
         myScore: mine ? { text: mine.rawText, state: mine.state } : null,
       };
-    });
+    })
+    // 按道次排：裁判按道点名与记录，不按主键（主键顺序对现场毫无意义）
+    .sort((a, b) => (a.lane || 99) - (b.lane || 99));
 
   // 能不能录（D70 代录 + B9c 批量指派）：
   //   · 管理员可代录任意场次；
@@ -431,6 +437,7 @@ async function getMeetResultPreview(payload = {}, ctx) {
       entryKey: doc._id,
       collegeId: doc.collegeId,
       userIds: doc.userIds,
+      lane: Number((session && session.lanes && session.lanes[doc._id]) || 0),
       value: values.get(doc._id),
       text: values.get(doc._id) === null
         ? '未收齐'

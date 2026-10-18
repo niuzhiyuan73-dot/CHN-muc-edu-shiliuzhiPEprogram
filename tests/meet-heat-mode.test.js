@@ -22,7 +22,8 @@ const meetService = require('../miniprogram/services/meet-service.js');
 const leadService = require('../miniprogram/services/meet-college-lead-service.js');
 const reg = require('../miniprogram/services/meet-registration-service.js');
 const advance = require('../miniprogram/services/meet-advance-service.js');
-const { meetEventKey } = require('../miniprogram/utils/meet-scope.js');
+const score = require('../miniprogram/services/meet-score-service.js');
+const { meetEventKey, meetSessionKey } = require('../miniprogram/utils/meet-scope.js');
 const { collegeKey, schoolMemberKey, schoolRoleKey } = require('../miniprogram/utils/school.js');
 
 const SCHOOL = 'muc';
@@ -272,4 +273,124 @@ test('长跑的每组上限可以逐项目改，改完影响组数', async () =>
     { eventKey, rounds: 'final', heatCapacity: 51 }, admin);
   assert.equal(tooBig.ok, false);
   assert.match(tooBig.message, /2–50/);
+});
+
+// ---------- 同院强制分散（Q5） ----------
+
+test('splitIntoGroups：同院优先分散，各组人数最多差 1', () => {
+  const { splitIntoGroups } = require('../miniprogram/services/meet-advance.js');
+  const keys = [];
+  const collegeOf = new Map();
+  for (const college of ['c01', 'c02']) {
+    for (let i = 0; i < 6; i += 1) {
+      const key = `${college}_${i}`;
+      keys.push(key);
+      collegeOf.set(key, college);
+    }
+  }
+  // 递增随机源：排序后保持原顺序，测试可复现
+  let n = 0;
+  const random = () => (n += 1) / 100;
+  const buckets = splitIntoGroups(keys, 3, [], random, collegeOf);
+
+  assert.equal(buckets.length, 3);
+  const sizes = buckets.map((bucket) => bucket.length).sort((a, b) => a - b);
+  assert.ok(sizes[2] - sizes[0] <= 1, `各组人数应最多差 1，实际 ${sizes}`);
+  for (const bucket of buckets) {
+    const colleges = new Set(bucket.map((key) => collegeOf.get(key)));
+    assert.ok(colleges.size >= 2, '每组至少含两个学院，不应出现同院扎堆');
+  }
+});
+
+test('1500 米 32 人分 4 组：同院 8 人最多 2 人同组', async () => {
+  const world = await makeWorld();
+  const { meetId, admin, enrollMany } = world;
+  const eventKey = meetEventKey(meetId, 'middle-1500m', 'male');
+  await meetService.configureMeetEvent(
+    { templateId: 'middle-1500m', group: 'male', perCollegeLimit: 8 }, admin);
+  await meetService.publishMeetRegistration(WINDOW, admin);
+  for (const collegeId of COLLEGES) {
+    await enrollMany(eventKey, STUDENTS[collegeId].slice(0, 8), LEAD[collegeId]);
+  }
+
+  const drawn = await advance.drawMeetHeats({ eventKey, heatCount: 4, seed: 21 }, admin);
+  assert.equal(drawn.ok, true, drawn.message);
+  assert.equal(drawn.data.heatCount, 4);
+
+  const entries = await world.repo.sportsMeetEntries.list();
+  const collegeOf = new Map(entries.map((doc) => [doc._id, doc.collegeId]));
+  for (const heat of drawn.data.heats) {
+    assert.equal(heat.entryKeys.length, 8, '各组人数应均等');
+    const perCollege = {};
+    for (const key of heat.entryKeys) {
+      const college = collegeOf.get(key);
+      perCollege[college] = (perCollege[college] || 0) + 1;
+    }
+    for (const [college, count] of Object.entries(perCollege)) {
+      assert.ok(count <= 2, `${college} 在同一组出现 ${count} 次，应尽量分散`);
+    }
+  }
+});
+
+test('组数少于学院数时退回人数最少，不会卡死', () => {
+  const { splitIntoGroups } = require('../miniprogram/services/meet-advance.js');
+  const keys = [];
+  const collegeOf = new Map();
+  for (const college of ['c01', 'c02', 'c03']) {
+    for (let i = 0; i < 3; i += 1) {
+      const key = `${college}_${i}`;
+      keys.push(key);
+      collegeOf.set(key, college);
+    }
+  }
+  // 2 个组、3 个学院：必然有同院同组，但必须全部落位、人数均等
+  const buckets = splitIntoGroups(keys, 2, [], undefined, collegeOf);
+  assert.deepEqual(buckets.map((bucket) => bucket.length).sort((a, b) => a - b), [4, 5]);
+  assert.equal(buckets.flat().length, 9, '不能丢人');
+});
+
+// ---------- 道次（Q7） ----------
+
+test('分道项目抽签即定道次：8 人占满 8 条道、1 号居中最优道', async () => {
+  const world = await makeWorld();
+  const { meetId, admin, enrollMany } = world;
+  const sprint = meetEventKey(meetId, 'sprint-100m', 'male');
+  const long = meetEventKey(meetId, 'middle-1500m', 'male');
+  await meetService.configureMeetEvent(
+    { templateId: 'sprint-100m', group: 'male', perCollegeLimit: 8 }, admin);
+  await meetService.configureMeetEvent(
+    { templateId: 'middle-1500m', group: 'male', perCollegeLimit: 3 }, admin);
+  await meetService.publishMeetRegistration(WINDOW, admin);
+
+  await enrollMany(sprint, STUDENTS.c01.slice(0, 8), LEAD.c01);
+  const drawn = await advance.drawMeetHeats({ eventKey: sprint, heatCount: 1, seed: 3 }, admin);
+  assert.equal(drawn.ok, true, drawn.message);
+  assert.equal(drawn.data.heatMode, 'lane');
+
+  const sessionKey = meetSessionKey(meetId, sprint, 'final', 1);
+  const session = await world.repo.sportsMeetSessions.getById(sessionKey);
+  assert.ok(session.lanes, '分道项目应记录道次');
+  assert.deepEqual(
+    Object.values(session.lanes).sort((a, b) => a - b),
+    [1, 2, 3, 4, 5, 6, 7, 8],
+    '8 人应占满 8 条道且不重复',
+  );
+
+  // 录分表带道次并按道次排
+  const view = await score.getMeetSessionScores({ sessionKey }, admin);
+  assert.equal(view.ok, true, view.message);
+  assert.equal(view.data.items.length, 8);
+  assert.deepEqual(view.data.items.map((row) => row.lane), [1, 2, 3, 4, 5, 6, 7, 8]);
+
+  // 不分道项目不记道次
+  await enrollMany(long, STUDENTS.c02.slice(0, 3), LEAD.c02);
+  const drawnLong = await advance.drawMeetHeats({ eventKey: long, heatCount: 1, seed: 3 }, admin);
+  assert.equal(drawnLong.ok, true, drawnLong.message);
+  const longSession = await world.repo.sportsMeetSessions.getById(
+    meetSessionKey(meetId, long, 'final', 1));
+  assert.ok(!longSession.lanes, '不分道项目不记道次');
+
+  const longView = await score.getMeetSessionScores(
+    { sessionKey: meetSessionKey(meetId, long, 'final', 1) }, admin);
+  assert.equal(longView.data.items.every((row) => row.lane === 0), true, '无道次记 0');
 });

@@ -40,7 +40,8 @@
         <view wx:if="{{!canEnterSession}}" class="meet-warn">你没有被指派到这个项目，不能录入成绩</view>
         <view wx:if="{{scoreItems.length === 0}}" class="meet-hint">该场次还没有通过审核的参赛记录</view>
         <view wx:for="{{scoreItems}}" wx:for-item="row" wx:key="entryKey" class="meet-score-row">
-          <view class="meet-score-college">{{row.collegeId}}</view>
+          <!-- 道次：分道项目才有，裁判按道点名与记录 -->
+          <view class="meet-score-college">{{row.lane ? row.lane + '道 ' : ''}}{{row.collegeId}}</view>
           <input
             class="meet-score-input"
             type="digit"
@@ -150,7 +151,7 @@
               </view>
               <view wx:for="{{preview.items}}" wx:for-item="row" wx:key="entryKey" class="meet-preview-row">
                 <view class="meet-preview-college" data-entry-key="{{row.entryKey}}" bindtap="onToggleVoid">
-                  {{row.collegeId}}{{row.text === '未收齐' ? '（未收齐）' : ''}}
+                  {{row.lane ? row.lane + '道 ' : ''}}{{row.collegeId}}{{row.text === '未收齐' ? '（未收齐）' : ''}}
                 </view>
                 <view class="meet-preview-value">{{row.text}}</view>
                 <view class="meet-preview-void {{voidKeys.indexOf(row.entryKey) >= 0 ? 'is-void' : ''}}">
