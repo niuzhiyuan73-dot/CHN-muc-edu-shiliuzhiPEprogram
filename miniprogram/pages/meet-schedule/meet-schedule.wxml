@@ -252,6 +252,8 @@
             </scroll-view>
 
             <button class="btn btn-ghost" data-session-key="{{current.sessionKey}}" bindtap="onStartSession" disabled="{{busy || current.judgeIds.length === 0}}">开赛</button>
+            <!-- 手动开赛只是「提前开」：裁判录第一条成绩时系统会自动开赛，不必先点 -->
+            <view class="meet-hint">也可以不点：裁判录下第一条成绩时自动开赛。</view>
           </view>
         </view>
       </view>
