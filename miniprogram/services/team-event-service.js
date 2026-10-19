@@ -182,10 +182,44 @@ async function getTeamEvent(payload = {}, ctx) {
     return { canRecord: manage || captain, canPublish: manage };
   };
 
+  // 「我能替哪支队报名」由服务端算：队长只有自己队，管理者可以替任何队补报。
+  // 已经报过（含待审核、已通过、已锁定）的队不再出现，退回的可以重报。
+  const memberRows = await repo.teamMembers.list();
+  const activeCount = new Map();
+  memberRows
+    .filter(row => row.status === TEAM_MEMBER_STATUS.ACTIVE)
+    .forEach((row) => {
+      activeCount.set(row.teamId, (activeCount.get(row.teamId) || 0) + 1);
+    });
+  const entered = new Set(
+    entries
+      .filter(entry => entry.status !== TEAM_ENTRY_STATUS.REJECTED)
+      .map(entry => entry.teamId)
+  );
+  const entryMin = Number(event.entryMin) || 5;
+  const submitCandidates = event.status === TEAM_EVENT_STATUS.REGISTRATION
+    ? teams
+      .filter(team => inScope(team, ctx)
+        && team.status === TEAM_STATUS.ACTIVE
+        && !entered.has(team._id)
+        && (manage || team.captainId === ctx.actorId))
+      .map(team => {
+        const count = activeCount.get(team._id) || 0;
+        return {
+          teamId: team._id,
+          name: team.name,
+          memberCount: count,
+          enough: count >= entryMin,
+          need: entryMin,
+        };
+      })
+    : [];
+
   return ok({
     ok: true,
     event: eventView(event, ctx, { manage, entryCount: entries.length }),
     entries: rows,
+    submitCandidates,
     matches: matches.map(match => matchView(match, teamName, rightsOf(match))),
     table,
     placements: event.placements || [],

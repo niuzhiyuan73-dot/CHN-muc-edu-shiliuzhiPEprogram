@@ -400,3 +400,45 @@ test('录分 —— 带个人统计时合计与球队得分不符只提示，不
   assert.equal(stats.integrity, 'basic');
   assert.deepEqual(stats.players, [{ userId: scorer, points: 20, fouls: 3 }]);
 });
+
+test('详情 —— 报名入口：队长只看到自己队，管理者看到所有还没报的队', async () => {
+  const repo = fixtureFor(4, 5);
+  const event = await call(repo, 'createTeamEvent', { name: '秋季联赛', requestId: 'req_e1' });
+  // 两支已通过的球队：t0（5 人）、t1（4 人，还差 1 个）
+  const t0 = await callTeam(repo, 'createTeamApplication', { name: '热浪队', requestId: 'req_a' }, 'u_t0c');
+  await callTeam(repo, 'reviewTeamApplication', { teamId: t0.teamId, approve: true });
+  for (let i = 0; i < 4; i += 1) {
+    await callTeam(repo, 'applyToJoinTeam', { teamId: t0.teamId }, `u_t0p${i}`);
+    await callTeam(repo, 'reviewTeamMember', { teamId: t0.teamId, userId: `u_t0p${i}`, approve: true }, 'u_t0c');
+  }
+  const t1 = await callTeam(repo, 'createTeamApplication', { name: '闪电队', requestId: 'req_b' }, 'u_t1c');
+  await callTeam(repo, 'reviewTeamApplication', { teamId: t1.teamId, approve: true });
+  for (let i = 0; i < 3; i += 1) {
+    await callTeam(repo, 'applyToJoinTeam', { teamId: t1.teamId }, `u_t1p${i}`);
+    await callTeam(repo, 'reviewTeamMember', { teamId: t1.teamId, userId: `u_t1p${i}`, approve: true }, 'u_t1c');
+  }
+
+  // 队长：只有自己那支
+  const asCaptain = await call(repo, 'getTeamEvent', { eventId: event.eventId }, 'u_t0c');
+  assert.equal(asCaptain.submitCandidates.length, 1);
+  assert.equal(asCaptain.submitCandidates[0].teamId, t0.teamId);
+  assert.equal(asCaptain.submitCandidates[0].memberCount, 5);
+  assert.equal(asCaptain.submitCandidates[0].enough, true);
+
+  // 管理者：两支都在，人数不足的那支标出来
+  const asLeader = await call(repo, 'getTeamEvent', { eventId: event.eventId }, 'u_leader');
+  assert.equal(asLeader.submitCandidates.length, 2);
+  const weak = asLeader.submitCandidates.find(row => row.teamId === t1.teamId);
+  assert.equal(weak.memberCount, 4);
+  assert.equal(weak.enough, false);
+
+  // 报过名（待审核）之后就不再出现在候选里
+  await call(repo, 'submitTeamEntry', { eventId: event.eventId, teamId: t0.teamId }, 'u_t0c');
+  const after = await call(repo, 'getTeamEvent', { eventId: event.eventId }, 'u_t0c');
+  assert.deepEqual(after.submitCandidates, []);
+
+  // 退回之后可以重报
+  await call(repo, 'reviewTeamEntry', { eventId: event.eventId, teamId: t0.teamId, approve: false });
+  const reopened = await call(repo, 'getTeamEvent', { eventId: event.eventId }, 'u_t0c');
+  assert.equal(reopened.submitCandidates.length, 1);
+});

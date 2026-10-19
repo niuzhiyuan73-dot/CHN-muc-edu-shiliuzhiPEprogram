@@ -40,6 +40,8 @@ Page({
     eventId: '',
     event: null,
     entries: [],
+    /** 我能替哪几支队报名（服务端算，已报过的不在里面） */
+    submitCandidates: [],
     /** 按轮次分组的赛程：[{ round, label, matches: [] }] */
     rounds: [],
     table: [],
@@ -96,6 +98,7 @@ Page({
         loading: false,
         event,
         entries: result.entries || [],
+        submitCandidates: result.submitCandidates || [],
         rounds: grouped,
         table: result.table || [],
         placements: result.placements || [],
@@ -143,6 +146,15 @@ Page({
   onRejectEntry(event) {
     const { teamid } = event.currentTarget.dataset;
     return this.run('reviewTeamEntry', { eventId: this.data.eventId, teamId: teamid, approve: false }, '已退回');
+  },
+
+  /** 队长为本队报名（管理者也能替任何一队补报） */
+  onSubmitEntry(event) {
+    const { teamid } = event.currentTarget.dataset;
+    return this.run('submitTeamEntry', {
+      eventId: this.data.eventId,
+      teamId: teamid,
+    }, '已提交报名，等协会负责人审核');
   },
 
   onLock() {

@@ -141,6 +141,7 @@ function detailFixture(overrides = {}) {
       matchOf(1, 1),
       matchOf(2, 0),
     ],
+    submitCandidates: [],
     table: [],
     placements: [],
     ...overrides,
@@ -188,6 +189,29 @@ test('赛事详情 —— 报名审核与锁定名单接的是对应接口', () 
 
   await page.onLock();
   assert.equal(calls.filter(call => call[0] === 'lockTeamEntries').length, 1);
+}));
+
+test('赛事详情 —— 队长点「报名」把球队提交到这场比赛', () => withApi({
+  getTeamEvent: () => detailFixture({
+    event: { ...EVENT, status: 'registration' },
+    submitCandidates: [
+      { teamId: 'tm_a', name: '热浪队', memberCount: 6, enough: true, need: 5 },
+      { teamId: 'tm_b', name: '闪电队', memberCount: 4, enough: false, need: 5 },
+    ],
+  }),
+  submitTeamEntry: () => ({ ok: true, status: 'submitted' }),
+}, async (calls) => {
+  const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
+  await page.onLoad({ eventId: 'tev_1' });
+
+  assert.equal(page.data.submitCandidates.length, 2);
+  assert.equal(page.data.submitCandidates[1].enough, false, '人数不足的队不该给报名按钮');
+
+  await page.onSubmitEntry({ currentTarget: { dataset: { teamid: 'tm_a' } } });
+
+  const submitted = calls.find(call => call[0] === 'submitTeamEntry');
+  assert.deepEqual(submitted[1], { eventId: 'tev_1', teamId: 'tm_a' });
+  assert.match(page.data.notice, /等协会负责人审核/);
 }));
 
 test('赛事详情 —— 抽签、排下一轮、结算都带赛事编号', () => withApi({

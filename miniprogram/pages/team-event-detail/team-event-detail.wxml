@@ -43,7 +43,30 @@
     <!-- 报名 -->
     <view class="card">
       <view class="card-title">报名（{{entries.length}}）</view>
-      <view wx:if="{{entries.length === 0}}" class="hint-inline">还没有球队报名</view>
+
+      <!-- 我能报的队：队长看到自己队，管理者看到所有还没报的队 -->
+      <view wx:if="{{submitCandidates.length > 0}}" class="submit-block">
+        <view
+          wx:for="{{submitCandidates}}"
+          wx:key="teamId"
+          class="submit-row"
+        >
+          <view class="row-main">
+            <view class="row-name">{{item.name}}</view>
+            <view class="row-meta {{item.enough ? '' : 'text-warn'}}">
+              {{item.memberCount}} / {{item.need}} 人{{item.enough ? '' : ' · 人数不足，先凑齐队员'}}
+            </view>
+          </view>
+          <view
+            wx:if="{{item.enough}}"
+            class="mini mini-primary"
+            data-teamid="{{item.teamId}}"
+            bindtap="onSubmitEntry"
+          >报名</view>
+        </view>
+      </view>
+
+      <view wx:if="{{entries.length === 0 && submitCandidates.length === 0}}" class="hint-inline">还没有球队报名</view>
       <view wx:else class="row-list">
         <view wx:for="{{entries}}" wx:key="teamId" class="row">
           <view class="row-main">

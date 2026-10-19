@@ -369,3 +369,21 @@
 .sheet-actions .btn {
   flex: 1;
 }
+
+/* 可报名的球队 */
+.submit-block {
+  margin-bottom: var(--space-sm);
+  padding-bottom: var(--space-sm);
+  border-bottom: 1rpx solid var(--color-border);
+}
+
+.submit-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-xs) 0;
+}
+
+.text-warn {
+  color: #B26A00;
+}
