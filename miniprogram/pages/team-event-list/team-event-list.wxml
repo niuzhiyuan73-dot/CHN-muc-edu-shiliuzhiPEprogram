@@ -1,0 +1,68 @@
+<!-- 团队赛事列表：一行一届，右上角「建赛」只有协会负责人看得到 -->
+<view class="page-container {{themeClass}}">
+  <view class="hero">
+    <view class="hero-title">团队赛事</view>
+    <view class="hero-subtitle">建赛后收报名、锁定名单、抽签编排、录分发布，最后结算名次。</view>
+  </view>
+
+  <view wx:if="{{notice}}" class="notice {{noticeError ? 'notice-error' : ''}}">{{notice}}</view>
+
+  <!-- 建赛表单：赛制与规则一旦建库就不再变，所以放在创建时选 -->
+  <view wx:if="{{creating}}" class="card">
+    <view class="card-title">新建赛事</view>
+    <input
+      class="create-input"
+      placeholder="赛事名称（2–30 字）"
+      value="{{newName}}"
+      bindinput="onInputName"
+    />
+    <view class="field">
+      <view class="field-label">赛制</view>
+      <picker mode="selector" range="{{formatOptions}}" range-key="label" value="{{formatIndex}}" bindchange="onPickFormat">
+        <view class="picker">{{formatOptions[formatIndex].label}}</view>
+      </picker>
+    </view>
+    <view class="field">
+      <view class="field-label">规则</view>
+      <picker mode="selector" range="{{presetOptions}}" range-key="label" value="{{presetIndex}}" bindchange="onPickPreset">
+        <view class="picker">{{presetOptions[presetIndex].label}}</view>
+      </picker>
+    </view>
+    <view class="field-note">规则在创建时固化，开赛后不再变更；要改规则请新建赛事。</view>
+    <view class="create-actions">
+      <view class="btn btn-ghost" bindtap="onCloseCreate">取消</view>
+      <view class="btn btn-primary {{submitting ? 'is-disabled' : ''}}" bindtap="onSubmitCreate">
+        {{submitting ? '提交中…' : '创建'}}
+      </view>
+    </view>
+  </view>
+
+  <view wx:if="{{loading}}" class="hint">加载中…</view>
+  <view wx:elif="{{error}}" class="hint">{{error}}</view>
+  <view wx:elif="{{events.length === 0}}" class="hint">
+    <view>还没有赛事</view>
+    <view wx:if="{{canManage}}" class="hint-sub">点右下角「建赛」开始第一届</view>
+  </view>
+
+  <view wx:else class="event-list">
+    <view
+      wx:for="{{events}}"
+      wx:key="eventId"
+      class="event-row"
+      data-eventid="{{item.eventId}}"
+      bindtap="onOpenEvent"
+    >
+      <view class="event-main">
+        <view class="event-name">{{item.name}}</view>
+        <view class="event-meta">{{item.rulesText}}</view>
+        <view class="event-meta">{{item.entryCount}} 支球队报名</view>
+      </view>
+      <view class="event-side">
+        <view class="status status-{{item.status}}">{{item.statusLabel}}</view>
+        <view class="event-arrow">›</view>
+      </view>
+    </view>
+  </view>
+
+  <view wx:if="{{canManage && !creating}}" class="fab" bindtap="onOpenCreate">＋ 建赛</view>
+</view>

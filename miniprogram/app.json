@@ -36,7 +36,9 @@
     "pages/meet-standing/meet-standing",
     "pages/cup-home/cup-home",
     "pages/team-list/team-list",
-    "pages/team-detail/team-detail"
+    "pages/team-detail/team-detail",
+    "pages/team-event-list/team-event-list",
+    "pages/team-event-detail/team-event-detail"
   ],
   "window": {
     "backgroundTextStyle": "dark",

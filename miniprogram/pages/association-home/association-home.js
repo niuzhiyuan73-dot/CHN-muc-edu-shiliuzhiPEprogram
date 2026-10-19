@@ -23,7 +23,7 @@
  */
 
 const {
-  getAssociation, isKnownAssociation, workbenchTabsOf,
+  getAssociation, isKnownAssociation, workbenchTabsOf, sportTypeOf, SPORT_TYPE,
 } = require('../../utils/associations.js');
 const { applyBranding } = require('../../services/branding.js');
 const scope = require('../../services/association-scope.js');
@@ -92,6 +92,8 @@ Page({
       associationGlyph: meta.glyph,
       associationIcon: meta.icon,
       themeClass: `assoc-${id}`,
+      // 团队运动没有个人赛事，赛事页签改指向「团队赛事」
+      isTeamSport: sportTypeOf(id) === SPORT_TYPE.TEAM,
       activeTab: active,
       tabs: definitions.map((def) => ({ ...def, active: def.tab === active })),
       mounted,
@@ -140,6 +142,11 @@ Page({
     if (typeof wx !== 'undefined' && typeof wx.setNavigationBarTitle === 'function') {
       wx.setNavigationBarTitle({ title: this.data.associationName || '协会' });
     }
+  },
+
+  /** 进团队赛事列表（团队运动专属） */
+  onOpenTeamEvents() {
+    return wx.navigateTo({ url: '/pages/team-event-list/team-event-list' });
   },
 
   /** 进组队页（团队运动专属） */

@@ -1165,6 +1165,7 @@ const TEAM_MEMBER_STATUS_LABEL = {
 const TEAM_EVENT_STATUS = {
   DRAFT: 'draft', // 草稿：只有管理员可见
   REGISTRATION: 'registration', // 报名中
+  LOCKED: 'locked', // 名单已锁定：等待抽签，不接受新报名
   SCHEDULED: 'scheduled', // 赛程已发布
   RUNNING: 'running', // 进行中
   FINISHED: 'finished', // 已结束
@@ -1174,6 +1175,7 @@ const TEAM_EVENT_STATUS = {
 const TEAM_EVENT_STATUS_LABEL = {
   [TEAM_EVENT_STATUS.DRAFT]: '草稿',
   [TEAM_EVENT_STATUS.REGISTRATION]: '报名中',
+  [TEAM_EVENT_STATUS.LOCKED]: '名单已锁定',
   [TEAM_EVENT_STATUS.SCHEDULED]: '赛程已发布',
   [TEAM_EVENT_STATUS.RUNNING]: '进行中',
   [TEAM_EVENT_STATUS.FINISHED]: '已结束',

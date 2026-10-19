@@ -51,7 +51,13 @@
     <match-panel id="match" />
   </view>
   <view wx:if="{{mounted.events}}" hidden="{{activeTab !== 'events'}}">
-    <events-panel id="events" />
+    <!-- 团队运动的赛事是另一套（球队报名、抽签、录总分），不是个人赛事 -->
+    <view wx:if="{{isTeamSport}}" class="team-pending">
+      <view class="team-pending-title">团队赛事</view>
+      <view class="team-pending-note">建赛、报名审核、抽签编排、录分发布、结算名次，都在团队赛事里完成。</view>
+      <view class="team-pending-btn" bindtap="onOpenTeamEvents">进入团队赛事</view>
+    </view>
+    <events-panel wx:else id="events" />
   </view>
 
 </view>

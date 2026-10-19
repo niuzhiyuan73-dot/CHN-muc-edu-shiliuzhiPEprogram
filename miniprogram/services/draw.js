@@ -677,6 +677,8 @@ function buildBracketMatches(plan, { event, format = DEFAULT_FORMAT, round = 1, 
  * @param {string} [params.placementMode] 见 constants.EVENT_PLACEMENT_MODE
  * @param {boolean} [params.includeExisting=false] 全量投影：把**此刻应当存在**的轮次
  *   （含已经排过的那几轮）一并交出，而不只是「还缺哪几轮」。默认 false 保持原行为。
+ * @param {Function} [params.isFinal] 判定「这一场是否已定局」。个人赛默认
+ *   「已生效且有胜方」；团队赛的比赛状态是另一套，由调用方传入。
  * @returns {{ok:boolean, rounds:Array<{round:number, stage:string, pairs:Array<Array<string>>}>}}
  *
  * 【includeExisting 为什么需要】
@@ -685,10 +687,19 @@ function buildBracketMatches(plan, { event, format = DEFAULT_FORMAT, round = 1, 
  * 调用方要能拿到这一轮的对阵才能把它刷新，于是这里提供「全量投影」：
  * 对战双方都定得下来的轮次一律交出，交由调用方与台账比对。
  */
-function planNextRound({ eventId, draw, matches, bronzeMode, placementMode = DEFAULT_PLACEMENT_MODE, includeExisting = false } = {}) {
+function planNextRound({
+  eventId, draw, matches, bronzeMode, placementMode = DEFAULT_PLACEMENT_MODE,
+  includeExisting = false, isFinal,
+} = {}) {
   if (!eventId || !draw || !Array.isArray(draw.slots) || draw.slots.length < 2) {
     return { ok: false, rounds: [] };
   }
+
+  // 个人赛用「已生效且判明胜负」；团队赛的比赛状态是另一套（published），
+  // 由调用方传入判定函数。默认保持原口径，老调用方零改动。
+  const settled = typeof isFinal === 'function'
+    ? isFinal
+    : (m) => Boolean(m) && m.status === MATCH_STATUS.ACTIVE && Boolean(m.winner);
 
   const size = Number(draw.size) || draw.slots.length;
   const totalRounds = Math.round(Math.log2(size));
@@ -716,8 +727,8 @@ function planNextRound({ eventId, draw, matches, bronzeMode, placementMode = DEF
         return;
       }
       const match = byId.get(eventMatchKey(eventId, round, BRACKET_STAGE.MAIN, slot));
-      // 只有「已生效且判明了胜负」才算打完；待确认、被撤销都还悬着
-      if (!match || match.status !== MATCH_STATUS.ACTIVE || !match.winner) {
+      // 只有「已定局且判明了胜负」才算打完；待确认、被撤销都还悬着
+      if (!settled(match)) {
         resolved = false;
         return;
       }
@@ -752,7 +763,7 @@ function planNextRound({ eventId, draw, matches, bronzeMode, placementMode = DEF
       winners.length === 4 &&
       losers.length === 4
     ) {
-      planPlacement(losers, round + 1, byId, eventId, includeExisting).forEach((item) => rounds.push(item));
+      planPlacement(losers, round + 1, byId, eventId, includeExisting, settled).forEach((item) => rounds.push(item));
     }
 
     entrants = winners;
@@ -779,8 +790,9 @@ function planNextRound({ eventId, draw, matches, bronzeMode, placementMode = DEF
  * @param {boolean} [includeExisting=false] 全量投影：已排过的轮次也一并交出
  * @returns {Array<Object>} 需要补排的轮次
  */
-function planPlacement(entrants, startRound, byId, eventId, includeExisting = false) {
+function planPlacement(entrants, startRound, byId, eventId, includeExisting = false, settled = null) {
   const rounds = [];
+  const isSettled = settled || ((m) => Boolean(m) && m.status === MATCH_STATUS.ACTIVE && Boolean(m.winner));
   const pairs = chunkPairs(entrants).slice(0, 2);
   const winners = [];
   const losers = [];
@@ -788,7 +800,7 @@ function planPlacement(entrants, startRound, byId, eventId, includeExisting = fa
 
   pairs.forEach((pair, slot) => {
     const match = byId.get(eventMatchKey(eventId, startRound, BRACKET_STAGE.PLACEMENT, slot));
-    if (!match || match.status !== MATCH_STATUS.ACTIVE || !match.winner) {
+    if (!isSettled(match)) {
       firstResolved = false;
       return;
     }

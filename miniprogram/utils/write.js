@@ -104,6 +104,12 @@ const SCHOOL_WRITE_ACTIONS = [
   'submitTeamEntry',
   'reviewTeamEntry',
   'lockTeamEntries',
+  // 团队赛事：抽签 / 录分 / 发布 / 下一轮 / 结算
+  'drawTeamEvent',
+  'recordTeamMatch',
+  'publishTeamMatch',
+  'advanceTeamRound',
+  'settleTeamEvent',
   // 跨校邀请赛：建赛 / 邀请应答 / 报名签到 / 抽签指派 / 录分与定名次
   'createExchangeEvent',
   'respondExchangeInvitation',

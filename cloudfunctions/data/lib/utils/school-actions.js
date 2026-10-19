@@ -72,6 +72,9 @@ const SCHOOL_SPACE_ACTIONS = Object.freeze([
   // 团队赛事：建赛 / 报名 / 审核 / 锁定名单（C 期首片）
   'listTeamEvents',               'getTeamEvent',                 'createTeamEvent',
   'submitTeamEntry',              'reviewTeamEntry',              'lockTeamEntries',
+  // 团队赛事：抽签 / 赛程 / 录分 / 发布 / 下一轮 / 结算
+  'drawTeamEvent',                'listTeamMatches',              'recordTeamMatch',
+  'publishTeamMatch',             'advanceTeamRound',             'settleTeamEvent',
 ]);
 
 /** 跨校邀请赛（`forExchange` 声明，16 个）。 */

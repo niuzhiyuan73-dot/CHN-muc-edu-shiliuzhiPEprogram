@@ -19,64 +19,9 @@ const path = require('node:path');
 const space = require('../miniprogram/services/association-space.js');
 const associationScope = require('../miniprogram/services/association-scope.js');
 const schoolSession = require('../miniprogram/services/school-session.js');
-
-/** 深拷贝，避免用例之间串 data */
-function cloneData(value) {
-  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
-}
-
-/** 按路径加载页面配置：Page() 调用被这次加载截获，与注册顺序无关 */
-function loadPage(relative) {
-  let config = null;
-  const previousPage = global.Page;
-  global.Page = (def) => { config = def; };
-  try {
-    const target = require.resolve(path.join(__dirname, '..', 'miniprogram', 'pages', relative));
-    delete require.cache[target];
-    require(target);
-  } finally {
-    global.Page = previousPage;
-  }
-  assert.ok(config, `页面没有调用 Page()：${relative}`);
-  return config;
-}
-
-/** 按真机语义实现 setData（支持 'a.b' 路径键）与页面方法绑定 */
-function instantiate(config) {
-  const page = { data: cloneData(config.data) };
-  for (const [key, value] of Object.entries(config)) {
-    if (key === 'data') continue;
-    page[key] = typeof value === 'function' ? value.bind(page) : value;
-  }
-  page.setData = (patch, callback) => {
-    for (const [key, value] of Object.entries(patch)) {
-      const parts = key.split('.');
-      let target = page.data;
-      for (let i = 0; i < parts.length - 1; i += 1) {
-        if (target[parts[i]] === null || typeof target[parts[i]] !== 'object') target[parts[i]] = {};
-        target = target[parts[i]];
-      }
-      target[parts[parts.length - 1]] = value;
-    }
-    if (callback) callback();
-  };
-  return page;
-}
-
-/** 用假的 API 顶掉真实门面，并记录每次调用 */
-function withApi(methods, run) {
-  const original = space.forScope;
-  const calls = [];
-  space.forScope = () => new Proxy({}, {
-    get: (_t, name) => async (payload) => {
-      calls.push([String(name), payload]);
-      const handler = methods[String(name)];
-      if (!handler) throw new Error(`未打桩的接口：${String(name)}`);
-      return handler(payload);
-    },
-  });
-  return Promise.resolve(run(calls)).finally(() => { space.forScope = original; });
-}
+const {
+  cloneData, loadPage, instantiate, withApi,
+} = require('./helpers/page-harness.js');
 
 /** 页面的 wx 桩：navigateTo / navigateBack / showModal(默认确认) */
 function withWx(run) {

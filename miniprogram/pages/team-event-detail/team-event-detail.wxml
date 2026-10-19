@@ -1,0 +1,174 @@
+<!-- 团队赛事详情：一页走完 报名 → 锁定 → 抽签 → 录分 → 发布 → 名次 -->
+<view class="page-container {{themeClass}}">
+  <view wx:if="{{loading}}" class="hint">加载中…</view>
+  <view wx:elif="{{error}}" class="hint">{{error}}</view>
+
+  <block wx:else>
+    <!-- 名头 -->
+    <view class="head">
+      <view class="head-name">{{event.name}}</view>
+      <view class="head-meta">
+        <text class="status status-{{event.status}}">{{event.statusLabel}}</text>
+        <text class="head-count">{{event.entryCount}} 支球队</text>
+      </view>
+      <view class="head-rules">{{event.rulesText}}</view>
+    </view>
+
+    <view wx:if="{{notice}}" class="notice {{noticeError ? 'notice-error' : ''}}">{{notice}}</view>
+
+    <!-- 管理动作：按状态只显示此刻该做的那一个 -->
+    <view wx:if="{{canManage}}" class="action-bar">
+      <view
+        wx:if="{{event.status === 'registration'}}"
+        class="btn btn-primary"
+        bindtap="onLock"
+      >锁定名单</view>
+      <view
+        wx:if="{{event.status === 'locked'}}"
+        class="btn btn-primary"
+        bindtap="onDraw"
+      >抽签并生成赛程</view>
+      <view
+        wx:if="{{event.format === 'single_elim' && (event.status === 'scheduled' || event.status === 'running') && rounds.length > 0}}"
+        class="btn btn-ghost"
+        bindtap="onAdvance"
+      >排下一轮</view>
+      <view
+        wx:if="{{(event.status === 'scheduled' || event.status === 'running') && rounds.length > 0}}"
+        class="btn btn-ghost"
+        bindtap="onSettle"
+      >结算名次</view>
+    </view>
+
+    <!-- 报名 -->
+    <view class="card">
+      <view class="card-title">报名（{{entries.length}}）</view>
+      <view wx:if="{{entries.length === 0}}" class="hint-inline">还没有球队报名</view>
+      <view wx:else class="row-list">
+        <view wx:for="{{entries}}" wx:key="teamId" class="row">
+          <view class="row-main">
+            <view class="row-name">
+              {{item.teamName}}
+              <text wx:if="{{item.placement}}" class="tag tag-rank">第 {{item.placement}} 名</text>
+            </view>
+            <view class="row-meta">{{item.rosterCount}} 人 · {{item.statusLabel}}</view>
+          </view>
+          <view wx:if="{{canManage && item.status === 'submitted'}}" class="row-actions">
+            <view class="mini mini-primary" data-teamid="{{item.teamId}}" bindtap="onApproveEntry">通过</view>
+            <view class="mini" data-teamid="{{item.teamId}}" bindtap="onRejectEntry">退回</view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 赛程 -->
+    <view wx:if="{{rounds.length > 0}}" class="card">
+      <view class="card-title">赛程</view>
+      <view wx:for="{{rounds}}" wx:key="round" class="round">
+        <view class="round-label">{{item.label}}</view>
+        <view
+          wx:for="{{item.matches}}"
+          wx:for-item="match"
+          wx:key="matchId"
+          class="match"
+        >
+          <view class="match-line">
+            <view class="side {{match.winner === 'A' ? 'side-win' : ''}}">{{match.teamAName}}</view>
+            <view class="score">{{match.scoreText}}</view>
+            <view class="side side-b {{match.winner === 'B' ? 'side-win' : ''}}">{{match.teamBName}}</view>
+          </view>
+          <view class="match-meta">
+            <text>{{match.statusLabel}}</text>
+            <text wx:if="{{match.overtime}}" class="tag tag-ot">加时</text>
+            <text wx:if="{{match.forfeit}}" class="tag tag-ot">{{match.forfeit === 'A' ? match.teamAName : match.teamBName}} 弃权</text>
+          </view>
+          <view class="match-actions">
+            <view
+              wx:if="{{match.canRecord && (match.status === 'scheduled' || match.status === 'reviewing')}}"
+              class="mini mini-primary"
+              data-matchid="{{match.matchId}}"
+              bindtap="onOpenRecord"
+            >{{match.status === 'reviewing' ? '重录' : '录分'}}</view>
+            <view
+              wx:if="{{match.canPublish && match.status === 'reviewing'}}"
+              class="mini mini-primary"
+              data-matchid="{{match.matchId}}"
+              bindtap="onPublish"
+            >发布</view>
+            <view
+              wx:if="{{match.canPublish && match.status === 'reviewing'}}"
+              class="mini"
+              data-matchid="{{match.matchId}}"
+              bindtap="onRejectScore"
+            >驳回</view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 积分表 -->
+    <view wx:if="{{table.length > 0}}" class="card">
+      <view class="card-title">积分表</view>
+      <view class="table-head">
+        <view class="col-name">球队</view>
+        <view class="col">场次</view>
+        <view class="col">胜</view>
+        <view class="col">负</view>
+        <view class="col">净胜</view>
+      </view>
+      <view wx:for="{{table}}" wx:key="teamId" class="table-row">
+        <view class="col-name">{{item.rank}}. {{item.teamName}}</view>
+        <view class="col">{{item.played}}</view>
+        <view class="col">{{item.wins}}</view>
+        <view class="col">{{item.losses}}</view>
+        <view class="col">{{item.diff > 0 ? '+' : ''}}{{item.diff}}</view>
+      </view>
+    </view>
+
+    <!-- 名次 -->
+    <view wx:if="{{placements.length > 0}}" class="card">
+      <view class="card-title">最终名次</view>
+      <view wx:for="{{placements}}" wx:key="teamId" class="row">
+        <view class="rank-no">{{item.rank}}</view>
+        <view class="row-main">
+          <view class="row-name">{{item.teamName}}</view>
+          <view class="row-meta">{{item.note}}</view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 录分浮层 -->
+    <view wx:if="{{recording}}" class="mask" bindtap="onCloseRecord"></view>
+    <view wx:if="{{recording}}" class="sheet">
+      <view class="sheet-title">{{recording.teamAName}} vs {{recording.teamBName}}</view>
+      <view class="score-form">
+        <input
+          class="score-input"
+          type="number"
+          value="{{scoreA}}"
+          data-side="A"
+          bindinput="onInputScore"
+          placeholder="0"
+        />
+        <view class="score-colon">:</view>
+        <input
+          class="score-input"
+          type="number"
+          value="{{scoreB}}"
+          data-side="B"
+          bindinput="onInputScore"
+          placeholder="0"
+        />
+      </view>
+      <view class="ot-row">
+        <text>打了加时</text>
+        <switch checked="{{overtime}}" color="#2E7D32" bindchange="onToggleOvertime" />
+      </view>
+      <view class="sheet-note">录完只是「待审核」，协会负责人发布之后才进积分表与名次。</view>
+      <view class="sheet-actions">
+        <view class="btn btn-ghost" bindtap="onCloseRecord">取消</view>
+        <view class="btn btn-primary {{busy ? 'is-disabled' : ''}}" bindtap="onSubmitScore">提交</view>
+      </view>
+    </view>
+  </block>
+</view>

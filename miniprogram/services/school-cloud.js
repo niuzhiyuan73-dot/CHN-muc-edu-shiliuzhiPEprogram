@@ -152,6 +152,13 @@ function forSchoolIdentity(input) {
     submitTeamEntry: payload => request('submitTeamEntry', payload),
     reviewTeamEntry: payload => request('reviewTeamEntry', payload),
     lockTeamEntries: payload => request('lockTeamEntries', payload),
+    // 团队赛事：抽签、赛程、录分、发布、下一轮、结算
+    drawTeamEvent: payload => request('drawTeamEvent', payload),
+    listTeamMatches: payload => request('listTeamMatches', payload),
+    recordTeamMatch: payload => request('recordTeamMatch', payload),
+    publishTeamMatch: payload => request('publishTeamMatch', payload),
+    advanceTeamRound: payload => request('advanceTeamRound', payload),
+    settleTeamEvent: payload => request('settleTeamEvent', payload),
   });
 }
 
