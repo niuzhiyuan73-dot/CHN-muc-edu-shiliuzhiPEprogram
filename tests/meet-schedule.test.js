@@ -275,3 +275,30 @@ test('D55 明确的取舍：同一裁判同一时间可被派两个场次，不�
   const second = await schedule.assignMeetJudge({ sessionKey: key200, judgeId: 'u_judge' }, admin);
   assert.equal(second.ok, true, '本期不做冲突检测，同时间段重复指派应被允许');
 });
+
+test('赛程页与详情页都给出「报名多少人」：只数正式名单，待审单列', async () => {
+  const { repo, meetId } = await makeWorld();
+  const eventKey = eventOf(meetId, 'sprint-100m');
+  const base = { schoolId: SCHOOL, meetId, eventKey, collegeId: 'c01' };
+  await repo.sportsMeetEntries.set('e1', { ...base, _id: 'e1', status: 'approved' });
+  await repo.sportsMeetEntries.set('e2', { ...base, _id: 'e2', status: 'approved' });
+  await repo.sportsMeetEntries.set('e3', { ...base, _id: 'e3', status: 'pending_review' });
+  await repo.sportsMeetEntries.set('e4', { ...base, _id: 'e4', status: 'withdrawn' });
+
+  // 管理员：赛程页与详情页都能看到 2 人（正式名单）+ 1 待审，已退出的不算
+  const admin = await ctxOf(repo, 'u_admin', meetId);
+  const listed = await schedule.getMeetSchedule({}, admin);
+  const row = listed.data.items.find((item) => item.eventKey === eventKey);
+  assert.equal(row.entryCount, 2, '只数 approved 的正式记录');
+  assert.equal(row.pendingCount, 1);
+  assert.equal(row.entryUnit, '人');
+
+  const detail = await meetService.getSportsMeet({}, admin);
+  const detailRow = detail.data.events.find((item) => item.eventKey === eventKey);
+  assert.equal(detailRow.entryCount, 2);
+  assert.equal(detailRow.pendingCount, 1);
+
+  // 学生看到的详情不带人数：这是管理台账，不是公开榜单
+  const asStudent = await meetService.getSportsMeet({}, await ctxOf(repo, 'u_s1', meetId));
+  assert.equal(asStudent.data.events.find((item) => item.eventKey === eventKey).entryCount, undefined);
+});

@@ -3,14 +3,20 @@
  * ============================================================
  * 这一页承担「报名截止后到比赛开始前」的全部编排工作，顺序就是页面上从上到下：
  *
+ *   0. 派裁判（页面顶部）：先选项目与场次（可跨项目多选），再选裁判（可多人）。
+ *      赛前最耗时的一步，且「整个上午的径赛都是同一批裁判」是常态，所以放在最上面。
  *   1. 定赛制：轮次（直接决赛 / 预赛+决赛）、每组人数（跑道数）、
  *      晋级人数或小组设置。**必须在报名截止后做**——分几组、分几枪是由实际
  *      报名人数除出来的，项目刚建好时人数还不知道。
  *   2. 分组/编排：径赛按跑道数自动均分（多枪决赛就是分几枪），
  *      胜负项目生成签表/循环赛。
  *   3. 排时间场地：时间是必填的告知信息，不做任何先后校验。
- *   4. 指派裁判：搜索 + 点人即指派，列表里直接看到已派的人。
- *   5. 发布赛程。
+ *   4. 发布赛程。
+ *
+ * 【派裁判为什么是「先场次、后裁判」，且已派的人会自动带出】
+ * 裁判是「派到场次上」的，先定范围才知道要显示谁；所选场次已有的裁判必须计入
+ * 人数，否则面板永远显示「选裁判（0）人」，管理员会以为没派、再派一遍。候选列表
+ * 里则把已选的人去掉——否则点一下只换来一句「已经选了」。
  *
  * 【为什么裁判不用 picker】
  * picker 的 range 是打开那一刻的快照：先搜索、再点开会拿到旧列表，
@@ -54,17 +60,32 @@ Page({
     chiefOpen: false,
     chiefKeyword: '',
     chiefCandidates: [],
-    filteredJudges: [],
-    judgeKeyword: '',
-    // 批量指派（B9c）：一批人一次派到多个场次
-    bulkOpen: false,
-    bulkJudges: [],
-    bulkSessions: [],
-    bulkDate: '',
-    // 批量面板的裁判搜索与已选摘要（试用反馈：面板里搜不了人、选了没提示）
-    bulkKeyword: '',
-    filteredBulkJudges: [],
-    bulkJudgeNames: '',
+    // ---- 派裁判（顶部一块，跨项目 / 跨场次 / 多人）----
+    // 旧版把批量指派挂在每个项目行里：一次只能派一个项目，而「所有径赛同一批裁判」
+    // 才是常态；已派了几个人也不显示（选裁判永远是 0 人）。现在统一到顶部：
+    // 先选项目与场次（可多选），再选裁判；所选场次已有的裁判自动带出并计入人数。
+    assignOpen: false,
+    assignKeyword: '',
+    /** 可派场次的项目（只列已有场次的：没抽签 / 没排期的派不了） */
+    assignTargets: [],
+    /** 已选场次（sessionKey 数组） */
+    assignSessionKeys: [],
+    assignSessionCount: 0,
+    assignEventCount: 0,
+    assignEventState: {},
+    /** 本次手动添加的裁判（不含带出的已有裁判） */
+    assignPickedIds: [],
+    /** 已选裁判 = 带出的已有裁判 + 手动添加 */
+    assignJudgeIds: [],
+    assignJudgeCount: 0,
+    assignAssignedCount: 0,
+    assignJudgeNames: {},
+    assignCoverage: {},
+    /** 候选池（当前搜索词的结果；候选列表会排除已选） */
+    assignPool: [],
+    assignCandidates: [],
+    assignHasMore: false,
+    assignSummaryText: '一次可派多个项目、多个场次',
     // 展开的行与它正在编辑的场次
     activeEventKey: '',
     editStartAt: '',
@@ -161,11 +182,13 @@ Page({
     this.update({ loading: true, error: '' });
     try {
       const schedule = await this.client().getMeetSchedule({});
-      let judges = [];
+      let pool = this.data.assignPool || [];
+      let judges = this.data.judges || [];
       if (schedule.canManage) {
-        const candidates = await this.client().listMeetJudgeCandidates({});
+        const candidates = await this.client().listMeetJudgeCandidates({ keyword: this.data.assignKeyword });
+        pool = candidates.items;
         judges = candidates.items;
-        this.update({judgeHasMore: Boolean(candidates.hasMore), bulkHasMore: Boolean(candidates.hasMore)});
+        this.update({ assignHasMore: Boolean(candidates.hasMore) });
       }
       const items = schedule.items.map((item) => ({
         ...item,
@@ -188,15 +211,22 @@ Page({
       // 关键：用**刷新后的**场次对象替换 current，否则界面还显示指派前的 0 个裁判
       const current = sessionOf(items, eventKey, sessionKey);
 
+      // 派裁判面板：项目清单换了之后，把已经不存在的场次从选择里剔掉再重算
+      const assignTargets = this.assignTargetsOf(items);
+      const aliveSessions = new Set();
+      for (const row of assignTargets) for (const slot of row.sessions) aliveSessions.add(slot.sessionKey);
+      const keptSessions = this.data.assignSessionKeys.filter((key) => aliveSessions.has(key));
+      const assignState = this.assignStateOf(
+        keptSessions, assignTargets, pool, this.data.assignPickedIds);
+
       this.update({
         loading: false,
         canManage: schedule.canManage,
         chiefJudge: schedule.chiefJudge || null,
         items,
         judges,
-        filteredJudges: this.filterJudges(judges, this.data.judgeKeyword),
-        filteredBulkJudges: this.filterJudges(judges, this.data.bulkKeyword),
-        bulkJudgeNames: this.judgeNamesOf(this.data.bulkJudges),
+        assignPool: pool,
+        ...assignState,
         activeEventKey: current ? eventKey : '',
         editSessionKey: current ? sessionKey : '',
         current,
@@ -222,19 +252,108 @@ Page({
     return matched ? matched[2] : '';
   },
 
-  filterJudges(judges, keyword) {
-    const needle = String(keyword || '').trim();
-    if (!needle) return judges;
-    return judges.filter((row) => `${row.name}${row.collegeName || ''}${row.collegeId || ''}`.includes(needle));
+  /**
+   * 可派裁判的项目：**只列已经有场次的**。
+   *
+   * 没抽签、没排期的项目在这里出现只会让人点了才被拒（服务端也拒绝空场次）。
+   * 报名人数一并带上——分几组、要不要多派裁判都看这个数。
+   */
+  assignTargetsOf(items) {
+    const groupLabelOf = (group) => (group === 'male' ? '男子' : group === 'female' ? '女子' : '混合');
+    return (items || [])
+      .filter((item) => (item.sessions || []).length > 0)
+      .map((item) => ({
+        eventKey: item.eventKey,
+        name: item.name,
+        groupLabel: groupLabelOf(item.group),
+        entryText: `${item.entryCount || 0} ${item.entryUnit || '人'}`,
+        pendingText: item.pendingCount ? `${item.pendingCount} 待审` : '',
+        sessionCount: item.sessions.length,
+        // 首个已排时间：让管理员一眼看出「这场到底排没排」
+        timeText: (item.sessions.find((row) => row.startAt) || {}).startAt || '未排期',
+        sessions: item.sessions.map((row) => ({
+          sessionKey: row.sessionKey,
+          label: row.displayLabel,
+          timeText: row.startAt || '',
+          assignedCount: (row.judges || []).length,
+          judges: row.judges || [],
+        })),
+      }));
   },
 
-  /** 已选裁判的姓名串：chips 之外再给一行文字摘要，选中状态不只靠颜色 */
-  judgeNamesOf(judgeIds) {
-    const names = (judgeIds || []).map((id) => {
-      const judge = this.data.judges.find((row) => row.userId === id);
-      return judge ? judge.name : id;
-    });
-    return names.join('、');
+  /**
+   * 派裁判面板的派生状态（纯计算）。
+   *
+   * 【为什么「选裁判」要先把已有的人算进来】
+   * 从前这个数字从 0 起算：下面明明已经派了 3 个人，面板仍显示「选裁判（0）人」，
+   * 再选一个变成 1，提交完才知道这 3 个人早就在场上了。现在所选场次已有的裁判
+   * **全部带出**并计入人数：3 人 → 再点一个就是 4 人。
+   *
+   * 【候选里为什么不再出现已选的人】
+   * 已选的人列在上面的 chips 里，候选池仍然列出来只会让人重复点、再收到一句
+   * 「已经选了」。候选 = 候选池 − 已选，点一下就是「新加一个人」。
+   *
+   * @param {string[]} sessionKeys 已选场次
+   * @param {Array} targets assignTargetsOf 的结果
+   * @param {Array} pool 当前搜索结果
+   * @param {string[]} picked 手动添加的裁判（不含带出的）
+   */
+  assignStateOf(sessionKeys, targets, pool, picked) {
+    const sessions = new Map();
+    for (const row of targets || []) {
+      for (const slot of row.sessions) sessions.set(slot.sessionKey, slot);
+    }
+    const keys = (sessionKeys || []).filter((key) => sessions.has(key));
+
+    // 每个项目的勾选三态：全选 / 部分 / 未选
+    const eventState = {};
+    for (const row of targets || []) {
+      const hit = row.sessions.filter((slot) => keys.includes(slot.sessionKey)).length;
+      eventState[row.eventKey] = {
+        all: hit > 0 && hit === row.sessions.length,
+        some: hit > 0 && hit < row.sessions.length,
+        count: hit,
+      };
+    }
+
+    // 带出的已有裁判：所选场次上「在任」的裁判取并集
+    const coverage = {};
+    const names = {};
+    for (const key of keys) {
+      for (const judge of (sessions.get(key).judges || [])) {
+        coverage[judge.judgeId] = (coverage[judge.judgeId] || 0) + 1;
+        if (!names[judge.judgeId]) names[judge.judgeId] = judge.name || judge.judgeId;
+      }
+    }
+    // 姓名以成员表为准（比场次里带的更新）
+    for (const row of (pool || [])) names[row.userId] = row.name;
+
+    const judgeIds = [...new Set([...Object.keys(coverage), ...(picked || [])])];
+    const chosen = new Set(judgeIds);
+    const candidates = (pool || [])
+      .filter((row) => !chosen.has(row.userId))
+      .map((row) => ({
+        ...row,
+        coveredText: coverage[row.userId] ? `已派 ${coverage[row.userId]}/${keys.length} 场` : '',
+      }));
+
+    const eventCount = Object.values(eventState).filter((row) => row.count > 0).length;
+    return {
+      assignTargets: targets || [],
+      assignSessionKeys: keys,
+      assignSessionCount: keys.length,
+      assignEventCount: eventCount,
+      assignEventState: eventState,
+      assignJudgeIds: judgeIds,
+      assignJudgeCount: judgeIds.length,
+      assignAssignedCount: Object.keys(coverage).length,
+      assignJudgeNames: names,
+      assignCoverage: coverage,
+      assignCandidates: candidates,
+      assignSummaryText: keys.length
+        ? `${eventCount} 个项目 · ${keys.length} 个场次 · ${judgeIds.length} 名裁判`
+        : '一次可派多个项目、多个场次',
+    };
   },
 
   // ---------- 赛制设置（报名截止后） ----------
@@ -292,112 +411,170 @@ Page({
     this.update({ proc: { ...this.data.proc, [field]: next } });
   },
 
-  /**
-   * 批量指派面板。
-   *
-   * 「连续几个项目同一批裁判」是学生运动会的常态。逐个场次、逐个裁判地派，
-   * 一个上午的赛程要几十次点击，漏派一场那场就开不了赛。所以这里一次选多人、
-   * 一次选多场，服务端按写预算拆事务后全部完成。
-   *
-   * 【为什么必须带上 eventKey】
-   * 面板的显示条件是 `bulkOpen && activeEventKey === item.eventKey`，而按钮挂在
-   * 每个项目行上。早先只翻 `bulkOpen`，点在未展开的项目上时 activeEventKey 还是
-   * 空的——按钮像坏了一样「点了没反应」（试用反馈）。现在点谁就把谁展开。
-   */
-  onOpenBulk(event) {
-    if (this.data.busy) return;
+  /* ---------- 派裁判（顶部一块） ---------- */
+
+  /** 展开 / 收起派裁判面板；打开时按当前搜索词重取候选 */
+  onToggleAssignPanel() {
+    if (this.data.busy) return undefined;
+    if (this.data.assignOpen) {
+      this.update({ assignOpen: false });
+      return undefined;
+    }
+    this.update({ assignOpen: true, error: '', notice: '' });
+    return this.loadAssignCandidates(this.data.assignKeyword, false);
+  },
+
+  /** 从某个项目直接进面板：把这个项目的全部场次预设为已选 */
+  onAssignForEvent(event) {
+    if (this.data.busy) return undefined;
     const eventKey = (event.currentTarget.dataset.eventKey || '').trim();
-    if (!eventKey) return;
-    const row = this.data.items.find(item => item.eventKey === eventKey);
-    // 没有场次就没有可派的裁判：模板已把按钮置灰，这里再兜一道（旧版缓存/直达调用）
-    if (!row || !(row.sessions || []).length) {
-      this.update({ error: '该项目还没有抽签分组，先抽签再派裁判' });
-      return;
+    const row = this.data.assignTargets.find((item) => item.eventKey === eventKey);
+    if (!row) {
+      this.update({ error: '该项目还没有场次，先抽签分组并排好时间场地' });
+      return undefined;
     }
-    const sameEvent = this.data.activeEventKey === eventKey;
-    if (!sameEvent) {
-      this.pickSession(eventKey, row.sessions[0]);
+    const keys = row.sessions.map((slot) => slot.sessionKey);
+    const state = this.assignStateOf(keys, this.data.assignTargets, this.data.assignPool, []);
+    this.update({ assignOpen: true, assignPickedIds: [], error: '', notice: '', ...state });
+    if ((this.data.assignPool || []).length === 0) {
+      return this.loadAssignCandidates(this.data.assignKeyword, false);
     }
-    this.update({
-      activeEventKey: eventKey,
-      bulkOpen: sameEvent ? !this.data.bulkOpen : true,
-      bulkJudges: [],
-      bulkSessions: [],
-      bulkDate: '',
-      bulkKeyword: '',
-      filteredBulkJudges: this.data.judges,
-      bulkJudgeNames: '',
-      error: '',
-      notice: '',
-    });
+    return undefined;
   },
 
-  onToggleBulkJudge(event) {
-    const userId = event.currentTarget.dataset.userId;
-    if (!userId) return;
-    const picked = this.data.bulkJudges.includes(userId)
-      ? this.data.bulkJudges.filter((id) => id !== userId)
-      : [...this.data.bulkJudges, userId];
-    this.update({ bulkJudges: picked, bulkJudgeNames: this.judgeNamesOf(picked) });
+  applyAssignSessions(keys) {
+    const state = this.assignStateOf(
+      keys, this.data.assignTargets, this.data.assignPool, this.data.assignPickedIds);
+    this.update({ ...state, error: '', notice: '' });
   },
 
-  onBulkKeyword(event) {
-    const bulkKeyword = event.detail.value;
-    this.update({
-      bulkKeyword,
-      filteredBulkJudges: this.filterJudges(this.data.judges, bulkKeyword),
-    });
-    this.queueCandidateSearch('bulk');
+  /** 点项目行：全选 / 全不选该项目的场次（含预赛各组与决赛） */
+  onToggleAssignEvent(event) {
+    const eventKey = event.currentTarget.dataset.eventKey;
+    const row = this.data.assignTargets.find((item) => item.eventKey === eventKey);
+    if (!row) return;
+    const chosen = new Set(this.data.assignSessionKeys);
+    const all = row.sessions.every((slot) => chosen.has(slot.sessionKey));
+    for (const slot of row.sessions) {
+      if (all) chosen.delete(slot.sessionKey);
+      else chosen.add(slot.sessionKey);
+    }
+    this.applyAssignSessions([...chosen]);
   },
 
-  onToggleBulkSession(event) {
+  /** 点场次 chip：只选这一场（预赛第 2 组、决赛等） */
+  onToggleAssignSession(event) {
     const sessionKey = event.currentTarget.dataset.sessionKey;
     if (!sessionKey) return;
-    const picked = this.data.bulkSessions.includes(sessionKey)
-      ? this.data.bulkSessions.filter((key) => key !== sessionKey)
-      : [...this.data.bulkSessions, sessionKey];
-    this.update({ bulkSessions: picked });
+    const chosen = new Set(this.data.assignSessionKeys);
+    if (chosen.has(sessionKey)) chosen.delete(sessionKey);
+    else chosen.add(sessionKey);
+    this.applyAssignSessions([...chosen]);
   },
 
-  /** 本项目的全部场次（含未排期的） */
-  onBulkAllSessions() {
-    const item = this.data.items.find((row) => row.eventKey === this.data.activeEventKey);
-    const all = (item && item.sessions || []).map((row) => row.sessionKey);
-    this.update({ bulkSessions: all, bulkDate: '' });
+  onAssignAll() {
+    const keys = [];
+    for (const row of this.data.assignTargets) {
+      for (const slot of row.sessions) keys.push(slot.sessionKey);
+    }
+    this.applyAssignSessions(keys);
+    return undefined;
   },
 
-  onBulkDateInput(event) {
-    // 填了日期就清空勾选：两者是互斥的范围
-    this.update({ bulkDate: event.detail.value, bulkSessions: [] });
+  onAssignClear() {
+    const state = this.assignStateOf([], this.data.assignTargets, this.data.assignPool, []);
+    this.update({ ...state, assignPickedIds: [], error: '', notice: '' });
   },
 
-  async onSubmitBulk() {
-    if (this.data.busy) return;
-    const { bulkJudges, bulkSessions, bulkDate, activeEventKey } = this.data;
-    if (bulkJudges.length === 0) {
-      this.update({ error: '请先选择裁判' });
+  onAssignKeyword(event) {
+    const assignKeyword = event.detail.value;
+    this.update({ assignKeyword });
+    clearTimeout(this.candidateTimer);
+    this.candidateTimer = setTimeout(() => this.loadAssignCandidates(assignKeyword, false), 400);
+  },
+
+  onMoreAssignJudges() {
+    return this.loadAssignCandidates(this.data.assignKeyword, true);
+  },
+
+  /**
+   * 拉裁判候选并重算面板。
+   *
+   * append=true 接着上一页取，否则按新关键词从头取。用 requestId 判活：
+   * 连着改两次关键词时，慢的那个响应不能盖掉后来的。
+   */
+  async loadAssignCandidates(keyword, append) {
+    const previous = append ? this.data.assignPool : [];
+    const requestId = (this.assignRequestId || 0) + 1;
+    this.assignRequestId = requestId;
+    try {
+      const result = await this.client().listMeetJudgeCandidates({ keyword, offset: previous.length });
+      if (this.unloaded || this.assignRequestId !== requestId
+        || keyword !== this.data.assignKeyword) return undefined;
+      const pool = previous.concat(result.items);
+      const merged = new Map((this.data.judges || []).map((row) => [row.userId, row]));
+      for (const row of result.items) merged.set(row.userId, row);
+      const state = this.assignStateOf(
+        this.data.assignSessionKeys, this.data.assignTargets, pool, this.data.assignPickedIds);
+      this.update({
+        ...state,
+        assignPool: pool,
+        judges: [...merged.values()],
+        assignHasMore: Boolean(result.hasMore),
+      });
+    } catch (err) {
+      this.update({ error: (err && err.message) || '搜索裁判失败' });
+    }
+    return undefined;
+  },
+
+  /** 点候选人 = 新加一个人。已选的不会出现在候选里，所以不会重复 */
+  onToggleAssignJudge(event) {
+    const userId = event.currentTarget.dataset.userId;
+    if (!userId) return;
+    if (this.data.assignCoverage[userId]) {
+      // 已在所选场次里：保持不动，提示也不会再出现（候选已排除），这里只兜旧缓存
       return;
     }
-    const payload = { judgeIds: bulkJudges };
-    if (bulkSessions.length > 0) payload.sessionKeys = bulkSessions;
-    else if (bulkDate) payload.date = bulkDate;
-    else payload.eventKey = activeEventKey;
+    const picked = [...this.data.assignPickedIds, userId];
+    const state = this.assignStateOf(
+      this.data.assignSessionKeys, this.data.assignTargets, this.data.assignPool, picked);
+    this.update({ ...state, assignPickedIds: picked });
+  },
 
+  /** chips 上的 ×：只撤掉本次「新加的人」；已有指派要在场次里点撤销 */
+  onRemoveAssignJudge(event) {
+    const userId = event.currentTarget.dataset.userId;
+    if (!userId || this.data.assignCoverage[userId]) return;
+    const picked = this.data.assignPickedIds.filter((id) => id !== userId);
+    const state = this.assignStateOf(
+      this.data.assignSessionKeys, this.data.assignTargets, this.data.assignPool, picked);
+    this.update({ ...state, assignPickedIds: picked });
+  },
+
+  async onSubmitAssign() {
+    if (this.data.busy) return;
+    const { assignSessionKeys, assignJudgeIds } = this.data;
+    if (assignSessionKeys.length === 0) {
+      this.update({ error: '请先选择要派裁判的项目或场次' });
+      return;
+    }
+    if (assignJudgeIds.length === 0) {
+      this.update({ error: '请选择裁判' });
+      return;
+    }
     this.update({ busy: true, error: '', notice: '' });
     try {
-      const result = await this.client().assignMeetJudges(payload);
-      await this.reload({ eventKey: activeEventKey, sessionKey: this.data.editSessionKey });
-      const existed = result.existed ? `（${result.existed} 条原本就已指派）` : '';
-      this.update({
-        busy: false,
-        bulkOpen: false,
-        bulkJudges: [],
-        bulkSessions: [],
-        bulkJudgeNames: '',
-        notice: '',
-        error: '',
+      const result = await this.client().assignMeetJudges({
+        judgeIds: assignJudgeIds,
+        sessionKeys: assignSessionKeys,
       });
-      showNotice(`已指派 ${result.judgeIds.length} 名裁判到 ${result.sessionCount} 个场次${existed}`);
+      // 先清选择再重载：面板收起，场次里的裁判数与「已派」标记随之更新
+      this.update({ assignSessionKeys: [], assignPickedIds: [] });
+      await this.reload({ eventKey: this.data.activeEventKey, sessionKey: this.data.editSessionKey });
+      this.update({ busy: false, assignOpen: false });
+      const existed = result.existed ? `（${result.existed} 条原本已派）` : '';
+      showNotice(`已派 ${result.judgeIds.length} 人到 ${result.sessionCount} 个场次${existed}`);
     } catch (err) {
       this.update({ busy: false });
       showError((err && err.message) || '指派失败');
@@ -553,60 +730,6 @@ Page({
     } catch (err) {
       this.update({ busy: false, error: (err && err.message) || '保存失败' });
       return undefined;
-    }
-  },
-
-  onJudgeKeyword(event) {
-    const judgeKeyword = event.detail.value;
-    this.update({
-      judgeKeyword,
-      filteredJudges: this.filterJudges(this.data.judges, judgeKeyword),
-    });
-    this.queueCandidateSearch('judge');
-  },
-
-  queueCandidateSearch(kind) {
-    clearTimeout(this.candidateTimer);
-    this.candidateTimer = setTimeout(() => this.loadCandidates(kind, false), 400);
-  },
-
-  async loadCandidates(kind, append) {
-    const bulk = kind === 'bulk';
-    const keyword = bulk ? this.data.bulkKeyword : this.data.judgeKeyword;
-    const field = bulk ? 'filteredBulkJudges' : 'filteredJudges';
-    const previous = append ? this.data[field] : [];
-    const requestId = (this.candidateRequestId || 0) + 1;
-    this.candidateRequestId = requestId;
-    try {
-      const result = await this.client().listMeetJudgeCandidates({keyword, offset: previous.length});
-      if (this.unloaded || this.candidateRequestId !== requestId || keyword !== (bulk ? this.data.bulkKeyword : this.data.judgeKeyword)) return;
-      const merged = new Map(this.data.judges.map(row => [row.userId, row]));
-      for (const row of result.items) merged.set(row.userId, row);
-      this.update({[field]: previous.concat(result.items), judges: [...merged.values()], [bulk ? 'bulkHasMore' : 'judgeHasMore']: Boolean(result.hasMore)});
-    } catch(err) { this.update({error: err.message || '搜索裁判失败'}); }
-  },
-
-  onMoreJudges() { return this.loadCandidates('judge', true); },
-  onMoreBulkJudges() { return this.loadCandidates('bulk', true); },
-
-  /** 点候选人即指派：不再经过 picker，避免「搜索完还要再点一次才刷新」 */
-  async onAssignJudge(event) {
-    if (this.data.busy) return;
-    const judgeId = event.currentTarget.dataset.judgeId;
-    const target = this.data.current;
-    if (!judgeId || !target) {
-      this.update({ error: '请先选择一个场次' });
-      return;
-    }
-    this.update({ busy: true, error: '', notice: '' });
-    try {
-      await this.client().assignMeetJudge({ sessionKey: target.sessionKey, judgeId });
-      const judge = this.data.judges.find((row) => row.userId === judgeId);
-      // reload 会带回新的 current（含刚指派的裁判），而不是只弹一句提示
-      await this.reload({ eventKey: this.data.activeEventKey, sessionKey: target.sessionKey });
-      this.update({ busy: false, notice: `已指派 ${judge ? judge.name : judgeId}` });
-    } catch (err) {
-      this.update({ busy: false, error: (err && err.message) || '指派失败' });
     }
   },
 

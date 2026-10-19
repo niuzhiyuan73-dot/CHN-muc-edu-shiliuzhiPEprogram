@@ -1,7 +1,7 @@
 <!--
-  赛程编排：定赛制 → 分组/编排 → 排时间场地 → 指派裁判 → 发布赛程。
-  顺序不能颠倒：分几组、分几枪由报名人数与跑道数算出来，所以赛制放在这个阶段，
-  而不是项目刚建好、报名还没开始的时候。
+  赛程编排：派裁判（顶部）→ 定赛制 → 分组/编排 → 排时间场地 → 发布赛程。
+  「分几组、分几枪」由报名人数与跑道数算出来，所以赛制要等报名截止后再定；
+  派裁判不依赖赛制，反而常常是同一批人跨项目派，因此单独提到页面最上面。
 -->
 <view class="page-container">
 
@@ -16,6 +16,83 @@
     </view>
 
     <block wx:else>
+      <!-- 派裁判：一次选多个项目 / 多个场次 / 多名裁判。
+           放在最上面，是因为它才是赛前最耗时的一步：同一批计时裁判往往要派到整个
+           上午的所有径赛，旧版只能在单个项目里批量派，还得逐个项目重复一遍。 -->
+      <view class="card meet-row">
+        <view class="meet-row-head" bindtap="onToggleAssignPanel">
+          <view class="meet-row-main">
+            <view class="meet-row-name">派裁判</view>
+            <view class="meet-row-meta">{{assignSummaryText}}</view>
+          </view>
+          <view class="meet-row-tag {{assignOpen ? 'is-ok' : ''}}">{{assignOpen ? '收起' : '展开'}}</view>
+        </view>
+
+        <view wx:if="{{assignOpen}}" class="meet-editor">
+          <view class="meet-form-label">1. 选项目与场次（只列已有场次的项目）</view>
+          <view class="meet-actions">
+            <view class="meet-btn" bindtap="onAssignAll">全选</view>
+            <view class="meet-btn" bindtap="onAssignClear">清空</view>
+          </view>
+          <scroll-view scroll-y class="meet-assign-scroll">
+            <view wx:for="{{assignTargets}}" wx:for-item="ev" wx:key="eventKey" class="meet-assign-event">
+              <view class="meet-assign-event-head" data-event-key="{{ev.eventKey}}" bindtap="onToggleAssignEvent">
+                <view class="meet-assign-check {{assignEventState[ev.eventKey].all ? 'is-on' : (assignEventState[ev.eventKey].some ? 'is-half' : '')}}"></view>
+                <view class="meet-assign-event-main">
+                  <view class="meet-assign-event-name">{{ev.name}} · {{ev.groupLabel}}</view>
+                  <view class="meet-assign-event-meta">报名 {{ev.entryText}}<text wx:if="{{ev.pendingText}}"> · {{ev.pendingText}}</text> · {{ev.sessionCount}} 个场次 · {{ev.timeText}}</view>
+                </view>
+              </view>
+              <view class="meet-chips meet-assign-sessions">
+                <view
+                  wx:for="{{ev.sessions}}"
+                  wx:for-item="slot"
+                  wx:key="sessionKey"
+                  class="meet-chip {{assignSessionKeysSelected[slot.sessionKey] ? 'is-on' : ''}}"
+                  data-session-key="{{slot.sessionKey}}"
+                  bindtap="onToggleAssignSession"
+                >{{slot.label}}<text wx:if="{{slot.assignedCount}}" class="meet-chip-count">{{slot.assignedCount}}</text></view>
+              </view>
+            </view>
+            <view wx:if="{{assignTargets.length === 0}}" class="meet-hint">
+              还没有可派裁判的项目：先在下面抽签分组、排好时间场地
+            </view>
+          </scroll-view>
+
+          <view class="meet-form-label">2. 选裁判（{{assignJudgeCount}} 人<text wx:if="{{assignAssignedCount}}">，其中 {{assignAssignedCount}} 人原本已派</text>）</view>
+          <input class="meet-search" placeholder="搜索姓名或学院" value="{{assignKeyword}}" bindinput="onAssignKeyword" />
+          <view wx:if="{{assignJudgeIds.length > 0}}" class="meet-chips">
+            <view wx:for="{{assignJudgeIds}}" wx:for-item="judgeId" wx:key="*this" class="meet-chip is-on">
+              {{assignJudgeNames[judgeId] || judgeId}}
+              <text wx:if="{{assignCoverage[judgeId]}}" class="meet-chip-note">已派</text>
+              <text wx:else class="meet-chip-x" data-user-id="{{judgeId}}" catchtap="onRemoveAssignJudge">×</text>
+            </view>
+          </view>
+          <scroll-view scroll-y class="meet-assign-scroll">
+            <view wx:if="{{assignCandidates.length === 0}}" class="meet-hint">没有更多可选的本校成员</view>
+            <view
+              wx:for="{{assignCandidates}}"
+              wx:key="userId"
+              class="meet-judge-pick"
+              data-user-id="{{item.userId}}"
+              bindtap="onToggleAssignJudge"
+            >
+              <view class="meet-judge-main">
+                <text class="meet-judge-name">{{item.name}}</text>
+                <text class="meet-judge-college">{{item.collegeName}}{{item.coveredText ? ' · ' + item.coveredText : ''}}</text>
+              </view>
+              <text class="meet-judge-add-btn">添加</text>
+            </view>
+            <view wx:if="{{assignHasMore}}" bindtap="onMoreAssignJudges" class="meet-hint">加载更多成员</view>
+          </scroll-view>
+
+          <button class="btn btn-primary" bindtap="onSubmitAssign" disabled="{{busy}}">
+            指派 {{assignJudgeCount}} 人到 {{assignSessionCount}} 个场次
+          </button>
+          <view class="meet-hint">上方 × 只撤掉本次新加的人；已有指派请在下面场次里点「撤销」。</view>
+        </view>
+      </view>
+
       <!-- 本届总裁判：与校级管理员同档的发布/更正/判定/重排权（B4），本届结束自动卸任 -->
       <view class="card meet-row">
         <view class="meet-row-head">
@@ -58,6 +135,9 @@
                 {{item.sessions.length}} 个场次 · {{item.sessions[0].startAt || '未排期'}}
               </block>
               <block wx:else>还没有场次</block>
+            </view>
+            <view class="meet-row-meta">
+              报名 {{item.entryCount}} {{item.entryUnit}}<text wx:if="{{item.pendingCount}}"> · {{item.pendingCount}} 待审</text>
             </view>
           </view>
           <view class="meet-row-tag {{item.ready ? 'is-ok' : ''}}">{{item.ready ? '已配齐' : '未配齐'}}</view>
@@ -136,58 +216,6 @@
           <button class="btn btn-primary" bindtap="onSaveProcedure" disabled="{{busy}}">保存赛制</button>
         </view>
 
-        <!-- 批量指派：一批裁判一次派到多个场次。
-             还没抽签就没有场次可派，按钮置灰并说明原因——原先能点，点了才被服务端拒绝。 -->
-        <view class="meet-actions">
-          <view
-            wx:if="{{item.sessions.length > 0}}"
-            class="meet-btn is-primary"
-            data-event-key="{{item.eventKey}}"
-            bindtap="onOpenBulk"
-          >批量派裁判</view>
-          <view wx:else class="meet-btn is-disabled">抽签后派裁判</view>
-        </view>
-
-        <view wx:if="{{bulkOpen && activeEventKey === item.eventKey}}" class="meet-editor">
-          <view class="meet-form-label">选裁判（{{bulkJudges.length}} 人）</view>
-          <input class="meet-search" placeholder="搜索姓名或学院" value="{{bulkKeyword}}" bindinput="onBulkKeyword" />
-          <view class="meet-hint">已选：{{bulkJudgeNames || '尚未选择'}}</view>
-          <view class="meet-chips">
-            <view
-              wx:for="{{filteredBulkJudges}}"
-              wx:for-item="judge"
-              wx:key="userId"
-              class="meet-chip {{bulkJudgesSelected[judge.userId] ? 'is-on' : ''}}"
-              data-user-id="{{judge.userId}}"
-              bindtap="onToggleBulkJudge"
-            >{{judge.name}}</view>
-          </view>
-
-          <view wx:if="{{bulkHasMore}}" bindtap="onMoreBulkJudges" class="meet-hint">加载更多裁判</view>
-          <view class="meet-form-label">派到哪些场次</view>
-          <view class="meet-actions">
-            <view class="meet-btn" bindtap="onBulkAllSessions">本项目全部场次</view>
-          </view>
-          <view class="meet-chips">
-            <view
-              wx:for="{{item.sessions}}"
-              wx:for-item="rnd"
-              wx:key="sessionKey"
-              class="meet-chip {{bulkSessionsSelected[rnd.sessionKey] ? 'is-on' : ''}}"
-              data-session-key="{{rnd.sessionKey}}"
-              bindtap="onToggleBulkSession"
-            >{{rnd.displayLabel}}</view>
-          </view>
-          <view class="meet-form-row">
-            <text class="meet-form-label">或按日期</text>
-            <input class="meet-input" placeholder="2026-10-24" value="{{bulkDate}}" bindinput="onBulkDateInput" />
-          </view>
-
-          <button class="btn btn-primary" bindtap="onSubmitBulk" disabled="{{busy}}">
-            指派 {{bulkJudges.length}} 人到 {{bulkSessions.length > 0 ? bulkSessions.length + ' 个场次' : (bulkDate ? bulkDate + ' 全部场次' : '本项目全部场次')}}
-          </button>
-        </view>
-
         <!-- 场次排期与裁判 -->
         <view wx:if="{{activeEventKey === item.eventKey}}" class="meet-editor">
           <scroll-view wx:if="{{item.sessions.length > 1}}" scroll-x class="meet-rounds">
@@ -233,23 +261,8 @@
               <text class="meet-judge-remove" data-session-key="{{current.sessionKey}}" data-judge-id="{{judge.judgeId}}" bindtap="onRemoveJudge">撤销</text>
             </view>
 
-            <!-- 搜索 + 直接点人指派：不再用 picker，避免「搜完还要再点一次」 -->
-            <input class="meet-search" placeholder="搜索姓名或学院" value="{{judgeKeyword}}" bindinput="onJudgeKeyword" />
-            <scroll-view scroll-y class="meet-judge-list">
-              <view wx:if="{{judgeHasMore}}" bindtap="onMoreJudges" class="meet-hint">加载更多裁判</view>
-              <view wx:if="{{filteredJudges.length === 0}}" class="meet-hint">没有匹配的本校成员</view>
-              <view
-                wx:for="{{filteredJudges}}"
-                wx:key="userId"
-                class="meet-judge-pick"
-                data-judge-id="{{item.userId}}"
-                bindtap="onAssignJudge"
-              >
-                <text class="meet-judge-name">{{item.name}}</text>
-                <text class="meet-judge-college">{{item.collegeName}}</text>
-                <text class="meet-judge-add-btn">指派</text>
-              </view>
-            </scroll-view>
+            <!-- 派裁判只保留顶部一个入口：这里给个直达链接，点开即预选本项目 -->
+            <view class="meet-college-link" data-event-key="{{item.eventKey}}" bindtap="onAssignForEvent">增派 / 改派裁判 ›</view>
 
             <button class="btn btn-ghost" data-session-key="{{current.sessionKey}}" bindtap="onStartSession" disabled="{{busy || current.judgeIds.length === 0}}">开赛</button>
             <!-- 手动开赛只是「提前开」：裁判录第一条成绩时系统会自动开赛，不必先点 -->

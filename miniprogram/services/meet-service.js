@@ -27,7 +27,7 @@ const { unchanged } = require('./meet-consistency.js');
  */
 
 const {
-  MEET_STATUS, MEET_EVENT_STATUS,
+  MEET_STATUS, MEET_EVENT_STATUS, MEET_ENTRY_STATUS,
   meetEventKey, meetCollegeKey, newMeetId, meetRequestScope, listAliveEvents,
 } = require('../utils/meet-scope.js');
 const {
@@ -752,10 +752,33 @@ async function getSportsMeet(payload = {}, ctx) {
     : null;
   const collegeId = lead && isActiveMeetLead(lead) && lead.userId === fresh.actorId ? lead.collegeId : '';
 
+  const events = await listEventsOf(ctx.repo, fresh);
+  if (canManage) {
+    // 管理员要能一眼看到「这个项目收了多少人」：分组、派裁判、写总结都靠这个数。
+    // 只数正式名单（approved），意向不占名额（D10）；待审单独给一个数，
+    // 因为待审的人还没进名单、不能算进参赛人数。
+    const entries = await ctx.repo
+      .forMeet({ schoolId: fresh.schoolId, meetId: fresh.meetId })
+      .sportsMeetEntries.list();
+    const counts = new Map();
+    for (const doc of entries) {
+      if (!doc || !doc.eventKey) continue;
+      const row = counts.get(doc.eventKey) || { approved: 0, pending: 0 };
+      if (doc.status === MEET_ENTRY_STATUS.APPROVED) row.approved += 1;
+      else if (doc.status === MEET_ENTRY_STATUS.PENDING_REVIEW) row.pending += 1;
+      counts.set(doc.eventKey, row);
+    }
+    for (const row of events) {
+      const counted = counts.get(row.eventKey) || { approved: 0, pending: 0 };
+      row.entryCount = counted.approved;
+      row.pendingCount = counted.pending;
+    }
+  }
+
   return ok({
     // registration 换成人话版（open / 文本时间），页面不必再自己比时间
     meet: { ...meetSummary(met), registration: registrationView(met, fresh.now) },
-    events: await listEventsOf(ctx.repo, fresh),
+    events,
     // canLeadCollege 决定「学院报名工作台」入口给谁看：部长与管理员，其他人不必看到
     permissions: { canManage, collegeId, canLeadCollege: Boolean(collegeId) || canManage },
   });

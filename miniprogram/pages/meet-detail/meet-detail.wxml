@@ -55,6 +55,8 @@
           <text class="meet-tag" wx:else>{{item.rounds === 'heat_final' ? '预赛+决赛' : '直接决赛'}}</text>
           <text class="meet-tag" wx:if="{{item.heatCapacity}}">{{item.heatMode === 'lane' ? '每批' : '每批最多'}} {{item.heatCapacity}}</text>
           <text class="meet-tag" wx:if="{{!item.scored}}">不计分</text>
+          <!-- 管理员看报名规模：正式名单人数 + 待审（学生看不到，避免页面对所有人变成台账） -->
+          <text class="meet-tag" wx:if="{{canManage}}">已报 {{item.entryCount}}{{item.entryForm === 'team' ? '队' : item.entryForm === 'group' ? '组' : '人'}}<text wx:if="{{item.pendingCount}}"> · {{item.pendingCount}} 待审</text></text>
           <text class="meet-tag is-result" wx:if="{{item.hasResult}}">已出成绩 ›</text>
         </view>
       </view>

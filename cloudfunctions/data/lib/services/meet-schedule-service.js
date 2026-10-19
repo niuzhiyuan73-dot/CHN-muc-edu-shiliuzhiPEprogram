@@ -21,7 +21,7 @@
  */
 
 const {
-  MEET_STATUS, meetSessionKey, meetJudgeKey, listAliveEvents,
+  MEET_STATUS, MEET_ENTRY_STATUS, meetSessionKey, meetJudgeKey, listAliveEvents,
 } = require('../utils/meet-scope.js');
 const { schoolMemberKey, SCHOOL_MEMBER_STATUS } = require('../utils/school.js');
 const { MEET_SCORE_TYPE, getTemplate, HEAT_MODE } = require('./meet-event-catalog.js');
@@ -608,11 +608,13 @@ async function getMeetSchedule(payload = {}, ctx) {
   const isAdmin = canManageMeet(ctx);
   const scope = scopeOf(ctx);
 
-  const [meet, events, sessions, assignments] = await Promise.all([
+  const [meet, events, sessions, assignments, entries] = await Promise.all([
     ctx.repo.sportsMeets.getById(ctx.meetId),
     listAliveEvents(ctx.repo.forMeet(scope).sportsMeetEvents),
     listSessions(ctx.repo, ctx),
     ctx.repo.forMeet(scope).sportsMeetJudgeAssignments.list(),
+    // 名额是排赛程的前提（分几组、分几枪都要看人数），管理员也该一眼看到
+    ctx.repo.forMeet(scope).sportsMeetEntries.list(),
   ]);
   if (!isAliveMeet(meet) || meet.schoolId !== ctx.schoolId) return refused('运动会不存在或已删除');
   if (meet.status === MEET_STATUS.DRAFT && !isAdmin) return refused('运动会尚未发布');
@@ -635,8 +637,21 @@ async function getMeetSchedule(payload = {}, ctx) {
   const judgesSummary = (sessionKey) => (judgesOf.get(sessionKey) || [])
     .map((judgeId) => ({ judgeId, name: judgeNames.get(judgeId) || judgeId }));
 
+  // 每个项目已通过 / 待审的参赛记录数。赛事侧的「报名多少人」说的就是这一对数：
+  // 意向不占名额（D10），只有正式 entry 才算数。
+  const entryCounts = new Map();
+  for (const doc of entries) {
+    if (!doc || !doc.eventKey) continue;
+    const row = entryCounts.get(doc.eventKey) || { approved: 0, pending: 0 };
+    if (doc.status === MEET_ENTRY_STATUS.APPROVED) row.approved += 1;
+    else if (doc.status === MEET_ENTRY_STATUS.PENDING_REVIEW) row.pending += 1;
+    entryCounts.set(doc.eventKey, row);
+  }
+  const entryUnitOf = (form) => (form === 'team' ? '队' : form === 'group' ? '组' : '人');
+
   const items = events.map((event) => {
     const own = sessions.filter((doc) => doc.eventKey === event._id);
+    const counted = entryCounts.get(event._id) || { approved: 0, pending: 0 };
     // 老数据没有 heatMode／heatCapacity：按模板补。不补的话页面会把长跑显示成
     // 「每批 6 人」，也会把跳远的「抽签分组」按钮点亮——点了才报错。
     const template = getTemplate(event.templateId);
@@ -662,6 +677,11 @@ async function getMeetSchedule(payload = {}, ctx) {
       laneCount: Number(event.laneCount) || 0,
       advance: event.advance || null,
       scored: event.scored,
+      // 报名口径：entryForm 决定「人 / 组 / 队」，approved 是正式名单，pending 待审
+      entryForm: event.entryForm || 'single',
+      entryCount: counted.approved,
+      pendingCount: counted.pending,
+      entryUnit: entryUnitOf(event.entryForm),
       ready: own.some((doc) => doc.startAt && doc.venue),
       sessions: own.map((doc) => ({
         ...sessionSummary(doc),

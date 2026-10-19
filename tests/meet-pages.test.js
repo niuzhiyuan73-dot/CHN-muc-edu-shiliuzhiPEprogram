@@ -115,12 +115,15 @@ test('详情页与向导页的关键动作存在', () => {
   }
 
   const schedulePage = loadPage('meet-schedule');
-  for (const method of ['reload', 'onSaveSession', 'onAssignJudge', 'onRemoveJudge', 'onStartSession',
+  for (const method of ['reload', 'onSaveSession', 'onRemoveJudge', 'onStartSession',
     'onPublishSchedule', 'onPickSession', 'onOpenProcedure', 'onSaveProcedure', 'onDraw',
-    'onProcPickRounds', 'onProcPickFormat', 'onProcInput', 'onJudgeKeyword',
+    'onProcPickRounds', 'onProcPickFormat', 'onProcInput',
     'onStartDateChange', 'onStartTimeChange',
-    'onOpenBulk', 'onToggleBulkJudge', 'onToggleBulkSession', 'onBulkAllSessions',
-    'onBulkDateInput', 'onSubmitBulk']) {
+    // 派裁判（顶部一块）：跨项目 / 跨场次 / 多人
+    'onToggleAssignPanel', 'onAssignForEvent', 'assignTargetsOf', 'assignStateOf',
+    'onToggleAssignEvent', 'onToggleAssignSession', 'onAssignAll', 'onAssignClear',
+    'onAssignKeyword', 'onMoreAssignJudges', 'onToggleAssignJudge', 'onRemoveAssignJudge',
+    'onSubmitAssign', 'onOpenChief', 'onPickChief', 'onRevokeChiefJudge']) {
     assert.equal(typeof schedulePage[method], 'function', `赛程编排页缺少 ${method}`);
   }
 
@@ -180,4 +183,46 @@ test('WXML 选择状态不使用数组方法，标签正确闭合', () => {
     }
     assert.deepEqual(stack,[],name);
   }
+});
+
+
+test('派裁判面板：已派裁判带出并计数，候选里不再出现已选的人', () => {
+  const page = loadPage('meet-schedule');
+  const targets = [{
+    eventKey: 'e1', name: '100 米', groupLabel: '男子', entryText: '32 人',
+    pendingText: '', sessionCount: 2,
+    sessions: [
+      { sessionKey: 's1', label: '预赛 第 1 组', judges: [{ judgeId: 'j1', name: '甲' }, { judgeId: 'j2', name: '乙' }, { judgeId: 'j3', name: '丙' }] },
+      { sessionKey: 's2', label: '决赛', judges: [] },
+    ],
+  }];
+  const pool = ['j1', 'j2', 'j3', 'j4'].map((id) => ({ userId: id, name: id, collegeName: '' }));
+
+  // 只选第 1 组：3 个已派裁判自动带出，「选裁判」不再是 0
+  let state = page.assignStateOf(['s1'], targets, pool, []);
+  assert.equal(state.assignJudgeCount, 3);
+  assert.equal(state.assignAssignedCount, 3);
+  assert.deepEqual(state.assignCandidates.map((row) => row.userId), ['j4'], '已选的人不再出现在候选里');
+
+  // 再加一个 → 4 人；新加的那个可以撤，已派的没有 ×
+  state = page.assignStateOf(['s1'], targets, pool, ['j4']);
+  assert.equal(state.assignJudgeCount, 4);
+  assert.equal(state.assignAssignedCount, 3);
+  assert.equal(state.assignCoverage.j4, undefined);
+
+  // 项目行三态：只选了 2 场里的 1 场 = 部分选中
+  assert.deepEqual(state.assignEventState.e1, { all: false, some: true, count: 1 });
+  state = page.assignStateOf(['s1', 's2'], targets, pool, []);
+  assert.deepEqual(state.assignEventState.e1, { all: true, some: false, count: 2 });
+});
+
+test('派裁判只列已有场次的项目，并带上报名人数', () => {
+  const page = loadPage('meet-schedule');
+  const targets = page.assignTargetsOf([
+    { eventKey: 'e1', name: '100 米', group: 'male', entryCount: 32, entryUnit: '人', pendingCount: 2, sessions: [{ sessionKey: 's1', displayLabel: '决赛', judges: [] }] },
+    { eventKey: 'e2', name: '跳远', group: 'female', entryCount: 8, entryUnit: '人', pendingCount: 0, sessions: [] },
+  ]);
+  assert.deepEqual(targets.map((row) => row.eventKey), ['e1'], '没有场次的项目不该出现在派裁判列表里');
+  assert.equal(targets[0].entryText, '32 人');
+  assert.equal(targets[0].pendingText, '2 待审');
 });

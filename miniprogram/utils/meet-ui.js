@@ -36,7 +36,7 @@ function updateMeetPage(page, values) {
   if (page.unloaded) return;
   if (values.error) showError(values.error);
   else if (values.notice) showNotice(values.notice);
-  for (const key of ['bulkJudges', 'bulkSessions', 'voidKeys']) {
+  for (const key of ['bulkJudges', 'bulkSessions', 'voidKeys', 'assignJudgeIds', 'assignSessionKeys']) {
     if (Array.isArray(values[key])) {
       values[`${key}Selected`] = Object.fromEntries(values[key].map(id => [id, true]));
     }
