@@ -51,6 +51,7 @@ const schoolSession = require('../../services/school-session.js');
 const associationScope = require('../../services/association-scope.js');
 const space = require('../../services/association-space.js');
 const identity = require('../../services/school-identity.js');
+const { getAssociation } = require('../../utils/associations.js');
 const { LEGACY_SCHOOL_ID } = require('../../utils/school.js');
 
 /** 生成一次提交的请求编号：时间戳 + 随机后缀，满足服务端的编号字符集要求 */
@@ -116,6 +117,9 @@ Page({
     /** 当前协会的主题类，挂在页面根节点上 */
     themeClass: '',
 
+    /** 所属项目（石榴籽杯的三个球类之一）：由进入时选定的项目决定，表单内不可改 */
+    projectName: '',
+
     /** 没有发布权时的原因，非空就在页面上顶掉整张表单 */
     blockReason: '',
 
@@ -175,7 +179,11 @@ Page({
     selectedGroupIds: [],
   },
 
-  async onLoad() {
+  async onLoad(query = {}) {
+    // 石榴籽杯首页带项目进来：直接锁定到该项目，避免落到全局默认协会。
+    // 关键兜底——用户不经杯赛首页、直接从小程序码 / 分享链接进发布页时，
+    // 全局当前协会可能仍是别的球类，必须按参数强制归属，否则会发到错误的项目。
+    this.applyProjectFromQuery(query);
     const scope = this.currentScope();
     this.scope = scope;
 
@@ -197,7 +205,11 @@ Page({
       console.error('[college-event-edit] 发布权探针失败', err);
     }
 
-    this.setData({ blockReason: this.describeBlock(allowed, session), themeClass: currentThemeClass() });
+    this.setData({
+      blockReason: this.describeBlock(allowed, session),
+      themeClass: currentThemeClass(),
+      projectName: this.projectNameOf(scope.association),
+    });
 
     // 小组清单（报名资格勾选用，B6）。读不到就保持空清单，提交端由服务端校验把关。
     try {
@@ -210,12 +222,34 @@ Page({
     }
   },
 
+  /**
+   * 杯赛首页带项目进来时锁定协会；无参数或已是该项目则不动。
+   * 单独抽出来是为了可测——发布页的其余逻辑不应关心「项目从哪来」。
+   *
+   * @param {Object} query onLoad 的入参，可能带 projectId
+   */
+  applyProjectFromQuery(query) {
+    const wanted = query && query.projectId;
+    if (wanted && associationScope.getAssociation() !== wanted) {
+      associationScope.setAssociation(wanted);
+    }
+  },
+
   /** 当前「学校 + 协会」范围。写操作复用它，避免异步期间全局范围被切走 */
   currentScope() {
     return {
       schoolId: schoolSession.getSchoolId() || LEGACY_SCHOOL_ID,
       association: associationScope.getAssociation(),
     };
+  },
+
+  /** 所属项目的展示名；注册表里没有就留空，不显示半截文案 */
+  projectNameOf(associationId) {
+    try {
+      return getAssociation(associationId).sportName || '';
+    } catch (err) {
+      return '';
+    }
   },
 
   /** 不能发布的原因。能发布时返回空串 */

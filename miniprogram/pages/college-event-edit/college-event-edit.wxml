@@ -17,6 +17,13 @@
     <view class="card">
       <view class="card-title">赛事信息</view>
 
+      <!-- 项目由进入时选定（石榴籽杯首页顶部），表单内不可改：
+           一次发起只能落在一个项目上 -->
+      <view wx:if="{{projectName}}" class="field-row">
+        <view class="field-label">所属项目</view>
+        <view class="field-static">{{projectName}} · 石榴籽杯</view>
+      </view>
+
       <view class="field-row">
         <view class="field-label">赛事名称</view>
         <input

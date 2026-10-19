@@ -1,22 +1,19 @@
 /**
- * 全部赛事 / 全部学院赛
+ * 全部赛事
  * ============================================================
- * 赛事页上两个列表各只摆最近 3 条，「查看全部」就到这里。同一页靠
- * `type` 参数分两种口径（event / college），因为两者的行形状、跳转目标
- * 都不同，但装载逻辑、排序与置顶规则完全一样——不必写成两个页面。
+ * 赛事页的「查看全部」落点，只保留个人赛事分支。
  *
- * 【为什么不复用赛事页而是新开一页】
- * 赛事页还要装赛季积分榜、搜索框与「我的排名」，那一整套在这里全是多余的。
- * 这里只要一份不截断的列表：`loadSchoolEventsPanelView({ listLimit: Infinity, includePoints: false })`。
- *
- * 身份与权限来自 S2 会话及读端能力，列表、积分和置顶使用相同学校 / 协会范围。
+ * 【学院赛分支已下线】
+ * 学院赛整体迁入「石榴籽杯」，列表由 `pages/cup-home` 按项目承载。
+ * 旧链接 `?type=college` 仍可能从聊天记录或收藏进入，这里直接重定向，
+ * 不再维护第二套学院赛列表。
  * ============================================================
  */
 
 const { loadSchoolEventsPanelView } = require('../../services/school-events-panel-view.js');
 const { isMock } = require('../../services/runtime-mode.js');
 const { currentThemeClass } = require('../../services/branding.js');
-// 两类赛事的读取与置顶均走同一 S2 范围。
+// 赛事读取与置顶走同一 S2 范围。
 const schoolSession = require('../../services/school-session.js');
 const associationScope = require('../../services/association-scope.js');
 const space = require('../../services/association-space.js');
@@ -34,7 +31,7 @@ Page({
     view: {},
     /** 开发期在页脚标注数据来源 */
     isMock,
-    /** 'event' 看全部赛事，'college' 看全部学院赛 */
+    /** 固定为全部赛事；保留字段是为了兼容旧模板与测试 */
     type: 'event',
     /** 导航栏与页内标题 */
     title: '全部赛事',
@@ -44,13 +41,18 @@ Page({
 
   /** 返回 Promise 让测试能等待首屏加载完 */
   onLoad(query) {
-    const type = query && query.type === 'college' ? 'college' : 'event';
-    const title = type === 'college' ? '全部学院赛' : '全部赛事';
-    this.type = type;
-    this.setData({ type, title });
-    // 测试环境里没有这个 API，做个保护
+    // 学院赛已迁入石榴籽杯：旧链接不报错，直接换页
+    if (query && query.type === 'college') {
+      this.redirected = true;
+      if (typeof wx !== 'undefined' && typeof wx.redirectTo === 'function') {
+        wx.redirectTo({ url: '/pages/cup-home/cup-home' });
+      }
+      return undefined;
+    }
+
+    this.setData({ type: 'event', title: '全部赛事' });
     if (typeof wx !== 'undefined' && typeof wx.setNavigationBarTitle === 'function') {
-      wx.setNavigationBarTitle({ title });
+      wx.setNavigationBarTitle({ title: '全部赛事' });
     }
     return this.refresh();
   },
@@ -133,35 +135,9 @@ Page({
     );
   },
 
-  /**
-   * 管理员置顶 / 取消置顶一场学院赛。
-   *
-   * 与个人赛一致，这一步走学校维度：列表已按 S2 读，置顶也得写回 S2 的学院赛
-   * 主记录（见 school-college-service.setCollegeEventPinned）。权限与登录都由
-   * 服务端判，未登录 / 无管理权时读端返回 ok:false，页面只负责把话说清楚。
-   */
-  onToggleCollegePin(event) {
-    const { eventId, pinned } = event.currentTarget.dataset;
-    if (!eventId) return undefined;
-    const next = !pinned;
-    const scope = {
-      schoolId: schoolSession.getSchoolId() || LEGACY_SCHOOL_ID,
-      association: associationScope.getAssociation(),
-    };
-    return this.runPin(
-      () => space.forScope(this.scope || scope).setCollegeEventPinned({ eventId, pinned: next }),
-      next ? '已置顶' : '已取消置顶'
-    );
-  },
-
   /** 管理员发布赛事。无发布权时按钮根本不会渲染出来 */
   onOpenPublish() {
     wx.navigateTo({ url: '/pages/event-edit/event-edit' });
-  },
-
-  /** 管理员发布学院赛。与发布个人赛同一权限门槛 */
-  onOpenCollegePublish() {
-    wx.navigateTo({ url: '/pages/college-event-edit/college-event-edit' });
   },
 
   /** 点一场赛事，进详情 */
@@ -169,16 +145,5 @@ Page({
     const eventId = event.currentTarget.dataset.eventId;
     if (!eventId) return;
     wx.navigateTo({ url: `/pages/event-detail/event-detail?eventId=${encodeURIComponent(eventId)}` });
-  },
-
-  /** 点一场学院赛：学院负责人在报名中去名单页，其余人进详情页 */
-  onOpenCollegeEvent(event) {
-    const { eventId, canSubmit } = event.currentTarget.dataset;
-    if (!eventId) return;
-    if (canSubmit) {
-      wx.navigateTo({ url: `/pages/college-entry/college-entry?eventId=${encodeURIComponent(eventId)}` });
-      return;
-    }
-    wx.navigateTo({ url: `/pages/college-event-detail/college-event-detail?eventId=${encodeURIComponent(eventId)}` });
   },
 });

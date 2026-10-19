@@ -79,56 +79,6 @@
       </view>
     </view>
 
-    <!-- ========== 学院赛（名单制报名的入口） ========== -->
-    <!-- 学院赛不个人报名，由学院负责人交名单；同一行对管理员与学院负责人去不同的页 -->
-    <view class="card">
-      <view class="rank-head">
-        <view class="rank-head-title">学院赛</view>
-        <view wx:if="{{view.canManageCollege}}" class="event-publish" bindtap="onOpenCollegePublish">＋ 学院赛</view>
-      </view>
-
-      <view wx:if="{{!view.hasCollegeEvents}}" class="empty-note">{{view.collegeEventsEmptyNote}}</view>
-
-      <view
-        wx:for="{{view.collegeEvents}}"
-        wx:key="eventId"
-        class="event-row"
-        data-event-id="{{item.eventId}}"
-        data-can-submit="{{item.canSubmit}}"
-        bindtap="onOpenCollegeEvent"
-      >
-        <view class="event-main">
-          <view class="event-title">
-            <text class="event-name">{{item.title}}</text>
-            <text wx:if="{{item.pinned}}" class="tag tag-danger">置顶</text>
-            <text class="tag {{item.statusClass}}">{{item.statusLabel}}</text>
-          </view>
-          <view class="event-meta">
-            {{item.startTimeText}}<text wx:if="{{item.location}}"> · {{item.location}}</text>
-          </view>
-          <view class="event-meta">{{item.legPlanText}} · 名单 {{item.rosterText}}</view>
-        </view>
-
-        <view class="event-side">
-          <!-- 管理员在列表上直接切换置顶；catchtap 挡住行点击，否则会跳进详情 -->
-          <view
-            wx:if="{{item.canPin}}"
-            class="event-pin {{item.pinned ? 'is-on' : ''}}"
-            data-event-id="{{item.eventId}}"
-            data-pinned="{{item.pinned}}"
-            catchtap="onToggleCollegePin"
-          >{{item.pinned ? '取消置顶' : '置顶'}}</view>
-          <view wx:if="{{item.actionText}}" class="event-action">{{item.actionText}}</view>
-          <view wx:if="{{!item.actionText && !item.canPin}}" class="event-arrow">›</view>
-        </view>
-      </view>
-
-      <!-- 列表只摆最近几场，其余进「全部学院赛」；没被截断时这条不渲染 -->
-      <view wx:if="{{view.hasMoreCollegeEvents}}" class="list-more" bindtap="onMoreCollegeEvents">
-        查看全部 {{view.collegeEventTotal}} 场学院赛 ›
-      </view>
-    </view>
-
     <!-- ========== 我在积分榜上的位置 ========== -->
     <view wx:if="{{view.me}}" class="card my-rank">
       <view class="my-rank-value">

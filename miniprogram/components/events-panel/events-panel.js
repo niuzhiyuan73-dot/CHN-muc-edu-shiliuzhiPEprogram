@@ -227,33 +227,11 @@ Component({
       );
     },
 
-    /**
-     * 管理员置顶 / 取消置顶一场学院赛。
-     *
-     * 与个人赛一致，这一步走学校维度：列表已按 S2 读，置顶也得写回 S2 的学院赛
-     * 主记录（见 school-college-service.setCollegeEventPinned）。权限与登录都由
-     * 服务端判，未登录 / 无管理权时读端返回 ok:false，页面只负责把话说清楚。
-     *
-     * @param {Object} event currentTarget.dataset = { eventId, pinned }
-     * @returns {Promise<void>}
-     */
-    onToggleCollegePin(event) {
-      const { eventId, pinned } = event.currentTarget.dataset;
-      if (!eventId) return;
-      return this.runPin(() => space.forScope(this.scope).setCollegeEventPinned({ eventId, pinned: !pinned }),
-        pinned ? '已取消置顶' : '已置顶');
-    },
-
     /** 进「全部赛事」，看没被截断的完整列表 */
     onMoreEvents() {
       // 外校演示赛事没有对应的列表页（那是本校的），别把人引到本校去
       if (this.data.demoSchool) return undefined;
       wx.navigateTo({ url: '/pages/event-list/event-list?type=event' });
-    },
-
-    /** 进「全部学院赛」 */
-    onMoreCollegeEvents() {
-      wx.navigateTo({ url: '/pages/event-list/event-list?type=college' });
     },
 
     /** 点榜上的任何一行，去看这个人的完整战绩 */
@@ -279,29 +257,6 @@ Component({
     /** 管理员发布赛事。无发布权时按钮根本不会渲染出来 */
     onOpenPublish() {
       wx.navigateTo({ url: '/pages/event-edit/event-edit' });
-    },
-
-    /** 管理员发布学院赛。与发布个人赛同一权限门槛 */
-    onOpenCollegePublish() {
-      wx.navigateTo({ url: '/pages/college-event-edit/college-event-edit' });
-    },
-
-    /**
-     * 点一场学院赛。
-     *
-     * 学院负责人在报名中直接进本学院的名单页——那几天他的全部任务就是交名单，
-     * 少走一步；其余情况一律进详情页，抽签、开赛、大场对阵与名单审核的
-     * 入口都收在那里，普通会员也能看到签表。
-     */
-    onOpenCollegeEvent(event) {
-      const { eventId, canSubmit } = event.currentTarget.dataset;
-      if (!eventId) return;
-
-      if (canSubmit) {
-        wx.navigateTo({ url: `/pages/college-entry/college-entry?eventId=${encodeURIComponent(eventId)}` });
-        return;
-      }
-      wx.navigateTo({ url: `/pages/college-event-detail/college-event-detail?eventId=${encodeURIComponent(eventId)}` });
     },
   },
 });

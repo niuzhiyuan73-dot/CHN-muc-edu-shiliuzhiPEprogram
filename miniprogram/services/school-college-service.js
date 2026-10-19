@@ -235,6 +235,17 @@ async function listCollegeEvents(payload = {}, ctx) {
 
   let rows = (await ctx.repo.forScope(ctx).collegeEvents.list()).filter(isCollegeEventDoc);
   if (typeof payload.status === 'number') rows = rows.filter(row => row.status === payload.status);
+  // 石榴籽杯按「发起时间」归档：同一年发起的赛事归在一起，不设届次。
+  // 用 publishTime 而不是 startTime——一场比赛可以提前很久发布、也可以跨年开赛。
+  if (payload.year) {
+    const year = Number(payload.year);
+    if (Number.isInteger(year)) {
+      rows = rows.filter(row => {
+        const at = Date.parse(row.publishTime || row.updatedAt || '');
+        return Number.isFinite(at) && new Date(at).getFullYear() === year;
+      });
+    }
+  }
 
   const sorted = sortCollegeEvents(rows);
   const limit = Number.isInteger(payload.limit) && payload.limit > 0
@@ -248,6 +259,7 @@ async function listCollegeEvents(payload = {}, ctx) {
   const canReview = canManageCollegeEvent(actor);
   return ok({
     ok: true, canManage,
+    total: sorted.length,
     hasMore: sorted.length > offset + page.length,
     nextOffset: offset + page.length,
     events: page.map(doc => ({

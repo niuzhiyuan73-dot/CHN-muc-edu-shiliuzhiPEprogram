@@ -16,7 +16,7 @@
   <block wx:else>
 
     <!-- ========== 全部赛事 ========== -->
-    <view wx:if="{{type === 'event'}}" class="card">
+    <view class="card">
       <view class="list-head">
         <view class="list-head-title">全部赛事</view>
         <view wx:if="{{view.canPublish}}" class="event-publish" bindtap="onOpenPublish">＋ 发布</view>
@@ -54,50 +54,6 @@
             catchtap="onToggleEventPin"
           >{{item.pinned ? '取消置顶' : '置顶'}}</view>
           <view wx:if="{{!item.signedUp && !item.canPin}}" class="event-arrow">›</view>
-        </view>
-      </view>
-    </view>
-
-    <!-- ========== 全部学院赛 ========== -->
-    <view wx:else class="card">
-      <view class="list-head">
-        <view class="list-head-title">全部学院赛</view>
-        <view wx:if="{{view.canManageCollege}}" class="event-publish" bindtap="onOpenCollegePublish">＋ 学院赛</view>
-      </view>
-
-      <view wx:if="{{!view.hasCollegeEvents}}" class="empty-note">{{view.collegeEventsEmptyNote}}</view>
-
-      <view
-        wx:for="{{view.collegeEvents}}"
-        wx:key="eventId"
-        class="event-row"
-        data-event-id="{{item.eventId}}"
-        data-can-submit="{{item.canSubmit}}"
-        bindtap="onOpenCollegeEvent"
-      >
-        <view class="event-main">
-          <view class="event-title">
-            <text class="event-name">{{item.title}}</text>
-            <text wx:if="{{item.pinned}}" class="tag tag-danger">置顶</text>
-            <text class="tag {{item.statusClass}}">{{item.statusLabel}}</text>
-          </view>
-          <view class="event-meta">
-            {{item.startTimeText}}<text wx:if="{{item.location}}"> · {{item.location}}</text>
-          </view>
-          <view class="event-meta">{{item.legPlanText}} · 名单 {{item.rosterText}}</view>
-        </view>
-
-        <view class="event-side">
-          <!-- 管理员在列表上直接切换置顶；catchtap 挡住行点击，否则会跳进详情 -->
-          <view
-            wx:if="{{item.canPin}}"
-            class="event-pin {{item.pinned ? 'is-on' : ''}}"
-            data-event-id="{{item.eventId}}"
-            data-pinned="{{item.pinned}}"
-            catchtap="onToggleCollegePin"
-          >{{item.pinned ? '取消置顶' : '置顶'}}</view>
-          <view wx:if="{{item.actionText}}" class="event-action">{{item.actionText}}</view>
-          <view wx:if="{{!item.actionText && !item.canPin}}" class="event-arrow">›</view>
         </view>
       </view>
     </view>

@@ -1,0 +1,177 @@
+/* 石榴籽杯首页：项目切换 + 分状态赛事列表 */
+
+.cup-header {
+  padding: 36rpx 32rpx 12rpx;
+}
+
+.cup-title {
+  font-size: 46rpx;
+  font-weight: 600;
+  letter-spacing: 2rpx;
+  color: #1f2329;
+}
+
+.cup-subtitle {
+  margin-top: 10rpx;
+  font-size: 26rpx;
+  color: #6b7280;
+}
+
+/* 顶部项目切换：横向滚动，三项一屏放得下，多了也不挤 */
+.cup-projects {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 20rpx 24rpx 8rpx;
+  white-space: nowrap;
+}
+
+.cup-project {
+  display: inline-flex;
+  align-items: center;
+  padding: 14rpx 30rpx;
+  margin-right: 16rpx;
+  border: 2rpx solid #e6e8ec;
+  border-radius: 999rpx;
+  background: #ffffff;
+  color: #5a606b;
+  font-size: 28rpx;
+  line-height: 1;
+}
+
+.cup-project:last-child {
+  margin-right: 24rpx;
+}
+
+.cup-project.is-active {
+  border-color: #b23a2e;
+  background: #b23a2e;
+  color: #ffffff;
+  font-weight: 500;
+}
+
+.cup-project-glyph {
+  margin-right: 10rpx;
+  font-size: 26rpx;
+}
+
+.cup-project.is-active .cup-project-glyph {
+  color: #ffffff;
+}
+
+/* 筛选条 */
+.cup-toolbar {
+  display: flex;
+  align-items: center;
+  padding: 20rpx 32rpx 8rpx;
+}
+
+.cup-filter {
+  padding: 10rpx 20rpx;
+  margin-right: 16rpx;
+  border-radius: 12rpx;
+  background: #ffffff;
+  border: 2rpx solid #e6e8ec;
+  color: #4b5563;
+  font-size: 26rpx;
+}
+
+.cup-total {
+  margin-left: auto;
+  color: #9aa0a6;
+  font-size: 24rpx;
+}
+
+.cup-create {
+  padding: 12rpx 32rpx 8rpx;
+}
+
+/* 分状态列表 */
+.cup-group {
+  padding: 20rpx 24rpx 0;
+}
+
+.cup-group-title {
+  display: flex;
+  align-items: center;
+  padding: 0 8rpx 14rpx;
+  color: #303540;
+  font-size: 28rpx;
+  font-weight: 600;
+}
+
+.cup-group-count {
+  margin-left: 12rpx;
+  padding: 0 12rpx;
+  border-radius: 999rpx;
+  background: #eceef2;
+  color: #6b7280;
+  font-size: 22rpx;
+  font-weight: 400;
+  line-height: 34rpx;
+}
+
+.cup-row {
+  display: flex;
+  align-items: center;
+  padding: 24rpx 26rpx;
+  margin-bottom: 16rpx;
+  border-radius: 20rpx;
+  background: #ffffff;
+  box-shadow: 0 4rpx 16rpx rgba(31, 35, 41, 0.05);
+}
+
+.cup-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.cup-row-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.cup-row-name {
+  max-width: 380rpx;
+  margin-right: 10rpx;
+  overflow: hidden;
+  color: #1f2329;
+  font-size: 30rpx;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cup-row-meta {
+  margin-top: 8rpx;
+  color: #7b818b;
+  font-size: 24rpx;
+}
+
+.cup-row-side {
+  flex: none;
+  display: flex;
+  align-items: center;
+  margin-left: 16rpx;
+}
+
+.cup-row-action {
+  padding: 8rpx 18rpx;
+  border-radius: 999rpx;
+  background: #fdeceb;
+  color: #b23a2e;
+  font-size: 24rpx;
+}
+
+.cup-row-arrow {
+  color: #c1c5cc;
+  font-size: 34rpx;
+  line-height: 1;
+}
+
+.cup-more {
+  padding: 24rpx;
+  color: #8a8f99;
+  font-size: 26rpx;
+  text-align: center;
+}

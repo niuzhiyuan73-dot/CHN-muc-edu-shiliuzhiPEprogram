@@ -45,6 +45,11 @@ Page({
     return wx.navigateTo({ url: '/pages/meet-list/meet-list' });
   },
 
+  /** 石榴籽杯入口（校级活动档）：学院赛按三个球类项目归档，也不再属于协会 */
+  onChooseCup() {
+    return wx.navigateTo({ url: '/pages/cup-home/cup-home' });
+  },
+
   /**
    * 返回 Promise 是有意为之：小程序不关心返回值，
    * 但测试需要一个句柄等首屏加载完（见 tests/page.test.js）。

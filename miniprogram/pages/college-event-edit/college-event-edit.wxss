@@ -41,6 +41,14 @@
   font-size: var(--font-md);
 }
 
+/* 只读的归属展示（所属项目）：与输入行同高，但不给可编辑的暗示 */
+.field-static {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-md);
+  color: var(--color-text-primary);
+}
+
 /* ==================== 小项序列（逐项添加） ==================== */
 
 .leg-list {

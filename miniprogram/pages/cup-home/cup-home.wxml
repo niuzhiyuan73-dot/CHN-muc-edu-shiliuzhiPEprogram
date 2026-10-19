@@ -1,0 +1,92 @@
+<!--
+  石榴籽杯：学院赛唯一入口。
+  顶部按球类切项目（每个项目各自一个杯赛），下方是该项目历次学院赛，
+  按发起时间归档；不设届次，年份只作筛选。
+-->
+<view class="page-container {{themeClass}}">
+
+  <view class="cup-header">
+    <view class="cup-title">石榴籽杯</view>
+    <view class="cup-subtitle">学院赛 · {{projectName}}</view>
+  </view>
+
+  <scroll-view class="cup-projects" scroll-x enable-flex>
+    <view
+      wx:for="{{projects}}"
+      wx:key="id"
+      class="cup-project {{item.id === projectId ? 'is-active' : ''}}"
+      data-id="{{item.id}}"
+      bindtap="onPickProject"
+    >
+      <text class="cup-project-glyph">{{item.glyph}}</text>
+      <text class="cup-project-name">{{item.sportName}}</text>
+    </view>
+  </scroll-view>
+
+  <view wx:if="{{loading}}" class="loading">正在加载…</view>
+
+  <view wx:elif="{{error}}" class="empty-state">
+    <view class="empty-state-icon">⚠️</view>
+    <view class="empty-state-text">{{error}}</view>
+    <button class="btn btn-primary" bindtap="reload">重试</button>
+  </view>
+
+  <block wx:else>
+    <view class="cup-toolbar">
+      <picker range="{{years}}" range-key="label" value="{{yearIndex}}" bindchange="onPickYear">
+        <view class="cup-filter">{{years[yearIndex].label}}</view>
+      </picker>
+      <picker range="{{statusOptions}}" range-key="label" value="{{statusIndex}}" bindchange="onPickStatus">
+        <view class="cup-filter">{{statusOptions[statusIndex].label}}</view>
+      </picker>
+      <view class="cup-total">共 {{total}} 场</view>
+    </view>
+
+    <view wx:if="{{canManage}}" class="cup-create">
+      <button class="btn btn-primary" bindtap="onCreate">发起学院赛</button>
+    </view>
+
+    <view wx:if="{{total === 0}}" class="empty-state">
+      <view class="empty-state-icon">🏆</view>
+      <view class="empty-state-text">本项目还没有学院赛</view>
+      <view wx:if="{{canManage}}" class="empty-state-hint">点上方「发起学院赛」开始第一场</view>
+    </view>
+
+    <block wx:for="{{groups}}" wx:key="status" wx:for-item="group">
+      <view class="cup-group">
+        <view class="cup-group-title">
+          {{group.label}}<text class="cup-group-count">{{group.rows.length}}</text>
+        </view>
+
+        <view
+          wx:for="{{group.rows}}"
+          wx:key="eventId"
+          wx:for-item="row"
+          class="cup-row"
+          data-event-id="{{row.eventId}}"
+          data-can-submit="{{row.canSubmit}}"
+          bindtap="onOpenEvent"
+        >
+          <view class="cup-row-main">
+            <view class="cup-row-title">
+              <text class="cup-row-name">{{row.title}}</text>
+              <text wx:if="{{row.pinned}}" class="tag tag-danger">置顶</text>
+              <text class="tag {{row.isSignup ? 'tag-success' : (row.isOngoing ? 'tag-warning' : 'tag-gray')}}">{{row.statusLabel}}</text>
+            </view>
+            <view class="cup-row-meta">
+              {{row.startTimeText}}<text wx:if="{{row.location}}"> · {{row.location}}</text>
+            </view>
+            <view class="cup-row-meta">{{row.legPlanText}} · 名单 {{row.rosterText}}</view>
+          </view>
+          <view class="cup-row-side">
+            <view wx:if="{{row.canSubmit}}" class="cup-row-action">交名单</view>
+            <view wx:else class="cup-row-arrow">›</view>
+          </view>
+        </view>
+      </view>
+    </block>
+
+    <view wx:if="{{hasMore}}" class="cup-more" bindtap="loadMore">{{busy ? '加载中…' : '加载更多'}}</view>
+  </block>
+
+</view>

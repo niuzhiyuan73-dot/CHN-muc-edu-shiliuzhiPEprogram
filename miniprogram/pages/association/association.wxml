@@ -20,7 +20,7 @@
       正在浏览 {{schoolName}}（只读）· 榜单 / 比赛 / 赛事均为演示内容
     </view>
 
-    <!-- 上档：校级活动。运动会是学校级栏目，不属于任何协会；
+    <!-- 上档：校级活动。运动会与石榴籽杯都是学校级栏目，不属于任何协会；
          卡片样式与下面的协会一致（同一套宫格），只是分组标题不同。 -->
     <view class="assoc-section">
       <view class="assoc-section-title">校级活动<text class="assoc-section-note">全校都能参加</text></view>
@@ -30,6 +30,12 @@
           <view class="assoc-item-icon"><text>🏟️</text></view>
           <view class="assoc-item-name">运动会</view>
           <view class="assoc-item-sport">校级赛事</view>
+        </view>
+
+        <view class="assoc-item assoc-item-cup" data-kind="cup" bindtap="onChooseCup">
+          <view class="assoc-item-icon"><text>🏆</text></view>
+          <view class="assoc-item-name">石榴籽杯</view>
+          <view class="assoc-item-sport">学院赛</view>
         </view>
       </view>
     </view>

@@ -33,7 +33,8 @@
     "pages/meet-college/meet-college",
     "pages/meet-schedule/meet-schedule",
     "pages/meet-score/meet-score",
-    "pages/meet-standing/meet-standing"
+    "pages/meet-standing/meet-standing",
+    "pages/cup-home/cup-home"
   ],
   "window": {
     "backgroundTextStyle": "dark",

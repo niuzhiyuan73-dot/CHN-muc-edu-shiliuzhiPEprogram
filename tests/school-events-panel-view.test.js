@@ -48,14 +48,13 @@ function membersOf(count) {
  * @param {Object} options
  * @param {Array} [options.members] getSchoolMemberStats 的成员行
  * @param {Array} [options.events] 个人赛事列表
- * @param {Array} [options.collegeEvents] 学院赛列表
  * @param {Object} [options.season] 赛季文档
  * @param {boolean} [options.statsOk] 积分读端是否成功
  * @param {Function} run
  */
 async function withStubs(options, run) {
   const {
-    members = [], events = [], collegeEvents = [], season = { startTime: '2026-09-01T00:00:00Z' },
+    members = [], events = [], season = { startTime: '2026-09-01T00:00:00Z' },
     statsOk = true, seasonOk = true, includePoints = true,
   } = options;
   const origSpace = assocSpace.forScope;
@@ -65,7 +64,6 @@ async function withStubs(options, run) {
       ? { ok: true, members } : { ok: false, message: '没有读取本协会积分的权限' }),
     getSchoolSeason: async () => (seasonOk ? { ok: true, season } : { ok: false, message: '赛季读取失败' }),
     listSchoolEvents: async () => ({ ok: true, events, canManage: true, hasMore: false }),
-    listCollegeEvents: async () => ({ ok: true, events: collegeEvents, canManage: true, hasMore: false }),
   });
   identity.forSchoolIdentity = () => ({
     getSchoolIdentitySession: async () => ({ user: { userId: ME } }),
@@ -173,22 +171,18 @@ describe('赛季积分榜 —— 旧栈「赛事页」那一段的 S2 对应', (
   });
 });
 
-/* ------------------------------------------------------- 两个赛事分支的截断 */
+/* --------------------------------------------------------- 赛事列表的截断 */
 
-describe('两个赛事分支 —— 列表截断与「查看全部」标记', () => {
+describe('赛事列表 —— 截断与「查看全部」标记', () => {
   const event = id => ({ eventId: id, title: `赛事${id}` });
 
-  test('默认各摆最近 3 条，总数与「查看更多」如实交代', async () => {
+  test('默认只摆最近 3 条，总数与「查看更多」如实交代', async () => {
     const events = ['e1', 'e2', 'e3', 'e4', 'e5'].map(event);
-    await withStubs({ events, collegeEvents: ['c1', 'c2'].map(event) }, (view) => {
-      assert.equal(view.events.length, 3, '个人赛默认只摆 3 条');
+    await withStubs({ events }, (view) => {
+      assert.equal(view.events.length, 3, '默认只摆 3 条');
       assert.equal(view.eventTotal, 5, '总数是全部，不是这一页的条数');
       assert.equal(view.hasMoreEvents, true);
       assert.equal(view.hasEvents, true);
-
-      assert.equal(view.collegeEvents.length, 2);
-      assert.equal(view.collegeEventTotal, 2);
-      assert.equal(view.hasMoreCollegeEvents, false);
     });
   });
 
@@ -199,7 +193,6 @@ describe('两个赛事分支 —— 列表截断与「查看全部」标记', ()
       getSchoolMemberStats: async () => ({ ok: true, members: [] }),
       getSchoolSeason: async () => ({ ok: true, season: {} }),
       listSchoolEvents: async () => ({ ok: true, events: ['e1', 'e2', 'e3', 'e4'].map(event), canManage: true, hasMore: false }),
-      listCollegeEvents: async () => ({ ok: true, events: [], canManage: true, hasMore: false }),
     });
     identity.forSchoolIdentity = () => ({ getSchoolIdentitySession: async () => ({ user: { userId: ME } }) });
     try {
@@ -213,11 +206,9 @@ describe('两个赛事分支 —— 列表截断与「查看全部」标记', ()
   });
 
   test('一条赛事都没有时给空态文案而不是空白', async () => {
-    await withStubs({ events: [], collegeEvents: [] }, (view) => {
+    await withStubs({ events: [] }, (view) => {
       assert.equal(view.hasEvents, false);
-      assert.equal(view.hasCollegeEvents, false);
       assert.equal(view.eventsEmptyNote, '还没有赛事，等管理员发布一场吧');
-      assert.equal(view.collegeEventsEmptyNote, '还没有学院赛，等管理员发布一场吧');
     });
   });
 

@@ -223,6 +223,8 @@ require('../miniprogram/pages/association/association.js');
 require('../miniprogram/pages/association-home/association-home.js');
 // 协会空间面板（工作台里的第一个页签），同样追加在末尾以免打乱既有下标
 require('../miniprogram/components/association-space-panel/association-space-panel.js');
+// 石榴籽杯首页：学院赛迁入校级活动后的唯一入口，追加在末尾
+require('../miniprogram/pages/cup-home/cup-home.js');
 
 /**
  * 深拷贝页面初值。
@@ -320,6 +322,7 @@ const liveScoreConfig = registered[25];
 const associationConfig = registered[26];
 const associationHomeConfig = registered[27];
 const spacePanelConfig = registered[28];
+const cupHomeConfig = registered[29];
 
 // 写接口（确认 / 撤销 / 录入）只改内存，跑完一条用例就得把内存退回种子状态，
 // 否则上一条确认过的比赛会让下一条拿到的榜单与台账都不一样
@@ -4865,27 +4868,6 @@ collegeTest('发布学院赛 —— 先到 N 场胜时不校验净胜口径', as
   assert.strictEqual(list[0].tieNetMode, null);
 });
 
-collegeTest('赛事页 —— 学院赛发布入口同样只给管理员', async () => {
-  loginCollegeAs(COLLEGE_ADMIN);
-  const admin = instantiate(eventsConfig);
-  await admin.onLoad();
-  assert.strictEqual(admin.data.view.canManageCollege, true, '管理员才给学院赛入口');
-
-  calls.navigations.length = 0;
-  admin.onOpenCollegePublish();
-  assert.deepStrictEqual(calls.navigations, ['/pages/college-event-edit/college-event-edit']);
-
-  loginCollegeAs(COLLEGE_STAFF);
-  const staff = instantiate(eventsConfig);
-  await staff.onLoad();
-  assert.strictEqual(staff.data.view.canManageCollege, false, '学院负责人不给学院赛入口');
-
-  loginCollegeAs();
-  const member = instantiate(eventsConfig);
-  await member.onLoad();
-  assert.strictEqual(member.data.view.canManageCollege, false, '普通会员不给学院赛入口');
-});
-
 /* ============================================================
  * 学院赛 —— 名单提交（M2-3）与名单审核（M2-4）
  * ============================================================ */
@@ -4926,6 +4908,110 @@ async function publishTestCollegeEvent(overrides = {}) {
 
   return result.record;
 }
+
+/* ============================================================
+ * 石榴籽杯 —— 学院赛迁入校级活动后的唯一入口
+ * ============================================================ */
+
+collegeTest('石榴籽杯 —— 三个项目、默认项目列表与发起入口', async () => {
+  const before = associationScope.getAssociation();
+  try {
+    await publishTestCollegeEvent({ title: '石榴籽杯匹克球赛' });
+    loginCollegeAs(COLLEGE_ADMIN);
+    const page = instantiate(cupHomeConfig);
+    await page.onLoad({});
+
+    assert.strictEqual(page.data.loading, false);
+    assert.strictEqual(page.data.projects.length, 3, '三个球类都在顶部');
+    assert.strictEqual(page.data.projectId, 'pkb', '默认落在当前协会');
+    assert.ok(page.data.total >= 1);
+    assert.strictEqual(page.data.canManage, true);
+    assert.ok(page.data.groups.some(group => group.rows.some(row => row.title === '石榴籽杯匹克球赛')));
+
+    calls.navigations.length = 0;
+    page.onCreate();
+    assert.deepStrictEqual(calls.navigations, [
+      '/pages/college-event-edit/college-event-edit?projectId=pkb',
+    ]);
+  } finally {
+    associationScope.setAssociation(before);
+  }
+});
+
+collegeTest('石榴籽杯 —— 切项目只显示该项目的学院赛', async () => {
+  const before = associationScope.getAssociation();
+  try {
+    await publishTestCollegeEvent({ title: '匹克球学院赛' });
+    loginCollegeAs(COLLEGE_ADMIN);
+    const page = instantiate(cupHomeConfig);
+    await page.onLoad({});
+
+    await page.onPickProject({ currentTarget: { dataset: { id: 'tt' } } });
+    assert.strictEqual(page.data.projectId, 'tt');
+    assert.strictEqual(page.data.total, 0, '乒乓球项目还没有赛事');
+    assert.deepStrictEqual(page.data.groups, []);
+
+    await page.onPickProject({ currentTarget: { dataset: { id: 'pkb' } } });
+    assert.ok(page.data.total >= 1, '切回匹克球仍能看到原赛事');
+  } finally {
+    associationScope.setAssociation(before);
+  }
+});
+
+collegeTest('石榴籽杯 —— 普通会员可看，页面不给管理入口', async () => {
+  const before = associationScope.getAssociation();
+  try {
+    await publishTestCollegeEvent();
+    loginCollegeAs();
+    const page = instantiate(cupHomeConfig);
+    await page.onLoad({});
+
+    assert.strictEqual(page.data.canManage, false);
+    assert.ok(page.data.total >= 1, '全校在册成员可读');
+  } finally {
+    associationScope.setAssociation(before);
+  }
+});
+
+collegeTest('石榴籽杯 —— 点一场进详情', async () => {
+  const before = associationScope.getAssociation();
+  try {
+    const event = await publishTestCollegeEvent();
+    loginCollegeAs(COLLEGE_ADMIN);
+    const page = instantiate(cupHomeConfig);
+    await page.onLoad({});
+
+    calls.navigations.length = 0;
+    page.onOpenEvent({ currentTarget: { dataset: { eventId: event._id, canSubmit: false } } });
+    assert.deepStrictEqual(calls.navigations, [
+      `/pages/college-event-detail/college-event-detail?eventId=${encodeURIComponent(event._id)}`,
+    ]);
+  } finally {
+    associationScope.setAssociation(before);
+  }
+});
+
+collegeTest('石榴籽杯 —— 年份筛选按发起时间归档', async () => {
+  const before = associationScope.getAssociation();
+  try {
+    await publishTestCollegeEvent();
+    loginCollegeAs(COLLEGE_ADMIN);
+    const page = instantiate(cupHomeConfig);
+    await page.onLoad({});
+
+    const currentYear = String(new Date().getFullYear());
+    const currentIndex = page.data.years.findIndex(year => year.value === currentYear);
+    await page.onPickYear({ detail: { value: currentIndex } });
+    assert.ok(page.data.total >= 1, '今年发起的赛事在当年可见');
+
+    const lastYear = String(new Date().getFullYear() - 1);
+    const lastIndex = page.data.years.findIndex(year => year.value === lastYear);
+    await page.onPickYear({ detail: { value: lastIndex } });
+    assert.strictEqual(page.data.total, 0, '去年没有赛事');
+  } finally {
+    associationScope.setAssociation(before);
+  }
+});
 
 /** 取某学院在册会员的编号，用于拼一份合法名单 */
 async function memberIdsOf(college) {
@@ -5053,59 +5139,53 @@ collegeTest('名单提交 —— 人数不在上下限内会被数据层拒下',
   assert.match(tooFew.message, /至少 2 人/);
 });
 
-collegeTest('赛事页 —— 学院赛一行按身份去不同的页', async () => {
-  const event = await publishTestCollegeEvent();
+collegeTest('石榴籽杯 —— 一场赛事按身份去不同的页', async () => {
+  const before = associationScope.getAssociation();
+  try {
+    const event = await publishTestCollegeEvent();
 
-  // 管理员：进详情页（抽签、开赛、大场与审核入口都在那里）
-  loginCollegeAs(COLLEGE_ADMIN);
-  const admin = instantiate(eventsConfig);
-  await admin.onLoad();
-  assert.strictEqual(admin.data.view.hasCollegeEvents, true);
-  const adminRow = admin.data.view.collegeEvents[0];
-  assert.strictEqual(adminRow.canReview, true);
-  assert.strictEqual(adminRow.canSubmit, false);
-  assert.strictEqual(adminRow.actionText, '管理');
+    // 管理员：进详情页（抽签、开赛、大场与审核入口都在那里）
+    loginCollegeAs(COLLEGE_ADMIN);
+    const admin = instantiate(cupHomeConfig);
+    await admin.onLoad({});
+    const adminRow = admin.data.rows.find(row => row.eventId === event._id);
+    assert.ok(adminRow, '管理员能在杯赛列表看到这场');
+    assert.strictEqual(adminRow.canSubmit, false);
 
-  calls.navigations.length = 0;
-  admin.onOpenCollegeEvent({
-    currentTarget: { dataset: { eventId: event._id, canSubmit: false } },
-  });
-  assert.deepStrictEqual(calls.navigations, [
-    `/pages/college-event-detail/college-event-detail?eventId=${encodeURIComponent(event._id)}`,
-  ]);
+    calls.navigations.length = 0;
+    admin.onOpenEvent({ currentTarget: { dataset: { eventId: event._id, canSubmit: false } } });
+    assert.deepStrictEqual(calls.navigations, [
+      `/pages/college-event-detail/college-event-detail?eventId=${encodeURIComponent(event._id)}`,
+    ]);
 
-  // 学院负责人：报名中直接进本学院的名单页
-  loginCollegeAs({ role: 1, _id: STAFF_ID, college: STAFF_COLLEGE });
-  const staff = instantiate(eventsConfig);
-  await staff.onLoad();
-  const staffRow = staff.data.view.collegeEvents[0];
-  assert.strictEqual(staffRow.canReview, false, '学院负责人没有审核权');
-  assert.strictEqual(staffRow.canSubmit, true);
-  assert.strictEqual(staffRow.actionText, '提交名单');
+    // 学院负责人：报名中直接进本学院的名单页
+    loginCollegeAs({ role: 1, _id: STAFF_ID, college: STAFF_COLLEGE });
+    const staff = instantiate(cupHomeConfig);
+    await staff.onLoad({});
+    const staffRow = staff.data.rows.find(row => row.eventId === event._id);
+    assert.strictEqual(staffRow.canSubmit, true);
 
-  calls.navigations.length = 0;
-  staff.onOpenCollegeEvent({
-    currentTarget: { dataset: { eventId: event._id, canSubmit: true } },
-  });
-  assert.deepStrictEqual(calls.navigations, [
-    `/pages/college-entry/college-entry?eventId=${encodeURIComponent(event._id)}`,
-  ]);
+    calls.navigations.length = 0;
+    staff.onOpenEvent({ currentTarget: { dataset: { eventId: event._id, canSubmit: true } } });
+    assert.deepStrictEqual(calls.navigations, [
+      `/pages/college-entry/college-entry?eventId=${encodeURIComponent(event._id)}`,
+    ]);
 
-  // 普通会员：进详情页看签表与对阵
-  loginCollegeAs();
-  const member = instantiate(eventsConfig);
-  await member.onLoad();
-  const memberRow = member.data.view.collegeEvents[0];
-  assert.strictEqual(memberRow.canSubmit, false);
-  assert.strictEqual(memberRow.actionText, '查看');
+    // 普通会员：进详情页看签表与对阵
+    loginCollegeAs();
+    const member = instantiate(cupHomeConfig);
+    await member.onLoad({});
+    const memberRow = member.data.rows.find(row => row.eventId === event._id);
+    assert.strictEqual(memberRow.canSubmit, false);
 
-  calls.navigations.length = 0;
-  member.onOpenCollegeEvent({
-    currentTarget: { dataset: { eventId: event._id, canSubmit: false } },
-  });
-  assert.deepStrictEqual(calls.navigations, [
-    `/pages/college-event-detail/college-event-detail?eventId=${encodeURIComponent(event._id)}`,
-  ]);
+    calls.navigations.length = 0;
+    member.onOpenEvent({ currentTarget: { dataset: { eventId: event._id, canSubmit: false } } });
+    assert.deepStrictEqual(calls.navigations, [
+      `/pages/college-event-detail/college-event-detail?eventId=${encodeURIComponent(event._id)}`,
+    ]);
+  } finally {
+    associationScope.setAssociation(before);
+  }
 });
 
 collegeTest('名单审核 —— 只有管理员能进，学院负责人被挡', async () => {
@@ -5669,12 +5749,12 @@ collegeTest('学院赛 S2 闭环 —— 页面发布、列表、名单审核、�
   await publish.onSubmit();
   assert.equal(publish.data.errorText, '');
 
-  const list = instantiate(eventListConfig);
-  await list.onLoad({ type: 'college' });
-  assert.equal(list.data.view.collegeEvents.length, 1);
-  const eventId = list.data.view.collegeEvents[0].eventId;
+  const list = instantiate(cupHomeConfig);
+  await list.onLoad({});
+  assert.equal(list.data.rows.length, 1);
+  const eventId = list.data.rows[0].eventId;
   calls.navigations.length = 0;
-  list.onOpenCollegeEvent({ currentTarget: { dataset: { eventId, canSubmit: false } } });
+  list.onOpenEvent({ currentTarget: { dataset: { eventId, canSubmit: false } } });
   const route = new URL(calls.navigations[0], 'https://miniprogram.local');
   assert.equal(route.pathname, '/pages/college-event-detail/college-event-detail');
   const detail = instantiate(collegeEventDetailConfig);
@@ -5745,7 +5825,8 @@ collegeTest('学院赛 S2 闭环 —— 页面发布、列表、名单审核、�
   await list.onShow();
   assert.equal(detail.data.view.isFinished, true);
   assert.equal(detail.data.view.resultRows[0].college, tie.collegeA);
-  assert.equal(list.data.view.collegeEvents[0].isFinished, true);
+  // 杯赛列表重载后仍是「已结束」：同项目一次赛事结束不会把列表冲掉
+  assert.equal(list.data.groups.flatMap(group => group.rows)[0].isFinished, true);
 });
 
 /* ============================================================
@@ -5925,23 +6006,6 @@ collegeTest('学院赛 S2 访客 —— 无 actor 的视图不显示名单、排
   }
 });
 
-collegeTest('全部学院赛 —— 超过单次 50 条仍完整展示，工作台只显示前三条', async () => {
-  for (let index = 0; index < 52; index += 1) {
-    await publishTestCollegeEvent({ title: `分页学院赛 ${index}` });
-  }
-  loginCollegeAs(COLLEGE_ADMIN);
-  const all = instantiate(eventListConfig);
-  await all.onLoad({ type: 'college' });
-  assert.equal(all.data.view.collegeEvents.length, 52);
-  assert.equal(new Set(all.data.view.collegeEvents.map(row => row.eventId)).size, 52);
-  assert.equal(all.data.view.hasMoreCollegeEvents, false);
-  const panel = instantiate(eventsConfig);
-  await panel.onLoad();
-  assert.equal(panel.data.view.collegeEvents.length, 3);
-  assert.equal(panel.data.view.collegeEventTotal, 52);
-  assert.equal(panel.data.view.hasMoreCollegeEvents, true);
-});
-
 /* ============================================================
  * 个人赛弃权（M5-3）入口
  * ============================================================ */
@@ -6087,10 +6151,6 @@ eventPanelTest('赛事页 —— 列表只摆近 3 条，「查看全部」入�
   calls.navigations.length = 0;
   page.onMoreEvents();
   assert.deepStrictEqual(calls.navigations, ['/pages/event-list/event-list?type=event']);
-
-  calls.navigations.length = 0;
-  page.onMoreCollegeEvents();
-  assert.deepStrictEqual(calls.navigations, ['/pages/event-list/event-list?type=college']);
 });
 
 eventPanelTest('赛事页 —— 管理员点「置顶」把赛事提到最前，普通会员看不到按钮', async (fx) => {
@@ -6110,26 +6170,6 @@ eventPanelTest('赛事页 —— 管理员点「置顶」把赛事提到最前�
 
 });
 
-collegeTest('赛事页 —— 管理员点「置顶」把学院赛提到最前', async () => {
-  const first = await publishTestCollegeEvent({ startTime: '2026-10-01T09:00:00' });
-  const second = await publishTestCollegeEvent({ title: '第二场学院赛', startTime: '2026-11-01T09:00:00' });
-
-  loginCollegeAs(COLLEGE_ADMIN);
-  const page = instantiate(eventsConfig);
-  await page.onLoad();
-
-  // 两场都是「报名中」，同状态内按开赛时间升序：先开赛的 first 在前
-  assert.strictEqual(page.data.view.collegeEvents[0].eventId, first._id);
-  assert.strictEqual(page.data.view.collegeEvents[1].eventId, second._id);
-  assert.strictEqual(page.data.view.collegeEvents[1].canPin, true);
-
-  calls.toasts.length = 0;
-  await page.onToggleCollegePin({ currentTarget: { dataset: { eventId: second._id, pinned: false } } });
-
-  assert.ok(calls.toasts.includes('已置顶'));
-  assert.strictEqual(page.data.view.collegeEvents[0].eventId, second._id, '置顶后排到最前');
-});
-
 eventPanelTest('全部赛事页 —— 不截断地列出全部赛事，管理员可在页内置顶', async (fx) => {
 
   const allEvents=await fx.api().listSchoolEvents({limit:50});
@@ -6143,25 +6183,6 @@ eventPanelTest('全部赛事页 —— 不截断地列出全部赛事，管理�
   await page.onToggleEventPin({currentTarget:{dataset:{eventId:target.id,pinned:false}}});
   assert.equal(page.data.view.events[0].id,target.id);
 
-});
-
-collegeTest('全部赛事页 —— type=college 走学院赛口径，点行进对应页面', async () => {
-  const event = await publishTestCollegeEvent();
-
-  loginCollegeAs(COLLEGE_ADMIN);
-  const page = instantiate(eventListConfig);
-  await page.onLoad({ type: 'college' });
-
-  assert.strictEqual(page.data.type, 'college');
-  assert.strictEqual(page.data.title, '全部学院赛');
-  assert.strictEqual(page.data.view.collegeEvents.length, 1);
-  assert.strictEqual(page.data.view.collegeEvents[0].eventId, event._id);
-
-  calls.navigations.length = 0;
-  page.onOpenCollegeEvent({ currentTarget: { dataset: { eventId: event._id, canSubmit: false } } });
-  assert.deepStrictEqual(calls.navigations, [
-    `/pages/college-event-detail/college-event-detail?eventId=${encodeURIComponent(event._id)}`,
-  ]);
 });
 
 /* ============================================================

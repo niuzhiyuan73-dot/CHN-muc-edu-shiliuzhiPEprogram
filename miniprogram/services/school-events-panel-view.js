@@ -1,8 +1,7 @@
-/** 赛事工作台及全部列表：两个赛事分支、积分和身份使用同一 S2 范围。 */
+/** 赛事工作台及全部列表：赛事、积分和身份使用同一 S2 范围。 */
 const space = require('./association-space');
 const identity = require('./school-identity');
 const { loadSchoolEventListView } = require('./school-event-view');
-const { loadCollegeEventListRows } = require('./school-college-view');
 const { buildPointsRows, describeSeason } = require('./events-view');
 const { formatPercent } = require('../utils/format');
 const { USER_STATUS } = require('../utils/constants');
@@ -13,9 +12,8 @@ async function loadSchoolEventsPanelView(options) {
   const api = space.forScope(scope);
   const session = await identity.forSchoolIdentity(scope).getSchoolIdentitySession();
   const actorId = session.user && session.user.userId;
-  const [personal, college, stats, season] = await Promise.all([
+  const [personal, stats, season] = await Promise.all([
     loadSchoolEventListView({ ...scope, actorId, limit: Infinity }),
-    loadCollegeEventListRows(scope),
     includePoints ? api.getSchoolMemberStats({}) : { ok: true, members: [] },
     includePoints ? api.getSchoolSeason({}) : { ok: true, season: {} },
   ]);
@@ -26,7 +24,6 @@ async function loadSchoolEventsPanelView(options) {
   const total = allRows.length;
   const me = allRows.find(row => row.userId === actorId);
   const events = personal.events.slice(0, listLimit);
-  const collegeEvents = college.rows.slice(0, listLimit);
   return {
     seasonText: describeSeason(season.season), rows, allRows, total,
     hasMore: total > rows.length, empty: !total,
@@ -37,9 +34,6 @@ async function loadSchoolEventsPanelView(options) {
     events, hasEvents: events.length > 0, eventTotal: personal.events.length,
     eventsEmptyNote: personal.eventsEmptyNote, hasMoreEvents: personal.events.length > events.length,
     canPublish: personal.canPublish,
-    collegeEvents, hasCollegeEvents: collegeEvents.length > 0, collegeEventTotal: college.rows.length,
-    collegeEventsEmptyNote: '还没有学院赛，等管理员发布一场吧',
-    hasMoreCollegeEvents: college.rows.length > collegeEvents.length, canManageCollege: college.canManage,
   };
 }
 
