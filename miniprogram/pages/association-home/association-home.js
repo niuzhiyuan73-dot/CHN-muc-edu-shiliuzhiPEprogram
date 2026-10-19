@@ -22,23 +22,23 @@
  * ============================================================
  */
 
-const { getAssociation, isKnownAssociation } = require('../../utils/associations.js');
+const {
+  getAssociation, isKnownAssociation, workbenchTabsOf,
+} = require('../../utils/associations.js');
 const { applyBranding } = require('../../services/branding.js');
 const scope = require('../../services/association-scope.js');
 
-/** 页签定义。顺序即页面上的先后：协会空间排第一，且进入即默认展示它 */
-const TAB_DEFS = [
-  { tab: 'space', label: '协会空间' },
-  { tab: 'rank', label: '排行榜' },
-  { tab: 'match', label: '比赛' },
-  { tab: 'events', label: '赛事' },
-];
-/** 进入工作台的默认页签（原为排行榜，见规划 §3.1） */
+/**
+ * 页签不再写死。球拍运动是「协会空间 / 排行榜 / 比赛 / 赛事」，
+ * 团队运动（篮球）是「协会空间 / 组队 / 赛事」——由注册表的 capabilities
+ * 生成，见 utils/associations.js 的 workbenchTabsOf。
+ */
+/** 进入工作台的默认页签（每个协会的第一个页签都是协会空间） */
 const DEFAULT_TAB = 'space';
 
-/** 是否是合法的页签名 */
-function isKnownTab(tab) {
-  return TAB_DEFS.some((def) => def.tab === tab);
+/** 是否是合法的页签名（按当前协会可用的页签判断） */
+function isKnownTab(tabs, tab) {
+  return (Array.isArray(tabs) ? tabs : []).some((def) => def.tab === tab);
 }
 
 Page({
@@ -51,8 +51,8 @@ Page({
     associationGlyph: '',
     /** 协会运动图标（白色 PNG）；为空时名头退回文字徽标 */
     associationIcon: '',
-    /** 顶部页签：[{ tab, label, active }] */
-    tabs: TAB_DEFS.map((def) => ({ ...def, active: def.tab === DEFAULT_TAB })),
+    /** 顶部页签：[{ tab, label, active }]，按当前协会的能力生成 */
+    tabs: [],
     /** 当前页签 */
     activeTab: DEFAULT_TAB,
     /**
@@ -75,8 +75,16 @@ Page({
       console.error('[association-home] 切换协会失败', err);
     }
 
-    const tab = isKnownTab(options.tab) ? options.tab : DEFAULT_TAB;
     const meta = this.resolveMeta(id);
+    // 页签按协会能力生成：团队运动没有排行榜与个人比赛入口，多一个「组队」。
+    const definitions = workbenchTabsOf(id);
+    // 旧链接可能带着当前协会不再提供的页签（如切到篮球后的 tab=match），
+    // 按第一个可用页签落地，不白屏也不报错。
+    const active = isKnownTab(definitions, options.tab)
+      ? options.tab
+      : (definitions[0] || { tab: DEFAULT_TAB }).tab;
+    const mounted = {};
+    definitions.forEach((def) => { mounted[def.tab] = def.tab === active; });
 
     this.setData({
       associationId: id,
@@ -84,9 +92,9 @@ Page({
       associationGlyph: meta.glyph,
       associationIcon: meta.icon,
       themeClass: `assoc-${id}`,
-      activeTab: tab,
-      tabs: TAB_DEFS.map((def) => ({ ...def, active: def.tab === tab })),
-      mounted: { space: tab === 'space', rank: tab === 'rank', match: tab === 'match', events: tab === 'events' },
+      activeTab: active,
+      tabs: definitions.map((def) => ({ ...def, active: def.tab === active })),
+      mounted,
     });
     this.paintNav();
   },
@@ -137,11 +145,11 @@ Page({
   /** 切页签。首次切到某个页签时把它挂上 */
   onSwitchTab(event) {
     const { tab } = event.currentTarget.dataset;
-    if (!isKnownTab(tab) || tab === this.data.activeTab) return undefined;
+    if (!isKnownTab(this.data.tabs, tab) || tab === this.data.activeTab) return undefined;
 
     this.setData({
       activeTab: tab,
-      tabs: TAB_DEFS.map((def) => ({ ...def, active: def.tab === tab })),
+      tabs: this.data.tabs.map((def) => ({ ...def, active: def.tab === tab })),
       [`mounted.${tab}`]: true,
     });
   },

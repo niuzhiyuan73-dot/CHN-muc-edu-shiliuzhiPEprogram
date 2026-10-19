@@ -432,3 +432,11 @@ page {
   --color-primary-light: #e8f5e9;
   --color-accent: #c6d93b;
 }
+
+/* 篮球 → 橙（与匹克球的蓝、网球的草绿拉开；accent 用琥珀配球体质感） */
+.assoc-bk {
+  --color-primary: #e65100;
+  --color-primary-dark: #bf360c;
+  --color-primary-light: #fff3e0;
+  --color-accent: #f9a825;
+}

@@ -38,6 +38,52 @@ const {
   DEFAULT_TENNIS_FORMAT,
 } = require('./match-format.js');
 const { RATED_PAIR_LIMIT, ASSOCIATION_STATUS } = require('./constants.js');
+const { defaultRulesFor } = require('./basketball-rules.js');
+
+/**
+ * 运动类型。
+ *
+ * 【为什么要分这个】
+ * 球拍运动是「个人 vs 个人」，一场比赛的结果决定个人等级分；篮球、足球、
+ * 排球是「球队 vs 球队」，结果是名次与技术统计，**不进个人 Elo**。
+ * 两者的工作台页签、赛事模型、录分台、数据集合全都不同，不能靠
+ * 「加一个赛制」混过去。业务代码只读这个字段，不判断具体是哪个协会。
+ */
+const SPORT_TYPE = {
+  RACKET: 'racket', // 球拍运动：匹克球 / 乒乓 / 羽球 / 网球
+  TEAM: 'team', // 团队运动：篮球 / 足球 / 排球
+};
+
+/**
+ * 工作台能力。页签由它生成，页面不再假设「每个协会都有排行榜和比赛」。
+ *
+ * space  协会空间（分组 / 通知 / 训练 / 成员）
+ * teams  组队（长期球队、入队申请、队长管理）
+ * rank   排行榜（等级分 / 积分，仅球拍运动）
+ * match  比赛（个人比赛流水：录分、确认、驳回）
+ * events 赛事（个人赛 / 团队赛事）
+ */
+const CAPABILITY = {
+  SPACE: 'space',
+  TEAMS: 'teams',
+  RANK: 'rank',
+  MATCH: 'match',
+  EVENTS: 'events',
+};
+
+/** 能力 → 页签文案与顺序。顺序即工作台上的先后。 */
+const CAPABILITY_TAB = {
+  [CAPABILITY.SPACE]: { tab: CAPABILITY.SPACE, label: '协会空间' },
+  [CAPABILITY.TEAMS]: { tab: CAPABILITY.TEAMS, label: '组队' },
+  [CAPABILITY.RANK]: { tab: CAPABILITY.RANK, label: '排行榜' },
+  [CAPABILITY.MATCH]: { tab: CAPABILITY.MATCH, label: '比赛' },
+  [CAPABILITY.EVENTS]: { tab: CAPABILITY.EVENTS, label: '赛事' },
+};
+
+/** 球拍运动的能力组合 */
+const RACKET_CAPABILITIES = Object.freeze([CAPABILITY.SPACE, CAPABILITY.RANK, CAPABILITY.MATCH, CAPABILITY.EVENTS]);
+/** 团队运动的能力组合（没有排行榜与个人比赛入口） */
+const TEAM_CAPABILITIES = Object.freeze([CAPABILITY.SPACE, CAPABILITY.TEAMS, CAPABILITY.EVENTS]);
 
 /**
  * 各协会共用的规则默认值。
@@ -47,10 +93,12 @@ const { RATED_PAIR_LIMIT, ASSOCIATION_STATUS } = require('./constants.js');
  * 因为它的计分体系不同——不是换个数字，而是多一层「盘」。
  * 返回新对象，避免各条目之间共享同一份可变引用。
  *
- * @returns {{format: Object, elo: Object, ratedPairLimit: number}}
+ * @returns {{format: Object, elo: Object, ratedPairLimit: number, sportType: string, capabilities: string[]}}
  */
 function baseRules() {
   return {
+    sportType: SPORT_TYPE.RACKET,
+    capabilities: RACKET_CAPABILITIES.slice(),
     format: {
       scoring: SCORING.POINT,
       gamePointsOptions: GAME_POINTS_OPTIONS.slice(),
@@ -59,6 +107,24 @@ function baseRules() {
     },
     elo: { ...DEFAULT_CONFIG },
     ratedPairLimit: RATED_PAIR_LIMIT,
+  };
+}
+
+/**
+ * 团队运动的规则默认值。
+ *
+ * 与球拍运动的关键差别：**没有 format、没有 elo、没有防刷阈值**——团队赛
+ * 不进个人等级分，一场 5v5 也就无所谓「一对会员打了几场」。取而代之的是
+ * 规则快照（节数/节长/犯规上限），默认值取自 utils/basketball-rules.js。
+ *
+ * @param {string} [presetKey] 规则预设
+ * @returns {{sportType: string, capabilities: string[], basketballRules: Object}}
+ */
+function teamRules(presetKey) {
+  return {
+    sportType: SPORT_TYPE.TEAM,
+    capabilities: TEAM_CAPABILITIES.slice(),
+    basketballRules: defaultRulesFor(presetKey),
   };
 }
 
@@ -175,6 +241,24 @@ const ASSOCIATIONS = [
     ...tennisRules(),
     status: ASSOCIATION_STATUS.ACTIVE,
   },
+  {
+    id: 'bk',
+    name: '中央民族大学篮球协会',
+    shortName: '民大篮球',
+    sportName: '篮球',
+    logoGlyph: '篮',
+    logoIcon: '/assets/assoc/bk.png',
+    theme: {
+      // 篮球 → 橙（与匹克球的蓝、网球的草绿拉开；accent 用琥珀，配球体质感）
+      primary: '#E65100',
+      primaryDark: '#BF360C',
+      primaryLight: '#FFF3E0',
+      accent: '#F9A825',
+    },
+    // 团队运动：没有 format / elo，换成规则快照（节数、节长、犯规上限）
+    ...teamRules(),
+    status: ASSOCIATION_STATUS.ACTIVE,
+  },
 ];
 
 /**
@@ -276,6 +360,74 @@ function defaultFormatOf(id) {
   }
 }
 
+/**
+ * 某协会的运动类型。
+ *
+ * 未知 id 按球拍运动处理：这是改造前的唯一类型，旧数据与旧调用方都按它
+ * 工作，兜底成 team 会让它们全部走到没有实现的分支上。
+ *
+ * @param {string} id
+ * @returns {'racket'|'team'}
+ */
+function sportTypeOf(id) {
+  try {
+    return getAssociation(id).sportType === SPORT_TYPE.TEAM ? SPORT_TYPE.TEAM : SPORT_TYPE.RACKET;
+  } catch (err) {
+    return SPORT_TYPE.RACKET;
+  }
+}
+
+/** 是否团队运动（篮球/足球/排球）。个人赛录分等入口据此拒绝。 */
+function isTeamSport(id) {
+  return sportTypeOf(id) === SPORT_TYPE.TEAM;
+}
+
+/**
+ * 某协会工作台的能力组合（副本）。
+ * 页面据它生成页签与挂载的面板，不再假设「每个协会都有排行榜」。
+ *
+ * @param {string} id
+ * @returns {string[]}
+ */
+function capabilitiesOf(id) {
+  try {
+    const caps = getAssociation(id).capabilities;
+    return Array.isArray(caps) && caps.length ? caps.slice() : RACKET_CAPABILITIES.slice();
+  } catch (err) {
+    return RACKET_CAPABILITIES.slice();
+  }
+}
+
+/**
+ * 某协会工作台的页签（{ tab, label } 数组），顺序固定为
+ * 协会空间 → 组队 → 排行榜 → 比赛 → 赛事，只保留该协会有能力的那几个。
+ *
+ * @param {string} id
+ * @returns {Array<{tab:string,label:string}>}
+ */
+function workbenchTabsOf(id) {
+  const caps = capabilitiesOf(id);
+  return [CAPABILITY.SPACE, CAPABILITY.TEAMS, CAPABILITY.RANK, CAPABILITY.MATCH, CAPABILITY.EVENTS]
+    .filter((tab) => caps.includes(tab))
+    .map((tab) => ({ ...CAPABILITY_TAB[tab] }));
+}
+
+/**
+ * 团队运动的默认规则快照（深拷贝）。球拍运动返回 null。
+ *
+ * @param {string} id
+ * @returns {Object|null}
+ */
+function basketballRulesOf(id) {
+  try {
+    const assoc = getAssociation(id);
+    if (assoc.sportType !== SPORT_TYPE.TEAM) return null;
+    return { ...assoc.basketballRules };
+  } catch (err) {
+    return null;
+  }
+}
+
 module.exports = {
   allAssociations,
   activeAssociations,
@@ -283,6 +435,14 @@ module.exports = {
   isKnownAssociation,
   defaultAssociationId,
   defaultFormatOf,
+  sportTypeOf,
+  isTeamSport,
+  capabilitiesOf,
+  workbenchTabsOf,
+  basketballRulesOf,
+  SPORT_TYPE,
+  CAPABILITY,
+  CAPABILITY_TAB,
   LEGACY_ASSOCIATION_ID,
   belongsToAssociation,
 };

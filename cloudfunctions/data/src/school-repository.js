@@ -8,6 +8,9 @@ const SCHOOL_COLLECTIONS = ['schools', 'schoolAssociations', 'colleges', 'school
   'associationNotices', 'associationTrainings', 'trainingRegistrations', 'pairCounts',
   // 会员评级表与结算序号计数：均为「学校 + 协会」双维度归属，写入即校验。
   'memberRatings', 'ratingCounters',
+  // 团队运动（篮球/足球/排球）6 个集合：与个人赛彻底分开，同样按
+  // 「学校 + 协会」双维度归属。比赛与统计**绝不写 matches / memberRatings**。
+  'teams', 'teamMembers', 'teamEvents', 'teamEventEntries', 'teamMatches', 'teamMatchStats',
   // 运动会 12 个集合：学校级业务，不属于任何协会。基础读写挂在这里，
   // 范围校验走 forMeet（{schoolId, meetId}），不能混进下面的 SCOPED_COLLECTIONS
   // ——那一组会注入 association 字段，把运动会错挂到协会上。
@@ -32,6 +35,8 @@ const SCOPED_COLLECTIONS = [
   'memberRatings',
   // 结算序号计数：每「学校 + 协会」一条，写入即校验归属。
   'ratingCounters',
+  // 团队运动：球队 / 队员 / 赛事 / 报名 / 比赛 / 统计，一律按「学校 + 协会」。
+  'teams', 'teamMembers', 'teamEvents', 'teamEventEntries', 'teamMatches', 'teamMatchStats',
 ];
 
 /**

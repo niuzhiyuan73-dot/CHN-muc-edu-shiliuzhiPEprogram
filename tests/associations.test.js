@@ -19,9 +19,15 @@ const {
   getAssociation,
   isKnownAssociation,
   defaultAssociationId,
+  sportTypeOf,
+  isTeamSport,
+  capabilitiesOf,
+  workbenchTabsOf,
+  basketballRulesOf,
 } = require('../miniprogram/utils/associations.js');
 const { ASSOCIATION_STATUS } = require('../miniprogram/utils/constants.js');
 const { isValidFormat } = require('../miniprogram/utils/match-format.js');
+const { isValidBasketballRules } = require('../miniprogram/utils/basketball-rules.js');
 
 const DEST_ROOT = path.join(__dirname, '..', 'cloudfunctions', 'data', 'lib');
 
@@ -57,8 +63,23 @@ test('每个协会的字段齐全，且规则默认值合法', () => {
       assert.match(a.theme[key], /^#[0-9A-Fa-f]{6}$/, `${a.id}.theme.${key} 不是颜色`);
     }
 
+    // 运动类型只有两种：球拍运动（个人 + Elo）与团队运动（球队 + 名次统计）。
+    assert.ok(['racket', 'team'].includes(a.sportType), `${a.id}.sportType 非法`);
+
+    if (a.sportType === 'team') {
+      // 团队运动不挂个人赛制与 Elo，只挂能力组合与规则快照。
+      assert.ok(Array.isArray(a.capabilities) && a.capabilities.includes('teams'), `${a.id} 缺组队能力`);
+      assert.ok(!a.capabilities.includes('rank'), `${a.id} 团队运动不该有排行榜页签`);
+      assert.ok(!a.capabilities.includes('match'), `${a.id} 团队运动不该有个人比赛页签`);
+      assert.strictEqual(a.format, undefined, `${a.id} 团队运动不该带个人赛制`);
+      assert.strictEqual(a.elo, undefined, `${a.id} 团队运动不该带 Elo 配置`);
+      assert.ok(isValidBasketballRules(a.basketballRules), `${a.id}.basketballRules 不合法`);
+      continue;
+    }
+
     // 规则默认值：默认赛制必须落在可选值里，且选项组要与计分体系对得上。
     // 网球是三层计分（分→局→盘），可变项是「每盘几局」，没有「每局几分」。
+    assert.ok(a.capabilities.includes('rank'), `${a.id} 球拍运动该有排行榜页签`);
     assert.ok(Array.isArray(a.format.bestOfOptions));
     assert.ok(isValidFormat(a.format.defaultFormat), `${a.id}.format.defaultFormat 不合法`);
     assert.ok(
@@ -181,4 +202,59 @@ test('app.wxss 的协会主题块与注册表镜像一致，JS 与 CSS 不许分
   const neutral = css.match(/\.assoc-neutral\s*\{([\s\S]*?)\}/);
   assert.ok(neutral, 'app.wxss 里缺少 .assoc-neutral');
   assert.ok(neutral[1].toLowerCase().includes(NEUTRAL_BRAND.theme.primary.toLowerCase()));
+});
+
+/* ============================================================
+ * 六、运动类型与工作台能力
+ * ============================================================
+ * 篮球加入后，「每个协会都有排行榜和比赛」不再成立。页签必须按能力生成，
+ * 而不是在每个页面里写死四个名字；个人赛录分这类入口也要在后端识别团队
+ * 运动并拒绝，不能只靠前端藏按钮。
+ * ============================================================ */
+
+test('sportTypeOf / isTeamSport —— 球拍与团队两类，未知 id 按球拍兜底', () => {
+  assert.strictEqual(sportTypeOf('pkb'), 'racket');
+  assert.strictEqual(sportTypeOf('tn'), 'racket');
+  assert.strictEqual(sportTypeOf('bk'), 'team');
+  assert.strictEqual(isTeamSport('bk'), true);
+  assert.strictEqual(isTeamSport('pkb'), false);
+  // 未知 id 兜底成球拍运动：旧数据与旧调用方都按它工作
+  assert.strictEqual(sportTypeOf('nope'), 'racket');
+  assert.strictEqual(sportTypeOf(''), 'racket');
+});
+
+test('capabilitiesOf / workbenchTabsOf —— 团队运动没有排行榜与个人比赛页签', () => {
+  assert.deepStrictEqual(capabilitiesOf('pkb'), ['space', 'rank', 'match', 'events']);
+  assert.deepStrictEqual(capabilitiesOf('bk'), ['space', 'teams', 'events']);
+
+  // 页签顺序固定：协会空间 → 组队 → 排行榜 → 比赛 → 赛事
+  assert.deepStrictEqual(
+    workbenchTabsOf('pkb').map((def) => def.tab),
+    ['space', 'rank', 'match', 'events']
+  );
+  assert.deepStrictEqual(
+    workbenchTabsOf('bk').map((def) => def.tab),
+    ['space', 'teams', 'events']
+  );
+  assert.deepStrictEqual(workbenchTabsOf('bk')[1], { tab: 'teams', label: '组队' });
+  // 未知协会给球拍组合，绝不返回空数组（空数组会让工作台一片空白）
+  assert.ok(workbenchTabsOf('nope').length > 0);
+  // 返回副本：改它不影响注册表
+  const tabs = workbenchTabsOf('bk');
+  tabs[0].label = '改坏了';
+  assert.strictEqual(workbenchTabsOf('bk')[0].label, '协会空间');
+});
+
+test('basketballRulesOf —— 团队运动才有规则快照，球拍运动返回 null', () => {
+  const rules = basketballRulesOf('bk');
+  assert.ok(rules);
+  assert.strictEqual(rules.periods, 4);
+  assert.strictEqual(rules.rosterMin, 5, '满 5 人即可比赛');
+  assert.strictEqual(rules.minOnCourt, 2);
+
+  assert.strictEqual(basketballRulesOf('pkb'), null);
+  assert.strictEqual(basketballRulesOf('nope'), null);
+  // 返回副本
+  rules.periods = 9;
+  assert.strictEqual(basketballRulesOf('bk').periods, 4);
 });

@@ -56,6 +56,8 @@ const {
 } = require('./rating-cap.js');
 const { loadSeason } = require('./school-rank-service.js');
 const { RATED_PAIR_LIMIT } = require('../utils/constants.js');
+// 团队运动不得走个人录分：这是后端闸门，见 submitSchoolMatch 顶部。
+const { isTeamSport } = require('../utils/associations.js');
 const { liveScoreOf } = require('./live-score.js');
 const { advanceSchoolEvent } = require('./school-event-service.js');
 // 学院赛小场生效后的收尾：把结果写回大场、必要时排出下一轮（M2-c2）。
@@ -338,6 +340,13 @@ async function getSchoolMatch(payload = {}, ctx) {
 
 async function submitSchoolMatch(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
+
+  // 团队运动（篮球/足球/排球）没有「个人录分」这条路：一场 5v5 既不是单打也
+  // 不是双打，写进 matches 会污染个人 Elo 与评级表。后端在这里硬拒，不靠前端
+  // 藏入口——藏按钮挡不住直接调接口（见 docs/篮球协会-需求与实施规划.md §7）。
+  if (isTeamSport(ctx.association)) {
+    return ok(refused('该协会为团队项目，比赛成绩请在球队赛事中录入'));
+  }
 
   const dir = await buildDirectory(ctx);
 

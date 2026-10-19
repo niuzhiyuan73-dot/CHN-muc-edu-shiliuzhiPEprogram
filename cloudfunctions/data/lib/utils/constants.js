@@ -692,6 +692,15 @@ const COLLECTION = {
   COLLEGE_ENTRIES: 'college_entries',
   TIES: 'ties',
   COLLEGE_LINEUPS: 'lineups',
+  // 团队运动（篮球/足球/排球）：球队、队员、团队赛事、报名、比赛、单场统计。
+  // 与个人赛彻底分开——matches 是个人 Elo 的唯一流水，团队赛写进去会污染
+  // 个人账本（一场 5v5 既不是单打也不是双打）。见 docs/篮球协会-需求与实施规划.md
+  TEAMS: 'teams',
+  TEAM_MEMBERS: 'team_members',
+  TEAM_EVENTS: 'team_events',
+  TEAM_EVENT_ENTRIES: 'team_event_entries',
+  TEAM_MATCHES: 'team_matches',
+  TEAM_MATCH_STATS: 'team_match_stats',
   // 实时比分一场一条（_id = 'ls_' + matchId），重启不堆记录。
   // 只存「正在逐球计分」的过程态，定稿后转成 matches 里的正式比分
   LIVE_SCORES: 'live_scores',
@@ -1117,6 +1126,104 @@ const COLLEGE_ENTRY_STATUS_LABEL = {
 };
 
 /**
+ * 团队运动（篮球/足球/排球）的状态机。
+ *
+ * 【为什么用字符串而不是数字】
+ * 学院赛用的是 0/1/2/3，那是历史选择；团队赛是新增业务，没有兼容包袱，
+ * 用可读的字符串：控制台里直接看字段就知道是什么状态，不必翻枚举表。
+ */
+const TEAM_STATUS = {
+  PENDING: 'pending', // 待审核：学生申请建队，等协会管理员审
+  ACTIVE: 'active', // 正常
+  ARCHIVED: 'archived', // 已归档（解散）：历史成绩仍可查，不再接受报名
+};
+
+const TEAM_STATUS_LABEL = {
+  [TEAM_STATUS.PENDING]: '待审核',
+  [TEAM_STATUS.ACTIVE]: '正常',
+  [TEAM_STATUS.ARCHIVED]: '已归档',
+};
+
+/** 队员状态。入队申请与被移出都留痕，不物理删除。 */
+const TEAM_MEMBER_STATUS = {
+  PENDING: 'pending', // 已申请，等队长批
+  ACTIVE: 'active', // 在队
+  REJECTED: 'rejected', // 申请被拒
+  LEFT: 'left', // 已退队 / 被移出
+};
+
+const TEAM_MEMBER_STATUS_LABEL = {
+  [TEAM_MEMBER_STATUS.PENDING]: '待审批',
+  [TEAM_MEMBER_STATUS.ACTIVE]: '在队',
+  [TEAM_MEMBER_STATUS.REJECTED]: '已拒绝',
+  [TEAM_MEMBER_STATUS.LEFT]: '已离队',
+};
+
+/** 团队赛事状态 */
+const TEAM_EVENT_STATUS = {
+  DRAFT: 'draft', // 草稿：只有管理员可见
+  REGISTRATION: 'registration', // 报名中
+  SCHEDULED: 'scheduled', // 赛程已发布
+  RUNNING: 'running', // 进行中
+  FINISHED: 'finished', // 已结束
+  CANCELED: 'canceled', // 已取消
+};
+
+const TEAM_EVENT_STATUS_LABEL = {
+  [TEAM_EVENT_STATUS.DRAFT]: '草稿',
+  [TEAM_EVENT_STATUS.REGISTRATION]: '报名中',
+  [TEAM_EVENT_STATUS.SCHEDULED]: '赛程已发布',
+  [TEAM_EVENT_STATUS.RUNNING]: '进行中',
+  [TEAM_EVENT_STATUS.FINISHED]: '已结束',
+  [TEAM_EVENT_STATUS.CANCELED]: '已取消',
+};
+
+/** 球队报名状态。锁定（LOCKED）之后名单不再接受修改。 */
+const TEAM_ENTRY_STATUS = {
+  SUBMITTED: 'submitted', // 已提交，待审核
+  APPROVED: 'approved', // 已通过
+  REJECTED: 'rejected', // 已退回
+  LOCKED: 'locked', // 已锁定：赛前名单冻结，进快照
+};
+
+const TEAM_ENTRY_STATUS_LABEL = {
+  [TEAM_ENTRY_STATUS.SUBMITTED]: '待审核',
+  [TEAM_ENTRY_STATUS.APPROVED]: '已通过',
+  [TEAM_ENTRY_STATUS.REJECTED]: '已退回',
+  [TEAM_ENTRY_STATUS.LOCKED]: '已锁定',
+};
+
+/**
+ * 团队比赛状态。
+ *
+ * 「已发布」与「已更正」是同一场的两个版本：比分可以改，但每次发布都留一版，
+ * 个人累计按最新版本替换而不是再次累加。
+ */
+const TEAM_MATCH_STATUS = {
+  SCHEDULED: 'scheduled', // 已排期
+  LIVE: 'live', // 进行中（有录制员在录）
+  REVIEWING: 'reviewing', // 待审核：录完了，等赛事管理员发布
+  PUBLISHED: 'published', // 已发布：成绩与统计对外可见
+  CANCELED: 'canceled', // 已取消
+};
+
+const TEAM_MATCH_STATUS_LABEL = {
+  [TEAM_MATCH_STATUS.SCHEDULED]: '未开赛',
+  [TEAM_MATCH_STATUS.LIVE]: '进行中',
+  [TEAM_MATCH_STATUS.REVIEWING]: '待审核',
+  [TEAM_MATCH_STATUS.PUBLISHED]: '已发布',
+  [TEAM_MATCH_STATUS.CANCELED]: '已取消',
+};
+
+/** 统计完整性：区分「确认是 0」「还没录」「本赛事不统计」 */
+const TEAM_STAT_INTEGRITY = {
+  FULL: 'full', // 全部指标已录
+  PARTIAL: 'partial', // 只录了部分指标
+  BASIC: 'basic', // 只录了总分与犯规
+  NONE: 'none', // 没有统计
+};
+
+/**
  * 名单人数的边界与默认区间（D22 / D28）。
  *
  * 管理员可在发布时自定义每院最少 / 最多报名人数，默认 4–20；替补计入其中
@@ -1281,6 +1388,17 @@ module.exports = {
   DEFAULT_COLLEGE_EVENT_STATUS,
   COLLEGE_ENTRY_STATUS,
   COLLEGE_ENTRY_STATUS_LABEL,
+  TEAM_STATUS,
+  TEAM_STATUS_LABEL,
+  TEAM_MEMBER_STATUS,
+  TEAM_MEMBER_STATUS_LABEL,
+  TEAM_EVENT_STATUS,
+  TEAM_EVENT_STATUS_LABEL,
+  TEAM_ENTRY_STATUS,
+  TEAM_ENTRY_STATUS_LABEL,
+  TEAM_MATCH_STATUS,
+  TEAM_MATCH_STATUS_LABEL,
+  TEAM_STAT_INTEGRITY,
   TIE_STATUS,
   TIE_STATUS_LABEL,
   DEFAULT_TIE_STATUS,

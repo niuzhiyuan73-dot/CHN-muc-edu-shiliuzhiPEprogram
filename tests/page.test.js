@@ -7381,3 +7381,69 @@ test('录入页 —— 网球协会日常约球：盘制与每盘局数可选，
     fx.restore();
   }
 });
+
+/* ============================================================
+ * 团队运动（篮球）：工作台页签与后端闸门
+ * ============================================================
+ * 篮球不提供排行榜与个人比赛入口，页签由注册表能力生成；同时个人赛录分
+ * 必须被后端拒绝——「藏按钮」挡不住直接调接口，而一场 5v5 写进 matches
+ * 会污染个人 Elo 与评级表。
+ * ============================================================ */
+
+test('工作台 —— 篮球只给「协会空间 / 组队 / 赛事」，没有排行榜与比赛', async () => {
+  const schoolSession = require('../miniprogram/services/school-session');
+  const scope = require('../miniprogram/services/association-scope.js');
+  schoolSession.reset();
+  const before = scope.getAssociation();
+  try {
+    const page = instantiate(associationHomeConfig);
+    page.onLoad({ association: 'bk' });
+
+    assert.strictEqual(page.data.associationId, 'bk');
+    assert.strictEqual(page.data.associationName, '民大篮球');
+    assert.deepStrictEqual(
+      page.data.tabs.map((item) => item.tab),
+      ['space', 'teams', 'events'],
+      '团队运动不该出现排行榜与个人比赛页签'
+    );
+    assert.deepStrictEqual(
+      page.data.tabs.filter((item) => item.active).map((item) => item.tab),
+      ['space'],
+      '默认落在协会空间'
+    );
+    assert.deepStrictEqual(page.data.mounted, { space: true, teams: false, events: false });
+
+    // 旧链接带着该协会不提供的页签（tab=match）时不白屏，回落到第一个可用页签
+    const stale = instantiate(associationHomeConfig);
+    stale.onLoad({ association: 'bk', tab: 'match' });
+    assert.strictEqual(stale.data.activeTab, 'space');
+  } finally {
+    scope.setAssociation(before);
+    schoolSession.reset();
+  }
+});
+
+test('个人赛录分 —— 团队运动协会直接拒绝，不写 matches', async () => {
+  const fx = schoolEventFixture('bk');
+  try {
+    fx.to('demo_muc_admin');
+    const out = await fx.api().submitSchoolMatch({
+      matchType: MATCH_TYPE.SINGLES,
+      teamA: ['demo_muc_member'],
+      teamB: ['demo_muc_admin'],
+      scoreA: ['11', '11'],
+      scoreB: ['9', '7'],
+      gamePoints: 11,
+      bestOf: 3,
+      matchTime: '2026-06-10T09:00:00',
+      requestId: 'req_bk_guard_1',
+    });
+
+    assert.strictEqual(out.ok, false);
+    assert.match(out.message, /团队项目/);
+    const list = await fx.api().listSchoolMatches({});
+    assert.strictEqual(list.matches.length, 0, '被拒的录分不该留下比赛记录');
+  } finally {
+    fx.restore();
+  }
+});

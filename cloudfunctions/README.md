@@ -34,7 +34,7 @@ const CLOUD_ENV_ID = 'cloud1-xxxxxxxxxxxx';
 `miniprogram/` 里，云端必须用**同一份实现**。所以：
 
 ```bash
-npm run sync:cloud        # 按 MANIFEST 复制到 cloudfunctions/data/lib/（当前 73 个文件）
+npm run sync:cloud        # 按 MANIFEST 复制到 cloudfunctions/data/lib/（当前 74 个文件）
 npm run check:cloud-sync  # 只校验不写入；漂移时退出码 1
 ```
 
@@ -51,7 +51,7 @@ npm run check:cloud-sync  # 只校验不写入；漂移时退出码 1
 > 「该操作尚未支持学校范围」（前端在调一个新 action，云端处理器表里没有）。
 > 判断依据：控制台 → 云函数 → `data` 的「更新时间」。
 
-## 三、建集合（47 个）
+## 三、建集合（53 个）
 
 名称须与 `miniprogram/utils/constants.js` 的 `COLLECTION`、`cloudfunctions/data/src/repository.js`
 的 `COLLECTIONS` 完全一致。按域分组：
@@ -64,6 +64,7 @@ npm run check:cloud-sync  # 只校验不写入；漂移时退出码 1
 | 个人赛与公共 | 5 | `events`、`event_signups`、`seasons`、`announcements`、`audit_logs` |
 | 学院赛 | 4 | `college_events`、`college_entries`、`ties`、`lineups` |
 | 实时计分 | 1 | `live_scores` |
+| 团队运动（篮球） | 6 | `teams`、`team_members`、`team_events`、`team_event_entries`、`team_matches`、`team_match_stats` |
 | 协会空间 | 5 | `association_groups`、`association_group_members`、`association_notices`、`association_trainings`、`training_registrations` |
 | 跨校邀请赛 | 4 | `exchange_events`、`exchange_invitations`、`exchange_signups`、`exchange_matches` |
 | 运动会 | 15 | `sports_meets` 及其 `_events` / `_colleges` / `_interests` / `_entries` / `_sessions` / `_judge_assignments` / `_scores` / `_publications` / `_result_rows` / `_quota_usage` / `_standings` / `_honors` / `_participant_claims` / `_college_leads` |

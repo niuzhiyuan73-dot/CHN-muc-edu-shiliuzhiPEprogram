@@ -18,6 +18,9 @@ const KEYS = ['users', 'schools', 'schoolAssociations', 'colleges', 'schoolMembe
   'memberRatings',
   // 结算序号计数：每「学校 + 协会」一条，_id 由 ratingSeqKey 组成
   'ratingCounters',
+  // 团队运动（篮球/足球/排球）：球队 / 队员 / 赛事 / 报名 / 比赛 / 统计，
+  // 与个人赛彻底分开，按「学校 + 协会」归属（与云端 SCOPED 同口径）
+  'teams', 'teamMembers', 'teamEvents', 'teamEventEntries', 'teamMatches', 'teamMatchStats',
   // 运动会：学校级业务，与协会无关。12 个集合一律以 schoolId + meetId 归属，
   // 范围校验走 forMeet（与云端 attachSchoolRepository 同口径）。
   ...MEET_COLLECTIONS,
@@ -62,6 +65,8 @@ function createSchoolMemoryRepo(seed = {}) {
       'associationGroups', 'associationGroupMembers',
       'associationNotices', 'associationTrainings', 'trainingRegistrations',
       'pairCounts', 'memberRatings', 'ratingCounters',
+      // 团队运动：按「学校 + 协会」双维度归属
+      'teams', 'teamMembers', 'teamEvents', 'teamEventEntries', 'teamMatches', 'teamMatchStats',
       // 学院部长授权：学校级（只按 schoolId 判归属，见 SCHOOL_SCOPED）
       'sportsMeetCollegeLeads',
     ];

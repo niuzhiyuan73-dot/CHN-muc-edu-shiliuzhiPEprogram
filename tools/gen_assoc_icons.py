@@ -87,8 +87,23 @@ def draw_tn(d) -> None:
     d.arc([(214, 46), (268, 100)], start=300, end=60, fill=WHITE, width=8)
 
 
+def draw_bk(d) -> None:
+    """篮球：正圆球体 + 一条横缝 + 一条竖缝 + 两侧弧线（经典篮球纹路）"""
+    w = 16
+    # 球体
+    d.ellipse([(40, 40), (248, 248)], outline=WHITE, width=w)
+    # 横缝 / 竖缝
+    d.line([(40, 144), (248, 144)], fill=WHITE, width=w)
+    d.line([(144, 40), (144, 248)], fill=WHITE, width=w)
+    # 两侧弧线（从上下极点绕到左右极点，模拟球面经纬）
+    d.arc([(-16, 40), (160, 248)], start=270, end=90, fill=WHITE, width=w)
+    d.arc([(128, 40), (304, 248)], start=270, end=90, fill=WHITE, width=w)
+
+
 def main() -> None:
-    for name, draw_fn in (("pkb", draw_pkb), ("tt", draw_tt), ("bd", draw_bd), ("tn", draw_tn)):
+    for name, draw_fn in (
+        ("pkb", draw_pkb), ("tt", draw_tt), ("bd", draw_bd), ("tn", draw_tn), ("bk", draw_bk),
+    ):
         save(render(draw_fn), f"{name}.png")
 
 

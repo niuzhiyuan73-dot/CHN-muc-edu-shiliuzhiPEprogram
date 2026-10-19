@@ -126,6 +126,13 @@ const COLLECTIONS = {
   seasons: COLLECTION.SEASONS,
   rankings: COLLECTION.RANKINGS,
   auditLogs: COLLECTION.AUDIT_LOGS,
+  // 团队运动（篮球/足球/排球）：与个人赛彻底分开，见 utils/constants.js 的 TEAMS 一段。
+  teams: COLLECTION.TEAMS,
+  teamMembers: COLLECTION.TEAM_MEMBERS,
+  teamEvents: COLLECTION.TEAM_EVENTS,
+  teamEventEntries: COLLECTION.TEAM_EVENT_ENTRIES,
+  teamMatches: COLLECTION.TEAM_MATCHES,
+  teamMatchStats: COLLECTION.TEAM_MATCH_STATS,
   // 运动会：12 个集合均为「学校 + 运动会」双维度归属（无协会），
   // 由 school-repository.js 的 forMeet 校验写入范围。
   sportsMeets: COLLECTION.SPORTS_MEETS,
