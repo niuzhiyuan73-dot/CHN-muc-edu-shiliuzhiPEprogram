@@ -65,7 +65,6 @@ function emptyStore() {
     announcements: new Map(),
     memberships: new Map(),
     seasons: new Map(),
-    rankings: new Map(),
     auditLogs: [],
   };
 }
@@ -300,12 +299,6 @@ function createMemoryRepo(seed = {}) {
         },
       },
 
-      rankings: {
-        get: (id) => read('rankings', id),
-        set: async (id, doc) => {
-          target.rankings.set(id, { ...doc, _id: id });
-        },
-      },
 
       audit: {
         append: async (entry) => {

@@ -54,9 +54,8 @@ function createSchoolMemoryRepo(seed = {}) {
       await repo.auditLogs.set(entry._id, entry);
     } };
     // 受范围限制的集合：与云端 attachSchoolRepository 的 SCOPED_COLLECTIONS 对齐
-    // （由 tests/for-scope-contract.test.js 守护）。云端多一个 `rankings`——它是
-    // 云端的榜单快照缓存集合，本地模拟端根本没有这个集合，那条差异在契约测试里
-    // **显式列出**，不是漏写。
+    // （由 tests/for-scope-contract.test.js 守护）。两端必须逐字一致——原先云端多一个
+    // `rankings` 并作为例外列在契约测试里；Elo 改为逐场结算后它已无任何读写，已删除。
     const SCOPED = [
       'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
       'colleges', 'schoolMembers', 'schoolRoles', 'schoolAssociations', 'memberships',

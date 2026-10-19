@@ -31,7 +31,7 @@ const { teamKey, teamMemberKey } = require('../utils/school.js');
 const {
   TEAM_STATUS, TEAM_STATUS_LABEL, TEAM_MEMBER_STATUS, TEAM_MEMBER_STATUS_LABEL,
 } = require('../utils/constants.js');
-const { sportTypeOf } = require('../utils/associations.js');
+const { sportTypeOf, allAssociations, SPORT_TYPE } = require('../utils/associations.js');
 
 const ok = data => ({ ok: true, data });
 const refused = (message, extra = {}) => ({ ok: false, message, ...extra });
@@ -449,6 +449,96 @@ async function archiveTeam(payload = {}, ctx) {
   return ok(result);
 }
 
+/* ---------------- 会员离开学校时的球队清理 ---------------- */
+
+/** 有球队的协会 id。足球、排球接进来时这里不用改——按 sportType 取的 */
+function teamAssociationIds() {
+  return allAssociations()
+    .filter(item => item.sportType === SPORT_TYPE.TEAM)
+    .map(item => item.id);
+}
+
+/**
+ * 把某个会员从「某校所有球队」里摘掉。
+ *
+ * 【为什么需要它】
+ * 转校只改 `school_members` 与 `memberships`，球队是另一套表。不清的话，
+ * 一个已经转走的人仍然挂在校队的名单里，甚至还是队长——报名时会被算进
+ * 人数、锁定名单时会被拍进快照，等于让一个不属于本校的人上了场。
+ *
+ * 【队长走了怎么办】
+ * 优先把队长交给「最早入队的在队队员」；一个在队队员都不剩就把球队归档。
+ * 不让「有队没队长」这种状态存在——那样报名、审批、归档都会卡住。
+ *
+ * 【为什么不在调用方的事务里做】
+ * 内存与云端仓储都不允许事务内整表查询。所以先在外面把要改的行读出来，
+ * 再开一个只做 `set` 的事务。代价是「读」与「写」之间有一个极小的窗口，
+ * 校园规模下可以接受（这期间有人刚好入队，会被下一次清理带走）。
+ *
+ * @param {Object} repo 未绑定范围的仓储（ctx.repo）
+ * @param {Object} params
+ * @param {string} params.schoolId 要清理的学校
+ * @param {string} params.userId
+ * @param {string} [params.now]
+ * @param {string} [params.actorId]
+ * @returns {Promise<{detached:number, captainMoved:number, archived:number}>}
+ */
+async function detachUserFromTeams(repo, { schoolId, userId, now, actorId } = {}) {
+  const summary = { detached: 0, captainMoved: 0, archived: 0 };
+  if (!repo || !schoolId || !userId) return summary;
+
+  for (const association of teamAssociationIds()) {
+    const scoped = repo.forScope({ schoolId, association });
+    const rows = await scoped.teamMembers.list();
+    const mine = rows.filter(row => row.userId === userId && row.status === TEAM_MEMBER_STATUS.ACTIVE);
+    if (mine.length === 0) continue;
+
+    const teams = await scoped.teams.list();
+    const patches = [];
+    for (const row of mine) {
+      const team = teams.find(item => item._id === row.teamId);
+      patches.push({ kind: 'member', doc: { ...row, status: TEAM_MEMBER_STATUS.LEFT, leftAt: now, updatedAt: now } });
+      if (!team || team.captainId !== userId) continue;
+
+      const others = rows
+        .filter(item => item.teamId === team._id
+          && item.userId !== userId
+          && item.status === TEAM_MEMBER_STATUS.ACTIVE)
+        .sort((a, b) => String(a.joinedAt || '').localeCompare(String(b.joinedAt || ''))
+          || String(a.userId).localeCompare(String(b.userId)));
+
+      if (others.length > 0) {
+        const next = others[0];
+        patches.push({ kind: 'team', doc: {
+          ...team, captainId: next.userId, updatedBy: actorId, updatedAt: now,
+        } });
+        patches.push({ kind: 'member', doc: { ...next, role: 'captain', updatedAt: now } });
+        summary.captainMoved += 1;
+      } else {
+        patches.push({ kind: 'team', doc: {
+          ...team, status: TEAM_STATUS.ARCHIVED, archivedAt: now, archivedReason: 'captain-left', updatedBy: actorId, updatedAt: now,
+        } });
+        summary.archived += 1;
+      }
+    }
+
+    await repo.transaction(async (tx) => {
+      const target = tx.forScope({ schoolId, association });
+      for (const patch of patches) {
+        if (patch.kind === 'team') await target.teams.set(patch.doc._id, patch.doc);
+        else await target.teamMembers.set(patch.doc._id, patch.doc);
+      }
+    });
+    summary.detached += mine.length;
+    repo.audit.append({
+      _id: `team_detach_${schoolId}_${userId}_${association}`,
+      action: 'detachUserFromTeams', schoolId, association, userId, actorId,
+      detached: mine.length, at: now,
+    }).catch(() => undefined);
+  }
+  return summary;
+}
+
 module.exports = {
   listTeams,
   getTeam,
@@ -459,4 +549,5 @@ module.exports = {
   leaveTeam,
   transferTeamCaptain,
   archiveTeam,
+  detachUserFromTeams,
 };

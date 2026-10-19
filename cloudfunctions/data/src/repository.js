@@ -57,8 +57,6 @@
  *   repo.memberships.remove(id)         → Promise<void>
  *   repo.seasons.get(id)                → Promise<Object|null>
  *   repo.seasons.set(id, doc)           → Promise<void>
- *   repo.rankings.get(id)               → Promise<Object|null>
- *   repo.rankings.set(id, doc)          → Promise<void>    排行榜快照（可随时删除的纯缓存）
  *   repo.transaction(fn)                → Promise<*>       fn(txRepo)，抛错则整体回滚
  *   repo.audit.append(entry)            → Promise<void>
  *
@@ -124,7 +122,6 @@ const COLLECTIONS = {
   memberRatings: COLLECTION.MEMBER_RATINGS,
   ratingCounters: COLLECTION.RATING_COUNTERS,
   seasons: COLLECTION.SEASONS,
-  rankings: COLLECTION.RANKINGS,
   auditLogs: COLLECTION.AUDIT_LOGS,
   // 团队运动（篮球/足球/排球）：与个人赛彻底分开，见 utils/constants.js 的 TEAMS 一段。
   teams: COLLECTION.TEAMS,

@@ -25,7 +25,7 @@ const SCOPED_COLLECTIONS = [
   'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
   ...SCHOOL_ONLY, 'schoolAssociations', 'memberships',
   'matches', 'events', 'eventSignups', 'collegeEvents', 'collegeEntries',
-  'ties', 'lineups', 'liveScores', 'seasons', 'rankings',
+  'ties', 'lineups', 'liveScores', 'seasons',
   // 协会空间小组 / 通知 / 训练均按「学校 + 协会」双维度范围，写入即校验归属。
   'associationGroups', 'associationGroupMembers',
   'associationNotices', 'associationTrainings', 'trainingRegistrations',

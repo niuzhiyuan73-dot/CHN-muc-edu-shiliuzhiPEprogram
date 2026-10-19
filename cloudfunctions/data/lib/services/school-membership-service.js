@@ -7,6 +7,7 @@ const {
 const { buildSchoolApplication, buildSchoolAccount } = require('./school-member.js');
 const { buildProfilePatch } = require('./profile.js');
 const { allAssociations } = require('../utils/associations.js');
+const { detachUserFromTeams } = require('./team-service.js');
 const {
   schoolMemberKey, schoolRoleKey, schoolMembershipKey, collegeKey,
   PLATFORM_ROLE, PLATFORM_STATUS, SCHOOL_MEMBER_STATUS, SCHOOL_ROLE,
@@ -321,6 +322,24 @@ function createSchoolHandlers({ claimKey }) {
         fromSchoolId: application.transferFrom, revision: next.revision, at: fresh.now });
       return { ok: true, account: next, moved, message: '' };
     });
+
+    // 转校成功之后把他从原学校的球队里摘掉。
+    // 放在事务外：球队清理是多协会循环 + 整表读，塞进上面那个事务会把
+    // 一次转校变成「先锁一堆表」；而它失败也不该把已经通过的转校回滚——
+    // 转校是主事实，球队残留可以再清一次。
+    if (result && result.ok && result.moved) {
+      try {
+        result.teams = await detachUserFromTeams(ctx.repo, {
+          schoolId: result.moved.fromSchoolId,
+          userId: payload.userId,
+          now: ctx.now,
+          actorId: ctx.actorId,
+        });
+      } catch (err) {
+        console.error('[reviewSchoolTransfer] 球队清理失败', err);
+        result.teams = { detached: 0, captainMoved: 0, archived: 0, error: true };
+      }
+    }
     return ok(result);
   }
 

@@ -350,10 +350,6 @@ function buildCollections(scope, inTx) {
       set: (id, doc) => col('seasons').doc(id).set({ data: withoutId(doc) }),
     },
 
-    rankings: {
-      get: (id) => readDoc(scope, COLLECTIONS.rankings, id),
-      set: (id, doc) => col('rankings').doc(id).set({ data: withoutId(doc) }),
-    },
 
     audit: {
       append: (entry) => entry._id

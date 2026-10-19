@@ -681,7 +681,6 @@ const COLLECTION = {
   EXCHANGE_MATCHES: 'exchange_matches',
   USERS: 'users',
   MATCHES: 'matches',
-  RANKINGS: 'rankings',
   EVENTS: 'events',
   EVENT_SIGNUPS: 'event_signups',
   ANNOUNCEMENTS: 'announcements',

@@ -397,3 +397,46 @@ test('identity session discloses the actor own permission tier and college-manag
   assert.equal(guest.permission, '');
   assert.equal(guest.canManageCollege, false);
 });
+
+/* ============================================================
+ * 转校与球队：人走了就不能再挂在校队名单里
+ * ============================================================
+ * 转校原先只改 school_members 与 memberships，球队是另一套表。留下的人行
+ * 会被报名人数算进去、被锁定名单拍进快照，等于让不属于本校的人上场。
+ * 这条用例把「转校 → 原学校球队清理」整条链路走一遍。
+ * ============================================================ */
+
+test('转校通过后，原学校球队里的队员行自动转为「已离队」', async () => {
+  const repo = fixture();
+  await apply(repo);
+  assert.equal((await review(repo)).data.ok, true);
+
+  // 直接铺一支原学校的篮球队，new1 是队长
+  const teamId = 'tm_detach_demo';
+  const teamScope = { schoolId: 'muc', association: 'bk' };
+  await repo.forScope(teamScope).teams.set(teamId, {
+    _id: teamId, schoolId: 'muc', association: 'bk', name: '热浪队',
+    captainId: 'new1', status: 'active', createdAt: '2026-10-13T00:00:00Z',
+  });
+  await repo.forScope(teamScope).teamMembers.set(`${teamId}_new1`, {
+    _id: `${teamId}_new1`, schoolId: 'muc', association: 'bk',
+    teamId, userId: 'new1', role: 'captain', status: 'active', joinedAt: '2026-10-13T00:00:00Z',
+  });
+
+  const applied = (await request(repo, 'applySchoolTransfer',
+    { collegeId: 'c01', studentId: 'BUAA001' }, 'new1', 'buaa')).data;
+  const approved = (await request(repo, 'reviewSchoolTransfer',
+    { userId: 'new1', decision: 'approve', revision: applied.account.revision },
+    'mock_openid_buaa_admin', 'buaa')).data;
+
+  assert.equal(approved.ok, true, approved.message);
+  assert.equal(approved.teams.detached, 1, '应当摘掉一条队员行');
+
+  const row = await repo.forScope(teamScope).teamMembers.getById(`${teamId}_new1`);
+  assert.equal(row.status, 'left');
+  assert.ok(row.leftAt);
+
+  // 队里一个人都不剩 → 球队归档，不留一支没有队长的活队
+  const team = await repo.forScope(teamScope).teams.getById(teamId);
+  assert.equal(team.status, 'archived');
+});

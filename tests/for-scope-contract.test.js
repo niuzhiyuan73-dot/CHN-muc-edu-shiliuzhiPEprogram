@@ -29,8 +29,8 @@ const { createSchoolMemoryRepo } = require('../miniprogram/services/school-memor
 const SCOPE = { schoolId: 'muc', association: 'pkb' };
 /** 结果对象自身的属性，不属于「集合」。 */
 const RESULT_LEVEL = ['scope', 'transaction'];
-/** 云端独有的受范围集合（模拟端没有这个集合）。 */
-const CLOUD_ONLY_KEYS = ['rankings'];
+/** 云端独有的受范围集合。目前两端完全一致，这个清单应当保持为空。 */
+const CLOUD_ONLY_KEYS = [];
 /** 受范围仓储里每个集合必须提供的方法。 */
 const REQUIRED_METHODS = ['getById', 'insert', 'list', 'set', 'update'];
 
@@ -39,7 +39,7 @@ const collectionKeys = surface =>
 const methodNames = target =>
   Object.keys(target).filter(key => typeof target[key] === 'function').sort();
 
-test('两端 forScope 暴露的集合键一致（云端仅多出显式列出的 rankings）', () => {
+test('两端 forScope 暴露的集合键逐字一致，没有任何例外', () => {
   const cloud = collectionKeys(createMemoryRepo().forScope(SCOPE));
   const mock = collectionKeys(createSchoolMemoryRepo().forScope(SCOPE));
 

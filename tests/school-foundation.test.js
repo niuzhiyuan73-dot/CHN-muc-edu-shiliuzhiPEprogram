@@ -72,7 +72,7 @@ for (const collection of SCOPED_COLLECTIONS) {
 test('project, season, ranking and manual-rating namespaces remain independent', async () => {
   const repo = createMemoryRepo();
   const tt = repo.forScope({ ...MUC, association: 'tt' });
-  for (const collection of ['matches', 'seasons', 'rankings']) {
+  for (const collection of ['matches', 'seasons']) {
     await repo.forScope(MUC)[collection].insert({ _id: 'pkb', value: 123 });
     assert.equal(await tt[collection].getById('pkb'), null);
     await assert.rejects(tt[collection].set('pkb', { value: 456 }));

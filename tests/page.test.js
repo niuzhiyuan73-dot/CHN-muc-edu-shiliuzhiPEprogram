@@ -185,46 +185,30 @@ global.getApp = () => app;
  * Component() 也往同一个数组里 push，并且在下头保持着原来的 require 顺序，
  * 下标便原样不变——已有的 70 多处引用一行都不用改。
  */
-const registered = [];
-global.Page = (config) => registered.push(config);
-global.Component = (config) => registered.push(config);
+/**
+ * 按**文件路径**加载页面 / 组件配置。
+ *
+ * 【为什么不再用 registered[N]】
+ * 原先靠「require 顺序」取下标：加一个页面必须追加在末尾，插在中间会让
+ * 已有下标全部错位，而且错位不会报错——用例会「装成别的页面」继续跑，
+ * 断言写得越像越容易骗过自己。改成按路径取名后，加页面不必动任何已有行。
+ *
+ * 组件与页面都走这一个函数：两者都是被 Page() / Component() 注册的配置。
+ */
+const registered = new Map();
+let loadingFile = '';
 
-// 注册动作发生在 require 的那一刻，所以必须先装好 Page / Component 再引入
-require('../miniprogram/pages/index/index.js');
-require('../miniprogram/pages/profile/profile.js');
-require('../miniprogram/pages/member/member.js');
-require('../miniprogram/components/rank-panel/rank-panel.js');
-require('../miniprogram/pages/login/login.js');
-require('../miniprogram/components/match-panel/match-panel.js');
-require('../miniprogram/pages/match-entry/match-entry.js');
-// 新页面一律追加在末尾：registered[] 是按 require 顺序取下标的，
-// 插在中间会让 0–6 全部错位，已有用例会成片地「装成别的页面」失败
-require('../miniprogram/pages/member-review/member-review.js');
-require('../miniprogram/pages/announcements/announcements.js');
-require('../miniprogram/pages/announcement-manage/announcement-manage.js');
-require('../miniprogram/pages/announcement-edit/announcement-edit.js');
-require('../miniprogram/pages/profile-edit/profile-edit.js');
-require('../miniprogram/pages/profile-detail/profile-detail.js');
-require('../miniprogram/components/events-panel/events-panel.js');
-require('../miniprogram/pages/event-detail/event-detail.js');
-require('../miniprogram/pages/event-edit/event-edit.js');
-require('../miniprogram/pages/event-placement/event-placement.js');
-require('../miniprogram/pages/college-event-edit/college-event-edit.js');
-require('../miniprogram/pages/college-entry/college-entry.js');
-require('../miniprogram/pages/college-entry-review/college-entry-review.js');
-require('../miniprogram/pages/college-event-detail/college-event-detail.js');
-require('../miniprogram/pages/college-lineup/college-lineup.js');
-require('../miniprogram/pages/college-match/college-match.js');
-require('../miniprogram/pages/college-placement/college-placement.js');
-require('../miniprogram/pages/event-list/event-list.js');
-require('../miniprogram/pages/live-score/live-score.js');
-// 「协会」页签与它的工作台（排行榜 / 比赛 / 赛事 收进了工作台），追加在末尾
-require('../miniprogram/pages/association/association.js');
-require('../miniprogram/pages/association-home/association-home.js');
-// 协会空间面板（工作台里的第一个页签），同样追加在末尾以免打乱既有下标
-require('../miniprogram/components/association-space-panel/association-space-panel.js');
-// 石榴籽杯首页：学院赛迁入校级活动后的唯一入口，追加在末尾
-require('../miniprogram/pages/cup-home/cup-home.js');
+global.Page = (config) => registered.set(loadingFile, config);
+global.Component = (config) => registered.set(loadingFile, config);
+
+function loadPage(relative) {
+  loadingFile = relative;
+  // 注册动作发生在 require 的那一刻，所以先设好 loadingFile 再引入
+  require(`../miniprogram/${relative}`);
+  const config = registered.get(relative);
+  assert.ok(config, `页面没有调用 Page()：${relative}`);
+  return config;
+}
 
 /**
  * 深拷贝页面初值。
@@ -290,39 +274,40 @@ function instantiate(config) {
   return page;
 }
 
-const indexConfig = registered[0];
-const profileConfig = registered[1];
-const memberConfig = registered[2];
-const rankConfig = registered[3];
-const loginConfig = registered[4];
-const matchConfig = registered[5];
-const matchEntryConfig = registered[6];
-const memberReviewConfig = registered[7];
-const announcementsConfig = registered[8];
-const announcementManageConfig = registered[9];
-const announcementEditConfig = registered[10];
-const profileEditConfig = registered[11];
-const profileDetailConfig = registered[12];
-const eventsConfig = registered[13];
-const eventDetailConfig = registered[14];
-const eventEditConfig = registered[15];
-const eventPlacementConfig = registered[16];
-const collegeEventEditConfig = registered[17];
-const collegeEntryConfig = registered[18];
-const collegeEntryReviewConfig = registered[19];
-const collegeEventDetailConfig = registered[20];
-const collegeLineupConfig = registered[21];
-const collegeMatchConfig = registered[22];
-const collegePlacementConfig = registered[23];
-// 「查看全部」列表页，最后注册，下标自然接在末尾
-const eventListConfig = registered[24];
-// 实时计分台（唯一的横屏页），注册顺序在最后
-const liveScoreConfig = registered[25];
-// 协会 tab 与它的工作台（排行榜 / 比赛 / 赛事 都收进了工作台）
-const associationConfig = registered[26];
-const associationHomeConfig = registered[27];
-const spacePanelConfig = registered[28];
-const cupHomeConfig = registered[29];
+const indexConfig = loadPage('pages/index/index.js');
+const profileConfig = loadPage('pages/profile/profile.js');
+const memberConfig = loadPage('pages/member/member.js');
+const rankConfig = loadPage('components/rank-panel/rank-panel.js');
+const loginConfig = loadPage('pages/login/login.js');
+const matchConfig = loadPage('components/match-panel/match-panel.js');
+const matchEntryConfig = loadPage('pages/match-entry/match-entry.js');
+const memberReviewConfig = loadPage('pages/member-review/member-review.js');
+const announcementsConfig = loadPage('pages/announcements/announcements.js');
+const announcementManageConfig = loadPage('pages/announcement-manage/announcement-manage.js');
+const announcementEditConfig = loadPage('pages/announcement-edit/announcement-edit.js');
+const profileEditConfig = loadPage('pages/profile-edit/profile-edit.js');
+const profileDetailConfig = loadPage('pages/profile-detail/profile-detail.js');
+const eventsConfig = loadPage('components/events-panel/events-panel.js');
+const eventDetailConfig = loadPage('pages/event-detail/event-detail.js');
+const eventEditConfig = loadPage('pages/event-edit/event-edit.js');
+const eventPlacementConfig = loadPage('pages/event-placement/event-placement.js');
+const collegeEventEditConfig = loadPage('pages/college-event-edit/college-event-edit.js');
+const collegeEntryConfig = loadPage('pages/college-entry/college-entry.js');
+const collegeEntryReviewConfig = loadPage('pages/college-entry-review/college-entry-review.js');
+const collegeEventDetailConfig = loadPage('pages/college-event-detail/college-event-detail.js');
+const collegeLineupConfig = loadPage('pages/college-lineup/college-lineup.js');
+const collegeMatchConfig = loadPage('pages/college-match/college-match.js');
+const collegePlacementConfig = loadPage('pages/college-placement/college-placement.js');
+const eventListConfig = loadPage('pages/event-list/event-list.js');
+const liveScoreConfig = loadPage('pages/live-score/live-score.js');
+const associationConfig = loadPage('pages/association/association.js');
+const associationHomeConfig = loadPage('pages/association-home/association-home.js');
+const spacePanelConfig = loadPage('components/association-space-panel/association-space-panel.js');
+const cupHomeConfig = loadPage('pages/cup-home/cup-home.js');
+const teamListConfig = loadPage('pages/team-list/team-list.js');
+const teamDetailConfig = loadPage('pages/team-detail/team-detail.js');
+const teamEventListConfig = loadPage('pages/team-event-list/team-event-list.js');
+const teamEventDetailConfig = loadPage('pages/team-event-detail/team-event-detail.js');
 
 // 写接口（确认 / 撤销 / 录入）只改内存，跑完一条用例就得把内存退回种子状态，
 // 否则上一条确认过的比赛会让下一条拿到的榜单与台账都不一样
