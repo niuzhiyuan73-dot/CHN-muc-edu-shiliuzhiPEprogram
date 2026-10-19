@@ -546,10 +546,18 @@ test('统计保存 —— 合计与球队得分不符只提示；空格子保持
   );
   assert.equal(doc.integrity, 'basic');
   const first = doc.players.find(item => item.userId === side.players[0].userId);
-  const blank = doc.players.find(item => item.userId === side.players[1].userId);
-  assert.deepEqual(first, { userId: side.players[0].userId, points: 20, fouls: 3 });
-  assert.deepEqual(blank, { userId: side.players[1].userId, points: null, fouls: null },
-    '空着的格子是「未记录」，不能落成 0');
+  assert.equal(first.points, 20);
+  assert.equal(first.fouls, 3);
+  // 基础模式七个指标都落一栏：没录的存 null，不落成 0
+  assert.equal(first.rebounds, null);
+  // 整行都空的球员根本不落库——「没录」不是「录了 0」
+  assert.equal(doc.players.length, 1);
+
+  // 但读回来时，名单里每个人都有一行，空格子显示成未记录
+  const reread = await call(repo, 'getTeamMatchStats', { matchId: row.matchId });
+  const blank = reread.sides[0].players.find(item => item.userId === side.players[1].userId);
+  assert.equal(blank.points, null);
+  assert.equal(blank.fouls, null, '空着的格子是「未记录」，不能落成 0');
 });
 
 test('统计保存 —— 名单外的人、越界数字都被拒', async () => {
@@ -595,4 +603,226 @@ test('统计保存 —— 赛事结束后不能再改', async () => {
   });
   assert.equal(saved.ok, false);
   assert.match(saved.message, /已结束/);
+});
+
+/* ============================================================
+ * D 期：按节统计、球员榜、并发版本
+ * ============================================================
+ * 按节统计解决「谁在哪一节打得好」，代价是录入量翻几倍——所以只有赛事
+ * 显式开了 statPolicy=detailed 才允许走这条模式，默认仍是基础模式。
+ * ============================================================ */
+
+/** 建一支已通过的队并报名、锁定，返回赛事与球队 */
+async function lockedDetailedEvent(repo, { teamCount = 2 } = {}) {
+  const event = await call(repo, 'createTeamEvent', {
+    name: '院际杯', requestId: 'req_d1', statPolicy: 'detailed', presetKey: 'campus-2x20',
+  });
+  const teamIds = [];
+  for (let t = 0; t < teamCount; t += 1) {
+    const captain = `u_t${t}c`;
+    const created = await callTeam(repo, 'createTeamApplication', {
+      name: `球队${t + 1}`, requestId: `req_dt${t}`,
+    }, captain);
+    await callTeam(repo, 'reviewTeamApplication', { teamId: created.teamId, approve: true });
+    for (let i = 0; i < 4; i += 1) {
+      const memberId = `u_t${t}p${i}`;
+      await callTeam(repo, 'applyToJoinTeam', { teamId: created.teamId }, memberId);
+      await callTeam(repo, 'reviewTeamMember', {
+        teamId: created.teamId, userId: memberId, approve: true,
+      }, captain);
+    }
+    await call(repo, 'submitTeamEntry', { eventId: event.eventId, teamId: created.teamId }, captain);
+    await call(repo, 'reviewTeamEntry', {
+      eventId: event.eventId, teamId: created.teamId, approve: true,
+    });
+    teamIds.push(created.teamId);
+  }
+  await call(repo, 'lockTeamEntries', { eventId: event.eventId });
+  return { eventId: event.eventId, teamIds };
+}
+
+test('按节统计 —— 合计由各行算出，节次越界与未开模式的赛事都被拒', async () => {
+  const repo = fixtureFor(2, 5);
+  const { eventId, teamIds } = await lockedDetailedEvent(repo);
+  const drawn = await call(repo, 'drawTeamEvent', { eventId });
+  assert.equal(drawn.ok, true, drawn.message);
+  const row = (await call(repo, 'listTeamMatches', { eventId })).matches[0];
+  await call(repo, 'recordTeamMatch', { matchId: row.matchId, scoreA: 30, scoreB: 24 });
+
+  const panel = await call(repo, 'getTeamMatchStats', { matchId: row.matchId });
+  assert.equal(panel.statPolicy, 'detailed');
+  assert.equal(panel.periods, 2, 'campus-2x20 是两节');
+  const side = panel.sides.find(item => item.teamId === row.teamA);
+  const player = side.players[0];
+
+  // 第 1 节 8 分 3 板，第 2 节 7 分 2 板 → 合计 15 分 5 板
+  const saved = await call(repo, 'saveTeamMatchStats', {
+    matchId: row.matchId,
+    mode: 'detailed',
+    rows: [
+      { period: 1, userId: player.userId, points: 8, rebounds: 3 },
+      { period: 2, userId: player.userId, points: 7, rebounds: 2 },
+    ],
+  });
+  assert.equal(saved.ok, true, saved.message);
+  assert.equal(saved.warnings.length, 1, '个人合计 15 ≠ 球队 30，只提示不拒绝');
+  assert.match(saved.warnings[0], /差 15 分待归属/);
+
+  const reread = await call(repo, 'getTeamMatchStats', { matchId: row.matchId });
+  const after = reread.sides.find(item => item.teamId === row.teamA).players[0];
+  assert.equal(after.points, 15, '合计由各行算出，不双份存储');
+  assert.equal(after.rebounds, 5);
+  assert.equal(after.assists, null, '没录的指标是未记录，不是 0');
+
+  const doc = await repo.teamMatchStats.getById(
+    require('../miniprogram/utils/school.js').schoolKey('tms', row.matchId, row.teamA)
+  );
+  assert.equal(doc.mode, 'detailed');
+  assert.equal(doc.rows.length, 2);
+  assert.equal(doc.integrity, 'partial', '5 人只录了 1 人');
+  assert.equal(doc.revision, 1);
+
+  // 节次越界
+  const badPeriod = await call(repo, 'saveTeamMatchStats', {
+    matchId: row.matchId, mode: 'detailed',
+    rows: [{ period: 3, userId: player.userId, points: 5 }],
+  });
+  assert.equal(badPeriod.ok, false);
+  assert.match(badPeriod.message, /节次需在 1–2/);
+
+  // 中文指标名，不把字段键抛给用户
+  const badValue = await call(repo, 'saveTeamMatchStats', {
+    matchId: row.matchId, mode: 'detailed',
+    rows: [{ period: 1, userId: player.userId, points: 300 }],
+  });
+  assert.equal(badValue.ok, false);
+  assert.match(badValue.message, /个人得分」需为 0–199/);
+});
+
+test('按节统计 —— 赛事没开 detailed 时拒绝，录满全队才记 full', async () => {
+  const repo = fixtureFor(4, 5);
+  const { eventId } = await lockedEvent(repo);
+  await call(repo, 'drawTeamEvent', { eventId });
+  const row = (await call(repo, 'listTeamMatches', { eventId })).matches[0];
+  const panel = await call(repo, 'getTeamMatchStats', { matchId: row.matchId });
+  assert.equal(panel.statPolicy, 'basic', '默认只开基础模式');
+  assert.equal(panel.periods, 4, '默认预设是 4 节');
+
+  const denied = await call(repo, 'saveTeamMatchStats', {
+    matchId: row.matchId, mode: 'detailed',
+    rows: [{ period: 1, userId: panel.sides[0].players[0].userId, points: 5 }],
+  });
+  assert.equal(denied.ok, false);
+  assert.match(denied.message, /未开启按节统计/);
+
+  // 另一份开了 detailed 的赛事：把 5 个人都录上 → full
+  const repo2 = fixtureFor(2, 5);
+  const detail = await lockedDetailedEvent(repo2);
+  await call(repo2, 'drawTeamEvent', { eventId: detail.eventId });
+  const m2 = (await call(repo2, 'listTeamMatches', { eventId: detail.eventId })).matches[0];
+  const side = (await call(repo2, 'getTeamMatchStats', { matchId: m2.matchId })).sides
+    .find(item => item.teamId === m2.teamA);
+  await call(repo2, 'saveTeamMatchStats', {
+    matchId: m2.matchId, mode: 'detailed',
+    rows: side.players.map(player => ({ period: 1, userId: player.userId, points: 6 })),
+  });
+  const doc = await repo2.teamMatchStats.getById(
+    require('../miniprogram/utils/school.js').schoolKey('tms', m2.matchId, m2.teamA)
+  );
+  assert.equal(doc.integrity, 'full');
+  assert.equal(doc.rows.length, 5);
+});
+
+test('球员数据榜 —— 只算已发布的比赛，按总得分排序', async () => {
+  const repo = fixtureFor(2, 5);
+  const { eventId } = await lockedDetailedEvent(repo);
+  await call(repo, 'drawTeamEvent', { eventId });
+
+  // 手动排出第二轮：单场赛制下两人只打一场，这里改成循环赛才能打两场
+  const rr = fixtureFor(3, 5);
+  const rrEvent = await call(rr, 'createTeamEvent', {
+    name: '循环杯', requestId: 'req_rr', format: 'round_robin', statPolicy: 'detailed',
+  });
+  const rrTeams = [];
+  for (let t = 0; t < 3; t += 1) {
+    const captain = `u_t${t}c`;
+    const created = await callTeam(rr, 'createTeamApplication', {
+      name: `队${t + 1}`, requestId: `req_rr${t}`,
+    }, captain);
+    await callTeam(rr, 'reviewTeamApplication', { teamId: created.teamId, approve: true });
+    for (let i = 0; i < 4; i += 1) {
+      const memberId = `u_t${t}p${i}`;
+      await callTeam(rr, 'applyToJoinTeam', { teamId: created.teamId }, memberId);
+      await callTeam(rr, 'reviewTeamMember', { teamId: created.teamId, userId: memberId, approve: true }, captain);
+    }
+    await call(rr, 'submitTeamEntry', { eventId: rrEvent.eventId, teamId: created.teamId }, captain);
+    await call(rr, 'reviewTeamEntry', { eventId: rrEvent.eventId, teamId: created.teamId, approve: true });
+    rrTeams.push(created.teamId);
+  }
+  await call(rr, 'lockTeamEntries', { eventId: rrEvent.eventId });
+  await call(rr, 'drawTeamEvent', { eventId: rrEvent.eventId });
+
+  const rows = (await call(rr, 'listTeamMatches', { eventId: rrEvent.eventId })).matches;
+  const star = rows[0].teamA;
+  const others = rows[1].teamA;
+  // 第一场发布并录统计，第二场只录比分不发布
+  await call(rr, 'recordTeamMatch', { matchId: rows[0].matchId, scoreA: 40, scoreB: 38 });
+  await call(rr, 'publishTeamMatch', { matchId: rows[0].matchId, approve: true });
+  await call(rr, 'recordTeamMatch', { matchId: rows[1].matchId, scoreA: 50, scoreB: 44 });
+  const p1 = (await call(rr, 'getTeamMatchStats', { matchId: rows[0].matchId })).sides
+    .find(item => item.teamId === star).players[0];
+  await call(rr, 'saveTeamMatchStats', {
+    matchId: rows[0].matchId, mode: 'detailed',
+    rows: [{ period: 1, userId: p1.userId, points: 12, rebounds: 5, assists: 4 }],
+  });
+
+  const board = await call(rr, 'getTeamEventPlayerStats', { eventId: rrEvent.eventId });
+  assert.equal(board.matchCount, 1, '只算已发布的那一场');
+  assert.equal(board.players.length, 1, '未发布的比赛不进榜');
+  assert.equal(board.players[0].userId, p1.userId);
+  assert.equal(board.players[0].points, 12);
+  assert.equal(board.players[0].rebounds, 5);
+  assert.equal(board.players[0].games, 1);
+  assert.equal(board.players[0].pointsPerGame, 12);
+});
+
+test('并发 —— 版本号对不上的录分、发布与统计都被拒', async () => {
+  const repo = fixtureFor(4, 5);
+  const { eventId } = await lockedEvent(repo);
+  await call(repo, 'drawTeamEvent', { eventId });
+  const row = (await call(repo, 'listTeamMatches', { eventId })).matches[0];
+
+  const stale = await call(repo, 'recordTeamMatch', {
+    matchId: row.matchId, scoreA: 80, scoreB: 70, expectRevision: 99,
+  });
+  assert.equal(stale.ok, false);
+  assert.match(stale.message, /刚被改过/);
+
+  // 用对的版本号录进去，版本 +1
+  const fresh = await call(repo, 'recordTeamMatch', {
+    matchId: row.matchId, scoreA: 80, scoreB: 70, expectRevision: 1,
+  });
+  assert.equal(fresh.ok, true, fresh.message);
+  const after = await repo.teamMatches.getById(row.matchId);
+  assert.equal(after.revision, 2, '每次录分版本 +1，页面据此判断要不要刷新');
+
+  // 再拿旧版本号发布 → 拒
+  const stalePublish = await call(repo, 'publishTeamMatch', {
+    matchId: row.matchId, approve: true, expectRevision: 1,
+  });
+  assert.equal(stalePublish.ok, false);
+
+  // 统计同样：拿不到对的版本号就拒绝覆盖
+  const panel = await call(repo, 'getTeamMatchStats', { matchId: row.matchId });
+  const player = panel.sides[0].players[0];
+  await call(repo, 'saveTeamMatchStats', {
+    matchId: row.matchId, players: [{ userId: player.userId, points: 10 }],
+  });
+  const staleStats = await call(repo, 'saveTeamMatchStats', {
+    matchId: row.matchId,
+    players: [{ userId: player.userId, points: 20 }],
+    expectRevision: 0,
+  });
+  assert.equal(staleStats.ok, false);
+  assert.match(staleStats.message, /统计刚被改过/);
 });

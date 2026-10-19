@@ -399,26 +399,49 @@ test('赛事详情 —— 切回「正常完赛」不再带 forfeit', () => with
 }));
 
 /* ============================================================
- * 个人统计录入
+ * 个人统计录入（基础 / 按节）与球员数据榜
  * ============================================================ */
 
+/** 一份面板数据。默认基础模式：每队两人，七个指标都未记录 */
 function statsPanel(overrides = {}) {
-  const players = (prefix) => [1, 2].map(index => ({
-    userId: `${prefix}p${index}`, name: `${prefix} 球员${index}`, points: null, fouls: null,
-  }));
+  const players = (prefix) => [1, 2].map(index => {
+    const row = { userId: `${prefix}p${index}`, name: `${prefix} 球员${index}` };
+    ['points', 'rebounds', 'assists', 'steals', 'blocks', 'turnovers', 'fouls']
+      .forEach((field) => { row[field] = null; });
+    return row;
+  });
   return {
     ok: true,
     match: { matchId: 'x_tev_1_r1_main_0', teamAName: '热浪队', teamBName: '闪电队' },
+    statPolicy: 'basic',
+    periods: 4,
     sides: [
-      { teamId: 'tm_a', teamName: '热浪队', players: players('a') },
-      { teamId: 'tm_b', teamName: '闪电队', players: players('b') },
+      { teamId: 'tm_a', teamName: '热浪队', players: players('a'), rows: null, revision: 0 },
+      { teamId: 'tm_b', teamName: '闪电队', players: players('b'), rows: null, revision: 0 },
     ],
     canEdit: true,
     ...overrides,
   };
 }
 
-test('统计面板 —— 按服务端名单铺格子，null 显示成空白而不是「null」', () => withApi({
+/** 按节模式的面板：每人每节一行 */
+function detailedPanel(periods = 2) {
+  const sides = ['a', 'b'].map((prefix) => ({
+    teamId: `tm_${prefix}`,
+    teamName: prefix === 'a' ? '热浪队' : '闪电队',
+    players: [1, 2].map((index) => {
+      const row = { userId: `${prefix}p${index}`, name: `${prefix} 球员${index}` };
+      ['points', 'rebounds', 'assists', 'steals', 'blocks', 'turnovers', 'fouls']
+        .forEach((field) => { row[field] = null; });
+      return row;
+    }),
+    rows: [],
+    revision: 0,
+  }));
+  return statsPanel({ statPolicy: 'detailed', periods, sides });
+}
+
+test('统计面板 —— 按服务端名单铺格子，未记录显示成空白而不是「null」', () => withApi({
   getTeamEvent: () => detailFixture(),
   getTeamMatchStats: () => statsPanel(),
 }, async () => {
@@ -428,7 +451,10 @@ test('统计面板 —— 按服务端名单铺格子，null 显示成空白而�
   await page.onOpenStats({ currentTarget: { dataset: { matchid: 'x_tev_1_r1_main_0' } } });
   assert.ok(page.data.statsEditing);
   assert.equal(page.data.statsEditing.title, '热浪队 vs 闪电队');
-  assert.equal(page.data.statsEditing.sides[0].players[0].points, '', '未记录显示为空');
+  assert.equal(page.data.statGroups.length, 1, '基础模式只有一组');
+  assert.equal(page.data.statRows.length, 4, '两队各两人');
+  assert.equal(page.data.statRows[0].points, '', '未记录显示为空');
+  assert.equal(page.data.statRows[0].rebounds, '');
 }));
 
 test('统计面板 —— 只把填过的格子发上去，没填的球员不占位', () => withApi({
@@ -440,34 +466,68 @@ test('统计面板 —— 只把填过的格子发上去，没填的球员不占
   await page.onLoad({ eventId: 'tev_1' });
   await page.onOpenStats({ currentTarget: { dataset: { matchid: 'x_tev_1_r1_main_0' } } });
 
-  // 第 1 支队的第 2 个人：12 分 4 犯
-  page.onInputStat({
-    currentTarget: { dataset: { side: 0, slot: 1, field: 'points' } }, detail: { value: '12' },
-  });
-  page.onInputStat({
-    currentTarget: { dataset: { side: 0, slot: 1, field: 'fouls' } }, detail: { value: '4' },
-  });
-  assert.equal(page.data.statsEditing.sides[0].players[1].points, '12');
-  assert.equal(page.data.statsEditing.sides[0].players[0].points, '', '别的格子不受影响');
+  // a 队第 2 个人：12 分 4 犯
+  const target = page.data.statRows.find(row => row.userId === 'ap2');
+  page.onInputStat({ currentTarget: { dataset: { key: target.key, field: 'points' } }, detail: { value: '12' } });
+  page.onInputStat({ currentTarget: { dataset: { key: target.key, field: 'fouls' } }, detail: { value: '4' } });
+
+  const after = page.data.statRows.find(row => row.userId === 'ap2');
+  assert.equal(after.points, '12');
+  assert.equal(after.fouls, '4');
+  assert.equal(page.data.statRows.find(row => row.userId === 'ap1').points, '', '别的格子不受影响');
 
   await page.onSaveStats();
   const saved = calls.find(call => call[0] === 'saveTeamMatchStats');
-  assert.deepEqual(saved[1].players, [{ userId: 'ap2', points: '12', fouls: '4' }]);
+  assert.equal(saved[1].mode, 'basic');
+  assert.equal(saved[1].expectRevision, 0, '把打开时拿到的版本号带回去');
+  assert.deepEqual(saved[1].players, [{ userId: 'ap2', points: '12', rebounds: '', assists: '', steals: '', blocks: '', turnovers: '', fouls: '4' }]);
   assert.equal(page.data.statsEditing, null, '保存成功收起面板');
   assert.match(page.data.notice, /已保存/);
+}));
+
+test('统计面板 —— 按节模式：一节一组，保存带节次', () => withApi({
+  getTeamEvent: () => detailFixture(),
+  getTeamMatchStats: () => detailedPanel(2),
+  saveTeamMatchStats: () => ({ ok: true, warnings: [] }),
+}, async (calls) => {
+  const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
+  await page.onLoad({ eventId: 'tev_1' });
+  await page.onOpenStats({ currentTarget: { dataset: { matchid: 'x_tev_1_r1_main_0' } } });
+
+  assert.equal(page.data.statsEditing.mode, 'detailed');
+  assert.deepEqual(page.data.statGroups.map(group => group.period), [1, 2], '按节分组');
+  assert.equal(page.data.statGroups[0].rows.length, 4, '一节里两队各两人');
+
+  // 同一人在两节各录一次：键必须不同，否则两节会串数据
+  const first = page.data.statRows.find(row => row.userId === 'ap1' && row.period === 1);
+  const second = page.data.statRows.find(row => row.userId === 'ap1' && row.period === 2);
+  assert.notEqual(first.key, second.key, '键要带节次');
+  page.onInputStat({ currentTarget: { dataset: { key: first.key, field: 'points' } }, detail: { value: '8' } });
+  page.onInputStat({ currentTarget: { dataset: { key: second.key, field: 'points' } }, detail: { value: '7' } });
+
+  const p1 = page.data.statRows.find(row => row.key === first.key);
+  const p2 = page.data.statRows.find(row => row.key === second.key);
+  assert.equal(p1.points, '8');
+  assert.equal(p2.points, '7');
+
+  await page.onSaveStats();
+  const saved = calls.find(call => call[0] === 'saveTeamMatchStats');
+  assert.equal(saved[1].mode, 'detailed');
+  const rows = saved[1].rows.filter(row => row.userId === 'ap1');
+  assert.equal(rows.length, 2, '两节各自一行');
+  assert.deepEqual(rows.map(row => row.period).sort(), [1, 2]);
 }));
 
 test('统计面板 —— 合计与球队得分不符时把差额提示出来', () => withApi({
   getTeamEvent: () => detailFixture(),
   getTeamMatchStats: () => statsPanel(),
-  saveTeamMatchStats: () => ({ ok: true, warnings: ['A 队个人得分合计 12，球队 80，差 68 分待归属'] }),
+  saveTeamMatchStats: () => ({ ok: true, warnings: ['第 A 队个人得分合计 12，球队 80，差 68 分待归属'] }),
 }, async () => {
   const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
   await page.onLoad({ eventId: 'tev_1' });
   await page.onOpenStats({ currentTarget: { dataset: { matchid: 'x_tev_1_r1_main_0' } } });
-  page.onInputStat({
-    currentTarget: { dataset: { side: 0, slot: 0, field: 'points' } }, detail: { value: '12' },
-  });
+  const target = page.data.statRows.find(row => row.userId === 'ap1');
+  page.onInputStat({ currentTarget: { dataset: { key: target.key, field: 'points' } }, detail: { value: '12' } });
   await page.onSaveStats();
 
   assert.match(page.data.notice, /差 68 分待归属/);
@@ -497,4 +557,33 @@ test('统计面板 —— 一个格子都没填时不发请求', () => withApi({
   await page.onSaveStats();
   assert.equal(calls.filter(call => call[0] === 'saveTeamMatchStats').length, 0);
   assert.match(page.data.notice, /还没填/);
+}));
+
+test('球员数据榜 —— 打开详情就拉一次，落到 data 供模板渲染', () => withApi({
+  getTeamEvent: () => detailFixture(),
+  getTeamEventPlayerStats: () => ({
+    ok: true,
+    players: [
+      { userId: 'ap1', name: 'a 球员1', games: 2, points: 26, rebounds: 10, assists: 6, pointsPerGame: 13 },
+    ],
+  }),
+}, async (calls) => {
+  const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
+  await page.onLoad({ eventId: 'tev_1' });
+
+  assert.equal(calls.filter(call => call[0] === 'getTeamEventPlayerStats').length, 1);
+  assert.equal(page.data.playerStats.length, 1);
+  assert.equal(page.data.playerStats[0].pointsPerGame, 13);
+}));
+
+test('球员数据榜 —— 拉失败只留一句提示，不影响页面其他部分', () => withApi({
+  getTeamEvent: () => detailFixture(),
+  getTeamEventPlayerStats: () => ({ ok: false, message: '赛事不存在' }),
+}, async () => {
+  const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
+  await page.onLoad({ eventId: 'tev_1' });
+
+  assert.deepEqual(page.data.playerStats, []);
+  assert.match(page.data.playerStatsError, /赛事不存在/);
+  assert.equal(page.data.error, '', '球员榜失败不该让整页报错');
 }));

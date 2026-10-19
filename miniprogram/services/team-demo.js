@@ -1,0 +1,346 @@
+/**
+ * 团队运动（篮球）的演示内容
+ * ============================================================
+ * 一条完整的团队赛链路摆在这里：建队 → 报名 → 锁定 → 抽签 → 录分 → 发布 →
+ * 季军赛 → 结算名次 → 个人统计 → 球员数据榜。打开小程序切到篮球协会，
+ * 每一步都有东西可点，不需要先在云控制台建数据。
+ *
+ * 【为什么单独一个文件，而不是塞进 school-seed】
+ * school-seed 的演示内容按「学校 + 协会」切片，被近二十个用例按条数断言；
+ * 团队内容是另一套集合、另一套服务，混在一起会让那些断言随球队多寡漂移。
+ * 这里只被 createSchoolDemoContent 调一次，谁要谁接。
+ *
+ * 【为什么比分与统计是手工摆的，而不是驱动服务跑一遍】
+ * 运动会演示数据是驱动真实服务跑出来的（meet-seed.js），因为那一套的
+ * 状态机有几十个分支，手摆必然对不上。团队赛这一版的形状是固定的：
+ * 4 支队 → 2 场半决赛 + 决赛 + 季军赛，比分与统计照着写反而更直观，
+ * 也更容易让人看懂「一场比赛的统计长什么样」。
+ *
+ * 【为什么统计的每节得分要刚好加得起来】
+ * 演示数据里出现「个人合计 58，球队 60，差 2 分待归属」这种提醒，
+ * 看的人会以为是 bug。所以每节的分都是按比例切出来的整数，合计分毫不差。
+ * ============================================================
+ */
+
+const { MEMBER_SEED } = require('./seed.js');
+const { eventMatchKey } = require('./draw.js');
+const { schoolKey, schoolMembershipKey, teamMemberKey } = require('../utils/school.js');
+const {
+  TEAM_STATUS, TEAM_MEMBER_STATUS, TEAM_EVENT_STATUS, TEAM_ENTRY_STATUS,
+  TEAM_MATCH_STATUS, EVENT_FORMAT, EVENT_BRONZE_MODE, BRACKET_STAGE,
+} = require('../utils/constants.js');
+const { normalizeBasketballRules } = require('../utils/basketball-rules.js');
+
+const SCHOOL_ID = 'muc';
+const ASSOCIATION = 'bk';
+const SCOPE = { schoolId: SCHOOL_ID, association: ASSOCIATION };
+/** 与其它演示内容同一个时间锚点：每次 reset 得到完全一样的数据 */
+const NOW = new Date('2026-03-01T09:00:00Z');
+const ISO = NOW.toISOString();
+
+/** 旧演示账号 u01–u24 的昵称，名单快照里要写当时的名字 */
+const NICK = new Map(MEMBER_SEED.map((item, index) => [`u${String(index + 1).padStart(2, '0')}`, item.nickName]));
+const nameOf = userId => NICK.get(userId) || userId;
+
+/** 四支球队：队长 + 4 名队员，全部取自有学校身份的旧演示账号 */
+const TEAM_SPECS = [
+  { slug: 'heat', name: '热浪队', captain: 'u01', members: ['u02', 'u03', 'u04', 'u05'] },
+  { slug: 'flash', name: '闪电队', captain: 'u06', members: ['u07', 'u08', 'u09', 'u10'] },
+  { slug: 'rock', name: '磐石队', captain: 'u11', members: ['u12', 'u13', 'u14', 'u15'] },
+  { slug: 'wind', name: '疾风队', captain: 'u16', members: ['u17', 'u18', 'u19', 'u20'] },
+];
+
+const teamIdOf = slug => schoolKey('tm', SCHOOL_ID, ASSOCIATION, slug);
+
+/** 把整数按比例切成整数数组，和恰好等于原数（四舍五入会差个一两分） */
+function splitExact(total, weights) {
+  const out = weights.map(weight => Math.floor(total * weight));
+  let left = total - out.reduce((sum, value) => sum + value, 0);
+  for (let i = 0; left > 0; i += 1, left -= 1) out[i % out.length] += 1;
+  return out;
+}
+
+/** 每节的全队得分：按 22 / 26 / 24 / 28 这样的节奏切，合计就是终场比分 */
+function periodSplit(total, periods) {
+  const weights = Array.from({ length: periods }, (_, index) => (index + 1) / (periods * (periods + 1) / 2));
+  return splitExact(total, weights);
+}
+
+/** 得分权重：首发三人拿大头，替补也有零有整 */
+const POINT_WEIGHTS = [0.45, 0.3, 0.15, 0.1, 0];
+/** 其他指标的固定形态：和比分无关，只要稳定可复现 */
+const OTHER_STATS = [
+  { rebounds: 7, assists: 5, steals: 2, blocks: 1, turnovers: 2, fouls: 1 },
+  { rebounds: 5, assists: 3, steals: 1, blocks: 1, turnovers: 2, fouls: 2 },
+  { rebounds: 4, assists: 2, steals: 1, blocks: 0, turnovers: 1, fouls: 3 },
+  { rebounds: 3, assists: 1, steals: 0, blocks: 0, turnovers: 1, fouls: 2 },
+  { rebounds: 2, assists: 0, steals: 0, blocks: 0, turnovers: 1, fouls: 4 },
+];
+
+/** 按节造一队 5 个人的统计行；合计得分与球队终场比分分毫不差 */
+function statRowsOf(roster, teamScore, periods) {
+  const perPeriod = periodSplit(teamScore, periods);
+  const rows = [];
+  roster.forEach((player, index) => {
+    for (let period = 1; period <= periods; period += 1) {
+      const teamPoints = perPeriod[period - 1];
+      const mine = splitExact(teamPoints, POINT_WEIGHTS)[index];
+      rows.push({
+        period,
+        userId: player.userId,
+        points: mine,
+        ...OTHER_STATS[index % OTHER_STATS.length],
+      });
+    }
+  });
+  return rows;
+}
+
+/** 球队文档 */
+function teamDocs() {
+  return TEAM_SPECS.map((spec) => {
+    const teamId = teamIdOf(spec.slug);
+    const roster = [spec.captain, ...spec.members];
+    const docs = [{
+      _id: teamId,
+      schoolId: SCHOOL_ID,
+      association: ASSOCIATION,
+      sport: 'basketball',
+      name: spec.name,
+      captainId: spec.captain,
+      status: TEAM_STATUS.ACTIVE,
+      createdAt: ISO,
+      updatedAt: ISO,
+    }];
+    roster.forEach((userId, index) => {
+      docs.push({
+        _id: teamMemberKey(teamId, userId),
+        schoolId: SCHOOL_ID,
+        association: ASSOCIATION,
+        teamId,
+        userId,
+        role: index === 0 ? 'captain' : 'member',
+        status: TEAM_MEMBER_STATUS.ACTIVE,
+        joinedAt: ISO,
+        updatedAt: ISO,
+      });
+    });
+    return docs;
+  }).flat();
+}
+
+/** 报名文档（含锁定那一刻的名单快照） */
+function entryDocOf(eventId, spec, status, placement) {
+  const teamId = teamIdOf(spec.slug);
+  const roster = [spec.captain, ...spec.members];
+  return {
+    _id: schoolKey('ten', eventId, teamId),
+    schoolId: SCHOOL_ID,
+    association: ASSOCIATION,
+    eventId,
+    teamId,
+    status,
+    roster: roster.map(userId => ({ userId, name: nameOf(userId) })),
+    submittedBy: spec.captain,
+    submittedAt: ISO,
+    lockedAt: status === TEAM_ENTRY_STATUS.LOCKED ? ISO : null,
+    placement: placement || null,
+    updatedAt: ISO,
+  };
+}
+
+/**
+ * 一届已打完的淘汰赛：4 队 → 半决赛 ×2 + 决赛 + 季军赛，全部已发布并结算。
+ * 这是演示数据的主体：赛程、名次、统计、球员榜全都挂在它身上。
+ */
+function finishedEvent() {
+  const eventId = schoolKey('tev', SCHOOL_ID, ASSOCIATION, 'intercollegiate');
+  const rules = normalizeBasketballRules({ presetKey: 'fiba-4x10' });
+  const periods = rules.periods;
+  const [heat, flash, rock, wind] = TEAM_SPECS;
+  const rosterOf = spec => [spec.captain, ...spec.members].map(userId => ({ userId, name: nameOf(userId) }));
+
+  const event = {
+    _id: eventId,
+    schoolId: SCHOOL_ID,
+    association: ASSOCIATION,
+    name: '院际篮球邀请赛',
+    format: EVENT_FORMAT.SINGLE_ELIM,
+    rules,
+    bronzeMode: EVENT_BRONZE_MODE.PLAYOFF,
+    statPolicy: 'detailed',
+    status: TEAM_EVENT_STATUS.FINISHED,
+    entryMin: rules.rosterMin,
+    entryMax: rules.rosterMax,
+    startTime: '2026-03-01T09:00:00.000Z',
+    location: '体育馆主馆',
+    lockedCount: 4,
+    finishedAt: ISO,
+    revision: 6,
+    createdAt: ISO,
+    updatedAt: ISO,
+  };
+
+  // 对阵必须是「一支队只从一个通道走下去」：
+  //   半决赛 热浪胜闪电、疾风胜磐石 → 决赛 热浪 vs 疾风；
+  //   季军赛由**两个半决赛的负者**打：闪电 vs 磐石。
+  // 负者若同时出现在季军赛和决赛里，整届赛事就是假的（曾经就是这么摆错的）。
+  const plan = [
+    { round: 1, stage: BRACKET_STAGE.MAIN, slot: 0, a: heat, b: flash, scoreA: 78, scoreB: 71 },
+    { round: 1, stage: BRACKET_STAGE.MAIN, slot: 1, a: rock, b: wind, scoreA: 66, scoreB: 74 },
+    { round: 2, stage: BRACKET_STAGE.BRONZE, slot: 0, a: flash, b: rock, scoreA: 81, scoreB: 69 },
+    { round: 2, stage: BRACKET_STAGE.MAIN, slot: 0, a: heat, b: wind, scoreA: 85, scoreB: 79 },
+  ];
+
+  const matches = plan.map((item) => {
+    const matchId = eventMatchKey(eventId, item.round, item.stage, item.slot);
+    const winner = item.scoreA > item.scoreB ? 'A' : 'B';
+    return {
+      _id: matchId,
+      schoolId: SCHOOL_ID,
+      association: ASSOCIATION,
+      eventId,
+      round: item.round,
+      stage: item.stage,
+      slot: item.slot,
+      teamA: teamIdOf(item.a.slug),
+      teamB: teamIdOf(item.b.slug),
+      scoreA: item.scoreA,
+      scoreB: item.scoreB,
+      overtime: false,
+      forfeit: null,
+      winner,
+      status: TEAM_MATCH_STATUS.PUBLISHED,
+      matchTime: '2026-03-01T09:00:00.000Z',
+      location: '体育馆主馆',
+      recordedBy: 'demo_muc_admin',
+      recordedAt: ISO,
+      publishedBy: 'demo_muc_admin',
+      publishedAt: ISO,
+      revision: 2,
+      createdAt: ISO,
+      updatedAt: ISO,
+    };
+  });
+
+  const stats = [];
+  matches.forEach((match, index) => {
+    const item = plan[index];
+    [
+      { spec: item.a, teamId: match.teamA, score: match.scoreA },
+      { spec: item.b, teamId: match.teamB, score: match.scoreB },
+    ].forEach((side) => {
+      const key = schoolKey('tms', match._id, side.teamId);
+      const rows = statRowsOf(rosterOf(side.spec), side.score, periods);
+      stats.push({
+        _id: key,
+        schoolId: SCHOOL_ID,
+        association: ASSOCIATION,
+        eventId,
+        matchId: match._id,
+        teamId: side.teamId,
+        mode: 'detailed',
+        rows,
+        players: [],
+        integrity: 'full',
+        revision: 1,
+        updatedBy: 'demo_muc_admin',
+        updatedAt: ISO,
+      });
+    });
+  });
+
+  // 名次：冠军热浪、亚军疾风、季军闪电、第四磐石
+  const placements = [
+    { rank: 1, teamId: teamIdOf('heat'), teamName: '热浪队', note: '冠军' },
+    { rank: 2, teamId: teamIdOf('wind'), teamName: '疾风队', note: '亚军' },
+    { rank: 3, teamId: teamIdOf('flash'), teamName: '闪电队', note: '季军' },
+    { rank: 4, teamId: teamIdOf('rock'), teamName: '磐石队', note: '第四名' },
+  ];
+  event.placements = placements;
+  event.draw = {
+    format: EVENT_FORMAT.SINGLE_ELIM,
+    size: 4,
+    slots: [teamIdOf('heat'), teamIdOf('flash'), teamIdOf('rock'), teamIdOf('wind')],
+    byes: [],
+    seeds: [],
+    seed: 20260301,
+    roundCount: 2,
+    drawnAt: ISO,
+  };
+
+  const entries = TEAM_SPECS.map(spec => entryDocOf(
+    eventId, spec, TEAM_ENTRY_STATUS.LOCKED,
+    (placements.find(row => row.teamId === teamIdOf(spec.slug)) || {}).rank || null
+  ));
+
+  return { event, entries, matches, stats };
+}
+
+/** 一届还在报名的赛事：一支已通过、一支待审核，用来演示审核与锁定 */
+function registrationEvent() {
+  const eventId = schoolKey('tev', SCHOOL_ID, ASSOCIATION, 'freshman');
+  const rules = normalizeBasketballRules({ presetKey: 'campus-2x20' });
+  const [heat, flash] = TEAM_SPECS;
+  const event = {
+    _id: eventId,
+    schoolId: SCHOOL_ID,
+    association: ASSOCIATION,
+    name: '新生杯（报名中）',
+    format: EVENT_FORMAT.SINGLE_ELIM,
+    rules,
+    bronzeMode: EVENT_BRONZE_MODE.PLAYOFF,
+    statPolicy: 'basic',
+    status: TEAM_EVENT_STATUS.REGISTRATION,
+    entryMin: rules.rosterMin,
+    entryMax: rules.rosterMax,
+    startTime: '2026-04-10T09:00:00.000Z',
+    location: '东体育馆',
+    lockedCount: 0,
+    revision: 1,
+    createdAt: ISO,
+    updatedAt: ISO,
+  };
+  const entries = [
+    entryDocOf(eventId, heat, TEAM_ENTRY_STATUS.APPROVED),
+    entryDocOf(eventId, flash, TEAM_ENTRY_STATUS.SUBMITTED),
+  ];
+  return { event, entries };
+}
+
+/**
+ * 团队演示内容。
+ *
+ * @returns {{teams:Array, teamMembers:Array, teamEvents:Array,
+ *   teamEventEntries:Array, teamMatches:Array, teamMatchStats:Array, memberships:Array}}
+ */
+function createTeamDemoContent() {
+  const finished = finishedEvent();
+  const registration = registrationEvent();
+
+  // 协会会籍：让「默认演示身份 u06」与四支球队的队长都能真的去申请入队。
+  // 只加 bk，不动其它协会的会籍名单。
+  const rosterIds = TEAM_SPECS.flatMap(spec => [spec.captain, ...spec.members]);
+  const memberships = [...new Set(rosterIds)].map((userId) => ({
+    _id: schoolMembershipKey(userId, SCOPE),
+    userId,
+    schoolId: SCHOOL_ID,
+    association: ASSOCIATION,
+    role: userId === 'u01' ? 'leader' : 'member',
+    status: 'active',
+    simulated: true,
+  }));
+
+  const docs = teamDocs();
+  return {
+    teams: docs.filter(doc => !doc.teamId),
+    teamMembers: docs.filter(doc => doc.teamId),
+    teamEvents: [finished.event, registration.event],
+    teamEventEntries: [...finished.entries, ...registration.entries],
+    teamMatches: finished.matches,
+    teamMatchStats: finished.stats,
+    memberships,
+  };
+}
+
+module.exports = { createTeamDemoContent };

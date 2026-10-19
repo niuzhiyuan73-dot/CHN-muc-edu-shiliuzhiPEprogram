@@ -162,6 +162,7 @@ function forSchoolIdentity(input) {
     // 团队赛事：个人统计
     getTeamMatchStats: payload => request('getTeamMatchStats', payload),
     saveTeamMatchStats: payload => request('saveTeamMatchStats', payload),
+    getTeamEventPlayerStats: payload => request('getTeamEventPlayerStats', payload),
   });
 }
 

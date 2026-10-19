@@ -209,60 +209,66 @@
       </view>
     </view>
 
-    <!-- 个人统计浮层：按锁定名单列人，只记得分与犯规 -->
+    <!-- 个人统计浮层：按锁定名单列人；按节模式一节一张小表 -->
     <view wx:if="{{statsEditing}}" class="mask" bindtap="onCloseStats"></view>
     <view wx:if="{{statsEditing}}" class="sheet sheet-tall">
       <view class="sheet-title">{{statsEditing.title}}</view>
+      <view class="stats-mode">
+        {{statsEditing.mode === 'detailed' ? '按节统计 · 共 ' + statsEditing.periods + ' 节' : '整场统计'}}
+      </view>
       <scroll-view scroll-y class="stats-scroll">
-        <view
-          wx:for="{{statsEditing.sides}}"
-          wx:for-item="side"
-          wx:for-index="si"
-          wx:key="teamId"
-          class="stats-team"
-        >
-          <view class="stats-team-name">{{side.teamName}}</view>
+        <view wx:for="{{statGroups}}" wx:for-item="group" wx:key="period" class="stats-team">
+          <view wx:if="{{group.period > 0}}" class="stats-team-name">第 {{group.period}} 节</view>
           <view class="stats-head">
             <view class="stats-col-name">球员</view>
-            <view class="stats-col">得分</view>
-            <view class="stats-col">犯规</view>
+            <view wx:for="{{statFields}}" wx:key="field" class="stats-col">{{item.label}}</view>
           </view>
-          <view
-            wx:for="{{side.players}}"
-            wx:for-item="player"
-            wx:for-index="pi"
-            wx:key="userId"
-            class="stats-row"
-          >
-            <view class="stats-col-name">{{player.name}}</view>
+          <view wx:for="{{group.rows}}" wx:for-item="row" wx:key="key" class="stats-row">
+            <view class="stats-col-name">{{row.name}}</view>
             <input
+              wx:for="{{statFields}}"
+              wx:for-item="col"
+              wx:key="field"
               class="stats-input"
               type="number"
-              value="{{player.points}}"
+              value="{{row[col.field]}}"
               placeholder="—"
-              data-side="{{si}}"
-              data-slot="{{pi}}"
-              data-field="points"
-              bindinput="onInputStat"
-            />
-            <input
-              class="stats-input"
-              type="number"
-              value="{{player.fouls}}"
-              placeholder="—"
-              data-side="{{si}}"
-              data-slot="{{pi}}"
-              data-field="fouls"
+              data-key="{{row.key}}"
+              data-field="{{col.field}}"
               bindinput="onInputStat"
             />
           </view>
         </view>
       </scroll-view>
-      <view class="sheet-note">只填得分与犯规。空着的格子表示「这场没统计」，不等于 0 分；合计与球队得分不一致时会提示差额。</view>
+      <view class="sheet-note">
+        空着的格子表示「这场没统计」，不等于 0 分；合计与球队得分不一致时会提示差额。
+      </view>
       <view class="sheet-actions">
         <view class="btn btn-ghost" bindtap="onCloseStats">取消</view>
         <view class="btn btn-primary {{statsBusy ? 'is-disabled' : ''}}" bindtap="onSaveStats">保存</view>
       </view>
+    </view>
+
+    <!-- 球员数据榜：只算已发布的比赛 -->
+    <view wx:if="{{playerStats.length > 0}}" class="card">
+      <view class="card-title">球员数据榜</view>
+      <view class="table-head">
+        <view class="col-name">球员</view>
+        <view class="col">场次</view>
+        <view class="col">得分</view>
+        <view class="col">场均</view>
+        <view class="col">篮板</view>
+        <view class="col">助攻</view>
+      </view>
+      <view wx:for="{{playerStats}}" wx:key="userId" class="table-row">
+        <view class="col-name">{{item.name}}</view>
+        <view class="col">{{item.games}}</view>
+        <view class="col">{{item.points}}</view>
+        <view class="col">{{item.pointsPerGame}}</view>
+        <view class="col">{{item.rebounds}}</view>
+        <view class="col">{{item.assists}}</view>
+      </view>
+      <view class="hint-inline">只统计已发布的比赛；没录的指标不计入。</view>
     </view>
   </block>
 </view>

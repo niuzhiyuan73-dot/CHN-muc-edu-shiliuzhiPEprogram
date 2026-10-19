@@ -19,6 +19,32 @@
  */
 
 const space = require('../../services/association-space.js');
+
+/** 统计指标：顺序即页面上的列顺序，label 给人看，max 只作提示 */
+const STAT_FIELDS = [
+  { field: 'points', label: '得分' },
+  { field: 'rebounds', label: '篮板' },
+  { field: 'assists', label: '助攻' },
+  { field: 'steals', label: '抢断' },
+  { field: 'blocks', label: '盖帽' },
+  { field: 'turnovers', label: '失误' },
+  { field: 'fouls', label: '犯规' },
+];
+
+/** 把摊平的统计行按节分组；基础模式（period 为 0）自成一组 */
+function groupStatRows(rows, mode) {
+  if (mode === 'detailed') {
+    const byPeriod = new Map();
+    rows.forEach((row) => {
+      if (!byPeriod.has(row.period)) byPeriod.set(row.period, []);
+      byPeriod.get(row.period).push(row);
+    });
+    return [...byPeriod.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([period, list]) => ({ period, rows: list }));
+  }
+  return [{ period: 0, rows }];
+}
 const associationScope = require('../../services/association-scope.js');
 const schoolSession = require('../../services/school-session.js');
 const { currentThemeClass } = require('../../services/branding.js');
@@ -62,9 +88,18 @@ Page({
     forfeitIndex: 0,
     forfeitLabels: ['正常完赛', 'A 队弃权', 'B 队弃权'],
     busy: false,
-    /** 个人统计录入面板：{ matchId, title, sides: [{ teamId, teamName, players: [] }] } */
+    /** 个人统计录入面板：{ matchId, title, mode, periods, revision } */
     statsEditing: null,
+    /** 摊平后的统计行：{ key, sideIndex, userId, name, period?, points?, ... } */
+    statRows: [],
+    /** 按节分组的渲染结构：[{ period, rows: [] }]；period 为 0 表示基础模式 */
+    statGroups: [],
     statsBusy: false,
+    /** 统计指标列（顺序即页面列顺序） */
+    statFields: STAT_FIELDS,
+    /** 球员数据榜 */
+    playerStats: [],
+    playerStatsError: '',
     notice: '',
     noticeError: false,
   },
@@ -120,6 +155,7 @@ Page({
         placements: result.placements || [],
         canManage: event.canManage === true,
       });
+      this.onLoadPlayerStats();
       return undefined;
     } catch (err) {
       console.error('[team-event-detail] 加载失败', err);
@@ -195,7 +231,10 @@ Page({
 
   /**
    * 打开统计面板。
+   *
    * 名单必须问服务端要：它是「锁定那一刻的快照」，不是球队现在的成员表。
+   * 按节模式下把「节 × 人」摊平成一张平表，再按节分组渲染——WXML 的
+   * 表达式能力有限，能摊平就不要嵌套两层 wx:for 取值。
    */
   async onOpenStats(event) {
     const { matchid } = event.currentTarget.dataset;
@@ -210,24 +249,48 @@ Page({
         this.setData({ notice: '这场已结束或你没有录入权限', noticeError: true });
         return undefined;
       }
-      // 输入框只认字符串：把 null 统一成空串，避免显示成「null」
-      const sides = (result.sides || []).map(side => ({
-        teamId: side.teamId,
-        teamName: side.teamName,
-        players: (side.players || []).map(player => ({
-          userId: player.userId,
-          name: player.name,
-          points: player.points === null || player.points === undefined ? '' : String(player.points),
-          fouls: player.fouls === null || player.fouls === undefined ? '' : String(player.fouls),
-        })),
-      }));
-      this.setData({
-        statsEditing: {
-          matchId: matchid,
-          title: `${result.match.teamAName} vs ${result.match.teamBName}`,
-          sides,
-        },
+      const editing = {
+        matchId: matchid,
+        title: `${result.match.teamAName} vs ${result.match.teamBName}`,
+        mode: result.statPolicy,
+        periods: Number(result.periods) || 4,
+        revision: (result.sides || []).reduce((max, side) => Math.max(max, side.revision || 0), 0),
+      };
+      const rows = [];
+      (result.sides || []).forEach((side, sideIndex) => {
+        const saved = side.rows || [];
+        // key 必须带上节次：同一个人在第 1 节和第 2 节是两行，撞键会串数据
+        const blankOf = (userId, name, period) => ({
+          key: period ? `${sideIndex}-${userId}-${period}` : `${sideIndex}-${userId}`,
+          sideIndex, userId, name,
+          points: '', rebounds: '', assists: '', steals: '', blocks: '', turnovers: '', fouls: '',
+        });
+        if (editing.mode === 'detailed') {
+          // 按节：一节一张小表，每个人在每个节里都有自己的一行
+          for (let period = 1; period <= editing.periods; period += 1) {
+            (side.players || []).forEach((player) => {
+              const hit = saved.find(row => row.period === period && row.userId === player.userId) || {};
+              const row = blankOf(player.userId, player.name, period);
+              row.period = period;
+              STAT_FIELDS.forEach(({ field }) => {
+                row[field] = hit[field] === null || hit[field] === undefined ? '' : String(hit[field]);
+              });
+              rows.push(row);
+            });
+          }
+        } else {
+          const savedPlayers = side.players || [];
+          (side.players || []).forEach((player) => {
+            const hit = savedPlayers.find(item => item.userId === player.userId) || {};
+            const row = blankOf(player.userId, player.name, 0);
+            STAT_FIELDS.forEach(({ field }) => {
+              row[field] = hit[field] === null || hit[field] === undefined ? '' : String(hit[field]);
+            });
+            rows.push(row);
+          });
+        }
       });
+      this.setData({ statsEditing: editing, statRows: rows, statGroups: groupStatRows(rows, editing.mode) });
       return undefined;
     } catch (err) {
       console.error('[team-event-detail] 统计加载失败', err);
@@ -237,50 +300,42 @@ Page({
   },
 
   onCloseStats() {
-    this.setData({ statsEditing: null, statsBusy: false });
+    this.setData({ statsEditing: null, statRows: [], statGroups: [], statsBusy: false });
   },
 
-  /** 改一个格子。整体重建 sides，不依赖 setData 的数组下标路径 */
+  /** 改一个格子。整张平表重建，不依赖 setData 的数组下标路径 */
   onInputStat(event) {
-    const editing = this.data.statsEditing;
-    if (!editing) return undefined;
-    const sideIndex = Number(event.currentTarget.dataset.side);
-    const slot = Number(event.currentTarget.dataset.slot);
+    const key = event.currentTarget.dataset.key;
     const field = event.currentTarget.dataset.field;
-    const sides = editing.sides.map((side, index) => {
-      if (index !== sideIndex) return side;
-      return {
-        ...side,
-        players: side.players.map((player, j) => (
-          j === slot ? { ...player, [field]: event.detail.value } : player
-        )),
-      };
-    });
-    this.setData({ statsEditing: { ...editing, sides } });
-    return undefined;
+    const rows = this.data.statRows.map((row) => (
+      row.key === key ? { ...row, [field]: event.detail.value } : row
+    ));
+    this.setData({ statRows: rows, statGroups: groupStatRows(rows, this.data.statsEditing.mode) });
   },
 
   async onSaveStats() {
     const editing = this.data.statsEditing;
     if (!editing || this.data.statsBusy) return undefined;
-    const players = [];
-    editing.sides.forEach((side) => {
-      side.players.forEach((player) => {
-        // 两个格子都空＝这场没记这个人，不发上去
-        if (player.points === '' && player.fouls === '') return;
-        players.push({ userId: player.userId, points: player.points, fouls: player.fouls });
-      });
-    });
-    if (players.length === 0) {
+    const filled = this.data.statRows.filter(row => STAT_FIELDS.some(({ field }) => row[field] !== ''));
+    if (filled.length === 0) {
       this.setData({ notice: '还没填任何统计', noticeError: true });
       return undefined;
     }
+
+    const players = filled.map(row => {
+      const out = { userId: row.userId };
+      STAT_FIELDS.forEach(({ field }) => { out[field] = row[field]; });
+      if (editing.mode === 'detailed') out.period = row.period;
+      return out;
+    });
 
     this.setData({ statsBusy: true, notice: '', noticeError: false });
     try {
       const result = await space.forScope(this.scope).saveTeamMatchStats({
         matchId: editing.matchId,
-        players,
+        mode: editing.mode,
+        expectRevision: editing.revision,
+        ...(editing.mode === 'detailed' ? { rows: players } : { players }),
       });
       if (!result || result.ok !== true) {
         this.setData({
@@ -294,6 +349,8 @@ Page({
       this.setData({
         statsBusy: false,
         statsEditing: null,
+        statRows: [],
+        statGroups: [],
         notice: warnings.length > 0 ? warnings.join('；') : '统计已保存',
         noticeError: false,
       });
@@ -301,6 +358,25 @@ Page({
     } catch (err) {
       console.error('[team-event-detail] 统计保存失败', err);
       this.setData({ statsBusy: false, notice: '保存失败，请稍后重试', noticeError: true });
+      return undefined;
+    }
+  },
+
+  /** 球员数据榜：赛事页底部一块，只算已发布的比赛 */
+  async onLoadPlayerStats() {
+    try {
+      const result = await space.forScope(this.scope).getTeamEventPlayerStats({
+        eventId: this.data.eventId,
+      });
+      if (!result || result.ok !== true) {
+        this.setData({ playerStats: [], playerStatsError: (result && result.message) || '' });
+        return undefined;
+      }
+      this.setData({ playerStats: result.players || [], playerStatsError: '' });
+      return undefined;
+    } catch (err) {
+      console.error('[team-event-detail] 球员榜加载失败', err);
+      this.setData({ playerStats: [], playerStatsError: '球员数据加载失败' });
       return undefined;
     }
   },

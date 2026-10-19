@@ -5,6 +5,7 @@ const {
   EVENT_FORMAT, EVENT_BRONZE_MODE, EVENT_PLACEMENT_MODE, DEFAULT_GF_RESET,
 } = require('../utils/constants.js');
 const { allAssociations } = require('../utils/associations.js');
+const { createTeamDemoContent } = require('./team-demo.js');
 const {
   schoolAssociationKey, collegeKey, schoolMemberKey, schoolRoleKey,
   schoolMembershipKey, schoolEventKey, schoolEventSignupKey, schoolMatchKey,
@@ -661,6 +662,9 @@ function createSchoolDemoContent() {
   content.exchangeMatches = exchange.matches;
   // 待审转校申请挂在 schoolMembers 上（与真实落库同一张表），reset() 会追加到已有会员之后
   content.schoolMembers = [demoTransferApplication(now)];
+  // 团队运动（篮球）的演示内容：一支打完的淘汰赛 + 一支报名中的赛事。
+  // 只造民大篮球——切到别的协会仍是空态，才看得出「这个协会没有球队」。
+  Object.assign(content, createTeamDemoContent());
   return content;
 }
 

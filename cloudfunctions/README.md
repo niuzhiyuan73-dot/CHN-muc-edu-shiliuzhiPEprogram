@@ -2,7 +2,7 @@
 
 全站只有一个云函数，名为 `data`。前端把请求包成
 `{ protocolVersion: 2, schoolId, association, action, payload }`，它按 action 分发到
-`src/core/school-*-handlers.js`（共 184 个动作，四组：会员 13 / 协会空间与个人赛与团队 103 /
+`src/core/school-*-handlers.js`（共 187 个动作，四组：会员 13 / 协会空间与个人赛与团队 106 /
 跨校 15 / 运动会 53）。
 
 等级分**在确认比分时逐场结算并落库**（`member_ratings` + `rating_counters` 序号），
