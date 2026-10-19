@@ -85,6 +85,15 @@ const ratingSeqKey = (scope) => {
   const s = schoolScope(scope);
   return schoolKey('mrseq', s.schoolId, s.association);
 };
+// 团队运动（篮球/足球/排球）：球队与队员。
+// 球队编号由「创建人 + 请求编号」派生，重试同一请求拿到同一个队，不会建出两个。
+const teamKey = (seed, scope) => {
+  const s = schoolScope(scope);
+  if (typeof seed !== 'string' || !seed) throw new Error('球队键缺少种子');
+  return schoolKey('tm', s.schoolId, s.association, keyDigest(seed));
+};
+// 队员关系：一队一人一条。teamId 已含学校与协会，这里不再重复。
+const teamMemberKey = (teamId, userId) => schoolKey('tmm', teamId, userId);
 const scopeKey = (scope) => {
   const s = schoolScope(scope);
   return schoolKey('scope', s.schoolId, s.association);
@@ -198,4 +207,5 @@ module.exports = {
   schoolEventKey, schoolEventSignupKey, schoolMatchKey, schoolLiveKey,
   collegeEventKey, collegeEntryKey, collegeLineupKey, schoolAnnouncementKey,
   schoolAccountKey, pairCountKey, memberRatingKey, ratingSeqKey,
+  teamKey, teamMemberKey,
 };

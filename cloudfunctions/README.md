@@ -2,7 +2,7 @@
 
 全站只有一个云函数，名为 `data`。前端把请求包成
 `{ protocolVersion: 2, schoolId, association, action, payload }`，它按 action 分发到
-`src/core/school-*-handlers.js`（共 161 个动作，四组：会员 13 / 协会空间与个人赛 80 /
+`src/core/school-*-handlers.js`（共 170 个动作，四组：会员 13 / 协会空间与个人赛 89 /
 跨校 15 / 运动会 53）。
 
 等级分**在确认比分时逐场结算并落库**（`member_ratings` + `rating_counters` 序号），
@@ -34,7 +34,7 @@ const CLOUD_ENV_ID = 'cloud1-xxxxxxxxxxxx';
 `miniprogram/` 里，云端必须用**同一份实现**。所以：
 
 ```bash
-npm run sync:cloud        # 按 MANIFEST 复制到 cloudfunctions/data/lib/（当前 74 个文件）
+npm run sync:cloud        # 按 MANIFEST 复制到 cloudfunctions/data/lib/（当前 75 个文件）
 npm run check:cloud-sync  # 只校验不写入；漂移时退出码 1
 ```
 

@@ -65,6 +65,10 @@ const SCHOOL_SPACE_ACTIONS = Object.freeze([
   'archiveSchoolAnnouncement',    'listSchoolMembers',            'getSchoolMember',
   'getSchoolRanking',             'getSchoolMemberStats',         'getSchoolMemberHonors',
   'getSchoolMemberProfile',       'getSchoolSeason',              'resetSchoolSeason',
+  // 团队运动（篮球/足球/排球）：球队与队员。与个人赛彻底分开，见 team-service.js
+  'listTeams',                    'getTeam',                      'createTeamApplication',
+  'reviewTeamApplication',        'applyToJoinTeam',              'reviewTeamMember',
+  'leaveTeam',                    'transferTeamCaptain',          'archiveTeam',
 ]);
 
 /** 跨校邀请赛（`forExchange` 声明，16 个）。 */

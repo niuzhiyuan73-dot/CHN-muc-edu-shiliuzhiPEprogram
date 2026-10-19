@@ -91,6 +91,14 @@ const SCHOOL_WRITE_ACTIONS = [
   'publishSchoolAnnouncement',
   'archiveSchoolAnnouncement',
   'resetSchoolSeason',
+  // 团队运动（篮球/足球/排球）：建队 / 审核 / 入队申请与审批 / 退队 / 交接 / 归档
+  'createTeamApplication',
+  'reviewTeamApplication',
+  'applyToJoinTeam',
+  'reviewTeamMember',
+  'leaveTeam',
+  'transferTeamCaptain',
+  'archiveTeam',
   // 跨校邀请赛：建赛 / 邀请应答 / 报名签到 / 抽签指派 / 录分与定名次
   'createExchangeEvent',
   'respondExchangeInvitation',

@@ -1135,12 +1135,14 @@ const COLLEGE_ENTRY_STATUS_LABEL = {
 const TEAM_STATUS = {
   PENDING: 'pending', // 待审核：学生申请建队，等协会管理员审
   ACTIVE: 'active', // 正常
+  REJECTED: 'rejected', // 未通过：申请被退回，可改名后再申请
   ARCHIVED: 'archived', // 已归档（解散）：历史成绩仍可查，不再接受报名
 };
 
 const TEAM_STATUS_LABEL = {
   [TEAM_STATUS.PENDING]: '待审核',
   [TEAM_STATUS.ACTIVE]: '正常',
+  [TEAM_STATUS.REJECTED]: '未通过',
   [TEAM_STATUS.ARCHIVED]: '已归档',
 };
 
