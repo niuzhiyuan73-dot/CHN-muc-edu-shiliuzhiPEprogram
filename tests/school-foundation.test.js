@@ -14,7 +14,9 @@ const BUAA = { schoolId: 'buaa', association: 'pkb' };
 test('pilot directory contains MUC and simulated Beihang with independent projects and colleges', () => {
   const seed = createSchoolSeed();
   assert.deepEqual(seed.schools.map(s => s.name), ['中央民族大学', '北京航空航天大学']);
-  assert.equal(seed.schoolAssociations.length, 6);
+  // 每校 × 每个登记协会一条，协会数由注册表决定（新增协会不必改这里）
+  const { allAssociations } = require('../miniprogram/utils/associations.js');
+  assert.equal(seed.schoolAssociations.length, seed.schools.length * allAssociations().length);
   assert.ok(seed.colleges.filter(c => c.schoolId === 'buaa').every(c => c.simulated));
   assert.equal(new Set(seed.colleges.map(c => c._id)).size, seed.colleges.length);
   seed.schools[0].name = 'modified';

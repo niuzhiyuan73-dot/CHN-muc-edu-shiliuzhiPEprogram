@@ -20,7 +20,7 @@
  */
 
 const { activeAssociations, getAssociation } = require('../../utils/associations.js');
-const { resetBranding } = require('../../services/branding.js');
+const { resetBranding, themeClassOf } = require('../../services/branding.js');
 const associationScope = require('../../services/association-scope.js');
 const runtime = require('../../services/runtime-mode.js');
 
@@ -120,6 +120,9 @@ Page({
         associations: base.map((assoc) => ({
           ...assoc,
           icon: this.iconOf(assoc.id),
+          // 每张卡片自带自己的主题类：图标底色、当前态描边、「当前」角标
+          // 都靠它覆盖 --color-primary 等变量。不挂的话全部继承页面的中性红。
+          themeClass: themeClassOf(assoc.id),
           active: assoc.id === currentId,
         })),
       });

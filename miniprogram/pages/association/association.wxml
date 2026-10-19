@@ -21,11 +21,11 @@
     </view>
 
     <!-- 上档：校级活动。运动会与石榴籽杯都是学校级栏目，不属于任何协会；
-         卡片样式与下面的协会一致（同一套宫格），只是分组标题不同。 -->
+         一行三个、卡片更大，与下面的协会密集宫格区分主次。 -->
     <view class="assoc-section">
       <view class="assoc-section-title">校级活动<text class="assoc-section-note">全校都能参加</text></view>
 
-      <view class="assoc-grid">
+      <view class="assoc-grid assoc-grid--three">
         <view class="assoc-item assoc-item-meet" data-kind="meet" bindtap="onChooseMeet">
           <view class="assoc-item-icon"><text>🏟️</text></view>
           <view class="assoc-item-name">运动会</view>
@@ -40,16 +40,16 @@
       </view>
     </view>
 
-    <!-- 下档：协会。图标式网格，squircle 渐变图标在上、文字提示在下
-         （参照主流体育 App 首页宫格；三个协会正好一行） -->
+    <!-- 下档：协会。图标式宫格，一行四个（四列放得下五个字以内的协会名），
+         四个之后自动换行，后续继续加协会不必再改布局。 -->
     <view class="assoc-section">
       <view class="assoc-section-title">协会<text class="assoc-section-note">按协会查看排行榜、比赛与赛事</text></view>
 
-      <view class="assoc-grid">
+      <view class="assoc-grid assoc-grid--four">
         <view
           wx:for="{{associations}}"
           wx:key="id"
-          class="assoc-item {{item.active ? 'is-active' : ''}}"
+          class="assoc-item {{item.themeClass}} {{item.active ? 'is-active' : ''}}"
           data-association="{{item.id}}"
           bindtap="onChooseAssociation"
         >

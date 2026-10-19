@@ -4922,7 +4922,9 @@ collegeTest('石榴籽杯 —— 三个项目、默认项目列表与发起入�
     await page.onLoad({});
 
     assert.strictEqual(page.data.loading, false);
-    assert.strictEqual(page.data.projects.length, 3, '三个球类都在顶部');
+    // 项目列表跟着启用协会走（按 N 个设计）：新增协会即多一个项目，不写死数量
+    const { activeAssociations } = require('../miniprogram/utils/associations.js');
+    assert.strictEqual(page.data.projects.length, activeAssociations().length, '每个启用协会一个项目');
     assert.strictEqual(page.data.projectId, 'pkb', '默认落在当前协会');
     assert.ok(page.data.total >= 1);
     assert.strictEqual(page.data.canManage, true);
@@ -6391,14 +6393,23 @@ test('协会页 —— 列出本校的协会，当前全局协会标为「当前
     assert.strictEqual(page.data.loading, false);
     assert.strictEqual(page.data.error, '');
     assert.strictEqual(page.data.readOnlySchool, false);
+    // 本校清单来自注册表：断言与注册表同序同量，新增协会不必再改这里
+    const { activeAssociations } = require('../miniprogram/utils/associations.js');
     assert.deepStrictEqual(
       page.data.associations.map((item) => item.name),
-      ['民大匹克球', '民大乒乓', '民大羽球']
+      activeAssociations().map((assoc) => assoc.shortName)
     );
     assert.deepStrictEqual(
       page.data.associations.filter((item) => item.active).map((item) => item.id),
       ['pkb'],
       '当前全局协会那一个才标「当前」'
+    );
+    // 每张卡片必须带自己的主题类，否则图标底色会继承页面的中性红——
+    // 四个协会全变成同一个红色，正是这个字段漏挂时的表现
+    assert.deepStrictEqual(
+      page.data.associations.map((item) => item.themeClass),
+      page.data.associations.map((item) => `assoc-${item.id}`),
+      '每个协会卡片各挂自己的主题类'
     );
   } finally {
     scope.setAssociation(before);
@@ -6444,11 +6455,20 @@ test('协会页 —— 切到北航列出它的演示协会，并标只读', asy
 
     assert.strictEqual(page.data.readOnlySchool, true);
     assert.strictEqual(page.data.schoolName, '北航');
+    // 外校清单来自演示数据（schoolAssociations）：直接与之比对，演示桶加协会即可
+    const demo = require('../miniprogram/services/school-demo.js').schoolAssociations('buaa');
     assert.deepStrictEqual(
       page.data.associations.map((item) => item.name),
-      ['北航匹克球', '北航乒乓球', '北航羽毛球']
+      demo.map((item) => item.name)
     );
+    assert.ok(page.data.associations.some((item) => item.id === 'tn'), '演示数据也带网球协会');
     assert.ok(page.data.associations.every((item) => Boolean(item.glyph)), '每个协会都带文字徽标');
+    // 演示协会用的是注册表 id，主题类照样能对上（北航的卡片也是分色的）
+    assert.deepStrictEqual(
+      page.data.associations.map((item) => item.themeClass),
+      page.data.associations.map((item) => `assoc-${item.id}`),
+      '演示协会卡片也各挂自己的主题类'
+    );
   } finally {
     schoolMock.setDemoActor('demo_applicant');
     schoolSession.reset();

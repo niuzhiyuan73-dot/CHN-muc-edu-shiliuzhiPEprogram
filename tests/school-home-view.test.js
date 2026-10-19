@@ -165,8 +165,11 @@ test('聚合 —— 公告超过单页限量时如实带 hasMore，赛事数循�
   assert.strictEqual(view.announcements.rows.length, 3, '首屏仍只展示 3 条');
   assert.strictEqual(view.announcements.rows[0].pinned, true, '置顶在最前');
   // 赛事带 offset 分页：循环取完，概况数不截断
-  assert.strictEqual(view.summary.eventCount, 80 * 3, '赛事数循环取完不截断');
-  assert.strictEqual(view.summary.matchCount, 5 * 3);
+  // 协会数由注册表决定（按 N 个设计），新增协会时聚合口径自然扩展，不必改数字
+  const { activeAssociations } = require('../miniprogram/utils/associations.js');
+  const assocCount = activeAssociations().length;
+  assert.strictEqual(view.summary.eventCount, 80 * assocCount, '赛事数循环取完不截断');
+  assert.strictEqual(view.summary.matchCount, 5 * assocCount);
 });
 
 test('聚合 —— 单协会读失败跳过，其余协会照常聚合（公告不受影响）', async () => {

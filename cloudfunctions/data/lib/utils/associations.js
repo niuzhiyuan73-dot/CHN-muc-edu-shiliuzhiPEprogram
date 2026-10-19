@@ -59,7 +59,7 @@ function baseRules() {
  *                 一旦上线不可改（改了等于把历史数据指向别的协会）。
  *   name          全称，用于选择页与页内大标题。
  *   shortName     简称，用于导航栏标题等窄处。
- *   sportName     项目名（三字），用于协会切换徽章、公告页协会标签等极窄处。
+ *   sportName     项目名（2–3 字），用于协会切换徽章、公告页协会标签等极窄处。
  *   logoGlyph     文字徽标（一个汉字），小面积场景（公告 chip、比分行）与图标
  *                 缺失时的兜底。
  *   logoIcon      运动项目线条图标（白色 PNG，透明底），铺在协会主题色的渐变
@@ -119,6 +119,23 @@ const ASSOCIATIONS = [
       primaryDark: '#4A148C',
       primaryLight: '#F3E8F7',
       accent: '#F2994A',
+    },
+    ...baseRules(),
+    status: ASSOCIATION_STATUS.ACTIVE,
+  },
+  {
+    id: 'tn',
+    name: '中央民族大学网球协会',
+    shortName: '民大网球',
+    sportName: '网球',
+    logoGlyph: '网',
+    logoIcon: '/assets/assoc/tn.png',
+    theme: {
+      // 网球 → 草地绿（与乒乓的墨绿 #004D40 靠明度区分，配网球黄做点缀）
+      primary: '#2E7D32',
+      primaryDark: '#1B5E20',
+      primaryLight: '#E8F5E9',
+      accent: '#C6D93B',
     },
     ...baseRules(),
     status: ASSOCIATION_STATUS.ACTIVE,

@@ -425,3 +425,10 @@ page {
   --color-primary-light: #f3e8f7;
   --color-accent: #f2994a;
 }
+
+.assoc-tn {
+  --color-primary: #2e7d32;
+  --color-primary-dark: #1b5e20;
+  --color-primary-light: #e8f5e9;
+  --color-accent: #c6d93b;
+}

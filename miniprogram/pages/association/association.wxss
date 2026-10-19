@@ -39,9 +39,16 @@
 
 /* ==================== 校级活动 ==================== */
 
-/* 运动会用与协会同一套宫格，只是图标换成浅灰（学校级栏目，不属于任何协会） */
+/* 运动会：学校级栏目，不属于任何协会，图标底用浅灰以示区别 */
 .assoc-item-meet .assoc-item-icon {
   background: linear-gradient(135deg, #f4f6f9, #e3e8ef);
+}
+
+/* 石榴籽杯（学院赛）：香槟金浅底，与运动会的冷灰形成暖冷对照。
+   不用深金/琥珀——金色奖杯图标压在金色底上会糊在一起；
+   也不能用红色——红色是学校品牌色，会和导航栏、其他协会混作一谈 */
+.assoc-item-cup .assoc-item-icon {
+  background: linear-gradient(135deg, #fbebc8 0%, #f2d9a0 100%);
 }
 
 .assoc-item-meet:active,
@@ -49,29 +56,92 @@
   background: #f7f7f7;
 }
 
-/* ==================== 协会宫格（图标式） ==================== */
-
-/* 横向网格，一行三个（三个协会正好一行；将来加协会自动换行）。
-   图标在上、文字提示在下，参照主流体育 App 的首页宫格布局。 */
+/* ==================== 宫格（两档共用） ====================
+   列数由修饰类决定，.assoc-item 只负责卡片外观：
+     .assoc-grid--three  校级活动，一行三个，卡片更大；
+     .assoc-grid--four   协会，一行四个（五个字以内的协会名放得下，
+                         之后再加协会自动换行，不必再改布局）。
+   列宽必须与 gap 成对计算，否则每行最后一格会被挤到下一行。 */
 .assoc-grid {
   display: flex;
   flex-wrap: wrap;
+}
+
+.assoc-grid--three {
+  gap: var(--space-md);
+}
+
+.assoc-grid--four {
   gap: var(--space-md);
 }
 
 .assoc-item {
   position: relative;
   box-sizing: border-box;
-  width: calc((100% - 2 * var(--space-md)) / 3);
-  padding: var(--space-lg) var(--space-xs) var(--space-md);
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
   background: var(--color-card);
   border: 2rpx solid transparent;
-  border-radius: var(--radius-lg);
   box-shadow: 0 4rpx 16rpx rgba(31, 35, 41, 0.07);
+}
+
+/* —— 校级活动：一行三个，图标与文字整体放大一档 —— */
+.assoc-grid--three .assoc-item {
+  width: calc((100% - 2 * var(--space-md)) / 3);
+  padding: var(--space-lg) var(--space-sm);
+  border-radius: var(--radius-lg);
+}
+
+.assoc-grid--three .assoc-item-icon {
+  width: 136rpx;
+  height: 136rpx;
+  border-radius: 36rpx;
+  font-size: 56rpx;
+}
+
+.assoc-grid--three .assoc-item-name {
+  margin-top: var(--space-md);
+  font-size: var(--font-md);
+}
+
+.assoc-grid--three .assoc-item-sport {
+  margin-top: 4rpx;
+  font-size: var(--font-sm);
+}
+
+/* —— 协会：一行四个。四列宽度容得下五个字的协会名，副行恢复显示，
+      图标与字号相应放大一档，避免五列时的局促感。 */
+.assoc-grid--four .assoc-item {
+  width: calc((100% - 3 * var(--space-md)) / 4);
+  padding: var(--space-md) var(--space-xs);
+  border-radius: var(--radius-lg);
+}
+
+.assoc-grid--four .assoc-item-icon {
+  width: 96rpx;
+  height: 96rpx;
+  border-radius: 26rpx;
+  font-size: var(--font-lg);
+}
+
+.assoc-grid--four .assoc-item-icon-img {
+  width: 58rpx;
+  height: 58rpx;
+}
+
+.assoc-grid--four .assoc-item-name {
+  margin-top: var(--space-sm);
+  font-size: var(--font-sm);
+}
+
+/* 「当前」角标在四列里收到贴角位置，避免压住放大的图标 */
+.assoc-grid--four .assoc-item-current {
+  top: var(--space-xs);
+  right: var(--space-xs);
+  font-size: 20rpx;
+  padding: 0 10rpx;
 }
 
 /* 当前全局协会：主色描边 + 浅色底，扫一眼就知道「我现在在哪个协会」 */

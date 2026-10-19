@@ -9,8 +9,8 @@
  * 【为什么要按协会分开造】
  * 中间三个界面（排行榜 / 比赛 / 赛事）的数据范围是**当前协会**，不是整所学校。
  * 只造一个协会的内容，切了协会却纹丝不动，同样会让人以为「切了没反应」。所以
- * 北航的每一份演示内容都按协会（匹克球 / 乒乓 / 羽球）各造一套；首页因为是
- * 跨协会聚合，就把三个协会各取一条拼在一起。
+ * 北航的每一份演示内容都按协会（匹克球 / 乒乓 / 羽球 / 网球）各造一套；首页因为是
+ * 跨协会聚合，就把各协会各取一条拼在一起。
  *
  * 【为什么真学校不在这里造数据】
  * 民大展示的就是应用本身的数据（聚合视图），不是演示。各 accessor 对其返回
@@ -36,7 +36,7 @@ const MEDALS = ['gold', 'silver', 'bronze'];
 /**
  * 模拟学校的演示数据。
  * key 是 schoolId；只有在这里登记过的学校才会进入「外校只读浏览」的分支。
- * 每所学校下按协会 id 分桶（pkb / tt / bd），每桶各有一份 home / rank / events / matches。
+ * 每所学校下按协会 id 分桶（pkb / tt / bd / tn），每桶各有一份 home / rank / events / matches。
  *
  * rank[项目] 里的一行是「榜面字段」，rank 行/avatar/名次由 schoolRank 统一补；
  * matches 里的一行已经是 buildRecordRow 的产出口径，权限位一律置假（只读）。
@@ -277,6 +277,84 @@ const DEMO_SCHOOLS = {
             scoreText: '18:21 21:19 16:21', statusLabel: '已生效', statusClass: 'is-active' },
           { matchId: 'buaa_bd_m4', typeLabel: '男单', formatText: '21 分制 · 三局两胜', dateText: '2026-10-07 19:00',
             locationText: '沙河羽毛球馆 2 号场', teamAText: '谢飞', teamBText: '罗宇', winnerSide: '',
+            scoreText: '', statusLabel: '待确认', statusClass: 'is-pending' },
+        ],
+      },
+
+      /* ---------------- 网球 ---------------- */
+      tn: {
+        home: {
+          announcements: [
+            { id: 'buaa_tn_a1', title: '北航网球协会 2026 秋季招新', category: '招新', pinned: true, dateText: '2026-10-21',
+              content: '面向全体在校生招募新会员，10 月 31 日前到体育部登记，场地与用球由协会统一安排。' },
+            { id: 'buaa_tn_a2', title: '学院路网球场夜间开放时段调整', category: '通知', pinned: false, dateText: '2026-10-14',
+              content: '即日起 1、2 号场 18:00–22:00 开放夜间灯光，需提前一天在协会群预约。' },
+            { id: 'buaa_tn_a3', title: '北航网球公开赛报名开始', category: '赛事', pinned: false, dateText: '2026-10-09',
+              content: '设男单、女单、双打三个项目，报名截止 11 月 8 日，限本校在册会员。' },
+          ],
+          events: [
+            { id: 'buaa_tn_e1', title: '北航网球新生杯', statusLabel: '报名中', isOngoing: false,
+              timeText: '2026-11-08 09:00', location: '学院路校区网球场', quotaText: '限 32 人' },
+            { id: 'buaa_tn_e2', title: '北航院系网球团体赛', statusLabel: '进行中', isOngoing: true,
+              timeText: '2026-10-25 14:00', location: '沙河校区网球场', quotaText: '已满 8 队' },
+          ],
+          summary: { memberCount: 38, matchCount: 96, eventCount: 4, seasonText: '2026-09-01 — 2026-12-31' },
+        },
+
+        rank: {
+          men_singles: [
+            { nickName: '郑凯', realName: '郑凯', record: '13 胜 2 负', elo: '1688', winRate: '87%', status: '' },
+            { nickName: '徐天成', realName: '徐天成', record: '10 胜 4 负', elo: '1645', winRate: '71%', status: '' },
+            { nickName: '马骁', realName: '马骁', record: '9 胜 5 负', elo: '1602', winRate: '64%', status: '' },
+            { nickName: '江帆', realName: '江帆', record: '7 胜 6 负', elo: '1566', winRate: '54%', status: 'provisional' },
+            { nickName: '崔浩', realName: '崔浩', record: '4 胜 9 负', elo: '1521', winRate: '31%', status: 'inactive' },
+          ],
+          women_singles: [
+            { nickName: '苏念', realName: '苏念', record: '12 胜 1 负', elo: '1692', winRate: '92%', status: '' },
+            { nickName: '白露', realName: '白露', record: '9 胜 3 负', elo: '1638', winRate: '75%', status: '' },
+            { nickName: '韩雨', realName: '韩雨', record: '6 胜 7 负', elo: '1580', winRate: '46%', status: '' },
+            { nickName: '谭晶', realName: '谭晶', record: '3 胜 5 负', elo: '1542', winRate: '38%', status: 'provisional' },
+          ],
+          doubles: [
+            { nickName: '郑凯 / 徐天成', realName: '', record: '15 胜 2 负', elo: '1725', winRate: '88%', status: '' },
+            { nickName: '苏念 / 白露', realName: '', record: '10 胜 5 负', elo: '1658', winRate: '67%', status: '' },
+            { nickName: '马骁 / 江帆', realName: '', record: '7 胜 7 负', elo: '1596', winRate: '50%', status: 'inactive' },
+          ],
+        },
+
+        events: {
+          seasonText: '2026 秋季赛季 · 北航网球',
+          list: [
+            { id: 'buaa_tn_e3', title: '北航网球公开赛', pinned: true, statusLabel: '报名中', isSignup: true, isOngoing: false,
+              timeText: '2026-11-20 13:30', location: '学院路校区网球场', levelLabel: '校级', matchTypeLabel: '单打', disciplineLabel: '', quotaText: '9/32 人' },
+            { id: 'buaa_tn_e1', title: '北航网球新生杯', pinned: false, statusLabel: '报名中', isSignup: true, isOngoing: false,
+              timeText: '2026-11-08 09:00', location: '学院路校区网球场', levelLabel: '校级', matchTypeLabel: '单打', disciplineLabel: '男单', quotaText: '21/32 人' },
+            { id: 'buaa_tn_e2', title: '北航院系网球团体赛', pinned: false, statusLabel: '进行中', isSignup: false, isOngoing: true,
+              timeText: '2026-10-25 14:00', location: '沙河校区网球场', levelLabel: '院系', matchTypeLabel: '双打', disciplineLabel: '混双', quotaText: '8/8 队' },
+            { id: 'buaa_tn_e4', title: '北航网球春季积分赛', pinned: false, statusLabel: '已结束', isSignup: false, isOngoing: false,
+              timeText: '2026-05-18 09:00', location: '沙河校区网球场', levelLabel: '校级', matchTypeLabel: '单打', disciplineLabel: '女单', quotaText: '24/24 人' },
+          ],
+          points: [
+            { nickName: '郑凯', realName: '郑凯', count: 6, points: 58 },
+            { nickName: '苏念', realName: '苏念', count: 5, points: 50 },
+            { nickName: '徐天成', realName: '徐天成', count: 4, points: 42 },
+            { nickName: '白露', realName: '白露', count: 4, points: 36 },
+            { nickName: '马骁', realName: '马骁', count: 3, points: 28 },
+          ],
+        },
+
+        matches: [
+          { matchId: 'buaa_tn_m1', typeLabel: '男单', formatText: '15 分制 · 三局两胜', dateText: '2026-10-13 18:30',
+            locationText: '学院路网球场 1 号场', teamAText: '郑凯', teamBText: '徐天成', winnerSide: 'A',
+            scoreText: '15:11 15:13', statusLabel: '已生效', statusClass: 'is-active' },
+          { matchId: 'buaa_tn_m2', typeLabel: '女单', formatText: '15 分制 · 三局两胜', dateText: '2026-10-13 19:20',
+            locationText: '学院路网球场 1 号场', teamAText: '苏念', teamBText: '白露', winnerSide: 'A',
+            scoreText: '15:12 13:15 15:9', statusLabel: '已生效', statusClass: 'is-active' },
+          { matchId: 'buaa_tn_m3', typeLabel: '双打', formatText: '15 分制 · 三局两胜', dateText: '2026-10-10 18:00',
+            locationText: '沙河网球场 2 号场', teamAText: '郑凯、徐天成', teamBText: '马骁、江帆', winnerSide: 'B',
+            scoreText: '12:15 15:10 11:15', statusLabel: '已生效', statusClass: 'is-active' },
+          { matchId: 'buaa_tn_m4', typeLabel: '男单', formatText: '15 分制 · 三局两胜', dateText: '2026-10-08 19:00',
+            locationText: '沙河网球场 2 号场', teamAText: '江帆', teamBText: '崔浩', winnerSide: '',
             scoreText: '', statusLabel: '待确认', statusClass: 'is-pending' },
         ],
       },

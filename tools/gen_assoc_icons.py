@@ -8,6 +8,7 @@
   pkb.png  匹克球：拍面 + 短柄 + 球
   tt.png   乒乓球：圆拍 + 短柄 + 球
   bd.png   羽毛球：球拍 + 球
+  tn.png   网球：椭圆拍面 + 斜长柄 + 球
 
 图标一律白色（#FFFFFF）线条 + 透明底——颜色由底座（渐变）提供，
 新增协会时在 ICONS 里加一个绘制函数即可。
@@ -73,8 +74,21 @@ def draw_bd(d) -> None:
     d.ellipse([(132, 208), (176, 252)], outline=WHITE, width=w)
 
 
+def draw_tn(d) -> None:
+    """网球：细长椭圆拍面 + 斜长柄 + 带缝线的球（不画网线，否则像放大镜）"""
+    w = 16
+    # 拍面：细长竖向椭圆（网球拍比乒乓拍更长、更窄）
+    d.ellipse([(44, 18), (172, 178)], outline=WHITE, width=w)
+    # 柄：从拍面右下斜向右下，长度明显大于乒乓拍
+    d.line([(152, 158), (240, 236)], fill=WHITE, width=w + 6)
+    # 球：右上，两条对称缝线
+    d.ellipse([(198, 30), (272, 104)], outline=WHITE, width=w - 2)
+    d.arc([(202, 34), (256, 88)], start=120, end=240, fill=WHITE, width=8)
+    d.arc([(214, 46), (268, 100)], start=300, end=60, fill=WHITE, width=8)
+
+
 def main() -> None:
-    for name, draw_fn in (("pkb", draw_pkb), ("tt", draw_tt), ("bd", draw_bd)):
+    for name, draw_fn in (("pkb", draw_pkb), ("tt", draw_tt), ("bd", draw_bd), ("tn", draw_tn)):
         save(render(draw_fn), f"{name}.png")
 
 
