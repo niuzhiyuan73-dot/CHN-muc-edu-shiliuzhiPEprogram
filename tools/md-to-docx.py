@@ -77,14 +77,17 @@ def left_border(paragraph, color="1F4E79"):
     p_pr.append(borders)
 
 
-INLINE = re.compile(r"(\*\*.+?\*\*|`[^`]+`)")
+INLINE = re.compile(r"(\*\*.+?\*\*|`[^`]+`|\[[^\]]+\]\([^)]+\))")
 
 
 def add_runs(paragraph, text, size=10.5, bold=False, color=None):
-    """把行内 **加粗** / `代码` 拆成不同字体的 run，其余原样。
+    """把行内 **加粗** / `代码` / [链接](目标) 拆成不同字体的 run，其余原样。
 
     加粗里可能嵌着代码（如「**不触发 `bumpSeason`**」），所以加粗那一支
     递归再拆一次，否则反引号会原样露在 Word 里。
+
+    链接只保留可读文字：仓库内相对链接（指向别的 .md）在 Word 里点不开，
+    把 `[[文档名](x.md)]` 原样印出来更糟；外部 http 链接附上地址，方便纸质版查阅。
     """
     for piece in INLINE.split(text):
         if not piece:
@@ -94,6 +97,12 @@ def add_runs(paragraph, text, size=10.5, bold=False, color=None):
         elif piece.startswith("`") and piece.endswith("`") and len(piece) > 2:
             run = paragraph.add_run(piece[1:-1])
             set_font(run, size=size - 0.5, bold=bold, color=CODE_COLOR, ea=BODY_EA, ascii_font=CODE_FONT)
+        elif piece.startswith("[") and "](" in piece and piece.endswith(")"):
+            label, _, target = piece[1:-1].partition("](")
+            add_runs(paragraph, label, size=size, bold=bold, color=color)
+            if target.startswith("http"):
+                run = paragraph.add_run(f"（{target}）")
+                set_font(run, size=size - 0.5, bold=bold, color=MUTED)
         else:
             run = paragraph.add_run(piece)
             set_font(run, size=size, bold=bold, color=color)
