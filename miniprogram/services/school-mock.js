@@ -27,6 +27,7 @@ const announcementService = require('./school-announcement-service.js');
 const schoolMemberService = require('./school-member-service.js');
 const rankService = require('./school-rank-service.js');
 const teamService = require('./team-service.js');
+const teamEventService = require('./team-event-service.js');
 const meetService = require('./meet-service.js');
 const meetLeadService = require('./meet-college-lead-service.js');
 const meetRegistrationService = require('./meet-registration-service.js');
@@ -49,7 +50,7 @@ const { createMeetDemoRecords } = require('./meet-seed.js');
 const spaceHandlers = Object.freeze(pickActions([
   groupService, memberService, noticeService, trainingService, eventService, matchService,
   liveService, collegeService, announcementService, schoolMemberService, rankService,
-  teamService,
+  teamService, teamEventService,
 ], SCHOOL_SPACE_ACTIONS));
 
 /** 跨校邀请赛处理器集合（同样按白名单收口）。 */

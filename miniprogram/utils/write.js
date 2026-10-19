@@ -99,6 +99,11 @@ const SCHOOL_WRITE_ACTIONS = [
   'leaveTeam',
   'transferTeamCaptain',
   'archiveTeam',
+  // 团队赛事：建赛 / 报名 / 审核 / 锁定
+  'createTeamEvent',
+  'submitTeamEntry',
+  'reviewTeamEntry',
+  'lockTeamEntries',
   // 跨校邀请赛：建赛 / 邀请应答 / 报名签到 / 抽签指派 / 录分与定名次
   'createExchangeEvent',
   'respondExchangeInvitation',

@@ -113,6 +113,7 @@ const MANIFEST = [
   'services/live-score.js',
   // 团队运动（篮球/足球/排球）：球队与队员。云端与本地模拟共用同一份权限与幂等逻辑。
   'services/team-service.js',
+  'services/team-event-service.js',
   'services/member-review.js',
   'services/announcement.js',
   'services/event.js',

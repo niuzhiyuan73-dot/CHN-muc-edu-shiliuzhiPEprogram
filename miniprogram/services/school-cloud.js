@@ -145,6 +145,13 @@ function forSchoolIdentity(input) {
     leaveTeam: payload => request('leaveTeam', payload),
     transferTeamCaptain: payload => request('transferTeamCaptain', payload),
     archiveTeam: payload => request('archiveTeam', payload),
+    // 团队赛事（C 期首片）：建赛、报名、审核、锁定名单
+    listTeamEvents: payload => request('listTeamEvents', payload),
+    getTeamEvent: payload => request('getTeamEvent', payload),
+    createTeamEvent: payload => request('createTeamEvent', payload),
+    submitTeamEntry: payload => request('submitTeamEntry', payload),
+    reviewTeamEntry: payload => request('reviewTeamEntry', payload),
+    lockTeamEntries: payload => request('lockTeamEntries', payload),
   });
 }
 
