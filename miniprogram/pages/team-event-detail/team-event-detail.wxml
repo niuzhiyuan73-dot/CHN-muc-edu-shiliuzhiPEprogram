@@ -87,7 +87,7 @@
     <!-- 赛程 -->
     <view wx:if="{{rounds.length > 0}}" class="card">
       <view class="card-title">赛程</view>
-      <view wx:for="{{rounds}}" wx:key="round" class="round">
+      <view wx:for="{{rounds}}" wx:key="key" class="round">
         <view class="round-label">{{item.label}}</view>
         <view
           wx:for="{{item.matches}}"
@@ -124,6 +124,12 @@
               data-matchid="{{match.matchId}}"
               bindtap="onRejectScore"
             >驳回</view>
+            <view
+              wx:if="{{match.canRecord && match.status !== 'canceled'}}"
+              class="mini"
+              data-matchid="{{match.matchId}}"
+              bindtap="onOpenStats"
+            >统计</view>
           </view>
         </view>
       </view>
@@ -184,6 +190,15 @@
         />
       </view>
       <view class="ot-row">
+        <text>本场结果</text>
+        <picker mode="selector" range="{{forfeitLabels}}" value="{{forfeitIndex}}" bindchange="onPickForfeit">
+          <view class="picker">{{forfeitLabels[forfeitIndex]}}</view>
+        </picker>
+      </view>
+      <view wx:if="{{forfeitIndex > 0}}" class="forfeit-note">
+        弃权按 20:0 记（弃权方 0 分、对手胜），比分可以按实际改。
+      </view>
+      <view wx:if="{{forfeitIndex === 0}}" class="ot-row">
         <text>打了加时</text>
         <switch checked="{{overtime}}" color="#2E7D32" bindchange="onToggleOvertime" />
       </view>
@@ -191,6 +206,62 @@
       <view class="sheet-actions">
         <view class="btn btn-ghost" bindtap="onCloseRecord">取消</view>
         <view class="btn btn-primary {{busy ? 'is-disabled' : ''}}" bindtap="onSubmitScore">提交</view>
+      </view>
+    </view>
+
+    <!-- 个人统计浮层：按锁定名单列人，只记得分与犯规 -->
+    <view wx:if="{{statsEditing}}" class="mask" bindtap="onCloseStats"></view>
+    <view wx:if="{{statsEditing}}" class="sheet sheet-tall">
+      <view class="sheet-title">{{statsEditing.title}}</view>
+      <scroll-view scroll-y class="stats-scroll">
+        <view
+          wx:for="{{statsEditing.sides}}"
+          wx:for-item="side"
+          wx:for-index="si"
+          wx:key="teamId"
+          class="stats-team"
+        >
+          <view class="stats-team-name">{{side.teamName}}</view>
+          <view class="stats-head">
+            <view class="stats-col-name">球员</view>
+            <view class="stats-col">得分</view>
+            <view class="stats-col">犯规</view>
+          </view>
+          <view
+            wx:for="{{side.players}}"
+            wx:for-item="player"
+            wx:for-index="pi"
+            wx:key="userId"
+            class="stats-row"
+          >
+            <view class="stats-col-name">{{player.name}}</view>
+            <input
+              class="stats-input"
+              type="number"
+              value="{{player.points}}"
+              placeholder="—"
+              data-side="{{si}}"
+              data-slot="{{pi}}"
+              data-field="points"
+              bindinput="onInputStat"
+            />
+            <input
+              class="stats-input"
+              type="number"
+              value="{{player.fouls}}"
+              placeholder="—"
+              data-side="{{si}}"
+              data-slot="{{pi}}"
+              data-field="fouls"
+              bindinput="onInputStat"
+            />
+          </view>
+        </view>
+      </scroll-view>
+      <view class="sheet-note">只填得分与犯规。空着的格子表示「这场没统计」，不等于 0 分；合计与球队得分不一致时会提示差额。</view>
+      <view class="sheet-actions">
+        <view class="btn btn-ghost" bindtap="onCloseStats">取消</view>
+        <view class="btn btn-primary {{statsBusy ? 'is-disabled' : ''}}" bindtap="onSaveStats">保存</view>
       </view>
     </view>
   </block>

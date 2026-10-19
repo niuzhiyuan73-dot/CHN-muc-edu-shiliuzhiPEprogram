@@ -387,3 +387,83 @@
 .text-warn {
   color: #B26A00;
 }
+
+.picker {
+  padding: 10rpx var(--space-md);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-subtle, #F5F6F8);
+  font-size: 27rpx;
+  color: var(--color-text-primary);
+}
+
+.forfeit-note {
+  margin-top: var(--space-sm);
+  font-size: 23rpx;
+  line-height: 1.6;
+  color: #B26A00;
+}
+
+/* 个人统计浮层：名单可能十几人，给一个可滚动的区域 */
+.sheet-tall {
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.stats-scroll {
+  flex: 1;
+  min-height: 0;
+  max-height: 58vh;
+}
+
+.stats-team {
+  margin-bottom: var(--space-md);
+}
+
+.stats-team-name {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: var(--color-primary);
+  margin-bottom: var(--space-xs);
+}
+
+.stats-head,
+.stats-row {
+  display: flex;
+  align-items: center;
+  padding: var(--space-xs) 0;
+}
+
+.stats-head {
+  font-size: 22rpx;
+  color: var(--color-text-secondary);
+  border-bottom: 1rpx solid var(--color-border);
+}
+
+.stats-row {
+  border-bottom: 1rpx solid var(--color-border);
+}
+
+.stats-col-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 26rpx;
+  color: var(--color-text-primary);
+}
+
+.stats-col {
+  width: 130rpx;
+  text-align: center;
+  font-size: 22rpx;
+  color: var(--color-text-secondary);
+}
+
+.stats-input {
+  width: 110rpx;
+  height: 60rpx;
+  margin-left: 20rpx;
+  text-align: center;
+  font-size: 26rpx;
+  border-radius: var(--radius-sm, 8rpx);
+  background: var(--color-bg-subtle, #F5F6F8);
+}

@@ -159,6 +159,9 @@ function forSchoolIdentity(input) {
     publishTeamMatch: payload => request('publishTeamMatch', payload),
     advanceTeamRound: payload => request('advanceTeamRound', payload),
     settleTeamEvent: payload => request('settleTeamEvent', payload),
+    // 团队赛事：个人统计
+    getTeamMatchStats: payload => request('getTeamMatchStats', payload),
+    saveTeamMatchStats: payload => request('saveTeamMatchStats', payload),
   });
 }
 

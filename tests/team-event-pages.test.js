@@ -330,3 +330,171 @@ test('赛事详情 —— 已结算的赛事展示名次与积分表', () => wit
   assert.equal(page.data.placements[0].note, '冠军');
   assert.equal(page.data.table[0].diff, 12);
 }));
+
+test('赛事详情 —— 季军赛与决赛同轮次但分开成组，标题不能混', () => withApi({
+  getTeamEvent: () => detailFixture({
+    event: { ...EVENT, status: 'scheduled', draw: { size: 4 } },
+    matches: [
+      matchOf(1, 0),
+      matchOf(1, 1),
+      matchOf(2, 0),
+      matchOf(2, 0, {
+        matchId: 'x_tev_1_r2_bronze_0', stage: 'bronze', teamAName: '甲队季', teamBName: '乙队季',
+      }),
+    ],
+  }),
+}, async () => {
+  const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
+  await page.onLoad({ eventId: 'tev_1' });
+
+  assert.deepEqual(
+    page.data.rounds.map(round => round.label),
+    ['半决赛', '决赛', '季军赛'],
+    '季军赛不能被塞进「决赛」那一组'
+  );
+  const bronze = page.data.rounds.find(round => round.label === '季军赛');
+  assert.equal(bronze.matches.length, 1);
+}));
+
+test('赛事详情 —— 选弃权后自动填 20:0，并把这方作为 forfeit 提交', () => withApi({
+  getTeamEvent: () => detailFixture(),
+  recordTeamMatch: () => ({ ok: true, warnings: [] }),
+}, async (calls) => {
+  const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
+  await page.onLoad({ eventId: 'tev_1' });
+
+  page.onOpenRecord({ currentTarget: { dataset: { matchid: 'x_tev_1_r1_main_0' } } });
+  assert.deepEqual(page.data.forfeitLabels, ['正常完赛', '甲队10 弃权', '乙队10 弃权'],
+    '弃权选项要用队名，不能让裁判自己对 A/B');
+
+  // A 队弃权 → 0:20
+  page.onPickForfeit({ detail: { value: 1 } });
+  assert.equal(page.data.scoreA, '0');
+  assert.equal(page.data.scoreB, '20');
+
+  await page.onSubmitScore();
+  const recorded = calls.find(call => call[0] === 'recordTeamMatch');
+  assert.equal(recorded[1].forfeit, 'A');
+  assert.equal(recorded[1].scoreA, '0');
+  assert.equal(recorded[1].scoreB, '20');
+}));
+
+test('赛事详情 —— 切回「正常完赛」不再带 forfeit', () => withApi({
+  getTeamEvent: () => detailFixture(),
+  recordTeamMatch: () => ({ ok: true, warnings: [] }),
+}, async (calls) => {
+  const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
+  await page.onLoad({ eventId: 'tev_1' });
+
+  page.onOpenRecord({ currentTarget: { dataset: { matchid: 'x_tev_1_r1_main_0' } } });
+  page.onPickForfeit({ detail: { value: 2 } });
+  assert.equal(page.data.scoreA, '20');
+  page.onPickForfeit({ detail: { value: 0 } });
+  page.onInputScore({ currentTarget: { dataset: { side: 'A' } }, detail: { value: '86' } });
+  page.onInputScore({ currentTarget: { dataset: { side: 'B' } }, detail: { value: '80' } });
+  await page.onSubmitScore();
+
+  const recorded = calls.find(call => call[0] === 'recordTeamMatch');
+  assert.equal(recorded[1].forfeit, null);
+}));
+
+/* ============================================================
+ * 个人统计录入
+ * ============================================================ */
+
+function statsPanel(overrides = {}) {
+  const players = (prefix) => [1, 2].map(index => ({
+    userId: `${prefix}p${index}`, name: `${prefix} 球员${index}`, points: null, fouls: null,
+  }));
+  return {
+    ok: true,
+    match: { matchId: 'x_tev_1_r1_main_0', teamAName: '热浪队', teamBName: '闪电队' },
+    sides: [
+      { teamId: 'tm_a', teamName: '热浪队', players: players('a') },
+      { teamId: 'tm_b', teamName: '闪电队', players: players('b') },
+    ],
+    canEdit: true,
+    ...overrides,
+  };
+}
+
+test('统计面板 —— 按服务端名单铺格子，null 显示成空白而不是「null」', () => withApi({
+  getTeamEvent: () => detailFixture(),
+  getTeamMatchStats: () => statsPanel(),
+}, async () => {
+  const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
+  await page.onLoad({ eventId: 'tev_1' });
+
+  await page.onOpenStats({ currentTarget: { dataset: { matchid: 'x_tev_1_r1_main_0' } } });
+  assert.ok(page.data.statsEditing);
+  assert.equal(page.data.statsEditing.title, '热浪队 vs 闪电队');
+  assert.equal(page.data.statsEditing.sides[0].players[0].points, '', '未记录显示为空');
+}));
+
+test('统计面板 —— 只把填过的格子发上去，没填的球员不占位', () => withApi({
+  getTeamEvent: () => detailFixture(),
+  getTeamMatchStats: () => statsPanel(),
+  saveTeamMatchStats: () => ({ ok: true, warnings: [] }),
+}, async (calls) => {
+  const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
+  await page.onLoad({ eventId: 'tev_1' });
+  await page.onOpenStats({ currentTarget: { dataset: { matchid: 'x_tev_1_r1_main_0' } } });
+
+  // 第 1 支队的第 2 个人：12 分 4 犯
+  page.onInputStat({
+    currentTarget: { dataset: { side: 0, slot: 1, field: 'points' } }, detail: { value: '12' },
+  });
+  page.onInputStat({
+    currentTarget: { dataset: { side: 0, slot: 1, field: 'fouls' } }, detail: { value: '4' },
+  });
+  assert.equal(page.data.statsEditing.sides[0].players[1].points, '12');
+  assert.equal(page.data.statsEditing.sides[0].players[0].points, '', '别的格子不受影响');
+
+  await page.onSaveStats();
+  const saved = calls.find(call => call[0] === 'saveTeamMatchStats');
+  assert.deepEqual(saved[1].players, [{ userId: 'ap2', points: '12', fouls: '4' }]);
+  assert.equal(page.data.statsEditing, null, '保存成功收起面板');
+  assert.match(page.data.notice, /已保存/);
+}));
+
+test('统计面板 —— 合计与球队得分不符时把差额提示出来', () => withApi({
+  getTeamEvent: () => detailFixture(),
+  getTeamMatchStats: () => statsPanel(),
+  saveTeamMatchStats: () => ({ ok: true, warnings: ['A 队个人得分合计 12，球队 80，差 68 分待归属'] }),
+}, async () => {
+  const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
+  await page.onLoad({ eventId: 'tev_1' });
+  await page.onOpenStats({ currentTarget: { dataset: { matchid: 'x_tev_1_r1_main_0' } } });
+  page.onInputStat({
+    currentTarget: { dataset: { side: 0, slot: 0, field: 'points' } }, detail: { value: '12' },
+  });
+  await page.onSaveStats();
+
+  assert.match(page.data.notice, /差 68 分待归属/);
+  assert.equal(page.data.noticeError, false, '这是提醒不是错误');
+}));
+
+test('统计面板 —— 没权限时不打开面板，只给一句提示', () => withApi({
+  getTeamEvent: () => detailFixture(),
+  getTeamMatchStats: () => statsPanel({ canEdit: false }),
+}, async () => {
+  const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
+  await page.onLoad({ eventId: 'tev_1' });
+  await page.onOpenStats({ currentTarget: { dataset: { matchid: 'x_tev_1_r1_main_0' } } });
+
+  assert.equal(page.data.statsEditing, null);
+  assert.match(page.data.notice, /没有录入权限/);
+}));
+
+test('统计面板 —— 一个格子都没填时不发请求', () => withApi({
+  getTeamEvent: () => detailFixture(),
+  getTeamMatchStats: () => statsPanel(),
+}, async (calls) => {
+  const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
+  await page.onLoad({ eventId: 'tev_1' });
+  await page.onOpenStats({ currentTarget: { dataset: { matchid: 'x_tev_1_r1_main_0' } } });
+
+  await page.onSaveStats();
+  assert.equal(calls.filter(call => call[0] === 'saveTeamMatchStats').length, 0);
+  assert.match(page.data.notice, /还没填/);
+}));

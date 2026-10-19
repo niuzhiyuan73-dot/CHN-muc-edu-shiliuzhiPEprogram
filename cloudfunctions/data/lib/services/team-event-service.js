@@ -20,7 +20,7 @@ const { buildDirectory } = require('./school-actor.js');
 const { schoolKey } = require('../utils/school.js');
 const {
   TEAM_STATUS, TEAM_MEMBER_STATUS, TEAM_EVENT_STATUS, TEAM_ENTRY_STATUS, TEAM_MATCH_STATUS,
-  BRACKET_STAGE,
+  BRACKET_STAGE, EVENT_BRONZE_MODE,
 } = require('../utils/constants.js');
 const { EVENT_FORMAT } = require('../utils/constants.js');
 const { normalizeBasketballRules, formatBasketballRules, DEFAULT_PRESET_KEY } = require('../utils/basketball-rules.js');
@@ -67,6 +67,7 @@ function eventView(event, ctx, { manage, entryCount }) {
     statusLabel: TEAM_EVENT_STATUS[event.status] || event.status,
     rulesText: formatBasketballRules(event.rules),
     rules: event.rules,
+    bronzeMode: event.bronzeMode || EVENT_BRONZE_MODE.PLAYOFF,
     entryCount: Number(entryCount) || 0,
     canManage: manage,
     createdAt: event.createdAt || null,
@@ -258,10 +259,16 @@ async function createTeamEvent(payload = {}, ctx) {
     .some(event => inScope(event, ctx) && event.name === name && event.status !== TEAM_EVENT_STATUS.CANCELED);
   if (duplicate) return ok(refused('同协会已有同名赛事'));
 
+  // 季军赛默认要打：并列季军只适合「不发奖牌、只记名次」的场合，
+  // 校园赛要发第三名，不给一场比赛就永远只能按净胜分排
+  const bronzeMode = payload.bronzeMode === EVENT_BRONZE_MODE.TIED
+    ? EVENT_BRONZE_MODE.TIED
+    : EVENT_BRONZE_MODE.PLAYOFF;
+
   const now = ctx.now;
   await ctx.repo.forScope(ctx).teamEvents.set(eventId, {
     _id: eventId, schoolId: ctx.schoolId, association: ctx.association,
-    name, format, rules, status: TEAM_EVENT_STATUS.REGISTRATION,
+    name, format, rules, bronzeMode, status: TEAM_EVENT_STATUS.REGISTRATION,
     entryMin: rules.rosterMin, entryMax: rules.rosterMax,
     // 赛程的时间与地点在建赛时给一次，之后每场可单独改
     startTime: String(payload.startTime || '') || null,
@@ -753,6 +760,7 @@ async function advanceTeamRound(payload = {}, ctx) {
     eventId: event._id,
     draw: event.draw,
     matches,
+    bronzeMode: event.bronzeMode || EVENT_BRONZE_MODE.PLAYOFF,
     isFinal: match => isFinal(match) && Boolean(match.winner),
   });
   if (!plan.ok || plan.rounds.length === 0) {
@@ -861,6 +869,161 @@ async function settleTeamEvent(payload = {}, ctx) {
   return ok({ ok: true, placements: rows, message: '' });
 }
 
+/* ---------------- 个人统计 ---------------- */
+
+/** 个人统计的数值边界：得分 0–199、犯规 0–10（再高几乎一定是填错） */
+const STAT_MAX_POINTS = 199;
+const STAT_MAX_FOULS = 10;
+
+/** 统计里的一个数字：空 / 非整数 / 越界一律 null（＝未记录），绝不夹取成 0 */
+function statValueOf(raw, max) {
+  if (raw === '' || raw === null || raw === undefined) return null;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0 || n > max) return null;
+  return n;
+}
+
+/**
+ * 取一场比赛的个人统计录入面板。
+ *
+ * 【为什么要单独一个接口】
+ * 名单是「锁定那一刻的快照」（`team_event_entries.roster`），不在球队表里。
+ * 页面要按当时上场的人列格子，只能由服务端把快照与已有统计一起给出——
+ * 前端自己拼会把「现在队里有谁」误当成「这场谁打了」。
+ */
+async function getTeamMatchStats(payload = {}, ctx) {
+  if (!ctx.actorId) return ok(refused('请先登录'));
+  if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
+
+  const repo = ctx.repo.forScope(ctx);
+  const match = await repo.teamMatches.getById(payload.matchId);
+  if (!inScope(match, ctx)) return ok(refused('比赛不存在，或不在本协会'));
+  const event = await repo.teamEvents.getById(match.eventId);
+  if (!inScope(event, ctx)) return ok(refused('赛事不存在，或不在本协会'));
+
+  const entries = await repo.teamEventEntries.list();
+  const teams = await repo.teams.list();
+  const teamName = new Map(teams.map(team => [team._id, team.name]));
+  const stats = (await repo.teamMatchStats.list()).filter(row => row.matchId === match._id);
+  const manage = canManageAssociationSpace(ctx);
+  const captain = [match.teamA, match.teamB].some(
+    teamId => (teams.find(team => team._id === teamId) || {}).captainId === ctx.actorId
+  );
+
+  const sides = [match.teamA, match.teamB].map((teamId) => {
+    const entry = entries.find(row => row.eventId === event._id && row.teamId === teamId);
+    const roster = ((entry && entry.roster) || []).map(row => ({ userId: row.userId, name: row.name }));
+    const saved = stats.find(row => row.teamId === teamId);
+    const savedById = new Map(((saved && saved.players) || []).map(row => [row.userId, row]));
+    return {
+      teamId,
+      teamName: teamName.get(teamId) || '已归档球队',
+      players: roster.map(row => {
+        const hit = savedById.get(row.userId) || {};
+        return {
+          userId: row.userId,
+          name: row.name || row.userId,
+          points: Number.isInteger(hit.points) ? hit.points : null,
+          fouls: Number.isInteger(hit.fouls) ? hit.fouls : null,
+        };
+      }),
+    };
+  });
+
+  return ok({
+    ok: true,
+    match: matchView(match, teamName, { canRecord: manage || captain, canPublish: manage }),
+    sides,
+    canEdit: (manage || captain) && match.status !== TEAM_MATCH_STATUS.CANCELED
+      && event.status !== TEAM_EVENT_STATUS.FINISHED,
+    message: '',
+  });
+}
+
+/**
+ * 保存一场比赛的个人统计（得分 + 犯规）。
+ *
+ * 【总分与个人统计谁说了算】
+ * 比分是权威、统计是解释。个人得分合计与球队得分对不上时**照存**，
+ * 只回一句差额提醒——校园赛经常只有一个记分牌，硬拦会让人干脆不录。
+ *
+ * 【未记录 ≠ 0】
+ * 没填的格子存 `null` 而不是 0。0 分是一个事实（上场了没得分），
+ * 没填是另一个事实（这场没统计）。混成一个数，场均得分就永远偏低。
+ */
+async function saveTeamMatchStats(payload = {}, ctx) {
+  if (!ctx.actorId) return ok(refused('请先登录'));
+  if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
+
+  const repo = ctx.repo.forScope(ctx);
+  const match = await repo.teamMatches.getById(payload.matchId);
+  if (!inScope(match, ctx)) return ok(refused('比赛不存在，或不在本协会'));
+  const event = await repo.teamEvents.getById(match.eventId);
+  if (!inScope(event, ctx)) return ok(refused('赛事不存在，或不在本协会'));
+  if (event.status === TEAM_EVENT_STATUS.FINISHED) return ok(refused('赛事已结束，统计不能再改'));
+  if (match.status === TEAM_MATCH_STATUS.CANCELED) return ok(refused('这场已取消'));
+  if (!(await canRecordTeamMatch(match, ctx, repo))) {
+    return ok(refused('只有协会管理者或参赛队队长可以录统计'));
+  }
+
+  const rows = Array.isArray(payload.players) ? payload.players : [];
+  if (rows.length === 0) return ok(refused('没有可保存的统计'));
+
+  const entries = await repo.teamEventEntries.list();
+  const sides = [match.teamA, match.teamB].map((teamId) => {
+    const entry = entries.find(row => row.eventId === event._id && row.teamId === teamId);
+    return {
+      teamId,
+      roster: new Set(((entry && entry.roster) || []).map(row => row.userId)),
+      players: [],
+    };
+  });
+
+  for (const row of rows) {
+    const side = sides.find(item => item.roster.has(row && row.userId));
+    if (!side) return ok(refused('统计里有人不在本场名单中'));
+    const points = statValueOf(row.points, STAT_MAX_POINTS);
+    const fouls = statValueOf(row.fouls, STAT_MAX_FOULS);
+    // 空输入可能是「这个球员没数据」，也可能是「填错了」——两种都不写
+    if (row.points !== '' && row.points !== null && row.points !== undefined && points === null) {
+      return ok(refused('个人得分需为 0–199 的整数'));
+    }
+    if (row.fouls !== '' && row.fouls !== null && row.fouls !== undefined && fouls === null) {
+      return ok(refused('个人犯规需为 0–10 的整数'));
+    }
+    side.players.push({ userId: row.userId, points, fouls });
+  }
+
+  const warnings = [];
+  const now = ctx.now;
+  for (const side of sides) {
+    if (side.players.length === 0) continue;
+    const key = schoolKey('tms', match._id, side.teamId);
+    const recorded = side.players.filter(row => row.points !== null);
+    const total = recorded.reduce((sum, row) => sum + row.points, 0);
+    const teamScore = side.teamId === match.teamA ? match.scoreA : match.scoreB;
+    if (recorded.length > 0 && Number.isInteger(Number(teamScore)) && total !== Number(teamScore)) {
+      const teamLabel = side.teamId === match.teamA ? 'A 队' : 'B 队';
+      warnings.push(`${teamLabel}个人得分合计 ${total}，球队 ${teamScore}，差 ${Number(teamScore) - total} 分待归属`);
+    }
+    const hasAny = side.players.some(row => row.points !== null || row.fouls !== null);
+    await repo.teamMatchStats.set(key, {
+      _id: key,
+      schoolId: ctx.schoolId,
+      association: ctx.association,
+      eventId: event._id,
+      matchId: match._id,
+      teamId: side.teamId,
+      players: side.players,
+      integrity: hasAny ? 'basic' : 'none',
+      updatedBy: ctx.actorId,
+      updatedAt: now,
+    });
+  }
+
+  return ok({ ok: true, warnings, message: '' });
+}
+
 module.exports = {
   listTeamEvents,
   getTeamEvent,
@@ -874,4 +1037,6 @@ module.exports = {
   publishTeamMatch,
   advanceTeamRound,
   settleTeamEvent,
+  getTeamMatchStats,
+  saveTeamMatchStats,
 };
