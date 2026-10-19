@@ -643,7 +643,7 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
         // 场号：抽签 / 晋级时按同轮次不重复的规则算好落库，这里只转文案。
         // 老赛事没有这个字段，courtText 是空串而不是「0 号场」
         courtText: courtNoTextOf(record.courtNo),
-        scoreText: hasScore ? formatScore(record.scoreA, record.scoreB) : '',
+        scoreText: hasScore ? formatScore(record.scoreA, record.scoreB, record.tiebreaks) : '',
         // 正在逐球计分的那一场：当前比分顶在终局比分的位置上（进行中 / 已结束）
         live: describeLive(record.live),
         liveActive: Boolean(record.live),

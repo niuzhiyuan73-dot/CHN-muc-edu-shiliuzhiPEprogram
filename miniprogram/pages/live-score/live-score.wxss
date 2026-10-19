@@ -223,3 +223,36 @@ page {
   color: #8ff0b5;
   background: rgba(16, 37, 27, 0.95);
 }
+
+/* ==================== 网球（三层比分） ====================
+   盘分用「盘 1 : 0」标出来，否则一排数字分不清哪层是哪层；
+   本盘局分沿用 .games，本局分（15/30/40/AD）是左右两块大号文字。 */
+
+.sets {
+  flex-shrink: 0;
+  margin-right: 2vw;
+  padding: 0.2vh 1.2vw;
+  border-radius: 1vh;
+  background: rgba(255, 255, 255, 0.12);
+  color: #cfe8d2;
+  font-size: 2.8vh;
+  font-weight: 600;
+}
+
+/* 抢七要显眼：这时的大数字是抢七分，不是局分 */
+.tiebreak {
+  flex-shrink: 0;
+  margin-left: 1.5vw;
+  padding: 0.2vh 1.2vw;
+  border-radius: 1vh;
+  background: #c6d93b;
+  color: #1b3a1f;
+  font-size: 2.6vh;
+  font-weight: 600;
+}
+
+/* 网球的大数字是两个字（15/30/40/AD），36vh 会顶到边 */
+.points.points-text {
+  font-size: 26vh;
+  letter-spacing: 0.2vw;
+}

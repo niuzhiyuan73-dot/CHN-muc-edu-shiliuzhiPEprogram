@@ -38,7 +38,8 @@
  */
 
 const { applyRally, liveScoreOf, LIVE_STATUS } = require('../../services/live-score.js');
-const { formatMatchFormat } = require('../../utils/match-format.js');
+const { describeLive } = require('../../services/live-view.js');
+const { formatMatchFormat, formatOfRecord } = require('../../utils/match-format.js');
 const { MATCH_COMPETITION, MATCH_STATUS } = require('../../utils/constants.js');
 const { currentThemeClass } = require('../../services/branding.js');
 const schoolSession = require('../../services/school-session.js');
@@ -69,11 +70,24 @@ Page({
     refereeNotice: '',
 
     /**
-     * 当前的实时视图，形状见 services/live-score.js 的 liveScoreOf：
-     * { pointsA, pointsB, gamesA, gamesB, gameIndex, status, finished,
-     *   leading, gamePoints, bestOf }
+     * 当前的实时视图，形状见 services/live-view.js 的 describeLive：
+     * { scoreText, gamesText, setsText, pointsTextA, pointsTextB, gameIndexText,
+     *   tiebreakText, scoring, leading, finished, statusLabel }
+     * 开台前先给一份「0 : 0」的空视图，模板不必判空。
      */
-    view: { pointsA: 0, pointsB: 0, gamesA: 0, gamesB: 0, gameIndex: 0, status: 'live', finished: false, leading: '' },
+    view: {
+      scoreText: '0 : 0',
+      gamesText: '0 : 0',
+      setsText: '',
+      pointsTextA: '0',
+      pointsTextB: '0',
+      gameIndexText: '第 1 局',
+      tiebreakText: '',
+      scoring: 'point',
+      leading: '',
+      finished: false,
+      statusLabel: '进行中',
+    },
     /** 有可撤销的球才亮撤销按钮 */
     canUndo: false,
     /** 分出胜负才能定稿 */
@@ -229,7 +243,7 @@ Page({
         blockReason: '',
         labelA: this.labelFor(record, 'A'),
         labelB: this.labelFor(record, 'B'),
-        formatText: formatMatchFormat({ gamePoints: record.gamePoints, bestOf: record.bestOf }),
+        formatText: formatMatchFormat(formatOfRecord(record)),
         refereeNotice: this.describeReferee(record, actorId),
       });
       this.applyLive(opened.live);
@@ -289,7 +303,10 @@ Page({
    */
   applyLive(state) {
     this.state = state;
-    const view = liveScoreOf(state) || this.data.view;
+    // 模板上要的是「描述过的」视图（见 live-view.describeLive）：盘分 / 局分 /
+    // 本局分三层文案、第几盘、抢七标记全在那一层整形。直接拿 liveScoreOf 的
+    // 原始数字，模板里的 pointsTextA、setsText、gameIndexText 都会是空的。
+    const view = describeLive(state ? liveScoreOf(state) : null) || this.data.view;
     this.setData({
       view,
       // 定稿之后实时态只读：撤分会与已经写进比赛记录的正式比分打架

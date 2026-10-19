@@ -20,9 +20,13 @@ const {
   BEST_OF_OPTIONS,
   BEST_OF_LABEL,
   DEFAULT_FORMAT,
+  TENNIS_BEST_OF_LABEL,
+  scoringOf,
+  formatFieldPatch,
   formatMatchFormat,
   validateMatchScore,
 } = require('../utils/match-format.js');
+const { getAssociation } = require('../utils/associations.js');
 const { normalizeScores } = require('./match-record.js');
 const { toDate } = require('../utils/format.js');
 
@@ -37,6 +41,108 @@ const GAME_POINTS_LABELS = GAME_POINTS_OPTIONS.map((value) => `${value} 分制`)
 
 /** 局制选项，picker 直接吃 */
 const BEST_OF_LABELS = BEST_OF_OPTIONS.map((value) => BEST_OF_LABEL[value]);
+
+/** 每盘局数的选项文案（网球）。4 局是短盘，界面上要说清，否则看不出区别 */
+const SET_GAMES_LABELS = { 6: '6 局（标准盘）', 4: '4 局（短盘）' };
+
+/** 兜底规则：注册表取不到时按匹克球口径，与改造前完全一致 */
+function fallbackRules() {
+  return {
+    scoring: 'point',
+    gamePointsOptions: GAME_POINTS_OPTIONS.slice(),
+    bestOfOptions: BEST_OF_OPTIONS.slice(),
+    defaultFormat: { ...DEFAULT_FORMAT },
+  };
+}
+
+/**
+ * 某个协会的赛制规则。注册表是唯一真相源——录入页的 picker 选项必须
+ * 跟着当前协会走，否则网球会拿到「11 / 15 / 21 分制」这三个用不上的选项。
+ *
+ * @param {string} associationId
+ * @returns {Object}
+ */
+function rulesOf(associationId) {
+  try {
+    const assoc = getAssociation(associationId);
+    return (assoc && assoc.format) || fallbackRules();
+  } catch (err) {
+    return fallbackRules();
+  }
+}
+
+/**
+ * 录入页要挂到 data 上的赛制选项集合。
+ *
+ * 两套计分体系的选项表不同，所以这里把「本协会用哪一组」一次算好：
+ *   point  → 分制 + 局制
+ *   tennis → 盘制 + 每盘局数（无分制，一局恒定 4 分）
+ *
+ * @param {string} associationId
+ * @returns {{scoring:string, defaultFormat:Object, bestOfOptions:number[], bestOfLabels:string[],
+ *            gamePointsOptions:number[], gamePointsLabels:string[], setGamesOptions:number[],
+ *            setGamesLabels:string[], noAd:boolean}}
+ */
+function formatOptionsOf(associationId) {
+  const rules = rulesOf(associationId);
+  const scoring = rules.scoring === 'tennis' ? 'tennis' : 'point';
+  const bestOfOptions = (rules.bestOfOptions || []).slice();
+  const defaultFormat = { ...(rules.defaultFormat || {}) };
+
+  if (scoring === 'tennis') {
+    const setGamesOptions = (rules.setGamesOptions || []).slice();
+    return {
+      scoring,
+      defaultFormat,
+      bestOfOptions,
+      bestOfLabels: bestOfOptions.map((value) => TENNIS_BEST_OF_LABEL[value]),
+      gamePointsOptions: [],
+      gamePointsLabels: [],
+      setGamesOptions,
+      setGamesLabels: setGamesOptions.map((value) => SET_GAMES_LABELS[value] || `${value} 局`),
+      noAd: defaultFormat.noAd === true,
+    };
+  }
+
+  return {
+    scoring,
+    defaultFormat,
+    bestOfOptions,
+    bestOfLabels: bestOfOptions.map((value) => BEST_OF_LABEL[value]),
+    gamePointsOptions: (rules.gamePointsOptions || GAME_POINTS_OPTIONS).slice(),
+    gamePointsLabels: (rules.gamePointsOptions || GAME_POINTS_OPTIONS).map((value) => `${value} 分制`),
+    setGamesOptions: [],
+    setGamesLabels: [],
+    noAd: false,
+  };
+}
+
+/**
+ * 从一份赛制对象里挑出要随表单 / 记录一起走的字段。
+ * 两套体系字段不同，混着写会让另一端按错误的规则解释比分。
+ *
+ * @param {Object} format
+ * @returns {Object}
+ */
+function formatFieldsOf(format) {
+  return formatFieldPatch(format || DEFAULT_FORMAT);
+}
+
+/** 表单里的赛制字段 → 校验用的赛制对象 */
+function formatOfForm(form) {
+  return formatFieldsOf(form);
+}
+
+/** 比分单元的叫法：网球是「盘」，其余是「局」 */
+function scoreUnitLabelOf(form) {
+  return scoringOf(form) === 'tennis' ? '盘' : '局';
+}
+
+/** 把 (赛制对象) 或 (分制, 局制) 两种老调用方式统一成赛制对象 */
+function toFormatArg(formatOrGamePoints, bestOf) {
+  if (formatOrGamePoints && typeof formatOrGamePoints === 'object') return formatOrGamePoints;
+  return { gamePoints: formatOrGamePoints, bestOf };
+}
 
 /** 每队几人。单打 1 人，双打 2 人 */
 function teamSizeOf(matchType) {
@@ -53,17 +159,18 @@ function pad2(value) {
  * A 队第一格锁定当前登录会员——录的是自己的比赛，这一格不该让用户选错。
  *
  * @param {Object|null} user 当前登录会员
+ * @param {Object} [options] formatOptionsOf() 的结果；缺省按 11 分制三局两胜
  * @returns {Object}
  */
-function createForm(user) {
+function createForm(user, options) {
+  const format = (options && options.defaultFormat) || DEFAULT_FORMAT;
   const teams = createTeams(MATCH_TYPE.SINGLES, user);
   return {
     matchType: MATCH_TYPE.SINGLES,
     ...teams,
-    scoreA: new Array(DEFAULT_FORMAT.bestOf).fill(''),
-    scoreB: new Array(DEFAULT_FORMAT.bestOf).fill(''),
-    gamePoints: DEFAULT_FORMAT.gamePoints,
-    bestOf: DEFAULT_FORMAT.bestOf,
+    scoreA: new Array(format.bestOf).fill(''),
+    scoreB: new Array(format.bestOf).fill(''),
+    ...formatFieldsOf(format),
     date: '',
     time: '',
     location: '',
@@ -82,7 +189,22 @@ function createForm(user) {
  */
 function scheduledForm(record) {
   const bestOf = Number(record && record.bestOf) || DEFAULT_FORMAT.bestOf;
-  const gamePoints = Number(record && record.gamePoints) || DEFAULT_FORMAT.gamePoints;
+  // 赛制整块照抄：网球记录没有 gamePoints，硬套默认值会把 6 局盘当成 11 分制
+  const format = formatFieldsOf(
+    scoringOf(record) === 'tennis'
+      ? {
+          scoring: 'tennis',
+          bestOf,
+          setGames: Number(record.setGames) || 6,
+          tiebreakAt: Number(record.tiebreakAt) || Number(record.setGames) || 6,
+          tiebreakPoints: Number(record.tiebreakPoints) || 7,
+          noAd: record.noAd === true,
+        }
+      : {
+          gamePoints: Number(record && record.gamePoints) || DEFAULT_FORMAT.gamePoints,
+          bestOf,
+        }
+  );
   // matchTime 可能是 Date（mock 抽签直接塞 event.startTime），也可能是
   // ISO 字符串（云库往返后）。统一先转 Date 再格式化——不能对 Date 直接
   // String().split('T')，那会得到一串「Wed May 20 2026 ...」的乱码。
@@ -96,8 +218,7 @@ function scheduledForm(record) {
     teamB: [...((record && record.teamB) || [])],
     scoreA: new Array(bestOf).fill(''),
     scoreB: new Array(bestOf).fill(''),
-    gamePoints,
-    bestOf,
+    ...format,
     date: date || '',
     time: clock ? clock.slice(0, 5) : '',
     location: (record && record.location) || '',
@@ -164,18 +285,21 @@ function toScoreRows(scoreA, scoreB) {
 /**
  * 从比分推出胜方，推不出来返回 null。
  * 表单上实时显示「谁会赢」用的就是它——用户不用自己心算。
+ *
+ * 第三参数既可以是赛制对象（网球要传整份），也可以是老写法的分制数字。
  */
-function winnerOf(scoreA, scoreB, gamePoints, bestOf) {
-  const result = validateMatchScore(normalizeScores(scoreA), normalizeScores(scoreB), {
-    gamePoints,
-    bestOf,
-  });
+function winnerOf(scoreA, scoreB, formatOrGamePoints, bestOf) {
+  const result = validateMatchScore(
+    normalizeScores(scoreA),
+    normalizeScores(scoreB),
+    toFormatArg(formatOrGamePoints, bestOf)
+  );
   return result.valid ? result.winner : null;
 }
 
-/** 赛制文案：11 分制 · 三局两胜 */
-function formatTextOf(gamePoints, bestOf) {
-  return formatMatchFormat({ gamePoints, bestOf });
+/** 赛制文案：11 分制 · 三局两胜 / 一盘决胜 · 每盘 6 局（6:6 抢七） */
+function formatTextOf(formatOrGamePoints, bestOf) {
+  return formatMatchFormat(toFormatArg(formatOrGamePoints, bestOf));
 }
 
 /**
@@ -213,8 +337,9 @@ function toSubmitParams(form) {
     teamB: (Array.isArray(form.teamB) ? form.teamB : []).filter(Boolean),
     scoreA: form.scoreA,
     scoreB: form.scoreB,
-    gamePoints: form.gamePoints,
-    bestOf: form.bestOf,
+    // 赛制随提交一起走：服务端据 scoring 决定按「局」还是按「盘」校验，
+    // 少了这组字段，网球比分会掉进 11 分制的判据里
+    ...formatOfForm(form),
     matchTime: toIsoMoment(form.date, form.time),
     location: form.location,
   };
@@ -290,6 +415,11 @@ module.exports = {
   MATCH_TYPE_OPTIONS,
   GAME_POINTS_LABELS,
   BEST_OF_LABELS,
+  SET_GAMES_LABELS,
+  formatOptionsOf,
+  formatFieldsOf,
+  formatOfForm,
+  scoreUnitLabelOf,
   teamSizeOf,
   createForm,
   scheduledForm,

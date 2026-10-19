@@ -663,3 +663,48 @@ describe('findDependentMatches —— 撤销前的自查', () => {
     assert.deepEqual(findDependentMatches(), []);
   });
 });
+
+describe('buildInitialMatches —— 赛制由协会决定（网球）', () => {
+  const tennisFormat = {
+    scoring: 'tennis',
+    bestOf: 1,
+    setGames: 6,
+    tiebreakAt: 6,
+    tiebreakPoints: 7,
+    noAd: false,
+  };
+
+  test('淘汰赛首轮草稿带网球赛制，且不留 gamePoints', () => {
+    const event = { _id: 'tn1', format: EVENT_FORMAT.SINGLE_ELIM, location: '网球场', startTime: '2026-01-01 09:00' };
+    const draw = { size: 4, slots: ['u1', 'u2', 'u3', 'u4'] };
+    const drafts = buildInitialMatches(event, draw, tennisFormat);
+
+    assert.equal(drafts.length, 2);
+    drafts.forEach((draft) => {
+      assert.equal(draft.scoring, 'tennis');
+      assert.equal(draft.setGames, 6);
+      assert.equal(draft.tiebreakAt, 6);
+      assert.equal(draft.tiebreakPoints, 7);
+      assert.equal(draft.gamePoints, undefined, '签表排的是 6 局盘，不能被读成 11 分制');
+    });
+  });
+
+  test('循环赛与后续轮次同样沿用这份赛制', () => {
+    const event = { _id: 'tn2', format: EVENT_FORMAT.ROUND_ROBIN, location: '网球场', startTime: '2026-01-01 09:00' };
+    const draw = { groups: [{ group: 0, entries: ['u1', 'u2', 'u3'] }] };
+    const drafts = buildInitialMatches(event, draw, tennisFormat);
+
+    assert.equal(drafts.length, 1);
+    assert.equal(drafts[0].scoring, 'tennis');
+    assert.equal(drafts[0].setGames, 6);
+  });
+
+  test('不传赛制时照旧 11 分制，老调用方零改动', () => {
+    const event = { _id: 'tn3', format: EVENT_FORMAT.SINGLE_ELIM, location: '1 号场', startTime: '2026-01-01 09:00' };
+    const draw = { size: 2, slots: ['u1', 'u2'] };
+    const drafts = buildInitialMatches(event, draw);
+
+    assert.equal(drafts[0].gamePoints, 11);
+    assert.equal(drafts[0].scoring, undefined);
+  });
+});

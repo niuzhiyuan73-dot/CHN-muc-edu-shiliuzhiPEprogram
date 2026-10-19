@@ -31,6 +31,8 @@ const {
   winnerOf,
   formatTextOf,
   toSubmitParams,
+  formatOptionsOf,
+  scoreUnitLabelOf,
   buildPickerRows,
   pickerEmptyText,
 } = require('../miniprogram/services/match-entry-view.js');
@@ -470,4 +472,149 @@ test('buildPickerRows —— 交手场次跟着搜索筛选走，不会串到别
 
   assert.deepStrictEqual(rows.map((row) => row.id), ['u03']);
   assert.strictEqual(rows[0].pairCount, 7);
+});
+
+/* ============================================================
+ * 九、网球协会的录入表单
+ * ============================================================
+ * 网球是全站唯一走「分 → 局 → 盘」三层计分的协会，录入页因此有三处不同：
+ * 选项表换成盘制 + 每盘局数（没有再多的分制）、比分格子叫「盘」、
+ * 提交时带的是 setGames/tiebreakAt/noAd 这组字段而不是 gamePoints。
+ * 这三处任一处漏了，6 局盘里的 6:4 就会被按「11 分制的一局」解读。
+ * ============================================================ */
+
+test('formatOptionsOf —— 网球给的是盘制 + 每盘局数，一个分制选项都不给', () => {
+  const options = formatOptionsOf('tn');
+
+  assert.strictEqual(options.scoring, 'tennis');
+  assert.deepStrictEqual(options.bestOfOptions, [1, 3]);
+  assert.deepStrictEqual(options.bestOfLabels, ['一盘决胜', '三盘两胜']);
+  assert.deepStrictEqual(options.setGamesOptions, [6, 4]);
+  assert.deepStrictEqual(options.setGamesLabels, ['6 局（标准盘）', '4 局（短盘）']);
+  assert.deepStrictEqual(options.gamePointsOptions, [], '网球没有「11/15/21 分制」可选');
+  assert.deepStrictEqual(options.gamePointsLabels, []);
+  assert.strictEqual(options.noAd, false, '默认带占先');
+  assert.strictEqual(options.defaultFormat.setGames, 6);
+  assert.strictEqual(options.defaultFormat.tiebreakAt, 6);
+});
+
+test('formatOptionsOf —— 非网球协会照旧是分制 + 局制，且没有网球选项', () => {
+  const options = formatOptionsOf('bd');
+
+  assert.strictEqual(options.scoring, 'point');
+  assert.deepStrictEqual(options.bestOfOptions, BEST_OF_OPTIONS);
+  assert.deepStrictEqual(options.gamePointsOptions, GAME_POINTS_OPTIONS);
+  assert.deepStrictEqual(options.setGamesOptions, []);
+  assert.strictEqual(options.noAd, false);
+
+  // 未知 / 空协会也不能炸，退回匹克球口径
+  ['', 'nope', undefined, null].forEach((id) => {
+    const fallback = formatOptionsOf(id);
+    assert.strictEqual(fallback.scoring, 'point');
+    assert.deepStrictEqual(fallback.gamePointsOptions, GAME_POINTS_OPTIONS);
+  });
+});
+
+test('createForm —— 网球按盘建比分格子，赛制字段随表单走', () => {
+  const options = formatOptionsOf('tn');
+  const form = createForm(ME, options);
+
+  // 默认一盘决胜 → 只留一行；这一行是一盘的局分，不是三局的分
+  assert.strictEqual(form.scoreA.length, 1);
+  assert.strictEqual(form.scoreB.length, 1);
+  assert.strictEqual(form.scoring, 'tennis');
+  assert.strictEqual(form.bestOf, 1);
+  assert.strictEqual(form.setGames, 6);
+  assert.strictEqual(form.tiebreakAt, 6);
+  assert.strictEqual(form.tiebreakPoints, 7);
+  assert.strictEqual(form.noAd, false);
+  assert.strictEqual(form.gamePoints, undefined, '网球表单不该带 gamePoints');
+
+  // 三盘两胜就三行
+  const bestOf3 = createForm(ME, {
+    ...options,
+    defaultFormat: { ...options.defaultFormat, bestOf: 3 },
+  });
+  assert.strictEqual(bestOf3.scoreA.length, 3);
+
+  // 短盘 + 无占先一并带出来
+  const shortForm = createForm(ME, {
+    ...options,
+    defaultFormat: { ...options.defaultFormat, setGames: 4, tiebreakAt: 4, noAd: true },
+  });
+  assert.strictEqual(shortForm.setGames, 4);
+  assert.strictEqual(shortForm.tiebreakAt, 4);
+  assert.strictEqual(shortForm.noAd, true);
+});
+
+test('scheduledForm —— 抽签排定的网球记录整块照抄赛制，不掺 gamePoints', () => {
+  const form = scheduledForm({
+    _id: 'm01',
+    matchType: MATCH_TYPE.SINGLES,
+    teamA: ['u01'],
+    teamB: ['u02'],
+    scoring: 'tennis',
+    bestOf: 1,
+    setGames: 4,
+    tiebreakAt: 4,
+    tiebreakPoints: 7,
+    noAd: true,
+    matchTime: '2026-05-20T10:00:00',
+    location: '网球场 1 号',
+  });
+
+  assert.strictEqual(form.scoring, 'tennis');
+  assert.strictEqual(form.setGames, 4);
+  assert.strictEqual(form.tiebreakAt, 4);
+  assert.strictEqual(form.noAd, true);
+  assert.strictEqual(form.gamePoints, undefined);
+  assert.strictEqual(form.scoreA.length, 1, '一盘决胜只要一行');
+  assert.strictEqual(form.location, '网球场 1 号');
+});
+
+test('winnerOf / formatTextOf —— 网球按盘判胜负，文案带盘制与每盘局数', () => {
+  const format = { scoring: 'tennis', bestOf: 3, setGames: 6, tiebreakAt: 6, tiebreakPoints: 7, noAd: false };
+
+  assert.strictEqual(winnerOf([6, 4, 6], [4, 6, 3], format), 'A');
+  assert.strictEqual(winnerOf([4, 6, 3], [6, 4, 6], format), 'B');
+  assert.strictEqual(winnerOf([6, 4], [4, 6], format), null, '才 1:1，还没分出胜负');
+  assert.strictEqual(winnerOf([6], [5], format), null, '6:5 不是合法的盘比分');
+
+  assert.strictEqual(formatTextOf(format), '三盘两胜 · 每盘 6 局（6:6 抢七）');
+  assert.strictEqual(
+    formatTextOf({ ...format, bestOf: 1, setGames: 4, tiebreakAt: 4, noAd: true }),
+    '一盘决胜 · 每盘 4 局短盘（4:4 抢七） · 无占先'
+  );
+  // 老写法（分制 + 局制）照旧能用
+  assert.strictEqual(formatTextOf(11, 3), '11 分制 · 三局两胜');
+});
+
+test('scoreUnitLabelOf / toSubmitParams —— 提交的是网球赛制字段，不是分制', () => {
+  assert.strictEqual(scoreUnitLabelOf({ scoring: 'tennis', setGames: 6 }), '盘');
+  assert.strictEqual(scoreUnitLabelOf({ gamePoints: 11, bestOf: 3 }), '局');
+
+  const params = toSubmitParams({
+    matchType: MATCH_TYPE.SINGLES,
+    teamA: ['u01', ''],
+    teamB: ['u02'],
+    scoreA: ['6', '7'],
+    scoreB: ['4', '6'],
+    scoring: 'tennis',
+    bestOf: 3,
+    setGames: 6,
+    tiebreakAt: 6,
+    tiebreakPoints: 7,
+    noAd: false,
+    date: '2026-05-20',
+    time: '10:00',
+    location: '网球场 1 号',
+  });
+
+  assert.deepStrictEqual(params.teamA, ['u01'], '空选手照旧滤掉');
+  assert.strictEqual(params.scoring, 'tennis');
+  assert.strictEqual(params.setGames, 6);
+  assert.strictEqual(params.tiebreakAt, 6);
+  assert.strictEqual(params.noAd, false);
+  assert.strictEqual(params.gamePoints, undefined);
+  assert.strictEqual(params.winner, undefined, '胜方由数据层从比分推');
 });

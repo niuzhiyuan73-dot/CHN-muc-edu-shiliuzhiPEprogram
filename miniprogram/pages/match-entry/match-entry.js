@@ -26,20 +26,20 @@ const associationScope = require('../../services/association-scope');
 const { recordOf, authOf } = require('../../services/school-match-view');
 const {
   MATCH_TYPE_OPTIONS,
-  GAME_POINTS_LABELS,
-  BEST_OF_LABELS,
+  formatOptionsOf,
+  formatOfForm,
+  formatTextOf,
+  scoreUnitLabelOf,
   createForm,
   scheduledForm,
   resizeTeams,
   resizeScores,
   toScoreRows,
   winnerOf,
-  formatTextOf,
   toSubmitParams,
   buildPickerRows,
   pickerEmptyText,
 } = require('../../services/match-entry-view.js');
-const { GAME_POINTS_OPTIONS, BEST_OF_OPTIONS } = require('../../utils/match-format.js');
 
 const { MATCH_STATUS } = require('../../utils/constants');
 const { currentThemeClass } = require('../../services/branding.js');
@@ -93,10 +93,27 @@ Page({
     /** 赛季首日，用作日期选择器的下界 */
     seasonStart: '',
 
+    /**
+     * 赛制选项。按当前协会的计分体系生成：
+     *   匹克球 / 乒乓 / 羽毛球 → 分制 + 局制；
+     *   网球                   → 盘制 + 每盘局数（一局恒定 4 分，没有分制可调）。
+     * 选项跟着协会走，页面不再 import 全局常量——否则网球会拿到三个用不上的分制。
+     */
+    formatOptions: formatOptionsOf(''),
+    /** 是否网球（三层计分）：决定页面文案说「局」还是「盘」 */
+    isTennis: false,
+    /** 比分单元的叫法：局 / 盘 */
+    scoreUnit: '局',
+
     /** 项目 / 分制 / 局制选项 */
     matchTypeOptions: MATCH_TYPE_OPTIONS,
-    gamePointsLabels: GAME_POINTS_LABELS,
-    bestOfLabels: BEST_OF_LABELS,
+    gamePointsLabels: [],
+    bestOfLabels: [],
+    setGamesLabels: [],
+    /** picker 下标 */
+    gamePointsIndex: 0,
+    bestOfIndex: 0,
+    setGamesIndex: 0,
 
     /** 表单本体 */
     form: {},
@@ -173,6 +190,8 @@ Page({
   async init() {
     this.scope = { schoolId: schoolSession.getSchoolId() || 'muc', association: associationScope.getAssociation() };
     this.api = space.forScope(this.scope);
+    // 赛制选项跟着协会走：网球是盘制 + 每盘局数，其余是分制 + 局制
+    this.formatOptions = formatOptionsOf(this.scope.association);
     this.requestId = 'match_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
     try {
       // 路由编号兼容（见 utils/route-query.js）：开发者工具把 query 原样透传，
@@ -187,11 +206,17 @@ Page({
       const seasonStart = context.seasonStart ? toDateText(new Date(context.seasonStart)) : '';
       this.setData({ loading: false, error: '', auth, scheduled: Boolean(this.matchId), seasonStart,
         members: context.members.map(m => ({ id: m.userId, name: m.nickName || m.userId, realName: m.realName })),
+        formatOptions: this.formatOptions,
+        isTennis: this.formatOptions.scoring === 'tennis',
+        scoreUnit: this.formatOptions.scoring === 'tennis' ? '盘' : '局',
+        gamePointsLabels: this.formatOptions.gamePointsLabels,
+        bestOfLabels: this.formatOptions.bestOfLabels,
+        setGamesLabels: this.formatOptions.setGamesLabels,
         blockReason: auth.canRecord ? '' : auth.notice || '当前账号暂时不能录入成绩', themeClass: currentThemeClass() });
       if (this.matchId) await this.refreshScheduled();
       else {
         const now = new Date();
-        const form = createForm(context.viewer ? { _id: context.viewer.userId } : null);
+        const form = createForm(context.viewer ? { _id: context.viewer.userId } : null, this.formatOptions);
         form.date = toDateText(now) < seasonStart ? seasonStart : toDateText(now);
         form.time = toTimeText(now);
         this.applyForm(form);
@@ -243,22 +268,35 @@ Page({
         };
       });
 
-    const winner = winnerOf(form.scoreA, form.scoreB, form.gamePoints, form.bestOf);
+    const winner = winnerOf(form.scoreA, form.scoreB, formatOfForm(form));
     const winnerTeam = winner === 'A' ? form.teamA : form.teamB;
     const winnerNames = (Array.isArray(winnerTeam) ? winnerTeam : [])
       .filter(Boolean)
       .map((id) => this.nameOf(id))
       .join('、');
 
+    const options = this.formatOptions || formatOptionsOf('');
+    const isTennis = form.scoring === 'tennis';
+    // picker 要的是下标，不是值。取不到时退回 0——只有签表记录的赛制
+    // 不在本协会选项里才会发生，而那种情况下 picker 本来就是只读的。
+    const indexOf = (list, value) => {
+      const at = (list || []).indexOf(value);
+      return at < 0 ? 0 : at;
+    };
+
     this.setData({
       form,
       teamARows: rowsOf(form.teamA, true),
       teamBRows: rowsOf(form.teamB, false),
       scoreRows: toScoreRows(form.scoreA, form.scoreB),
-      // picker 要的是下标，不是值
-      gamePointsIndex: GAME_POINTS_OPTIONS.indexOf(form.gamePoints),
-      bestOfIndex: BEST_OF_OPTIONS.indexOf(form.bestOf),
-      formatText: formatTextOf(form.gamePoints, form.bestOf),
+      scoreUnit: isTennis ? '盘' : '局',
+      gamePointsIndex: indexOf(options.gamePointsOptions, form.gamePoints),
+      bestOfIndex: indexOf(options.bestOfOptions, form.bestOf),
+      setGamesIndex: indexOf(options.setGamesOptions, form.setGames),
+      gamePointsText: options.gamePointsLabels[indexOf(options.gamePointsOptions, form.gamePoints)] || '',
+      bestOfText: options.bestOfLabels[indexOf(options.bestOfOptions, form.bestOf)] || '',
+      setGamesText: options.setGamesLabels[indexOf(options.setGamesOptions, form.setGames)] || '',
+      formatText: formatTextOf(formatOfForm(form)),
       winnerText: winner ? `${winnerNames || (winner === 'A' ? 'A 队' : 'B 队')} 胜` : '',
       ...extra,
     });
@@ -351,14 +389,16 @@ Page({
   },
 
   onPickGamePoints(event) {
-    const gamePoints = GAME_POINTS_OPTIONS[Number(event.detail.value)];
+    const options = this.formatOptions || formatOptionsOf('');
+    const gamePoints = options.gamePointsOptions[Number(event.detail.value)];
     if (!gamePoints) return;
     this.applyForm({ ...this.data.form, gamePoints });
   },
 
   /** 换局制要把比分输入行的数量对齐，否则三局两胜改五局三胜时会缺两行 */
   onPickBestOf(event) {
-    const bestOf = BEST_OF_OPTIONS[Number(event.detail.value)];
+    const options = this.formatOptions || formatOptionsOf('');
+    const bestOf = options.bestOfOptions[Number(event.detail.value)];
     const form = this.data.form;
     if (!bestOf || bestOf === form.bestOf) return;
 
@@ -368,6 +408,27 @@ Page({
       scoreA: resizeScores(bestOf, form.scoreA),
       scoreB: resizeScores(bestOf, form.scoreB),
     });
+  },
+
+  /**
+   * 网球换每盘局数（6 局标准盘 / 4 局短盘）。
+   * 盘制不变，比分行的行数也不变——变的只是「一盘到几局算赢」。
+   */
+  onPickSetGames(event) {
+    const options = this.formatOptions || formatOptionsOf('');
+    const setGames = options.setGamesOptions[Number(event.detail.value)];
+    if (!setGames) return;
+    this.applyForm({
+      ...this.data.form,
+      setGames,
+      tiebreakAt: setGames,
+    });
+  },
+
+  /** 网球无占先开关：40:40 后下一分直接定胜负 */
+  onToggleNoAd(event) {
+    const noAd = Boolean(event.detail.value);
+    this.applyForm({ ...this.data.form, noAd });
   },
 
   onPickDate(event) {

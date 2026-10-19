@@ -232,3 +232,160 @@ test('整场 —— 同一队连赢前两局后，第三局是多录的', () => 
   assert.strictEqual(result.valid, false);
   assert.deepStrictEqual(result.errors, ['比赛在第 2 局就已分出胜负，多录了 1 局']);
 });
+
+/* ============================================================
+ * 四、网球（三层计分：分 → 局 → 盘）
+ * ============================================================ */
+
+const {
+  SCORING,
+  TENNIS_SET_GAMES_OPTIONS,
+  TENNIS_BEST_OF_OPTIONS,
+  DEFAULT_TENNIS_FORMAT,
+  scoringOf,
+  normalizeTennisFormat,
+  createTennisFormat,
+  validateTennisSet,
+  tennisGameWon,
+  tennisSetWon,
+} = require('../miniprogram/utils/match-format.js');
+
+const T6_3 = { scoring: 'tennis', bestOf: 3, setGames: 6, tiebreakAt: 6, tiebreakPoints: 7, noAd: false };
+const T6_1 = { ...T6_3, bestOf: 1 };
+const T4_1 = { ...T6_1, setGames: 4, tiebreakAt: 4 };
+
+test('网球 —— 缺省 scoring 一律当 point，历史记录不受影响', () => {
+  assert.strictEqual(scoringOf({ gamePoints: 11, bestOf: 3 }), SCORING.POINT);
+  assert.strictEqual(scoringOf(null), SCORING.POINT);
+  assert.strictEqual(scoringOf(T6_1), SCORING.TENNIS);
+});
+
+test('网球 —— 只认 6/4 局盘与 1/3 盘制，抢七点必须是 7', () => {
+  assert.deepStrictEqual(TENNIS_SET_GAMES_OPTIONS, [6, 4]);
+  assert.deepStrictEqual(TENNIS_BEST_OF_OPTIONS, [1, 3]);
+
+  assert.ok(isValidFormat(T6_1));
+  assert.ok(isValidFormat(T4_1));
+  // 5 局盘、5 盘制、抢十都不在校内口径内，宁可拒绝也不悄悄接受
+  assert.strictEqual(isValidFormat({ ...T6_1, setGames: 5, tiebreakAt: 5 }), false);
+  assert.strictEqual(isValidFormat({ ...T6_1, bestOf: 5 }), false);
+  assert.strictEqual(isValidFormat({ ...T6_1, tiebreakPoints: 10 }), false);
+  assert.strictEqual(isValidFormat({ ...T6_1, tiebreakAt: 4 }), false);
+  assert.strictEqual(isValidFormat({ scoring: 'tennis' }), false);
+});
+
+test('网球 —— createTennisFormat 补默认值并做校验', () => {
+  const format = createTennisFormat({});
+  assert.deepStrictEqual(format, {
+    scoring: 'tennis',
+    bestOf: DEFAULT_TENNIS_FORMAT.bestOf,
+    setGames: 6,
+    tiebreakAt: 6,
+    tiebreakPoints: 7,
+    noAd: false,
+  });
+  assert.strictEqual(createTennisFormat({ bestOf: 3, setGames: 4 }).setGames, 4);
+  assert.strictEqual(createTennisFormat({ noAd: true }).noAd, true);
+  assert.throws(() => createTennisFormat({ setGames: 8 }), /不支持的网球赛制/);
+});
+
+test('网球 —— 标准盘只认 6:0–6:4、7:5、7:6', () => {
+  for (const [a, b] of [[6, 0], [6, 1], [6, 2], [6, 3], [6, 4], [7, 5], [7, 6], [0, 6], [6, 7]]) {
+    assert.deepStrictEqual(validateTennisSet(a, b, T6_1, 0), [], `${a}:${b} 应当合法`);
+  }
+  // 6:5 是没打完，不是合法盘比分；7:4 不存在（6:4 时就结束了）；8:6 属于不抢七的 Advantage Set
+  for (const [a, b] of [[6, 5], [6, 6], [7, 4], [8, 6], [5, 3]]) {
+    assert.ok(validateTennisSet(a, b, T6_1, 0).length > 0, `${a}:${b} 应当被拦下`);
+  }
+});
+
+test('网球 —— 短盘同构：4 局定盘', () => {
+  for (const [a, b] of [[4, 0], [4, 1], [4, 2], [5, 3], [5, 4]]) {
+    assert.deepStrictEqual(validateTennisSet(a, b, T4_1, 0), [], `${a}:${b} 短盘合法`);
+  }
+  for (const [a, b] of [[4, 3], [5, 2], [6, 4]]) {
+    assert.ok(validateTennisSet(a, b, T4_1, 0).length > 0, `${a}:${b} 短盘应当被拦下`);
+  }
+});
+
+test('网球 —— 盘比分的错误提示说清合法区间', () => {
+  const errors = validateTennisSet(6, 5, T6_1, 1);
+  assert.match(errors[0], /第 2 盘盘比分不合法/);
+  assert.match(errors[0], /6:0–6:4/);
+});
+
+test('网球 —— 一局内：4 分且领先 2，无占先时 4:3 直接赢', () => {
+  assert.strictEqual(tennisGameWon(4, 2, false), true);
+  assert.strictEqual(tennisGameWon(4, 3, false), false, '有占先时 4:3 只是占先');
+  assert.strictEqual(tennisGameWon(5, 3, false), true);
+  assert.strictEqual(tennisGameWon(4, 3, true), true, '无占先 40:40 后一分定胜负');
+  assert.strictEqual(tennisGameWon(3, 3, true), false);
+});
+
+test('网球 —— 一盘结束的判据', () => {
+  assert.strictEqual(tennisSetWon(6, 4, 6), true);
+  assert.strictEqual(tennisSetWon(6, 5, 6), false);
+  assert.strictEqual(tennisSetWon(7, 5, 6), true);
+  assert.strictEqual(tennisSetWon(7, 6, 6), true);
+});
+
+test('网球 —— 整场：三盘两胜 2:0 与 2:1 都合法', () => {
+  const straight = validateMatchScore([6, 6], [4, 3], T6_3);
+  assert.strictEqual(straight.valid, true, JSON.stringify(straight.errors));
+  assert.strictEqual(straight.winner, 'A');
+  assert.strictEqual(straight.gamesA, 2);
+  assert.strictEqual(straight.gamesB, 0);
+
+  const three = validateMatchScore([6, 4, 7], [4, 6, 6], T6_3);
+  assert.strictEqual(three.valid, true, JSON.stringify(three.errors));
+  assert.strictEqual(three.winner, 'A');
+  assert.strictEqual(three.gamesA, 2);
+  assert.strictEqual(three.gamesB, 1);
+});
+
+test('网球 —— 整场：1:1 还没打完', () => {
+  const result = validateMatchScore([6, 4], [4, 6], T6_3);
+  assert.strictEqual(result.valid, false);
+  assert.deepStrictEqual(result.errors, ['三盘两胜需要有一方赢下 2 盘才能结束，当前 1 : 1']);
+});
+
+test('网球 —— 整场：已经 2:0 之后多录的第三盘要报错', () => {
+  const result = validateMatchScore([6, 6, 6], [4, 4, 4], T6_3);
+  assert.strictEqual(result.valid, false);
+  // 与 point 同一口径：赢下的盘数超过需求时，报「不可能结束」而不是逐盘挑错
+  assert.deepStrictEqual(result.errors, ['三盘两胜需要有一方赢下 2 盘才能结束，当前 3 : 0']);
+
+  // 前两盘已经 2:0，第三盘才被对手拿下——决定性的是第 2 盘，第 3 盘是多录的
+  const extra = validateMatchScore([6, 6, 4], [4, 4, 6], T6_3);
+  assert.strictEqual(extra.valid, false);
+  assert.deepStrictEqual(extra.errors, ['比赛在第 2 盘就已分出胜负，多录了 1 盘']);
+});
+
+test('网球 —— 整场：一盘决胜只能录一盘', () => {
+  assert.strictEqual(validateMatchScore([7], [6], T6_1).valid, true);
+  const two = validateMatchScore([6, 6], [4, 4], T6_1);
+  assert.strictEqual(two.valid, false);
+  assert.ok(two.errors.some((e) => e.includes('最多打 1 盘')));
+});
+
+test('网球 —— 整场：盘比分有问题逐盘列出，不牵连合法的盘', () => {
+  const result = validateMatchScore([6, 6], [5, 4], T6_3);
+  assert.strictEqual(result.valid, false);
+  assert.strictEqual(result.errors.length, 1);
+  assert.match(result.errors[0], /第 1 盘/);
+});
+
+test('网球 —— 赛制文案', () => {
+  assert.strictEqual(formatMatchFormat(T6_1), '一盘决胜 · 每盘 6 局（6:6 抢七）');
+  assert.strictEqual(formatMatchFormat(T6_3), '三盘两胜 · 每盘 6 局（6:6 抢七）');
+  assert.strictEqual(formatMatchFormat(T4_1), '一盘决胜 · 每盘 4 局短盘（4:4 抢七）');
+  assert.strictEqual(formatMatchFormat({ ...T6_1, noAd: true }), '一盘决胜 · 每盘 6 局（6:6 抢七） · 无占先');
+  // 旧的 point 文案一个字都不许变
+  assert.strictEqual(formatMatchFormat({ gamePoints: 11, bestOf: 3 }), '11 分制 · 三局两胜');
+});
+
+test('网球 —— normalizeTennisFormat 对非网球赛制返回 null', () => {
+  assert.strictEqual(normalizeTennisFormat({ gamePoints: 11, bestOf: 3 }), null);
+  assert.strictEqual(normalizeTennisFormat(null), null);
+  assert.ok(normalizeTennisFormat(T6_1));
+});

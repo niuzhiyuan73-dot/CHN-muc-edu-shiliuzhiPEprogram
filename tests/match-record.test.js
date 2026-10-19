@@ -651,3 +651,142 @@ test('buildRefereePatch —— 编号两端空白被清掉，不留「看起来�
   const bare = buildRefereePatch('u05');
   assert.strictEqual(bare.refereeBy, '');
 });
+
+/* ============================================================
+ * 十、网球记录
+ * ============================================================
+ * 网球走三层计分，落库时与 11 分制只差「字段组」：
+ * 带 scoring/setGames/tiebreakAt/tiebreakPoints/noAd 与抢七小分，
+ * 不带 gamePoints。数组形状（scoreA/scoreB）与 bestOf 的含义照旧，
+ * 所以 Elo、历史、格式化这些地方不用为网球另开一套。
+ * ============================================================ */
+
+/** 造一份网球录入参数 */
+function tennisParams(overrides = {}) {
+  return {
+    matchType: MATCH_TYPE.SINGLES,
+    teamA: ['u01'],
+    teamB: ['u02'],
+    scoreA: ['6', '4', '7'],
+    scoreB: ['4', '6', '6'],
+    scoring: 'tennis',
+    bestOf: 3,
+    setGames: 6,
+    tiebreakAt: 6,
+    tiebreakPoints: 7,
+    noAd: false,
+    tiebreaks: [{ setIndex: 2, a: 7, b: 5 }],
+    matchTime: '2026-05-01T18:00:00',
+    location: '网球场 1 号',
+    ...overrides,
+  };
+}
+
+test('buildMatchRecord —— 网球记录带赛制与抢七小分，且不留 gamePoints', () => {
+  const result = buildMatchRecord(tennisParams(), { now: NOW, minMatchTime: MIN });
+
+  assert.strictEqual(result.ok, true);
+  assert.deepStrictEqual(result.scoreErrors, []);
+
+  const record = result.record;
+  assert.deepStrictEqual(record.scoreA, [6, 4, 7]);
+  assert.deepStrictEqual(record.scoreB, [4, 6, 6], '7:6 是合法的盘比分，不该被「领先 2」挡下');
+  assert.strictEqual(record.scoring, 'tennis');
+  assert.strictEqual(record.bestOf, 3);
+  assert.strictEqual(record.setGames, 6);
+  assert.strictEqual(record.tiebreakAt, 6);
+  assert.strictEqual(record.tiebreakPoints, 7);
+  assert.strictEqual(record.noAd, false);
+  assert.strictEqual(record.gamePoints, undefined, '两套体系的字段不能混着落库');
+  assert.strictEqual(record.winner, 'A');
+  assert.deepStrictEqual(record.tiebreaks, [{ setIndex: 2, a: 7, b: 5 }]);
+});
+
+test('buildMatchRecord —— 网球赛制不合法时报「盘制与每盘局数」', () => {
+  const result = buildMatchRecord(tennisParams({ setGames: 5, tiebreakAt: 5 }), {
+    now: NOW,
+    minMatchTime: MIN,
+  });
+
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.errors.format, '请选择有效的盘制与每盘局数');
+  assert.deepStrictEqual(result.scoreErrors, [], '赛制都不对，比分的报错没有意义');
+});
+
+test('buildMatchRecord —— 网球的「还差一局」与「多录一盘」都拦下', () => {
+  const unfinished = buildMatchRecord(tennisParams({ scoreA: ['6'], scoreB: ['5'] }), {
+    now: NOW,
+    minMatchTime: MIN,
+  });
+  assert.strictEqual(unfinished.ok, false);
+  assert.ok(
+    unfinished.scoreErrors.some((text) => /第 1 盘/.test(text)),
+    '6:5 不是打完的盘，要被点出来'
+  );
+
+  const extra = buildMatchRecord(tennisParams({ scoreA: ['6', '6', '6'], scoreB: ['4', '4', '4'] }), {
+    now: NOW,
+    minMatchTime: MIN,
+  });
+  assert.strictEqual(extra.ok, false, '已经 2:0 之后再录一盘要报错');
+});
+
+test('buildMatchRecord —— 抢七小分只做形状清洗，打平 / 0 分条目丢掉', () => {
+  const result = buildMatchRecord(
+    tennisParams({
+      tiebreaks: [
+        { setIndex: 0, a: 7, b: 5 },
+        { setIndex: 1, a: 7, b: 7 },
+        { setIndex: 2, a: 0, b: 0 },
+        'junk',
+      ],
+    }),
+    { now: NOW, minMatchTime: MIN }
+  );
+
+  assert.strictEqual(result.ok, true);
+  assert.deepStrictEqual(
+    result.record.tiebreaks,
+    [{ setIndex: 0, a: 7, b: 5 }],
+    '抢七永不决定胜负，所以这里只清形状，不拿它校验'
+  );
+});
+
+test('fillScheduledMatch —— 网球补录沿用记录上的赛制，并把抢七小分带上去', () => {
+  const match = {
+    _id: 'm_tn01',
+    matchType: MATCH_TYPE.SINGLES,
+    teamA: ['u01'],
+    teamB: ['u02'],
+    scoreA: [],
+    scoreB: [],
+    scoring: 'tennis',
+    bestOf: 1,
+    setGames: 4,
+    tiebreakAt: 4,
+    tiebreakPoints: 7,
+    noAd: true,
+    status: MATCH_STATUS.PENDING,
+    matchTime: '2026-05-01T18:00:00',
+    location: '网球场 2 号',
+    eventId: null,
+    round: 1,
+    stage: 'main',
+    slot: 0,
+  };
+
+  const result = fillScheduledMatch(
+    match,
+    { scoreA: ['5'], scoreB: ['4'], tiebreaks: [{ setIndex: 0, a: 7, b: 5 }] },
+    { now: NOW, minMatchTime: MIN, recorder: 'u01' }
+  );
+
+  assert.strictEqual(result.ok, true);
+  assert.deepStrictEqual(result.patch.scoreA, [5]);
+  assert.strictEqual(result.patch.scoring, 'tennis');
+  assert.strictEqual(result.patch.setGames, 4);
+  assert.strictEqual(result.patch.noAd, true);
+  assert.strictEqual(result.patch.gamePoints, undefined);
+  assert.deepStrictEqual(result.patch.tiebreaks, [{ setIndex: 0, a: 7, b: 5 }]);
+  assert.strictEqual(result.patch.winner, 'A');
+});

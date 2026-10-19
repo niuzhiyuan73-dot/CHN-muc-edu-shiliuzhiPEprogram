@@ -65,6 +65,7 @@ const {
 } = require('./event.js');
 const { planDraw, buildDrawRecord, canRedraw, drawnEntryCount } = require('./draw.js');
 const { buildInitialMatches, buildPlannedDrafts, planStageMatches } = require('./format-plan.js');
+const { defaultFormatOf } = require('../utils/associations.js');
 
 const ok = data => ({ ok: true, data });
 const refused = (message, extra = {}) => ({ ok: false, message, ...extra });
@@ -728,7 +729,7 @@ async function drawSchoolEvent(payload = {}, ctx) {
     drawnAt: ctx.now, drawnBy: ctx.actorId,
     drawCount: (doc.draw && doc.draw.drawCount ? doc.draw.drawCount : 0) + 1,
   });
-  const drafts = buildInitialMatches(doc, draw).map(draft => scopedMatchDoc(draft, ctx, 'draw'));
+  const drafts = buildInitialMatches(doc, draw, defaultFormatOf(ctx.association)).map(draft => scopedMatchDoc(draft, ctx, 'draw'));
   // 场号在 buildInitialMatches 内已由 court.js 统一排好，结果落库备查。
 
   const result = await ctx.repo.transaction(async tx => {
@@ -869,7 +870,7 @@ async function advanceSchoolEvent(ctx, eventId) {
   if (!plan.ok) return { ok: true, inserted: 0 };
 
   const taken = new Set(matches.map(row => row._id));
-  const drafts = buildPlannedDrafts(doc, plan.rounds)
+  const drafts = buildPlannedDrafts(doc, plan.rounds, defaultFormatOf(ctx.association))
     .filter(draft => !taken.has(draft._id))
     .map(draft => scopedMatchDoc(draft, ctx, 'advance'));
   if (drafts.length === 0) return { ok: true, inserted: 0 };

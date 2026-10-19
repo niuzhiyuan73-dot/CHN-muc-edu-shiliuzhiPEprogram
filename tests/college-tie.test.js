@@ -24,6 +24,7 @@ const {
   disciplineToMatchType,
   isDoublesDiscipline,
   collegeLegKey,
+  collegeLegFormatOf,
   buildLegMatchDrafts,
   scoreTextOf,
   totalPoints,
@@ -59,6 +60,7 @@ const {
   EVENT_LEVEL,
   TEAM,
 } = require('../miniprogram/utils/constants.js');
+const { validateMatchScore } = require('../miniprogram/utils/match-format.js');
 
 /** 造一条小项 */
 function leg(legNo, discipline, winner, pointsA = 0, pointsB = 0) {
@@ -718,3 +720,88 @@ test('buildTieRow —— 没派裁判时字段兜底为空，不渲染 undefined
  * 比赛一经确认即为最终结算，不存在「撤销小场回收大场」的路径。
  * ============================================================ */
 
+
+/* ============================================================
+ * 八、网球进石榴籽杯
+ * ============================================================
+ * 杯赛的小场原本写死「11 分制 · 一局一胜」，网球塞不进去。现在赛制由协会定，
+ * 网球按 4 局短盘 + 无占先跑（一盘 20 分钟上下，才排得进团体赛的节奏）。
+ * 这一节把「赛制怎么选」和「赛制怎么落进草稿」两件事钉死。
+ * ============================================================ */
+
+test('collegeLegFormatOf —— 网球协会走 4 局短盘 + 无占先，其余照旧 11 分制', () => {
+  const tennis = collegeLegFormatOf('tn');
+  assert.strictEqual(tennis.scoring, 'tennis');
+  assert.strictEqual(tennis.bestOf, 1, '团体赛一小项只打一盘');
+  assert.strictEqual(tennis.setGames, 4, '短盘：一盘 4 局');
+  assert.strictEqual(tennis.tiebreakAt, 4, '4:4 抢七');
+  assert.strictEqual(tennis.tiebreakPoints, 7);
+  assert.strictEqual(tennis.noAd, true, '无占先：40:40 后一分定局，压缩时长');
+
+  // 非网球 / 未知协会一律退回常规口径，且绝不抛错——抛了整场大场都开不了
+  ['', 'bd', 'tt', 'nope', undefined, null].forEach((id) => {
+    assert.deepStrictEqual(collegeLegFormatOf(id), COLLEGE_LEG_FORMAT, `协会 ${id} 应走常规口径`);
+  });
+});
+
+test('buildLegMatchDrafts —— 网球小场把短盘赛制带进草稿，不留 gamePoints', () => {
+  const lineups = [
+    { tieId: 't_ce01_1_main_0', college: '体育学院', entries: [{ legNo: 1, players: ['u01'] }] },
+    { tieId: 't_ce01_1_main_0', college: '信息工程学院', entries: [{ legNo: 1, players: ['u03'] }] },
+  ];
+  const target = tie({
+    legs: [{ legNo: 1, discipline: 'MS', matchId: '', winner: null, outcome: null }],
+  });
+
+  const built = buildLegMatchDrafts({
+    event: event(),
+    tie: target,
+    lineups,
+    now: '2026-06-01T12:00:00',
+    association: 'tn',
+  });
+  assert.strictEqual(built.ok, true);
+  const draft = built.drafts[0];
+  assert.strictEqual(draft.scoring, 'tennis');
+  assert.strictEqual(draft.bestOf, 1);
+  assert.strictEqual(draft.setGames, 4);
+  assert.strictEqual(draft.tiebreakAt, 4);
+  assert.strictEqual(draft.tiebreakPoints, 7);
+  assert.strictEqual(draft.noAd, true);
+  assert.strictEqual(draft.gamePoints, undefined, '网球记录不该带 gamePoints，否则两边读数会打架');
+
+  // 同一套函数，不传协会就是常规口径（乒乓 / 羽毛球的杯赛小项照旧）
+  const point = buildLegMatchDrafts({ event: event(), tie: target, lineups }).drafts[0];
+  assert.strictEqual(point.gamePoints, COLLEGE_LEG_FORMAT.gamePoints);
+  assert.strictEqual(point.bestOf, COLLEGE_LEG_FORMAT.bestOf);
+  assert.strictEqual(point.scoring, undefined);
+  assert.strictEqual(point.setGames, undefined);
+});
+
+test('buildLegMatchDrafts —— 网球草稿的赛制能直接过整场校验（5:3 是合法短盘）', () => {
+  const format = collegeLegFormatOf('tn');
+  assert.strictEqual(validateMatchScore([5], [3], format).valid, true);
+  assert.strictEqual(validateMatchScore([5], [4], format).valid, true, '4:4 抢七后 5:4');
+  assert.strictEqual(validateMatchScore([4], [3], format).valid, false, '4:3 还没打完');
+  assert.match(
+    validateMatchScore([6], [4], format).errors.join(''),
+    /第 1 盘/,
+    '常规 6 局的盘比分在短盘里不合法'
+  );
+});
+
+test('scoreTextOf —— 网球 7:6 要带抢七小分，其余协会照旧', () => {
+  // 单元之间是两空格，这是 formatScore 的既有口径（「11:9  12:10」），别改成单空格
+  assert.strictEqual(
+    scoreTextOf({
+      scoring: 'tennis',
+      scoreA: [6, 7],
+      scoreB: [4, 6],
+      tiebreaks: [{ setIndex: 1, a: 7, b: 5 }],
+    }),
+    '6:4  7:6(5)'
+  );
+  // 没有抢七小分的老网球记录，也不该多出空括号
+  assert.strictEqual(scoreTextOf({ scoring: 'tennis', scoreA: [6], scoreB: [4] }), '6:4');
+  assert.strictEqual(scoreTextOf({ scoreA: [11], scoreB: [9] }), '11:9');
+});

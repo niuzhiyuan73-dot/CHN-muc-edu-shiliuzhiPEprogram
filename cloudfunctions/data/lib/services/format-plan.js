@@ -67,9 +67,10 @@ const { withCourts } = require('./court.js');
  *
  * @param {Object} event 赛事记录
  * @param {Object} draw 赛事的 draw 字段
+ * @param {Object} [matchFormat] 比赛赛制（按协会取，见 associations.defaultFormatOf）
  * @returns {Array<Object>} 比赛草稿
  */
-function buildInitialMatches(event, draw) {
+function buildInitialMatches(event, draw, matchFormat = DEFAULT_FORMAT) {
   if (!event || !event._id || !draw) return [];
   const format = formatOf(event);
 
@@ -78,13 +79,13 @@ function buildInitialMatches(event, draw) {
   // 每个组都会从 1 号场重新数，A 组与 B 组的第一轮就撞号了
   const drafts =
     Array.isArray(draw.groups) && draw.groups.length > 0
-      ? draw.groups.flatMap((item) => groupRoundDrafts(event, item, 1))
+      ? draw.groups.flatMap((item) => groupRoundDrafts(event, item, 1, matchFormat))
       : buildRoundMatches(event, {
           round: 1,
           // 双败的首轮长在「胜者组」上，单败长在主签表上：stage 决定它归哪一区
           stage: hasDoubleKnockout(format) ? BRACKET_STAGE.WINNERS : BRACKET_STAGE.MAIN,
           pairs: chunkPairs(Array.isArray(draw.slots) ? draw.slots : []),
-          format: DEFAULT_FORMAT,
+          format: matchFormat,
         });
 
   return withCourts(drafts, event.courtCount);
@@ -103,9 +104,9 @@ function buildInitialMatches(event, draw) {
  * @param {Array<Object>} rounds planStageMatches 的 rounds
  * @returns {Array<Object>} 带 courtNo 的比赛草稿
  */
-function buildPlannedDrafts(event, rounds) {
+function buildPlannedDrafts(event, rounds, matchFormat = DEFAULT_FORMAT) {
   const drafts = (Array.isArray(rounds) ? rounds : []).reduce(
-    (all, roundPlan) => all.concat(buildRoundMatches(event, roundPlan)),
+    (all, roundPlan) => all.concat(buildRoundMatches(event, { ...roundPlan, format: roundPlan.format || matchFormat })),
     []
   );
   return withCourts(drafts, event && event.courtCount);
@@ -923,7 +924,7 @@ function scheduleOf(item) {
 }
 
 /** 某组某一轮的比赛草稿 */
-function groupRoundDrafts(event, item, roundNo) {
+function groupRoundDrafts(event, item, roundNo, matchFormat = DEFAULT_FORMAT) {
   const schedule = scheduleOf(item);
   const pairs = schedule[roundNo - 1];
   if (!pairs) return [];
@@ -931,7 +932,7 @@ function groupRoundDrafts(event, item, roundNo) {
     round: roundNo,
     stage: BRACKET_STAGE.GROUP,
     pairs,
-    format: DEFAULT_FORMAT,
+    format: matchFormat,
     group: item.group,
   });
 }

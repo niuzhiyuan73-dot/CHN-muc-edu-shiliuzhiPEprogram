@@ -2567,7 +2567,13 @@ function eventPanelTest(name, fn) {
   });
 }
 
-function schoolEventFixture() {
+/**
+ * 校级赛事的页面夹具。
+ *
+ * @param {string} [associationId='pkb'] 协会作用域。网球要单独传 'tn'——
+ *   赛事与比赛的默认赛制是从协会注册表取的（见 associations.defaultFormatOf）。
+ */
+function schoolEventFixture(associationId = 'pkb') {
   const schoolSession = require('../miniprogram/services/school-session');
   const schoolMock = require('../miniprogram/services/school-mock');
   const assocScope = require('../miniprogram/services/association-scope.js');
@@ -2576,8 +2582,8 @@ function schoolEventFixture() {
   schoolMock.reset({ withDemoContent: false });
   schoolSession.setSchoolId('muc');
   const before = assocScope.getAssociation();
-  assocScope.setAssociation('pkb');
-  const api = () => space.forScope({ schoolId: 'muc', association: 'pkb' });
+  assocScope.setAssociation(associationId);
+  const api = () => space.forScope({ schoolId: 'muc', association: associationId });
   return {
     to: (actor) => schoolMock.setDemoActor(actor),
     api,
@@ -6285,21 +6291,21 @@ test('实时计分台 —— 管理员开台，逐球计分与撤销', async () 
 
     assert.strictEqual(page.data.error, '');
     assert.strictEqual(page.data.blockReason, '');
-    assert.strictEqual(page.data.view.pointsA, 0, '开台从 0:0 起');
+    assert.strictEqual(page.data.view.pointsTextA, '0', '开台从 0:0 起');
     assert.strictEqual(page.data.canUndo, false, '还没判球，没什么可撤');
 
     await tap(page, 'A');
     await tap(page, 'A');
     await tap(page, 'B');
-    assert.strictEqual(page.data.view.pointsA, 2);
-    assert.strictEqual(page.data.view.pointsB, 1);
+    assert.strictEqual(page.data.view.pointsTextA, '2');
+    assert.strictEqual(page.data.view.pointsTextB, '1');
     assert.strictEqual(page.data.view.leading, 'A', '领先方要能高亮出来');
     assert.strictEqual(page.data.canUndo, true);
 
     page.onUndo();
     await page.queue;
-    assert.strictEqual(page.data.view.pointsB, 0, '撤销弹掉最后一球');
-    assert.strictEqual(page.data.view.pointsA, 2);
+    assert.strictEqual(page.data.view.pointsTextB, '0', '撤销弹掉最后一球');
+    assert.strictEqual(page.data.view.pointsTextA, '2');
   } finally {
     fx.restore();
   }
@@ -6320,7 +6326,7 @@ test('实时计分台 —— 打满两局可定稿，定稿后退回上一页', 
     }
     await page.queue;
 
-    assert.strictEqual(page.data.view.gamesA, 2);
+    assert.strictEqual(page.data.view.gamesText, '2 : 0');
     assert.strictEqual(page.data.view.finished, true);
     assert.strictEqual(page.data.canFinish, true);
 
@@ -7181,6 +7187,196 @@ test('协会空间 —— 训练签到：本人提交，负责人确认 / 退回
       { trainingId: 't1', userId: 'demo_muc_member', reason: '未到场' }]);
     assert.strictEqual(adminPage.data.approvalAction, null, '提交后收起原因输入');
     assert.strictEqual(adminPage.data.notice, '已退回该签到');
+  } finally {
+    fx.restore();
+  }
+});
+
+/* ============================================================
+ * 网球计分台（协会级赛事，端到端）
+ * ============================================================
+ * 与上面的匹克球计分台同一条路径，只是协会换成网球：赛事默认赛制从注册表取
+ * （一盘决胜 · 6 局 · 带占先），计分台要按「分 → 局 → 盘」三层推进，
+ * 定稿时写回的是盘比分而不是局比分。
+ * ============================================================ */
+
+test('实时计分台 —— 网球协会：4 分一局、6 局一盘，一盘打完可定稿', async () => {
+  const fx = schoolEventFixture('tn');
+  try {
+    const eventId = await fx.publish({ seedCount: 2 });
+    await fx.play(eventId, ['demo_muc_member', 'demo_muc_admin']);
+    const res = await fx.api().listSchoolMatches({ eventId });
+    const row = (res.matches || []).find((item) => item.status === MATCH_STATUS.PENDING);
+    assert.ok(row, '开赛后应当有一场待确认的比赛');
+
+    // 赛制在抽签时就按协会落库了，不是录入时才临时补
+    const detail = await fx.api().getSchoolMatch({ matchId: row.matchId });
+    assert.strictEqual(detail.match.scoring, 'tennis');
+    assert.strictEqual(detail.match.setGames, 6);
+    assert.strictEqual(detail.match.gamePoints, undefined);
+
+    fx.to('demo_muc_admin');
+    const page = instantiate(liveScoreConfig);
+    await page.onLoad({ matchId: row.matchId });
+
+    assert.strictEqual(page.data.error, '', page.data.error);
+    assert.strictEqual(page.data.formatText, '一盘决胜 · 每盘 6 局（6:6 抢七）');
+    assert.strictEqual(page.data.view.pointsTextA, '0', '网球开局是 0，不是 15');
+    assert.strictEqual(page.data.view.gameIndexText, '第 1 盘');
+    assert.strictEqual(page.data.view.setsText, '0 : 0');
+
+    // 同一侧连拿 3 分：15 → 30 → 40
+    for (let i = 0; i < 3; i += 1) page.onScore({ currentTarget: { dataset: { side: 'A' } } });
+    await page.queue;
+    assert.strictEqual(page.data.view.pointsTextA, '40');
+    assert.strictEqual(page.data.view.gamesText, '0 : 0', '还没拿局，局分不动');
+
+    // 第 4 分拿下这一局
+    page.onScore({ currentTarget: { dataset: { side: 'A' } } });
+    await page.queue;
+    assert.strictEqual(page.data.view.gamesText, '1 : 0');
+    assert.strictEqual(page.data.view.pointsTextA, '0', '新的一局从 0 起');
+
+    // 再连拿 5 局 → 6:0 拿下这一盘，一盘决胜即整场结束
+    for (let i = 0; i < 20; i += 1) page.onScore({ currentTarget: { dataset: { side: 'A' } } });
+    await page.queue;
+    assert.strictEqual(page.data.view.setsText, '1 : 0');
+    assert.strictEqual(page.data.view.finished, true);
+    assert.strictEqual(page.data.canFinish, true);
+
+    page.onFinish();
+    await page.queue;
+
+    const found = await fx.api().getSchoolMatch({ matchId: row.matchId });
+    assert.deepStrictEqual(found.match.scoreA, [6], '定稿写回的是盘比分，不是局比分');
+    assert.deepStrictEqual(found.match.scoreB, [0]);
+    assert.strictEqual(found.match.status, MATCH_STATUS.PENDING, '定稿只到待确认');
+  } finally {
+    fx.restore();
+  }
+});
+
+test('实时计分台 —— 网球抢七：4:4 不算抢七，6:6 才进，抢七分数按原始数字显示', async () => {
+  const fx = schoolEventFixture('tn');
+  try {
+    const eventId = await fx.publish({ seedCount: 2 });
+    await fx.play(eventId, ['demo_muc_member', 'demo_muc_admin']);
+    const res = await fx.api().listSchoolMatches({ eventId });
+    const row = (res.matches || []).find((item) => item.status === MATCH_STATUS.PENDING);
+
+    // 走接口铺分：每局 4 分定胜负（无占先之外的常规规则），交替拿局
+    const api = fx.api();
+    await api.startSchoolLiveScore({ matchId: row.matchId });
+    let rally = 0;
+    const feed = async (side, times) => {
+      for (let i = 0; i < times; i += 1) {
+        rally += 1;
+        const out = await api.recordSchoolRally({ matchId: row.matchId, side, rallyId: `r-${rally}` });
+        assert.strictEqual(out.ok, true, out.message);
+      }
+    };
+
+    // 4:4：标准盘还没到抢七
+    for (let g = 0; g < 4; g += 1) {
+      await feed('A', 4);
+      await feed('B', 4);
+    }
+    fx.to('demo_muc_admin');
+    const page = instantiate(liveScoreConfig);
+    await page.onLoad({ matchId: row.matchId });
+    assert.strictEqual(page.data.view.gamesText, '4 : 4');
+    assert.strictEqual(page.data.view.tiebreakText, '', '标准盘 4:4 不抢七，6:6 才是');
+    assert.strictEqual(page.data.view.finished, false);
+
+    // 再各拿两局 → 6:6，进抢七
+    for (let g = 0; g < 2; g += 1) {
+      await feed('A', 4);
+      await feed('B', 4);
+    }
+    await page.onLoad({ matchId: row.matchId });
+    assert.strictEqual(page.data.view.gamesText, '6 : 6');
+    assert.strictEqual(page.data.view.tiebreakText, '抢七');
+    assert.strictEqual(page.data.view.finished, false, '抢七没打完，整场不算结束');
+
+    // 抢七里比分是原始数字（不是 15/30/40），先拿 1 分
+    await feed('A', 1);
+    await page.onLoad({ matchId: row.matchId });
+    assert.strictEqual(page.data.view.pointsTextA, '1');
+    assert.strictEqual(page.data.view.pointsTextB, '0');
+
+    // 连拿 7 分 → 抢七 7:0，这一盘 7:6，一盘决胜即整场结束
+    await feed('A', 6);
+    await page.onLoad({ matchId: row.matchId });
+    assert.strictEqual(page.data.view.finished, true);
+    assert.strictEqual(page.data.view.setsText, '1 : 0');
+
+    page.onFinish();
+    await page.queue;
+    const found = await fx.api().getSchoolMatch({ matchId: row.matchId });
+    assert.deepStrictEqual(found.match.scoreA, [7], '抢七赢下来的盘记 7:6');
+    assert.deepStrictEqual(found.match.scoreB, [6]);
+    assert.deepStrictEqual(
+      found.match.tiebreaks,
+      [{ setIndex: 0, a: 7, b: 0 }],
+      '抢七小分单独存一份，用来还原 7:6(0) 的括号'
+    );
+  } finally {
+    fx.restore();
+  }
+});
+
+test('录入页 —— 网球协会日常约球：盘制与每盘局数可选，提交落库带网球赛制', async () => {
+  const fx = schoolEventFixture('tn');
+  try {
+    fx.to('demo_muc_member');
+    const entry = instantiate(matchEntryConfig);
+    await entry.onLoad();
+
+    assert.strictEqual(entry.data.blockReason, '', entry.data.blockReason);
+    assert.strictEqual(entry.data.isTennis, true);
+    assert.strictEqual(entry.data.scoreUnit, '盘');
+    assert.deepStrictEqual(entry.data.gamePointsLabels, [], '网球页面不该冒出「11/15/21 分制」');
+    assert.strictEqual(entry.data.bestOfText, '一盘决胜');
+    assert.strictEqual(entry.data.setGamesText, '6 局（标准盘）');
+    assert.strictEqual(entry.data.scoreRows.length, 1, '一盘决胜只要一行比分');
+
+    // 换三盘两胜 → 比分行跟着扩到三行
+    entry.onPickBestOf({ detail: { value: 1 } });
+    assert.strictEqual(entry.data.form.bestOf, 3);
+    assert.strictEqual(entry.data.scoreRows.length, 3);
+
+    // 换 4 局短盘：tiebreakAt 要跟着走，否则 4:4 永远不会进抢七
+    entry.onPickSetGames({ detail: { value: 1 } });
+    assert.strictEqual(entry.data.form.setGames, 4);
+    assert.strictEqual(entry.data.form.tiebreakAt, 4);
+    entry.onToggleNoAd({ detail: { value: true } });
+    assert.strictEqual(entry.data.form.noAd, true);
+    assert.strictEqual(entry.data.formatText, '三盘两胜 · 每盘 4 局短盘（4:4 抢七） · 无占先');
+
+    // 选对手，填满三盘：5:3 / 3:5 / 5:4（第四盘靠抢七才有的比分）
+    entry.onPickMember({ currentTarget: { dataset: { side: 'B', slot: 0, id: 'demo_muc_admin' } } });
+    const fill = (side, values) => values.forEach((value, slot) => {
+      entry.onInputScore({ currentTarget: { dataset: { side, slot } }, detail: { value: String(value) } });
+    });
+    fill('A', [5, 3, 5]);
+    fill('B', [3, 5, 4]);
+    assert.ok(entry.data.winnerText, '填完三盘就该判出胜方');
+
+    await entry.onSubmit();
+    assert.strictEqual(entry.data.errorText, '');
+
+    const list = await fx.api().listSchoolMatches({});
+    assert.strictEqual(list.matches.length, 1);
+    const found = await fx.api().getSchoolMatch({ matchId: list.matches[0].matchId });
+    assert.deepStrictEqual(found.match.scoreA, [5, 3, 5]);
+    assert.deepStrictEqual(found.match.scoreB, [3, 5, 4]);
+    assert.strictEqual(found.match.winner, 'A');
+    assert.strictEqual(found.match.scoring, 'tennis');
+    assert.strictEqual(found.match.setGames, 4);
+    assert.strictEqual(found.match.tiebreakAt, 4);
+    assert.strictEqual(found.match.noAd, true);
+    assert.strictEqual(found.match.gamePoints, undefined, '网球记录不落 gamePoints');
+    assert.strictEqual(found.match.status, MATCH_STATUS.PENDING);
   } finally {
     fx.restore();
   }

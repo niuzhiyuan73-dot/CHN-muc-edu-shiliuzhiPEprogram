@@ -57,13 +57,27 @@ test('每个协会的字段齐全，且规则默认值合法', () => {
       assert.match(a.theme[key], /^#[0-9A-Fa-f]{6}$/, `${a.id}.theme.${key} 不是颜色`);
     }
 
-    // 规则默认值：默认赛制必须落在可选值里
-    assert.ok(Array.isArray(a.format.gamePointsOptions));
+    // 规则默认值：默认赛制必须落在可选值里，且选项组要与计分体系对得上。
+    // 网球是三层计分（分→局→盘），可变项是「每盘几局」，没有「每局几分」。
     assert.ok(Array.isArray(a.format.bestOfOptions));
+    assert.ok(isValidFormat(a.format.defaultFormat), `${a.id}.format.defaultFormat 不合法`);
     assert.ok(
-      isValidFormat(a.format.defaultFormat),
-      `${a.id}.format.defaultFormat 不合法`
+      a.format.bestOfOptions.includes(a.format.defaultFormat.bestOf),
+      `${a.id} 默认盘制不在 bestOfOptions 里`
     );
+    if (a.format.scoring === 'tennis') {
+      assert.ok(Array.isArray(a.format.setGamesOptions), `${a.id} 缺 setGamesOptions`);
+      assert.ok(
+        a.format.setGamesOptions.includes(a.format.defaultFormat.setGames),
+        `${a.id} 默认每盘局数不在 setGamesOptions 里`
+      );
+    } else {
+      assert.ok(Array.isArray(a.format.gamePointsOptions), `${a.id} 缺 gamePointsOptions`);
+      assert.ok(
+        a.format.gamePointsOptions.includes(a.format.defaultFormat.gamePoints),
+        `${a.id} 默认分制不在 gamePointsOptions 里`
+      );
+    }
     assert.strictEqual(typeof a.ratedPairLimit, 'number');
     assert.ok(a.elo && typeof a.elo.initialRating === 'number');
   }

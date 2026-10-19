@@ -174,25 +174,36 @@ function formatRank(rank, total) {
 }
 
 /**
- * 把 1:0 这样的比分还原成「11:9  12:10」这样的逐局文案。
+ * 把两条比分数组还原成「11:9  12:10」这样的逐单元文案。
  *
  * 比赛数据里比分是两条数组（我方得分、对方得分），因为可能是三局两胜。
- * 页面上直接并列两排数字很难读，所以按局配对。
- * 两边局数不一致时以较短的一边为准，多出来的数据宁可丢掉也不错位。
+ * 页面上直接并列两排数字很难读，所以按单元配对。
+ * 两边单元数不一致时以较短的一边为准，多出来的数据宁可丢掉也不错位。
+ *
+ * 【网球多一个括号】
+ * 盘比分打到抢七时，网球记法要标出输方的抢七分：7:6(5)。第三个参数
+ * 就是这些抢七小分（`[{setIndex,a,b}]`，a/b 与 mine/theirs 同侧）。
+ * 不传就只输出 7:6——老赛制与没有记录小分的比赛都走这一路。
  *
  * @param {Array<number>} mine
  * @param {Array<number>} theirs
+ * @param {Array<{setIndex:number,a:number,b:number}>} [tiebreaks]
  * @returns {string}
  */
-function formatScore(mine, theirs) {
+function formatScore(mine, theirs, tiebreaks) {
   const a = Array.isArray(mine) ? mine : [];
   const b = Array.isArray(theirs) ? theirs : [];
   if (a.length === 0 || b.length === 0) return PLACEHOLDER;
 
+  const marks = Array.isArray(tiebreaks) ? tiebreaks : [];
   const games = Math.min(a.length, b.length);
   const lines = [];
   for (let i = 0; i < games; i += 1) {
-    lines.push(`${a[i]}:${b[i]}`);
+    let text = `${a[i]}:${b[i]}`;
+    const tb = marks.find((item) => item && item.setIndex === i);
+    // 括号里是**输方**的抢七分，这是网球的标准记法（7:6(5) 读作「七比六，抢七五比七」）
+    if (tb) text += `(${a[i] > b[i] ? tb.b : tb.a})`;
+    lines.push(text);
   }
   return lines.join('  ');
 }

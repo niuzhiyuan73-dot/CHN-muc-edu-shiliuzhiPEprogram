@@ -43,7 +43,7 @@ const {
 } = require('../utils/format.js');
 const { sortProjectsForDisplay } = require('../utils/leaderboard.js');
 const { allAssociations } = require('../utils/associations.js');
-const { formatMatchFormat } = require('../utils/match-format.js');
+const { formatMatchFormat, formatOfRecord } = require('../utils/match-format.js');
 const { resolveNameDisplay } = require('./profile.js');
 
 /** 默认取多少场逐场战绩。太多会拖慢首屏，剩下的靠「加载更多」。 */
@@ -130,7 +130,7 @@ function buildHistoryRow(row) {
     // 双打对手有两人，用顿号连起来读起来更顺
     rivalText: row.opponentNames.join('、'),
     partnerText: row.partnerNames.length ? `搭档 ${row.partnerNames.join('、')}` : '单打',
-    scoreText: formatScore(row.score.mine, row.score.theirs),
+    scoreText: formatScore(row.score.mine, row.score.theirs, row.tiebreaks),
     eloDeltaText: formatSigned(row.eloDelta),
     eloDeltaUp: row.eloDelta >= 0,
     pointDeltaText: formatSigned(row.pointDelta),
@@ -141,7 +141,7 @@ function buildHistoryRow(row) {
     poolLabel: RATING_POOL_LABEL[row.pool] || '',
     // 赛制文案。老数据没有这两个字段时 formatMatchFormat 返回空串，
     // 模板那边用 wx:if 挡住，免得留下一截悬空的分隔符
-    formatText: formatMatchFormat({ gamePoints: row.gamePoints, bestOf: row.bestOf }),
+    formatText: formatMatchFormat(formatOfRecord(row)),
   };
 }
 

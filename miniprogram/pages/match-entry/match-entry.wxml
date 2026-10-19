@@ -108,23 +108,52 @@
     <!-- ========== 赛制 ========== -->
     <view class="card">
       <view class="card-title">赛制</view>
-      <view class="card-subtitle">比分怎么算，由这里决定；历史战绩里显示的就是这行字</view>
+      <view class="card-subtitle" wx:if="{{isTennis}}">网球按「分 → 局 → 盘」计分：一局 4 分，一盘 6 局（或 4 局短盘）</view>
+      <view class="card-subtitle" wx:else>比分怎么算，由这里决定；历史战绩里显示的就是这行字</view>
 
-      <view class="field-row">
-        <view class="field-label">分制</view>
-        <picker wx:if="{{!scheduled}}" mode="selector" range="{{gamePointsLabels}}" value="{{gamePointsIndex}}" bindchange="onPickGamePoints">
-          <view class="field-value">{{gamePointsLabels[gamePointsIndex]}} ›</view>
-        </picker>
-        <view wx:else class="field-value">{{gamePointsLabels[gamePointsIndex]}}</view>
-      </view>
+      <!-- 网球：盘制 / 每盘局数 / 无占先。没有「分制」——一局恒定 4 分 -->
+      <block wx:if="{{isTennis}}">
+        <view class="field-row">
+          <view class="field-label">盘制</view>
+          <picker wx:if="{{!scheduled}}" mode="selector" range="{{bestOfLabels}}" value="{{bestOfIndex}}" bindchange="onPickBestOf">
+            <view class="field-value">{{bestOfText}} ›</view>
+          </picker>
+          <view wx:else class="field-value">{{bestOfText}}</view>
+        </view>
 
-      <view class="field-row">
-        <view class="field-label">局制</view>
-        <picker wx:if="{{!scheduled}}" mode="selector" range="{{bestOfLabels}}" value="{{bestOfIndex}}" bindchange="onPickBestOf">
-          <view class="field-value">{{bestOfLabels[bestOfIndex]}} ›</view>
-        </picker>
-        <view wx:else class="field-value">{{bestOfLabels[bestOfIndex]}}</view>
-      </view>
+        <view class="field-row">
+          <view class="field-label">每盘局数</view>
+          <picker wx:if="{{!scheduled}}" mode="selector" range="{{setGamesLabels}}" value="{{setGamesIndex}}" bindchange="onPickSetGames">
+            <view class="field-value">{{setGamesText}} ›</view>
+          </picker>
+          <view wx:else class="field-value">{{setGamesText}}</view>
+        </view>
+
+        <view class="field-row">
+          <view class="field-label">无占先</view>
+          <switch wx:if="{{!scheduled}}" checked="{{form.noAd}}" color="#2E7D32" bindchange="onToggleNoAd" />
+          <view wx:else class="field-value">{{form.noAd ? '是（40:40 一分定胜负）' : '否（需连得 2 分）'}}</view>
+        </view>
+      </block>
+
+      <!-- 其余项目：分制 / 局制 -->
+      <block wx:else>
+        <view class="field-row">
+          <view class="field-label">分制</view>
+          <picker wx:if="{{!scheduled}}" mode="selector" range="{{gamePointsLabels}}" value="{{gamePointsIndex}}" bindchange="onPickGamePoints">
+            <view class="field-value">{{gamePointsText}} ›</view>
+          </picker>
+          <view wx:else class="field-value">{{gamePointsText}}</view>
+        </view>
+
+        <view class="field-row">
+          <view class="field-label">局制</view>
+          <picker wx:if="{{!scheduled}}" mode="selector" range="{{bestOfLabels}}" value="{{bestOfIndex}}" bindchange="onPickBestOf">
+            <view class="field-value">{{bestOfText}} ›</view>
+          </picker>
+          <view wx:else class="field-value">{{bestOfText}}</view>
+        </view>
+      </block>
 
       <view class="format-preview">
         <text class="format-text">{{formatText}}</text>
@@ -134,11 +163,12 @@
 
     <!-- ========== 比分 ========== -->
     <view class="card">
-      <view class="card-title">逐局比分</view>
-      <view class="card-subtitle">按 A 队 / B 队的顺序填。没打到的局留空即可</view>
+      <view class="card-title">{{isTennis ? '逐盘比分' : '逐局比分'}}</view>
+      <view class="card-subtitle" wx:if="{{isTennis}}">填每盘各自赢下的局数，如 6:4、7:5、7:6。没打到的盘留空即可</view>
+      <view class="card-subtitle" wx:else>按 A 队 / B 队的顺序填。没打到的局留空即可</view>
 
       <view class="score-head">
-        <view class="score-head-no">局</view>
+        <view class="score-head-no">{{scoreUnit}}</view>
         <view class="score-head-team">A 队</view>
         <view class="score-head-team">B 队</view>
       </view>

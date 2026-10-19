@@ -55,10 +55,16 @@ function viewMatch(match, userId) {
     matchType: match.matchType,
     pool: detail ? detail.pool : match.pool,
     eventId: match.eventId || null,
-    // 赛制要跟着逐场明细一起走：脱离赛制就看不出 11:9 到底打完没有，
-    // 一场 21 分制的比赛和一局 11 分制的比赛，同样的数字含义完全不同
+    // 赛制要跟着逐场明细一起走：脱离赛制就看不出 11:9（或 6:4）到底打完没有，
+    // 一场 21 分制的比赛和一局 11 分制的比赛，同样的数字含义完全不同。
+    // 网球多一层「盘」，所以赛制字段整组带出（见 match-format.formatOfRecord）。
     gamePoints: match.gamePoints,
     bestOf: match.bestOf,
+    scoring: match.scoring || 'point',
+    setGames: match.setGames,
+    tiebreakAt: match.tiebreakAt,
+    tiebreakPoints: match.tiebreakPoints,
+    noAd: match.noAd === true,
     side,
     isWin: detail ? detail.isWin : match.winner === side,
     eloBefore: detail ? detail.eloBefore : null,
@@ -74,6 +80,13 @@ function viewMatch(match, userId) {
     score: side === 'A'
       ? { mine: match.scoreA, theirs: match.scoreB }
       : { mine: match.scoreB, theirs: match.scoreA },
+    // 抢七小分同样要跟着视角翻转：a/b 在记录里是 A/B 的，翻到「我方」这一侧
+    // 之后 formatScore 才能把括号标在正确的一方身上
+    tiebreaks: (Array.isArray(match.tiebreaks) ? match.tiebreaks : []).map((item) => (
+      side === 'A'
+        ? { ...item }
+        : { setIndex: item.setIndex, a: item.b, b: item.a }
+    )),
     location: match.location || '',
   };
 }

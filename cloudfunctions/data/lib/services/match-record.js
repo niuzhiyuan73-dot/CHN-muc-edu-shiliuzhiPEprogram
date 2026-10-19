@@ -413,6 +413,28 @@ function overlapOf(teamA, teamB) {
 }
 
 /**
+ * 抢七小分归一。
+ *
+ * 抢七不参与胜负判定（盘比分 7:6 已经决定了谁赢），它只是比分后面那个
+ * 括号（7:6(5)）。所以这里不做严格校验，只把形状收干净：脏数据不该
+ * 让整条比赛写不进去；但形状不对的条目要丢掉，免得渲染出奇怪的括号。
+ *
+ * @param {Array<Object>} list [{ setIndex, a, b }]
+ * @returns {Array<{setIndex:number, a:number, b:number}>}
+ */
+function normalizeTiebreaks(list) {
+  return (Array.isArray(list) ? list : [])
+    .map((item, index) => ({
+      setIndex: Number.isInteger(item && item.setIndex) ? item.setIndex : index,
+      a: Number(item && item.a) || 0,
+      b: Number(item && item.b) || 0,
+    }))
+    // 打平的（含 0:0 这种脏数据）与负数丢掉。注意输方 0 分是**合法**的：
+    // 抢七 7:0 的官方记法就是 7:6(0)，不能因为「0 看起来像没填」就吞掉。
+    .filter((item) => item.a >= 0 && item.b >= 0 && item.a !== item.b);
+}
+
+/**
  * 组装并校验一条待确认的比赛记录。
  *
  * 校验顺序刻意从「粗」到「细」：先确认项目与赛制，再看人有没有选对，
@@ -446,6 +468,12 @@ function buildMatchRecord(params = {}, options = {}) {
     scoreB,
     gamePoints,
     bestOf,
+    scoring,
+    setGames,
+    tiebreakAt,
+    tiebreakPoints,
+    noAd,
+    tiebreaks,
     matchTime,
     location = '',
     recorder,
@@ -462,9 +490,18 @@ function buildMatchRecord(params = {}, options = {}) {
   }
 
   // ---------- 2. 赛制 ----------
-  const format = { gamePoints, bestOf };
+  // 网球与其余项目的赛制形状不同：它没有「每局几分」，多一个「每盘几局」。
+  // 只有明确标了 tennis 才走三层口径，缺省一律按 point（历史记录都没有
+  // scoring 字段，不能因为多了个字段解释就把老比赛判成非法）。
+  const isTennis = scoring === 'tennis';
+  const format = isTennis
+    ? { scoring: 'tennis', bestOf, setGames, tiebreakAt, tiebreakPoints, noAd }
+    : { gamePoints, bestOf };
+
   if (!isValidFormat(format)) {
-    errors.format = '请选择有效的分制与局制';
+    errors.format = isTennis
+      ? '请选择有效的盘制与每盘局数'
+      : '请选择有效的分制与局制';
   }
 
   // ---------- 3. 参赛者 ----------
@@ -527,9 +564,21 @@ function buildMatchRecord(params = {}, options = {}) {
       teamB: [...teamB],
       scoreA: normalizedA,
       scoreB: normalizedB,
-      // 赛制与比分同生共死：脱离赛制就看不出 11:9 到底打完没有
-      gamePoints,
-      bestOf,
+      // 赛制与比分同生共死：脱离赛制就看不出 11:9（或 6:4）到底打完没有。
+      // 网球多一层「盘」，字段也就不同——两套写法不能混，混了另一端就读不出赛制。
+      ...(isTennis
+        ? {
+            scoring: 'tennis',
+            bestOf: format.bestOf,
+            setGames: format.setGames,
+            tiebreakAt: format.tiebreakAt,
+            tiebreakPoints: format.tiebreakPoints,
+            noAd: format.noAd === true,
+            ...(normalizeTiebreaks(tiebreaks).length > 0
+              ? { tiebreaks: normalizeTiebreaks(tiebreaks) }
+              : {}),
+          }
+        : { gamePoints, bestOf }),
       winner,
       location: String(location || '').trim(),
       matchTime: time,
@@ -578,8 +627,17 @@ function fillScheduledMatch(match, scores = {}, options = {}) {
       teamB: match.teamB,
       scoreA: scores.scoreA,
       scoreB: scores.scoreB,
+      // 网球定稿时把抢七小分一起带进来，用来还原 7:6(5) 的括号
+      tiebreaks: scores.tiebreaks,
       gamePoints: match.gamePoints,
       bestOf: match.bestOf,
+      // 网球补录：赛制同样取自那条待确认记录。这里若能改赛制，
+      // 签表里排的「6 局盘」就会被按另一套规则录进去，签表与记录自相矛盾。
+      scoring: match.scoring,
+      setGames: match.setGames,
+      tiebreakAt: match.tiebreakAt,
+      tiebreakPoints: match.tiebreakPoints,
+      noAd: match.noAd,
       matchTime: match.matchTime,
       location: match.location,
       recorder: options.recorder || match.recorder,
@@ -624,6 +682,7 @@ module.exports = {
   buildForfeitPatch,
   toScore,
   normalizeScores,
+  normalizeTiebreaks,
   buildMatchRecord,
   fillScheduledMatch,
 };

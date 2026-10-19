@@ -754,7 +754,7 @@ async function startCollegeTie(payload = {}, ctx) {
 
   // 排阵在事务外一次取全（事务内不允许整表查询）；小场草稿按排阵铺出。
   const lineups = (await ctx.repo.forScope(ctx).lineups.list()).filter(row => row.eventId === tie.eventId);
-  const built = buildLegMatchDrafts({ event, tie, lineups, now: ctx.now });
+  const built = buildLegMatchDrafts({ event, tie, lineups, now: ctx.now, association: ctx.association });
   if (!built.ok) return ok(refused(built.message));
 
   const byLegNo = new Map(built.drafts.map(draft => [Number(draft.legNo), draft._id]));

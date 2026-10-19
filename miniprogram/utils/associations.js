@@ -27,14 +27,24 @@
  */
 
 const { DEFAULT_CONFIG } = require('./elo.js');
-const { GAME_POINTS_OPTIONS, BEST_OF_OPTIONS, DEFAULT_FORMAT } = require('./match-format.js');
+const {
+  SCORING,
+  GAME_POINTS_OPTIONS,
+  BEST_OF_OPTIONS,
+  DEFAULT_FORMAT,
+  TENNIS_SET_GAMES_OPTIONS,
+  TENNIS_BEST_OF_OPTIONS,
+  TENNIS_TIEBREAK_POINTS,
+  DEFAULT_TENNIS_FORMAT,
+} = require('./match-format.js');
 const { RATED_PAIR_LIMIT, ASSOCIATION_STATUS } = require('./constants.js');
 
 /**
  * 各协会共用的规则默认值。
  *
- * 本期所有协会都沿用现有默认（赛制 11 分制三局两胜、Elo 锚点 1450、防刷 15 场），
- * 与改造前的行为一致。以后若某个协会要单独调，直接在该协会条目里覆盖同名字段即可。
+ * 本期除网球外的协会都沿用现有默认（赛制 11 分制三局两胜、Elo 锚点 1450、
+ * 防刷 15 场），与改造前的行为一致。网球在条目里整块覆盖 format（见下），
+ * 因为它的计分体系不同——不是换个数字，而是多一层「盘」。
  * 返回新对象，避免各条目之间共享同一份可变引用。
  *
  * @returns {{format: Object, elo: Object, ratedPairLimit: number}}
@@ -42,12 +52,36 @@ const { RATED_PAIR_LIMIT, ASSOCIATION_STATUS } = require('./constants.js');
 function baseRules() {
   return {
     format: {
+      scoring: SCORING.POINT,
       gamePointsOptions: GAME_POINTS_OPTIONS.slice(),
       bestOfOptions: BEST_OF_OPTIONS.slice(),
       defaultFormat: { ...DEFAULT_FORMAT },
     },
     elo: { ...DEFAULT_CONFIG },
     ratedPairLimit: RATED_PAIR_LIMIT,
+  };
+}
+
+/**
+ * 网球规则：三层计分（分 → 局 → 盘）。
+ *
+ * 与 baseRules 的差别不只是数值，而是整块换掉：网球没有「每局打到几分」这
+ * 个选项（一局恒定 4 分），可变的是「每盘几局」。录入页据 scoring 决定
+ * 显示哪组 picker，两套选项不能混在一张表里。
+ *
+ * @returns {{format: Object, elo: Object, ratedPairLimit: number}}
+ */
+function tennisRules() {
+  const base = baseRules();
+  return {
+    ...base,
+    format: {
+      scoring: SCORING.TENNIS,
+      setGamesOptions: TENNIS_SET_GAMES_OPTIONS.slice(),
+      bestOfOptions: TENNIS_BEST_OF_OPTIONS.slice(),
+      tiebreakPoints: TENNIS_TIEBREAK_POINTS,
+      defaultFormat: { ...DEFAULT_TENNIS_FORMAT },
+    },
   };
 }
 
@@ -137,7 +171,8 @@ const ASSOCIATIONS = [
       primaryLight: '#E8F5E9',
       accent: '#C6D93B',
     },
-    ...baseRules(),
+    // 唯一走三层计分（分 → 局 → 盘）的协会，见 tennisRules()
+    ...tennisRules(),
     status: ASSOCIATION_STATUS.ACTIVE,
   },
 ];
@@ -223,12 +258,31 @@ function belongsToAssociation(doc, association) {
   return owner === association;
 }
 
+/**
+ * 某协会的默认比赛赛制（深拷贝）。
+ *
+ * 抽签铺比赛、学院赛小场这类「没有人现场选赛制」的场合都取它：默认值写
+ * 在注册表里，只有这一份，不会出现「录入页按 11 分制、签表按别的」这种事。
+ * 未知协会回落到匹克球口径，绝不抛错——那会让整个抽签失败。
+ *
+ * @param {string} id
+ * @returns {Object}
+ */
+function defaultFormatOf(id) {
+  try {
+    return { ...getAssociation(id).format.defaultFormat };
+  } catch (err) {
+    return { ...DEFAULT_FORMAT };
+  }
+}
+
 module.exports = {
   allAssociations,
   activeAssociations,
   getAssociation,
   isKnownAssociation,
   defaultAssociationId,
+  defaultFormatOf,
   LEGACY_ASSOCIATION_ID,
   belongsToAssociation,
 };

@@ -5,11 +5,15 @@
   <view wx:elif="{{blockReason}}" class="hint">{{blockReason}}</view>
 
   <block wx:else>
-    <!-- 顶栏：局数、赛制与三个操作 -->
+    <!-- 顶栏：比分、赛制与三个操作。
+         网球是三层：盘分（大）→ 本盘局分 → 本局分（左右两块大数字），
+         其余项目只有「局数 + 局分」两层，盘分那一行整个不出现。 -->
     <view class="topbar">
       <view class="scoreline">
-        <text class="games">{{view.gamesA}} : {{view.gamesB}}</text>
-        <text class="game-index">第 {{view.gameIndex + 1}} 局</text>
+        <text wx:if="{{view.setsText}}" class="sets">盘 {{view.setsText}}</text>
+        <text class="games">{{view.gamesText}}</text>
+        <text class="game-index">{{view.gameIndexText}}</text>
+        <text wx:if="{{view.tiebreakText}}" class="tiebreak">{{view.tiebreakText}}</text>
         <text class="format">{{formatText}}</text>
         <text wx:if="{{refereeNotice}}" class="referee">{{refereeNotice}}</text>
       </view>
@@ -30,7 +34,7 @@
         bindtap="onScore"
       >
         <text class="team-name">{{labelA}}</text>
-        <text class="points">{{view.pointsA}}</text>
+        <text class="points {{view.scoring === 'tennis' ? 'points-text' : ''}}">{{view.pointsTextA}}</text>
         <text class="tap-hint">判 A 得分</text>
       </view>
       <view
@@ -39,7 +43,7 @@
         bindtap="onScore"
       >
         <text class="team-name">{{labelB}}</text>
-        <text class="points">{{view.pointsB}}</text>
+        <text class="points {{view.scoring === 'tennis' ? 'points-text' : ''}}">{{view.pointsTextB}}</text>
         <text class="tap-hint">判 B 得分</text>
       </view>
     </view>

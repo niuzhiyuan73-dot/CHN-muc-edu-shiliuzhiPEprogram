@@ -132,8 +132,12 @@ function tallyOf(match) {
   const scoreA = Array.isArray(match.scoreA) ? match.scoreA : [];
   const scoreB = Array.isArray(match.scoreB) ? match.scoreB : [];
 
-  // 有比分就按逐局胜负算局分与总分；比分缺失时退化成「胜方 1:0」，
-  // 至少不把这场已确认的比赛漏掉
+  // 有比分就按逐单元胜负算局分与总分；比分缺失时退化成「胜方 1:0」，
+  // 至少不把这场已确认的比赛漏掉。
+  //
+  // 网球不需要分支：scoreA/scoreB 的元素是「每盘的局数」，元素多寡比大小
+  // 就是谁拿下这一盘，所以这里的 gamesA 实际是「赢了几盘」、pointsA 是
+  // 「赢了多少局」。积分表并列时的第三级（总得分）用它依然说得通。
   let gamesA;
   let gamesB;
   if (scoreA.length > 0 && scoreA.length === scoreB.length) {

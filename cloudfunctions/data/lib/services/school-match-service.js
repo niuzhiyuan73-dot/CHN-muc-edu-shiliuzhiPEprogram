@@ -213,6 +213,14 @@ function matchSummary(doc, ctx, dir) {
     winner: doc.winner || '',
     gamePoints: doc.gamePoints,
     bestOf: doc.bestOf,
+    // 网球三层计分的赛制字段。个人赛其余项目为缺省值（不写这些字段），
+    // 展示端据 scoring 决定把比分读成「局」还是「盘」。
+    scoring: doc.scoring || 'point',
+    setGames: doc.setGames,
+    tiebreakAt: doc.tiebreakAt,
+    tiebreakPoints: doc.tiebreakPoints,
+    noAd: doc.noAd === true,
+    tiebreaks: Array.isArray(doc.tiebreaks) ? doc.tiebreaks.map((item) => ({ ...item })) : [],
     matchTime: doc.matchTime || null,
     location: doc.location || '',
     eventId: doc.eventId || null,
@@ -706,6 +714,10 @@ function matchDocFromRecord(record, matchId, ctx, fingerprint) {
 const fingerprintOf = record => JSON.stringify([
   record.matchType, record.teamA, record.teamB, record.scoreA, record.scoreB,
   record.gamePoints, record.bestOf, record.location, new Date(record.matchTime).getTime(),
+  // 网球赛制字段也进指纹：同一比分在两种盘制下不是同一场比赛，
+  // 漏进去会让「同 requestId 补发」把改过赛制的记录当成重复请求放过去
+  record.scoring || '', record.setGames || 0, record.tiebreakAt || 0,
+  record.tiebreakPoints || 0, record.noAd === true, record.tiebreaks || [],
 ]);
 
 module.exports = {

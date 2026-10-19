@@ -993,3 +993,35 @@ describe('buildRoundMatches —— 逐轮对阵生成', () => {
     assert.deepEqual(buildRoundMatches(event, { round: 1 }), []);
   });
 });
+
+describe('buildRoundMatches —— 赛制按协会议定，抽签时就写进草稿', () => {
+  const event = { _id: 'e7', location: '体育馆', startTime: '2026-06-10T09:00:00' };
+
+  test('网球赛制整块进草稿，且不留 gamePoints', () => {
+    const format = {
+      scoring: 'tennis',
+      bestOf: 1,
+      setGames: 4,
+      tiebreakAt: 4,
+      tiebreakPoints: 7,
+      noAd: true,
+    };
+    const drafts = buildRoundMatches(event, { round: 1, pairs: [['u1', 'u2']], format });
+
+    assert.equal(drafts[0].scoring, 'tennis');
+    assert.equal(drafts[0].bestOf, 1);
+    assert.equal(drafts[0].setGames, 4);
+    assert.equal(drafts[0].tiebreakAt, 4);
+    assert.equal(drafts[0].tiebreakPoints, 7);
+    assert.equal(drafts[0].noAd, true);
+    assert.equal(drafts[0].gamePoints, undefined, '按 11 分制解释 4:2 会把整盘读错');
+  });
+
+  test('不传赛制时照旧 11 分制 / 一局一胜，老调用方不改也能跑', () => {
+    const drafts = buildRoundMatches(event, { round: 1, pairs: [['u1', 'u2']] });
+    assert.equal(drafts[0].gamePoints, 11);
+    assert.equal(drafts[0].bestOf, 3);
+    assert.equal(drafts[0].scoring, undefined);
+    assert.equal(drafts[0].setGames, undefined);
+  });
+});

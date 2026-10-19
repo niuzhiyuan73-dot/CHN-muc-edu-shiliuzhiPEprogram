@@ -33,7 +33,7 @@ const {
   courtNoTextOf,
 } = require('../utils/constants.js');
 const { formatDateTime, formatScore } = require('../utils/format.js');
-const { formatMatchFormat } = require('../utils/match-format.js');
+const { formatMatchFormat, formatOfRecord } = require('../utils/match-format.js');
 const { createNameResolver } = require('../utils/stats.js');
 const { describeLive } = require('./live-view.js');
 const {
@@ -179,7 +179,7 @@ function buildRecordRow(record, ctx = {}) {
     matchId: record._id,
     typeLabel: MATCH_TYPE_LABEL[record.matchType] || '',
     // P3 要求的赛制落地：老数据没有这两个字段时返回空串，模板用 wx:if 挡掉
-    formatText: formatMatchFormat({ gamePoints: record.gamePoints, bestOf: record.bestOf }),
+    formatText: formatMatchFormat(formatOfRecord(record)),
     dateText: formatDateTime(record.matchTime),
     locationText: record.location || '',
     // 约球没有场号，老赛事的记录也没有——空串由模板挡掉
@@ -189,7 +189,7 @@ function buildRecordRow(record, ctx = {}) {
     teamAList: memberList(record.teamA, nameOf),
     teamBList: memberList(record.teamB, nameOf),
     winnerSide: winner,
-    scoreText: formatScore(record.scoreA, record.scoreB),
+    scoreText: formatScore(record.scoreA, record.scoreB, record.tiebreaks),
     // 正在逐球计分的那一场：把当前比分顶到终局比分的位置上显示（进行中 / 已结束）。
     // 首屏的 live 由读接口带上（见 read-handlers.attachLive 与 mock.attachLive）
     live: describeLive(record.live),

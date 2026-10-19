@@ -55,7 +55,7 @@ const { getPoolRating } = require('../utils/rating.js');
 const { createSeededRandom, shuffle } = require('../utils/random.js');
 const { drawBracket, bracketSizeOf } = require('../utils/bracket.js');
 const { groupEntries, roundRobinRounds } = require('../utils/standings.js');
-const { DEFAULT_FORMAT } = require('../utils/match-format.js');
+const { DEFAULT_FORMAT, formatFieldPatch } = require('../utils/match-format.js');
 
 /** 合法的种子来源集合 */
 const VALID_SEED_MODES = Object.values(SEED_MODE);
@@ -873,8 +873,8 @@ function draftsFromPairs(event, pairs, { round, stage, format, group } = {}) {
       // 还没开打：比分留空，胜方未知，录入人待赛后补
       scoreA: [],
       scoreB: [],
-      gamePoints: format.gamePoints,
-      bestOf: format.bestOf,
+      // 赛制整块落库：网球多一层「盘」，与 11 分制字段不能混
+      ...formatFieldPatch(format),
       winner: null,
       location: event.location || '',
       matchTime: event.startTime,

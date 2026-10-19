@@ -66,6 +66,43 @@ const {
 const { canManageCollegeEvent } = require('./college-event.js');
 const { collegeTieKey } = require('./college-draw.js');
 const { planCourts } = require('./court.js');
+const { getAssociation } = require('../utils/associations.js');
+const { scoringOf } = require('../utils/match-format.js');
+const { formatScore } = require('../utils/format.js');
+
+/**
+ * 学院赛小场该用哪套赛制。
+ *
+ * 【为什么不能继续写死 11 分制】
+ * 石榴籽杯的项目就是协会（cup-home 直接读 activeAssociations），网球项目
+ * 会自动出现在杯赛里。网球没有「11 分制一局」这种东西——一局恒定 4 分，
+ * 硬按 11 分制生成小场，录分时 6:4 会被判「没人打到 11 分」，一场都录不进去。
+ *
+ * 【网球小场为什么用 4 局短盘 + 无占先】
+ * 一个大场里通常有多场小项，标准盘（6 局、可能长到 7:5）会让赛程翻倍。
+ * 团体赛用短盘是通行做法，配无占先把单场压到 20 分钟上下。
+ *
+ * @param {string} association 协会 id（缺省按常规 11 分制）
+ * @returns {Object} 赛制对象
+ */
+function collegeLegFormatOf(association) {
+  try {
+    const assoc = getAssociation(association);
+    if (assoc && assoc.format && assoc.format.scoring === 'tennis') {
+      return {
+        scoring: 'tennis',
+        bestOf: 1,
+        setGames: 4,
+        tiebreakAt: 4,
+        tiebreakPoints: 7,
+        noAd: true,
+      };
+    }
+  } catch (err) {
+    // 未知协会：按常规口径，绝不因为查不到就抛错——那会让整个大场开不了
+  }
+  return { ...COLLEGE_LEG_FORMAT };
+}
 
 /* ============================================================
  * 赛事级开始
@@ -274,13 +311,28 @@ function playersForLeg(lineups, tieId, college, legNo) {
  * @param {Object} params.tie 大场
  * @param {Array<Object>} [params.lineups] 本赛事全部排阵
  * @param {Date|string} [params.now] 比赛时间，由调用方给
+ * @param {string} [params.association] 所属协会 id，决定小场赛制（见 collegeLegFormatOf）
  * @returns {{ok:boolean, drafts:Array<Object>, message:string}}
  */
-function buildLegMatchDrafts({ event = null, tie = null, lineups = [], now = null } = {}) {
+function buildLegMatchDrafts({ event = null, tie = null, lineups = [], now = null, association = '' } = {}) {
   if (!event || !tie) return { ok: false, drafts: [], message: '缺少赛事或大场' };
 
   const legs = Array.isArray(tie.legs) ? tie.legs : [];
   if (legs.length === 0) return { ok: false, drafts: [], message: '这场大场还没有小项' };
+
+  // 赛制按协会定一次，整场小项共用：同一大场里两场球不该有两套规则
+  const legFormat = collegeLegFormatOf(association);
+  const isTennis = scoringOf(legFormat) === 'tennis';
+  const formatFields = isTennis
+    ? {
+        scoring: 'tennis',
+        bestOf: legFormat.bestOf,
+        setGames: legFormat.setGames,
+        tiebreakAt: legFormat.tiebreakAt,
+        tiebreakPoints: legFormat.tiebreakPoints,
+        noAd: legFormat.noAd === true,
+      }
+    : { gamePoints: legFormat.gamePoints, bestOf: legFormat.bestOf };
 
   const drafts = [];
   for (const leg of legs) {
@@ -312,8 +364,8 @@ function buildLegMatchDrafts({ event = null, tie = null, lineups = [], now = nul
       collegeB: tie.collegeB,
       scoreA: [],
       scoreB: [],
-      gamePoints: COLLEGE_LEG_FORMAT.gamePoints,
-      bestOf: COLLEGE_LEG_FORMAT.bestOf,
+      // 赛制随记录一起落库：脱离赛制就看不出 6:4 是「一盘」还是「一局」
+      ...formatFields,
       winner: null,
       location: event.location || '',
       // 场号从大场下推：几个小项在同一块场地上依次打，与 referee 同一条路径
@@ -336,11 +388,13 @@ function buildLegMatchDrafts({ event = null, tie = null, lineups = [], now = nul
   return { ok: true, drafts, message: '' };
 }
 
-/** 小场比分的可读文本，例如「11:9 11:9」；没录分时给空串 */
+/** 小场比分的可读文本，例如「11:9 11:9」/ 网球「6:4 7:6(3)」；没录分时给空串 */
 function scoreTextOf(match) {
   const a = match && Array.isArray(match.scoreA) ? match.scoreA : [];
   const b = match && Array.isArray(match.scoreB) ? match.scoreB : [];
   if (a.length === 0 && b.length === 0) return '';
+  // 网球走统一格式化：7:6 后面要带抢七小分，且两边元素数本来就一致
+  if (match && match.scoring === 'tennis') return formatScore(a, b, match.tiebreaks);
   const games = [];
   for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
     games.push(`${a[i] === undefined ? 0 : a[i]}:${b[i] === undefined ? 0 : b[i]}`);
@@ -772,6 +826,7 @@ module.exports = {
   disciplineToMatchType,
   isDoublesDiscipline,
   collegeLegKey,
+  collegeLegFormatOf,
   buildLegMatchDrafts,
   scoreTextOf,
   totalPoints,
