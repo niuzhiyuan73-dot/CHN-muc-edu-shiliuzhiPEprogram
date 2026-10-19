@@ -1,0 +1,69 @@
+<!-- 球队详情：队名 / 队长 / 状态 + 名单 + 按身份显示的动作 -->
+<view class="page-container {{themeClass}}">
+  <view wx:if="{{loading}}" class="hint">加载中…</view>
+  <view wx:elif="{{error}}" class="hint">{{error}}</view>
+
+  <block wx:else>
+    <view class="team-head">
+      <view class="team-avatar">{{team.initial}}</view>
+      <view class="team-head-main">
+        <view class="team-name">{{team.name}}</view>
+        <view class="team-meta">
+          队长 {{team.captainName}} · {{team.memberCount}} 人
+          <text wx:if="{{team.college}}"> · {{team.college}}</text>
+        </view>
+        <view class="team-status">{{team.statusLabel}}</view>
+      </view>
+    </view>
+
+    <view wx:if="{{notice}}" class="notice {{noticeError ? 'notice-error' : ''}}">{{notice}}</view>
+
+    <!-- 路人：申请加入；已在队/待审时给状态说明 -->
+    <view wx:if="{{team.status === 'active'}}" class="actions">
+      <view wx:if="{{team.canApply}}" class="btn btn-primary" bindtap="onApply">申请加入</view>
+      <view wx:elif="{{team.pending}}" class="hint-inline">入队申请已提交，等队长审批</view>
+      <view wx:elif="{{team.isMine && !team.isCaptain}}" class="btn btn-ghost" bindtap="onLeave">退队</view>
+    </view>
+
+    <view class="card">
+      <view class="card-head">
+        <view class="card-title">队员名单</view>
+        <view wx:if="{{team.canManage && pendingCount > 0}}" class="badge">待审 {{pendingCount}}</view>
+      </view>
+
+      <view wx:if="{{members.length === 0}}" class="hint">还没有队员</view>
+      <view wx:else class="member-list">
+        <view wx:for="{{members}}" wx:key="userId" class="member-row">
+          <view class="member-main">
+            <view class="member-name">
+              {{item.name}}
+              <text wx:if="{{item.role === 'captain'}}" class="tag tag-captain">队长</text>
+              <text wx:if="{{item.status === 'pending'}}" class="tag tag-pending">待审批</text>
+            </view>
+            <view class="member-meta">{{item.statusLabel}}</view>
+          </view>
+
+          <!-- 队长/管理者：审待审申请；队长可把队长转给在队队员 -->
+          <view class="member-actions">
+            <block wx:if="{{item.status === 'pending' && team.canManage}}">
+              <view class="mini mini-primary" data-userid="{{item.userId}}" bindtap="onApprove">通过</view>
+              <view class="mini" data-userid="{{item.userId}}" bindtap="onReject">拒绝</view>
+            </block>
+            <view
+              wx:elif="{{team.isCaptain && item.role !== 'captain' && item.status === 'active'}}"
+              class="mini"
+              data-userid="{{item.userId}}"
+              data-name="{{item.name}}"
+              bindtap="onTransfer"
+            >转队长</view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{team.canManage && team.status !== 'archived'}}" class="danger-zone">
+      <view class="danger-text">归档后不再接受入队与报名，历史成绩仍可查询。</view>
+      <view class="btn btn-danger" bindtap="onArchive">归档球队</view>
+    </view>
+  </block>
+</view>

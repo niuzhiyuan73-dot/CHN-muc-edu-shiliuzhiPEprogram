@@ -142,6 +142,11 @@ Page({
     }
   },
 
+  /** 进组队页（团队运动专属） */
+  onOpenTeams() {
+    return wx.navigateTo({ url: '/pages/team-list/team-list' });
+  },
+
   /** 切页签。首次切到某个页签时把它挂上 */
   onSwitchTab(event) {
     const { tab } = event.currentTarget.dataset;

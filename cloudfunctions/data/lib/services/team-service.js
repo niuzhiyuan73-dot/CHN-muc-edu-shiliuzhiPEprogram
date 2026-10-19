@@ -83,6 +83,8 @@ function teamView(team, { dir, actorId, manage, membership }) {
   return {
     teamId: team._id,
     name: team.name,
+    // 队名首字做占位「队徽」：在服务端算好，模板不写下标取值
+    initial: String(team.name || '?').slice(0, 1),
     sport: team.sport || 'basketball',
     college: team.college || '',
     status: team.status,

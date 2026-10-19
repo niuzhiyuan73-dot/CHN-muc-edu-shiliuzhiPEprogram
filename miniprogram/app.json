@@ -34,7 +34,9 @@
     "pages/meet-schedule/meet-schedule",
     "pages/meet-score/meet-score",
     "pages/meet-standing/meet-standing",
-    "pages/cup-home/cup-home"
+    "pages/cup-home/cup-home",
+    "pages/team-list/team-list",
+    "pages/team-detail/team-detail"
   ],
   "window": {
     "backgroundTextStyle": "dark",

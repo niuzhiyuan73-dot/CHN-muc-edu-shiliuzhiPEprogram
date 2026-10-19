@@ -1,0 +1,208 @@
+/* 球队详情：名头 + 名单 + 动作区 */
+.team-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-lg) 0 var(--space-md);
+}
+
+.team-avatar {
+  width: 116rpx;
+  height: 116rpx;
+  line-height: 116rpx;
+  text-align: center;
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 52rpx;
+  font-weight: 700;
+  flex: none;
+}
+
+.team-head-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.team-name {
+  font-size: 38rpx;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.team-meta {
+  margin-top: 6rpx;
+  font-size: 26rpx;
+  color: var(--color-text-secondary);
+}
+
+.team-status {
+  margin-top: 6rpx;
+  display: inline-block;
+  padding: 2rpx 14rpx;
+  border-radius: 20rpx;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  font-size: 22rpx;
+}
+
+.actions {
+  margin-bottom: var(--space-md);
+}
+
+.btn {
+  height: 80rpx;
+  line-height: 80rpx;
+  border-radius: var(--radius-md);
+  font-size: 30rpx;
+  text-align: center;
+  font-weight: 600;
+}
+
+.btn-primary {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.btn-ghost {
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+}
+
+.btn-danger {
+  background: #FDECEA;
+  color: #B23A2E;
+}
+
+.notice {
+  margin-bottom: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  background: var(--color-primary-light);
+  color: var(--color-primary-dark);
+  font-size: 26rpx;
+  line-height: 1.6;
+}
+
+.notice-error {
+  background: #FDECEA;
+  color: #B23A2E;
+}
+
+.hint {
+  padding: var(--space-xl) 0;
+  text-align: center;
+  color: var(--color-text-secondary);
+  font-size: 28rpx;
+}
+
+.hint-inline {
+  padding: var(--space-sm) 0;
+  font-size: 26rpx;
+  color: var(--color-text-secondary);
+}
+
+.card {
+  margin-bottom: var(--space-md);
+  padding: var(--space-md);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-sm);
+}
+
+.card-title {
+  font-size: 30rpx;
+  font-weight: 600;
+}
+
+.badge {
+  padding: 2rpx 14rpx;
+  border-radius: 20rpx;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  font-size: 22rpx;
+}
+
+.member-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.member-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) 0;
+  border-bottom: 1rpx solid var(--color-border);
+}
+
+.member-row:last-child {
+  border-bottom: none;
+}
+
+.member-name {
+  font-size: 28rpx;
+  color: var(--color-text-primary);
+}
+
+.member-meta {
+  margin-top: 4rpx;
+  font-size: 22rpx;
+  color: var(--color-text-secondary);
+}
+
+.member-actions {
+  display: flex;
+  gap: var(--space-xs);
+  flex: none;
+}
+
+.mini {
+  padding: 0 var(--space-md);
+  height: 56rpx;
+  line-height: 56rpx;
+  border-radius: 28rpx;
+  background: var(--color-bg-subtle, #F5F6F8);
+  color: var(--color-text-secondary);
+  font-size: 24rpx;
+}
+
+.mini-primary {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.tag {
+  margin-left: var(--space-xs);
+  padding: 2rpx 12rpx;
+  border-radius: 20rpx;
+  font-size: 20rpx;
+}
+
+.tag-captain {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.tag-pending {
+  background: #FFF4E5;
+  color: #B26A00;
+}
+
+.danger-zone {
+  margin-top: var(--space-lg);
+}
+
+.danger-text {
+  margin-bottom: var(--space-sm);
+  font-size: 24rpx;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+}

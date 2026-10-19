@@ -1,0 +1,61 @@
+<!-- 组队：球队列表。搜索 / 我的球队 / 建队，点一行进详情 -->
+<view class="page-container {{themeClass}}">
+  <view class="hero">
+    <view class="hero-title">组队</view>
+    <view class="hero-subtitle">球队成立需要协会负责人审核；入队申请由队长审批</view>
+  </view>
+
+  <view class="toolbar">
+    <input
+      class="search"
+      placeholder="按队名搜索"
+      value="{{keyword}}"
+      bindinput="onInputKeyword"
+      bindconfirm="onSearch"
+      confirm-type="search"
+    />
+    <view class="chip {{mineOnly ? 'chip-on' : ''}}" bindtap="onToggleMine">我的球队</view>
+  </view>
+
+  <view wx:if="{{notice}}" class="notice {{noticeError ? 'notice-error' : ''}}">{{notice}}</view>
+
+  <view wx:if="{{creating}}" class="card create-card">
+    <view class="card-title">申请建队</view>
+    <input class="create-input" placeholder="球队名称（2–20 字）" value="{{newName}}" bindinput="onInputName" maxlength="20" />
+    <view class="create-actions">
+      <view class="btn btn-ghost" bindtap="onCloseCreate">取消</view>
+      <view class="btn btn-primary {{submitting ? 'is-disabled' : ''}}" bindtap="onSubmitCreate">
+        {{submitting ? '提交中…' : '提交申请'}}
+      </view>
+    </view>
+  </view>
+
+  <view wx:if="{{loading}}" class="hint">加载中…</view>
+  <view wx:elif="{{error}}" class="hint">{{error}}</view>
+  <view wx:elif="{{teams.length === 0}}" class="hint">
+    {{mineOnly ? '你还没有加入球队' : '还没有球队。点右下角申请建队，或等协会发布招募'}}
+  </view>
+
+  <view wx:else class="team-list">
+    <view
+      wx:for="{{teams}}"
+      wx:key="teamId"
+      class="team-row"
+      data-teamid="{{item.teamId}}"
+      bindtap="onOpenTeam"
+    >
+      <view class="team-avatar">{{item.initial}}</view>
+      <view class="team-main">
+        <view class="team-name">
+          {{item.name}}
+          <text wx:if="{{item.isMine}}" class="tag tag-mine">我的</text>
+          <text wx:if="{{item.status !== 'active'}}" class="tag tag-muted">{{item.statusLabel}}</text>
+        </view>
+        <view class="team-meta">队长 {{item.captainName}} · {{item.memberCount}} 人{{item.college ? ' · ' + item.college : ''}}</view>
+      </view>
+      <view class="team-arrow">›</view>
+    </view>
+  </view>
+
+  <view class="fab" bindtap="onOpenCreate">＋ 建队</view>
+</view>

@@ -85,7 +85,7 @@
 ## 五、技术架构
 
 ```
-pages / components        界面（35 个页面 + 面板组件）
+pages / components        界面（37 个页面 + 面板组件）
         │
 services                 视图模型 + 数据源门面（MOCK / CLOUD 同一套接口）
         │
