@@ -436,11 +436,17 @@ Page({
     return this.runDraw(picked.slice());
   },
 
-  /** 给抽签排出的比赛录分：跳到录入页，带上这一场的编号 */
+  /**
+   * 给抽签排出的比赛录分：进录入页（带上这一场编号）。
+   *
+   * 这一页同时提供两条路：顶部「实时计分」进横屏逐球计分台，下面直接填逐局比分。
+   * 不能直接跳计分台——很多场次是边裁口头报分、由管理员补录，没有逐球过程；
+   * 只有实时计分一条路时，这类场次就没法录了（用户反馈）。
+   */
   onRecordMatch(event) {
     const matchId = event.currentTarget.dataset.matchId;
     if (!matchId) return;
-    wx.navigateTo({ url: `/pages/live-score/live-score?matchId=${encodeURIComponent(matchId)}` });
+    wx.navigateTo({ url: `/pages/match-entry/match-entry?matchId=${encodeURIComponent(matchId)}` });
   },
 
   /** 确认一场已录分的比赛，成绩随即计入等级分 */

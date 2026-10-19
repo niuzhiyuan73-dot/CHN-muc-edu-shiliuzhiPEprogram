@@ -2630,9 +2630,20 @@ test('个人赛事 S2 闭环：列表进详情、实时计分、确认、名次�
     const matches = await fx.api().listSchoolMatches({ eventId });
     const matchId = matches.matches[0].matchId;
     detail.onRecordMatch({ currentTarget: { dataset: { matchId } } });
-    assert.ok(calls.navigations.at(-1).startsWith('/pages/live-score/live-score?'));
+    // 录分入口必须进「可手填比分」的录入页：实时计分只是这一页顶部的一个选项，
+    // 很多场次由管理员照边裁报分补录，没有逐球过程
+    const entryUrl = calls.navigations.at(-1);
+    assert.ok(entryUrl.startsWith('/pages/match-entry/match-entry?'), `录分入口跳错页：${entryUrl}`);
+    assert.equal(queryFrom(entryUrl).matchId, matchId);
+    // 录入页要真的能填：逐局比分输入仍在（不能只剩实时计分一条路）
+    const entry = instantiate(matchEntryConfig);
+    await entry.onLoad({ matchId });
+    assert.equal(entry.data.blockReason, '', entry.data.blockReason);
+    assert.equal(entry.data.scheduled, true);
+    assert.ok(entry.data.scoreRows.length > 0, '签表比赛的录入页应保留逐局比分输入');
+    // 从录入页走「实时计分」这条路：同编号进计分台，把逐球流程走完
     const score = instantiate(liveScoreConfig);
-    await score.onLoad(queryFrom(calls.navigations.at(-1)));
+    await score.onLoad({ matchId });
     for (let i = 0; i < 22; i += 1) score.onScore({ currentTarget: { dataset: { side: 'A' } } });
     await score.queue;
     score.onFinish();

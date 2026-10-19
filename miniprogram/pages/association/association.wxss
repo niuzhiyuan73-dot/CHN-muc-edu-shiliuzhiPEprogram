@@ -14,22 +14,39 @@
   line-height: 1.6;
 }
 
-/* ==================== 引导语 ==================== */
+/* ==================== 分档标题 ==================== */
 
-.assoc-intro {
-  margin: var(--space-sm) var(--space-xs) var(--space-md);
+/* 上下两档：校级活动 / 协会。标题左侧留一点缩进，与宫格对齐 */
+.assoc-section {
+  margin-top: var(--space-md);
 }
 
-.assoc-intro-title {
-  font-size: var(--font-lg);
+.assoc-section-title {
+  display: flex;
+  align-items: baseline;
+  margin: 0 var(--space-xs) var(--space-sm);
+  font-size: var(--font-md);
   font-weight: 600;
   color: var(--color-text);
 }
 
-.assoc-intro-note {
-  margin-top: 4rpx;
-  font-size: var(--font-sm);
-  color: var(--color-text-secondary);
+.assoc-section-note {
+  margin-left: var(--space-sm);
+  font-size: var(--font-xs);
+  font-weight: 400;
+  color: var(--color-text-tertiary);
+}
+
+/* ==================== 校级活动 ==================== */
+
+/* 运动会用与协会同一套宫格，只是图标换成浅灰（学校级栏目，不属于任何协会） */
+.assoc-item-meet .assoc-item-icon {
+  background: linear-gradient(135deg, #f4f6f9, #e3e8ef);
+}
+
+.assoc-item-meet:active,
+.assoc-item:active {
+  background: #f7f7f7;
 }
 
 /* ==================== 协会宫格（图标式） ==================== */
@@ -114,6 +131,3 @@
   font-size: var(--font-xs);
   color: var(--color-text-tertiary);
 }
-
-/* 运动会入口：与协会并列，但它是学校级栏目（不属于任何协会），用浅灰底区分 */
-.assoc-item-meet .assoc-item-icon { background: linear-gradient(135deg, #f4f6f9, #e3e8ef); }

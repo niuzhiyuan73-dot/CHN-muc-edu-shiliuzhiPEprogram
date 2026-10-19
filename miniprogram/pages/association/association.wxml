@@ -1,6 +1,8 @@
 <!--
   协会：tabBar 的第 2 个页签
-  列出当前学校的协会，每个协会一个按钮，点进去进它的工作台（排行榜 / 比赛 / 赛事）。
+  分成上下两档：
+    · 校级活动：运动会（学校级栏目，不属于任何协会），单独占一行；
+    · 协会：当前学校的各协会，每个一个按钮，点进去进它的工作台。
 --><view class="page-container {{themeClass}}">
 
   <!-- 加载中。排在出错之前，否则首屏会一闪而过地报错 -->
@@ -18,39 +20,45 @@
       正在浏览 {{schoolName}}（只读）· 榜单 / 比赛 / 赛事均为演示内容
     </view>
 
-    <view class="assoc-intro">
-      <view class="assoc-intro-title">选择协会</view>
-      <view class="assoc-intro-note">进入后可查看该协会的排行榜、比赛与赛事</view>
-    </view>
+    <!-- 上档：校级活动。运动会是学校级栏目，不属于任何协会；
+         卡片样式与下面的协会一致（同一套宫格），只是分组标题不同。 -->
+    <view class="assoc-section">
+      <view class="assoc-section-title">校级活动<text class="assoc-section-note">全校都能参加</text></view>
 
-    <!-- 图标式网格：squircle 渐变图标在上、文字提示在下（参照主流体育 App 首页宫格） -->
-    <view class="assoc-grid">
-      <view
-        wx:for="{{associations}}"
-        wx:key="id"
-        class="assoc-item {{item.active ? 'is-active' : ''}}"
-        data-association="{{item.id}}"
-        bindtap="onChooseAssociation"
-      >
-        <view wx:if="{{item.active}}" class="assoc-item-current">当前</view>
-        <view class="assoc-item-icon">
-          <image wx:if="{{item.icon}}" class="assoc-item-icon-img" src="{{item.icon}}" mode="aspectFit" />
-          <text wx:else>{{item.glyph}}</text>
+      <view class="assoc-grid">
+        <view class="assoc-item assoc-item-meet" data-kind="meet" bindtap="onChooseMeet">
+          <view class="assoc-item-icon"><text>🏟️</text></view>
+          <view class="assoc-item-name">运动会</view>
+          <view class="assoc-item-sport">校级赛事</view>
         </view>
-        <view class="assoc-item-name">{{item.name}}</view>
-        <view class="assoc-item-sport">{{item.sportName}}</view>
-      </view>
-
-      <!-- 运动会：学校级栏目，与各协会在同一网格里并列（R01）。
-           它不属于任何协会，所以是固定项，不随协会注册表变化。 -->
-      <view class="assoc-item assoc-item-meet" data-kind="meet" bindtap="onChooseMeet">
-        <view class="assoc-item-icon"><text>🏟️</text></view>
-        <view class="assoc-item-name">运动会</view>
-        <view class="assoc-item-sport">校院级赛事</view>
       </view>
     </view>
 
-    <view wx:if="{{associations.length === 0}}" class="empty-note">这所学校还没有协会</view>
+    <!-- 下档：协会。图标式网格，squircle 渐变图标在上、文字提示在下
+         （参照主流体育 App 首页宫格；三个协会正好一行） -->
+    <view class="assoc-section">
+      <view class="assoc-section-title">协会<text class="assoc-section-note">按协会查看排行榜、比赛与赛事</text></view>
+
+      <view class="assoc-grid">
+        <view
+          wx:for="{{associations}}"
+          wx:key="id"
+          class="assoc-item {{item.active ? 'is-active' : ''}}"
+          data-association="{{item.id}}"
+          bindtap="onChooseAssociation"
+        >
+          <view wx:if="{{item.active}}" class="assoc-item-current">当前</view>
+          <view class="assoc-item-icon">
+            <image wx:if="{{item.icon}}" class="assoc-item-icon-img" src="{{item.icon}}" mode="aspectFit" />
+            <text wx:else>{{item.glyph}}</text>
+          </view>
+          <view class="assoc-item-name">{{item.name}}</view>
+          <view class="assoc-item-sport">{{item.sportName}}</view>
+        </view>
+      </view>
+
+      <view wx:if="{{associations.length === 0}}" class="empty-note">这所学校还没有协会</view>
+    </view>
 
   </block>
 </view>
