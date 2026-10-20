@@ -196,3 +196,81 @@ test('球队详情 —— 业务失败时把服务端原话显示出来，不吞
   assert.match(page.data.notice, /转让队长/);
   assert.equal(page.data.busy, false, '失败后要解除防连点');
 }));
+
+/* ============================================================
+ * team-detail：战绩（P3）
+ * ============================================================ */
+
+function recordFixture(overrides = {}) {
+  return {
+    ok: true,
+    team: {
+      teamId: 'tm_1', name: '热浪队', status: 'active', statusLabel: '正常',
+      archived: false, captainName: '队长', memberCount: 6,
+    },
+    overall: {
+      games: 6, wins: 4, losses: 2, draws: 0, winRate: 67, winRateText: '67%',
+      recordText: '6 场 · 4 胜 2 负',
+    },
+    seasons: [
+      { eventId: 'tev_1', name: '秋季联赛', status: 'finished', statusLabel: '已结束', placement: 1, placementText: '冠军', recordText: '3 场 · 3 胜 0 负' },
+      { eventId: 'tev_2', name: '新生杯', status: 'running', statusLabel: '进行中', placement: null, placementText: '', recordText: '3 场 · 1 胜 2 负' },
+    ],
+    recent: [
+      { matchId: 'm1', opponentName: '闪电队', eventName: '秋季联赛', scoreText: '80 : 70', result: 'win', resultLabel: '胜', matchTimeText: '2026-10-20 14:00' },
+      { matchId: 'm2', opponentName: '风暴队', eventName: '秋季联赛', scoreText: '62 : 75', result: 'loss', resultLabel: '负', matchTimeText: '' },
+    ],
+    ...overrides,
+  };
+}
+
+test('球队详情 —— 战绩单独取，总胜负、历届名次与近期比赛都落到 data', () => withApi({
+  getTeam: () => ({ ok: true, team: TEAM, members: [], pendingCount: 0 }),
+  getTeamRecord: () => recordFixture(),
+}, async (calls) => {
+  const page = instantiate(loadPage('team-detail/team-detail.js'));
+  await page.onLoad({ teamId: 'tm_1' });
+  await page.loadRecord();
+
+  assert.equal(page.data.record.overall.winRateText, '67%');
+  assert.equal(page.data.record.overall.wins, 4);
+  assert.equal(page.data.record.seasons[0].placementText, '冠军');
+  assert.equal(page.data.record.seasons[1].placementText, '');
+  assert.equal(page.data.record.recent[0].resultLabel, '胜');
+  assert.equal(page.data.recordError, '');
+  assert.equal(calls.find(call => call[0] === 'getTeamRecord')[1].teamId, 'tm_1');
+}));
+
+test('球队详情 —— 战绩取不到时只坏这一块，球队与名单照常显示', () => withApi({
+  getTeam: () => ({ ok: true, team: TEAM, members: [], pendingCount: 0 }),
+  getTeamRecord: () => ({ ok: false, message: '战绩服务暂不可用' }),
+}, async () => {
+  const page = instantiate(loadPage('team-detail/team-detail.js'));
+  await page.onLoad({ teamId: 'tm_1' });
+  await page.loadRecord();
+
+  assert.equal(page.data.team.name, '热浪队', '名单不该被战绩拖垮');
+  assert.equal(page.data.record, null);
+  assert.equal(page.data.recordError, '战绩服务暂不可用');
+  assert.equal(page.data.error, '', '整页错误不该被点亮');
+}));
+
+test('球队详情 —— 归档球队的战绩照样能看', () => withApi({
+  getTeam: () => ({
+    ok: true,
+    team: { ...TEAM, status: 'archived', statusLabel: '已归档', canApply: false },
+    members: [],
+    pendingCount: 0,
+  }),
+  getTeamRecord: () => recordFixture({
+    team: { teamId: 'tm_1', name: '热浪队', status: 'archived', statusLabel: '已归档', archived: true, captainName: '队长', memberCount: 6 },
+  }),
+}, async () => {
+  const page = instantiate(loadPage('team-detail/team-detail.js'));
+  await page.onLoad({ teamId: 'tm_1' });
+  await page.loadRecord();
+
+  assert.equal(page.data.record.team.archived, true);
+  assert.equal(page.data.record.seasons[0].placementText, '冠军', '历史成绩不随归档消失');
+  assert.equal(page.data.record.overall.games, 6);
+}));

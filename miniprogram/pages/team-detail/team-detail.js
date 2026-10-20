@@ -29,6 +29,10 @@ Page({
     /** 名单：队长与管理者能看到待审申请 */
     members: [],
     pendingCount: 0,
+    /** 战绩（getTeamRecord）：总胜负 + 历届 + 近期；归档后照样能看 */
+    record: null,
+    /** 战绩单独失败不影响球员名单，所以错误只落在这一块 */
+    recordError: '',
     /** 动作进行中，防连点 */
     busy: false,
     notice: '',
@@ -59,10 +63,34 @@ Page({
         members: result.members || [],
         pendingCount: Number(result.pendingCount) || 0,
       });
+      // 战绩与名单互不依赖：单独取，失败也不该把整页打成加载失败
+      this.loadRecord();
       return undefined;
     } catch (err) {
       console.error('[team-detail] 加载失败', err);
       this.setData({ loading: false, error: '球队加载失败，请稍后重试' });
+      return undefined;
+    }
+  },
+
+  /**
+   * 取球队战绩。
+   *
+   * 只读、对所有人开放（包括归档球队）——「这支队往年打得怎么样」是公开事实，
+   * 与「谁能改这支队的名单」是两件事。
+   */
+  async loadRecord() {
+    try {
+      const result = await space.forScope(this.scope).getTeamRecord({ teamId: this.data.teamId });
+      if (!result || result.ok !== true) {
+        this.setData({ record: null, recordError: (result && result.message) || '战绩加载失败' });
+        return undefined;
+      }
+      this.setData({ record: result, recordError: '' });
+      return undefined;
+    } catch (err) {
+      console.error('[team-detail] 战绩加载失败', err);
+      this.setData({ record: null, recordError: '战绩加载失败，请稍后重试' });
       return undefined;
     }
   },

@@ -61,6 +61,64 @@
       </view>
     </view>
 
+    <!-- 战绩：总胜负 + 历届名次 + 近期几场。只算已发布的比赛 -->
+    <view class="card">
+      <view class="card-head">
+        <view class="card-title">球队战绩</view>
+        <view wx:if="{{record}}" class="badge">{{record.overall.winRateText}} 胜率</view>
+      </view>
+
+      <view wx:if="{{recordError}}" class="hint">{{recordError}}</view>
+      <view wx:elif="{{!record}}" class="hint">加载中…</view>
+      <block wx:else>
+        <view class="record-summary">
+          <view class="record-cell">
+            <view class="record-value">{{record.overall.games}}</view>
+            <view class="record-label">场次</view>
+          </view>
+          <view class="record-cell">
+            <view class="record-value">{{record.overall.wins}}</view>
+            <view class="record-label">胜</view>
+          </view>
+          <view class="record-cell">
+            <view class="record-value">{{record.overall.losses}}</view>
+            <view class="record-label">负</view>
+          </view>
+          <view class="record-cell">
+            <view class="record-value">{{record.overall.draws}}</view>
+            <view class="record-label">平</view>
+          </view>
+        </view>
+
+        <view wx:if="{{record.seasons.length === 0}}" class="hint-inline">还没有参加过赛事。</view>
+        <view wx:for="{{record.seasons}}" wx:key="eventId" class="record-row">
+          <view class="record-main">
+            <view class="record-name">{{item.name}}</view>
+            <view class="record-meta">{{item.recordText}}</view>
+          </view>
+          <view class="record-side">
+            <text wx:if="{{item.placementText}}" class="tag tag-medal">{{item.placementText}}</text>
+            <text wx:else class="record-status">{{item.statusLabel}}</text>
+          </view>
+        </view>
+
+        <block wx:if="{{record.recent.length > 0}}">
+          <view class="record-sub">近期比赛</view>
+          <view wx:for="{{record.recent}}" wx:key="matchId" class="record-row">
+            <view class="record-main">
+              <view class="record-name">vs {{item.opponentName}}</view>
+              <view class="record-meta">{{item.eventName}}<text wx:if="{{item.matchTimeText}}"> · {{item.matchTimeText}}</text></view>
+            </view>
+            <view class="record-side">
+              <text class="record-score">{{item.scoreText}}</text>
+              <text class="tag {{item.result === 'win' ? 'tag-win' : (item.result === 'loss' ? 'tag-loss' : '')}}">{{item.resultLabel}}</text>
+            </view>
+          </view>
+        </block>
+        <view class="hint-inline">只统计已发布的比赛；待审核的比分不进战绩。</view>
+      </block>
+    </view>
+
     <view wx:if="{{team.canManage && team.status !== 'archived'}}" class="danger-zone">
       <view class="danger-text">归档后不再接受入队与报名，历史成绩仍可查询。</view>
       <view class="btn btn-danger" bindtap="onArchive">归档球队</view>

@@ -38,7 +38,8 @@
     "pages/team-list/team-list",
     "pages/team-detail/team-detail",
     "pages/team-event-list/team-event-list",
-    "pages/team-event-detail/team-event-detail"
+    "pages/team-event-detail/team-event-detail",
+    "pages/my-team-profile/my-team-profile"
   ],
   "window": {
     "backgroundTextStyle": "dark",

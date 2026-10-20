@@ -206,3 +206,94 @@
   color: var(--color-text-secondary);
   line-height: 1.6;
 }
+
+/* 战绩：四格汇总 + 历届 + 近期 */
+.record-summary {
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--space-sm);
+}
+
+.record-cell {
+  flex: 1;
+  text-align: center;
+}
+
+.record-value {
+  font-size: 34rpx;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.record-label {
+  margin-top: 2rpx;
+  font-size: 22rpx;
+  color: var(--color-text-secondary);
+}
+
+.record-sub {
+  margin: var(--space-sm) 0 4rpx;
+  font-size: 24rpx;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.record-row {
+  display: flex;
+  align-items: center;
+  padding: var(--space-xs) 0;
+  border-bottom: 1rpx solid var(--color-border);
+}
+
+.record-row:last-child {
+  border-bottom: none;
+}
+
+.record-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.record-name {
+  font-size: 27rpx;
+  color: var(--color-text-primary);
+}
+
+.record-meta {
+  margin-top: 2rpx;
+  font-size: 23rpx;
+  color: var(--color-text-secondary);
+}
+
+.record-side {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: var(--space-xs);
+}
+
+.record-score {
+  font-size: 27rpx;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.record-status {
+  font-size: 23rpx;
+  color: var(--color-text-secondary);
+}
+
+.tag-medal {
+  background: #FFF3D6;
+  color: #9A6B00;
+}
+
+.tag-win {
+  background: #FDECEA;
+  color: #B23A2E;
+}
+
+.tag-loss {
+  background: #EAF5EE;
+  color: #2E7D54;
+}

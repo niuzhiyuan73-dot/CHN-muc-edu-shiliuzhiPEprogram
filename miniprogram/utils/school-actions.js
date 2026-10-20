@@ -83,6 +83,8 @@ const SCHOOL_SPACE_ACTIONS = Object.freeze([
   'getTeamMatchSchedule',         'updateTeamMatchSchedule',     'updateTeamRoundSchedule',
   // 团队赛事：报名选人（球衣号）与单场出场名单
   'getTeamEntryRoster',           'getTeamMatchLineup',          'saveTeamMatchLineup',
+  // 团队赛事：个人团队档案（我的球队 / 参赛经历 / 荣誉 / 跨赛事累计）与球队战绩
+  'getMyTeamProfile',             'getTeamRecord',
 ]);
 
 /** 跨校邀请赛（`forExchange` 声明，16 个）。 */

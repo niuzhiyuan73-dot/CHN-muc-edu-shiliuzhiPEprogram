@@ -172,6 +172,9 @@ function forSchoolIdentity(input) {
     getTeamEntryRoster: payload => request('getTeamEntryRoster', payload),
     getTeamMatchLineup: payload => request('getTeamMatchLineup', payload),
     saveTeamMatchLineup: payload => request('saveTeamMatchLineup', payload),
+    // 团队赛事：个人团队档案与球队战绩
+    getMyTeamProfile: payload => request('getMyTeamProfile', payload),
+    getTeamRecord: payload => request('getTeamRecord', payload),
   });
 }
 

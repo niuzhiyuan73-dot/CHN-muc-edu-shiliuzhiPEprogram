@@ -22,6 +22,7 @@ const { schoolKey, schoolMemberKey, schoolMembershipKey, PLATFORM_STATUS } = req
 const {
   TEAM_STATUS, TEAM_MEMBER_STATUS, TEAM_EVENT_STATUS, TEAM_ENTRY_STATUS, TEAM_MATCH_STATUS,
   TEAM_EVENT_STATUS_LABEL, TEAM_ENTRY_STATUS_LABEL, TEAM_MATCH_STATUS_LABEL,
+  TEAM_STATUS_LABEL, TEAM_MEMBER_STATUS_LABEL,
   BRACKET_STAGE, EVENT_BRONZE_MODE, TEAM_STAT_INTEGRITY, TEAM_STAT_STATUS,
 } = require('../utils/constants.js');
 const { EVENT_FORMAT } = require('../utils/constants.js');
@@ -2220,6 +2221,377 @@ async function getTeamEventPlayerStats(payload = {}, ctx) {
   return ok({ ok: true, players, matchCount: matches.length, message: '' });
 }
 
+/* ---------------- 个人与球队成绩 ---------------- */
+
+/** 名次文案：前三名给常说的说法，其余按名次写 */
+function placementTextOf(rank) {
+  const value = Number(rank);
+  if (!Number.isInteger(value) || value <= 0) return '';
+  if (value === 1) return '冠军';
+  if (value === 2) return '亚军';
+  if (value === 3) return '季军';
+  return `第 ${value} 名`;
+}
+
+/**
+ * 结算时名次写在报名单（`entry.placement`）上；早期赛事只把名次写进
+ * `event.placements`，这里兜一次，免得老数据在个人页上「一个荣誉都没有」。
+ */
+function placementOf(event, teamId, entry) {
+  const direct = Number(entry && entry.placement);
+  if (Number.isInteger(direct) && direct > 0) return direct;
+  const rows = (event && event.placements) || [];
+  const hit = rows.find(row => row.teamId === teamId);
+  return hit ? Number(hit.rank) || 0 : 0;
+}
+
+/**
+ * 一支球队在若干场比赛里的胜负。
+ *
+ * 只认**已发布**的比赛：待审核的比分会改，把它算进战绩等于发布审核白做。
+ * 没有 winner 的已发布比赛按平局记（只有循环赛允许平局）。
+ */
+function teamRecordOf(matches, teamId) {
+  const out = { games: 0, wins: 0, losses: 0, draws: 0 };
+  for (const match of Array.isArray(matches) ? matches : []) {
+    if (!match || match.status !== TEAM_MATCH_STATUS.PUBLISHED) continue;
+    const isA = match.teamA === teamId;
+    const isB = match.teamB === teamId;
+    if (!isA && !isB) continue;
+    out.games += 1;
+    if (match.winner !== 'A' && match.winner !== 'B') {
+      out.draws += 1;
+      continue;
+    }
+    if ((match.winner === 'A' && isA) || (match.winner === 'B' && isB)) out.wins += 1;
+    else out.losses += 1;
+  }
+  return out;
+}
+
+/** 战绩一句话，页面直接显示，不再自己拼字符串 */
+function recordTextOf(record) {
+  if (!record || record.games === 0) return '还没打完一场';
+  const draw = record.draws > 0 ? ` · ${record.draws} 平` : '';
+  return `${record.games} 场 · ${record.wins} 胜 ${record.losses} 负${draw}`;
+}
+
+/** 累计器：每个指标单独记「有记录的场次」，未记录 ≠ 0 */
+function emptyStatAcc() {
+  const fields = {};
+  for (const field of Object.keys(STAT_FIELDS)) fields[field] = { sum: 0, games: new Set() };
+  return { fields, matchIds: new Set() };
+}
+
+/** 累计器 → 数字 + 展示文本；某个指标一场都没记过就是 null 与「—」 */
+function statCellsOf(acc) {
+  const out = {};
+  for (const field of Object.keys(STAT_FIELDS)) {
+    const cell = acc.fields[field];
+    const total = cell.games.size > 0 ? cell.sum : null;
+    const perGame = total === null ? null : Math.round((cell.sum / cell.games.size) * 10) / 10;
+    out[field] = total;
+    out[`${field}Text`] = Number.isInteger(total) ? String(total) : '—';
+    // 场均按「该指标有记录的场次」算，不拿没记的场次摊薄
+    out[`${field}PerGame`] = perGame;
+    out[`${field}PerGameText`] = perGame === null ? '—' : String(perGame);
+  }
+  out.games = acc.matchIds.size;
+  return out;
+}
+
+/**
+ * 我的团队档案：我的球队 / 参赛经历 / 团队荣誉 / 跨赛事累计。
+ *
+ * 【为什么退队后历史还在】
+ * 参赛经历读的是**报名快照**（`team_event_entries.roster`），不是「现在队里有谁」。
+ * 人退队了，他当年那届比赛的事实没有变；按当前队员表算，会把历史抹掉。
+ *
+ * 【为什么别人的要看权限】
+ * 这份数据带「哪届报了、拿了几名、个人数据」。队内谁被退回、谁没报名，
+ * 属于当事人与管理者之间的事，路人不必都能翻。管理者可以代查。
+ */
+async function getMyTeamProfile(payload = {}, ctx) {
+  if (!ctx.actorId) return ok(refused('请先登录'));
+  if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
+
+  const targetId = payload.userId ? String(payload.userId) : ctx.actorId;
+  const manage = canManageAssociationSpace(ctx);
+  if (targetId !== ctx.actorId && !manage) {
+    return ok(refused('只能查看自己的团队成绩'));
+  }
+
+  const repo = ctx.repo.forScope(ctx);
+  const [teamsRaw, members, entries, events, matches, statDocs, dir] = await Promise.all([
+    repo.teams.list(), repo.teamMembers.list(), repo.teamEventEntries.list(),
+    repo.teamEvents.list(), repo.teamMatches.list(), repo.teamMatchStats.list(),
+    buildDirectory(ctx),
+  ]);
+  const teams = teamsRaw.filter(team => inScope(team, ctx));
+  const teamById = new Map(teams.map(team => [team._id, team]));
+  const eventById = new Map(events.map(event => [event._id, event]));
+
+  const nameOf = (userId) => {
+    const user = (dir.members || []).find(item => item._id === userId);
+    return (user && (user.nickName || user.realName)) || userId;
+  };
+  const memberCountOf = teamId => members.filter(
+    row => row.teamId === teamId && row.status === TEAM_MEMBER_STATUS.ACTIVE
+  ).length;
+
+  /* 我的球队：当前在队 + 已离队的历史（离队的不抹掉，只标状态） */
+  const myMemberships = members.filter(row => row.userId === targetId && teamById.has(row.teamId));
+  const myTeams = myMemberships
+    .map((row) => {
+      const team = teamById.get(row.teamId);
+      const record = teamRecordOf(
+        matches.filter(match => match.teamA === team._id || match.teamB === team._id),
+        team._id
+      );
+      return {
+        teamId: team._id,
+        name: team.name,
+        isCaptain: team.captainId === targetId,
+        roleLabel: team.captainId === targetId ? '队长' : '队员',
+        status: team.status,
+        statusLabel: TEAM_STATUS_LABEL[team.status] || team.status,
+        memberStatus: row.status,
+        memberStatusLabel: TEAM_MEMBER_STATUS_LABEL[row.status] || row.status,
+        current: row.status === TEAM_MEMBER_STATUS.ACTIVE,
+        memberCount: memberCountOf(team._id),
+        joinedAt: row.joinedAt || null,
+        record,
+        recordText: recordTextOf(record),
+      };
+    })
+    .sort((a, b) => (Number(b.current) - Number(a.current)) || String(a.name).localeCompare(String(b.name)));
+
+  /* 参赛经历：按报名快照算，退队后仍在 */
+  const playedEntries = entries.filter(
+    entry => Array.isArray(entry.roster) && entry.roster.some(row => row.userId === targetId)
+  );
+  const eventRows = playedEntries
+    .map((entry) => {
+      const event = eventById.get(entry.eventId);
+      if (!event || event.status === TEAM_EVENT_STATUS.DRAFT) return null;
+      const team = teamById.get(entry.teamId);
+      const record = teamRecordOf(
+        matches.filter(match => match.eventId === event._id),
+        entry.teamId
+      );
+      const rank = placementOf(event, entry.teamId, entry);
+      return {
+        eventId: event._id,
+        name: event.name,
+        status: event.status,
+        statusLabel: TEAM_EVENT_STATUS_LABEL[event.status] || event.status,
+        teamId: entry.teamId,
+        teamName: (team && team.name) || '已归档球队',
+        entryStatusLabel: TEAM_ENTRY_STATUS_LABEL[entry.status] || entry.status,
+        placement: rank || null,
+        placementText: placementTextOf(rank),
+        games: record.games,
+        wins: record.wins,
+        losses: record.losses,
+        draws: record.draws,
+        recordText: recordTextOf(record),
+        createdAt: event.createdAt || null,
+        finishedAt: event.finishedAt || null,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+
+  // 团队荣誉：只算前三名。第四名也是成绩，但「荣誉」在校园语境里就是冠亚季
+  const honors = eventRows
+    .filter(row => Number(row.placement) >= 1 && Number(row.placement) <= 3)
+    .map(row => ({
+      eventId: row.eventId,
+      eventName: row.name,
+      teamId: row.teamId,
+      teamName: row.teamName,
+      placement: row.placement,
+      placementText: row.placementText,
+      finishedAt: row.finishedAt,
+    }));
+
+  /* 跨赛事累计：只算已发布的比赛，且按赛事分组，避免不同届混算 */
+  const publishedIds = new Set(
+    matches.filter(match => match.status === TEAM_MATCH_STATUS.PUBLISHED).map(match => match._id)
+  );
+  const total = emptyStatAcc();
+  const byEvent = new Map();
+  for (const doc of statDocs) {
+    if (!publishedIds.has(doc.matchId)) continue;
+    const snapshot = doc.published;
+    if (!snapshot || snapshot.integrity === TEAM_STAT_INTEGRITY.NONE) continue;
+    const rows = snapshot.mode === STAT_MODE.DETAILED
+      ? (snapshot.rows || [])
+      : (snapshot.players || []);
+    const mine = rows.filter(row => row && row.userId === targetId);
+    if (mine.length === 0) continue;
+
+    const eventId = doc.eventId || (matches.find(match => match._id === doc.matchId) || {}).eventId;
+    if (!byEvent.has(eventId)) byEvent.set(eventId, emptyStatAcc());
+    const buckets = [total, byEvent.get(eventId)];
+    for (const bucket of buckets) {
+      bucket.matchIds.add(doc.matchId);
+      for (const row of mine) {
+        for (const field of Object.keys(STAT_FIELDS)) {
+          if (!Number.isInteger(row[field])) continue;
+          bucket.fields[field].sum += row[field];
+          bucket.fields[field].games.add(doc.matchId);
+        }
+      }
+    }
+  }
+
+  const statEvents = [...byEvent.entries()]
+    .map(([eventId, acc]) => {
+      const event = eventById.get(eventId);
+      const entry = playedEntries.find(item => item.eventId === eventId);
+      const team = entry ? teamById.get(entry.teamId) : null;
+      return {
+        eventId,
+        name: (event && event.name) || '已删除赛事',
+        teamName: (team && team.name) || '',
+        ...statCellsOf(acc),
+      };
+    })
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+
+  /* 球队层面的总战绩：按「报名过的每一届」累加，一队一届只算一次 */
+  const teamTotals = { games: 0, wins: 0, losses: 0, draws: 0 };
+  for (const entry of playedEntries) {
+    const event = eventById.get(entry.eventId);
+    if (!event || event.status === TEAM_EVENT_STATUS.DRAFT) continue;
+    const record = teamRecordOf(matches.filter(match => match.eventId === event._id), entry.teamId);
+    teamTotals.games += record.games;
+    teamTotals.wins += record.wins;
+    teamTotals.losses += record.losses;
+    teamTotals.draws += record.draws;
+  }
+
+  return ok({
+    ok: true,
+    userId: targetId,
+    name: nameOf(targetId),
+    isSelf: targetId === ctx.actorId,
+    teams: myTeams,
+    events: eventRows,
+    honors,
+    statEvents,
+    totals: { ...statCellsOf(total), ...teamTotals, recordText: recordTextOf(teamTotals) },
+    message: '',
+  });
+}
+
+/**
+ * 球队战绩：一支球队的历史参赛与胜负。
+ *
+ * 【为什么归档后还要能查】
+ * 「归档」只是不再接新队员、不再报名，历史成绩是别人查得到的公开事实。
+ * 把归档球队的战绩页一起关掉，等于把往届冠军从记录里抹掉。
+ */
+async function getTeamRecord(payload = {}, ctx) {
+  if (!ctx.actorId) return ok(refused('请先登录'));
+  if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
+
+  const repo = ctx.repo.forScope(ctx);
+  const team = await repo.teams.getById(payload.teamId);
+  if (!inScope(team, ctx)) return ok(refused('球队不存在，或不在本协会'));
+
+  const [events, entries, matches, members, teams, dir] = await Promise.all([
+    repo.teamEvents.list(), repo.teamEventEntries.list(), repo.teamMatches.list(),
+    repo.teamMembers.list(), repo.teams.list(), buildDirectory(ctx),
+  ]);
+  const eventById = new Map(events.map(event => [event._id, event]));
+  const teamName = new Map(teams.map(row => [row._id, row.name]));
+  const nameOf = (userId) => {
+    const user = (dir.members || []).find(item => item._id === userId);
+    return (user && (user.nickName || user.realName)) || '';
+  };
+
+  const teamMatches = matches.filter(match => match.teamA === team._id || match.teamB === team._id);
+  const overall = teamRecordOf(teamMatches, team._id);
+
+  const seasons = entries
+    .filter(entry => entry.teamId === team._id)
+    .map((entry) => {
+      const event = eventById.get(entry.eventId);
+      // 草稿赛事不对外：它可能只是管理员试建的一张空壳
+      if (!event || event.status === TEAM_EVENT_STATUS.DRAFT) return null;
+      const record = teamRecordOf(
+        matches.filter(match => match.eventId === event._id),
+        team._id
+      );
+      const rank = placementOf(event, team._id, entry);
+      return {
+        eventId: event._id,
+        name: event.name,
+        status: event.status,
+        statusLabel: TEAM_EVENT_STATUS_LABEL[event.status] || event.status,
+        placement: rank || null,
+        placementText: placementTextOf(rank),
+        games: record.games,
+        wins: record.wins,
+        losses: record.losses,
+        draws: record.draws,
+        recordText: recordTextOf(record),
+        createdAt: event.createdAt || null,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+
+  // 近期战绩：只列已发布的，比分是定稿的那一版
+  const recent = teamMatches
+    .filter(match => match.status === TEAM_MATCH_STATUS.PUBLISHED)
+    .sort((a, b) => String(b.matchTime || b.recordedAt || '')
+      .localeCompare(String(a.matchTime || a.recordedAt || '')))
+    .slice(0, 10)
+    .map((match) => {
+      const isA = match.teamA === team._id;
+      const opponentId = isA ? match.teamB : match.teamA;
+      const mine = isA ? match.scoreA : match.scoreB;
+      const other = isA ? match.scoreB : match.scoreA;
+      let result = 'draw';
+      if (match.winner === 'A' || match.winner === 'B') {
+        result = (match.winner === 'A') === isA ? 'win' : 'loss';
+      }
+      const event = eventById.get(match.eventId);
+      return {
+        matchId: match._id,
+        opponentName: teamName.get(opponentId) || '已归档球队',
+        eventName: (event && event.name) || '',
+        scoreText: `${mine} : ${other}`,
+        result,
+        resultLabel: result === 'win' ? '胜' : (result === 'loss' ? '负' : '平'),
+        matchTimeText: matchTimeText(match.matchTime),
+      };
+    });
+
+  const winRate = overall.games > 0 ? Math.round((overall.wins / overall.games) * 100) : null;
+  return ok({
+    ok: true,
+    team: {
+      teamId: team._id,
+      name: team.name,
+      status: team.status,
+      statusLabel: TEAM_STATUS_LABEL[team.status] || team.status,
+      archived: team.status === TEAM_STATUS.ARCHIVED,
+      captainName: nameOf(team.captainId),
+      memberCount: members.filter(
+        row => row.teamId === team._id && row.status === TEAM_MEMBER_STATUS.ACTIVE
+      ).length,
+    },
+    overall: { ...overall, winRate, winRateText: winRate === null ? '—' : `${winRate}%`, recordText: recordTextOf(overall) },
+    seasons,
+    recent,
+    message: '',
+  });
+}
+
 module.exports = {
   listTeamEvents,
   getTeamEvent,
@@ -2243,4 +2615,7 @@ module.exports = {
   getTeamEntryRoster,
   getTeamMatchLineup,
   saveTeamMatchLineup,
+  // 个人与球队成绩
+  getMyTeamProfile,
+  getTeamRecord,
 };

@@ -20,6 +20,7 @@ const { loadSchoolProfileSummaryView } = require('../../services/profile-view.js
 const { isMock } = require('../../services/runtime-mode.js');
 const { resetBranding } = require('../../services/branding.js');
 const associationScope = require('../../services/association-scope.js');
+const { isTeamSport } = require('../../utils/associations.js');
 
 Page({
   data: {
@@ -40,6 +41,12 @@ Page({
     reviewEntry: { visible: false, hint: '' },
     /** 公告管理入口。与审核入口同理，没权限就不渲染 */
     adminEntry: { visible: false, hint: '' },
+    /**
+     * 当前协会是不是团队项目（篮球等）。
+     * 团队运动的个人成绩挂在球队与赛事上，与球拍运动的等级分是两套账，
+     * 入口只在团队项目下出现（见 pages/my-team-profile）。
+     */
+    isTeamSport: false,
   },
 
   onLoad() {
@@ -119,7 +126,11 @@ Page({
    */
   syncAssociationBadge() {
     const id = this.currentAssociation();
-    if (id !== this.data.associationId) this.setData({ associationId: id });
+    const teamSport = isTeamSport(id);
+    const patch = {};
+    if (id !== this.data.associationId) patch.associationId = id;
+    if (teamSport !== this.data.isTeamSport) patch.isTeamSport = teamSport;
+    if (Object.keys(patch).length > 0) this.setData(patch);
   },
 
   /**
@@ -294,6 +305,11 @@ Page({
   },
 
   /** 点头卡头像进个人详情页。等级分、赛季积分、走势、战绩这些细账都在那边 */
+  /** 我的球队与团队成绩（仅团队项目显示入口） */
+  onGoMyTeamProfile() {
+    wx.navigateTo({ url: '/pages/my-team-profile/my-team-profile' });
+  },
+
   onGoProfileDetail() {
     wx.navigateTo({ url: '/pages/profile-detail/profile-detail' });
   },
