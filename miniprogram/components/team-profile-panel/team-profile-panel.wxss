@@ -1,1 +1,6 @@
-@import "../../packageTeam/my-team-profile/my-team-profile.wxss";
+/**
+ * 「我的球队」面板样式
+ * 与 packageTeam/my-team-profile 页面共用 templates/team-profile-view.wxss。
+ * 注意方向：主包可以引用主包，分包可以引用主包，**主包不能引用分包**。
+ */
+@import "../../templates/team-profile-view.wxss";

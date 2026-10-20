@@ -3,7 +3,7 @@
 一个原生微信小程序（WXML / WXSS / JS，零框架），把校内**多个体育协会**的等级分、赛事、训练与校级活动装进同一套系统。
 
 - 当前进度：篮球五人制与实时计分已落地；足球 F0—F3 已完成，支持赛后报告与成绩；足球/篮球已有协会内“我的球队”累计统计页签
-- 自检：`npm test` → **2847 项用例通过 / 0 失败 / 0 超时**（155 个测试文件 / 约 294 秒）
+- 自检：`npm test` → **2852 项用例通过 / 0 失败 / 0 超时**（156 个测试文件 / 约 292 秒）
 - 云端共享库：`npm run check:cloud-sync` → 85 个文件一致
 - 数据源：默认**本地模拟**（`miniprogram/config.js` 的 `CLOUD_ENV_ID` 为空），填入环境 ID 即切云端，页面代码一行不改
 
@@ -115,10 +115,11 @@ cloudfunctions/data      唯一云函数：协议 2 请求信封 + 仓储 + 事�
 
 主包 **939 KB（gzip）**，全量 1217 KB。约定：
 
-- **分包可以用主包的 `services` / `utils` / `components`，反过来不行。** 所以算法、门面、面板组件一律留在主包，分包里只放页面。
+- **分包可以用主包的 `services` / `utils` / `components` / `templates`，反过来不行。** 所以算法、门面、面板组件、共用样式一律留在主包，分包里只放页面。共用的 WXSS 放 `templates/`（如 `templates/team-profile-view.wxss`），两边都从主包 `@import`——**主包组件引用分包里的 wxss 会编译失败**，报错长得像「文件找不到」，实际是方向错了。
 - 页面目录深度保持两级（`<包>/<页面>/`），页面里的 `require('../../services/...')` 因此不用改。
 - 只有「我的」页对 `packageMember` 做 wifi 预下载；其余按需拉取——四个包全预载等于把分包的意义抵消掉。
 - 测试别写死 `pages/<名>/<名>`：用 `tests/helpers/page-registry.js` 的 `pageFileOf(name)` / `pagePathOf(name)` 从 `app.json` 查。分包页面**不在** `app.pages` 里，判断注册要用 `isRegistered(name)`。
+- 引用方向由 `tests/subpackage-boundaries.test.js` 守着，把 WXSS `@import`、WXML `import/include/wxs`、`usingComponents`、`require` 四种形式全查一遍。这类错误单元测试天然看不见，只有编译器会报。
 
 ## 六、目录
 
