@@ -225,6 +225,7 @@ function matchView(match, teamName, rights = {}) {
     canRecord: rights.canRecord === true,
     canPublish: rights.canPublish === true,
     canSetLineup: rights.canSetLineup === true,
+    canSchedule: rights.canSchedule === true,
     canSeePending: rights.canSeePending === true,
     // 这一场的统计有未审核的新版本（只有能看到待审核内容的人才需要知道）
     statPending: rights.canSeePending === true && rights.statPending === true,
@@ -313,11 +314,16 @@ async function getTeamEvent(payload = {}, ctx) {
     const captain = [match.teamA, match.teamB].some(
       teamId => (teams.find(team => team._id === teamId) || {}).captainId === ctx.actorId
     );
+    const active = ![TEAM_EVENT_STATUS.FINISHED, TEAM_EVENT_STATUS.CANCELED].includes(event.status)
+      && ![TEAM_MATCH_STATUS.PUBLISHED, TEAM_MATCH_STATUS.CANCELED, TEAM_MATCH_STATUS.LIVE].includes(match.status);
     // 管理者与参赛队队长既录分也看得到自己录的待审核数字；其余人只看「待审核」
     return {
       canRecord: strategy.supportsMatchData && (manage || (strategy.sportFormat !== 'football11' && captain) || match.recorderId === ctx.actorId),
       canPublish: strategy.supportsMatchData && manage,
-      canSetLineup: strategy.sportFormat === 'football11' && (manage || captain),
+      canSetLineup: active && (manage || captain) && !match.footballDraft,
+      canSchedule: manage && ![TEAM_EVENT_STATUS.FINISHED, TEAM_EVENT_STATUS.CANCELED].includes(event.status)
+        && match.status !== TEAM_MATCH_STATUS.CANCELED
+        && (strategy.sportFormat !== 'football11' || match.status === TEAM_MATCH_STATUS.SCHEDULED),
       canSeePending: manage || (strategy.sportFormat !== 'football11' && captain) || match.recorderId === ctx.actorId,
       statPending: pendingStatMatches.has(match._id),
     };
@@ -2503,6 +2509,7 @@ function statCellsOf(acc) {
     // 场均按「该指标有记录的场次」算，不拿没记的场次摊薄
     out[`${field}PerGame`] = perGame;
     out[`${field}PerGameText`] = perGame === null ? '—' : String(perGame);
+    out[`${field}RecordedMatches`] = cell.games.size;
   }
   out.games = acc.matchIds.size;
   return out;
@@ -2682,8 +2689,22 @@ async function getMyTeamProfile(payload = {}, ctx) {
     teamTotals.draws += record.draws;
   }
 
+  // 球队参加过的场次与本人实际出场分开。没有单场名单时不凭报名或统计空格推定出场。
+  const eligibleMatches = matches.filter(match => match.status === TEAM_MATCH_STATUS.PUBLISHED
+    && playedEntries.some(entry => entry.status === TEAM_ENTRY_STATUS.LOCKED && entry.eventId === match.eventId
+      && [match.teamA, match.teamB].includes(entry.teamId)));
+  let appearanceGames = 0;
+  let lineupRecordedMatches = 0;
+  for (const match of eligibleMatches) {
+    const entry = playedEntries.find(row => row.eventId === match.eventId && [match.teamA, match.teamB].includes(row.teamId));
+    const lineup = lineupOf(match, entry.teamId === match.teamA ? 'A' : 'B');
+    if (lineup.length) lineupRecordedMatches += 1;
+    if (lineup.includes(targetId)) appearanceGames += 1;
+  }
+
   return ok({
     ok: true,
+    sportFormat: 'basketball5',
     userId: targetId,
     name: nameOf(targetId),
     isSelf: targetId === ctx.actorId,
@@ -2691,7 +2712,8 @@ async function getMyTeamProfile(payload = {}, ctx) {
     events: eventRows,
     honors,
     statEvents,
-    totals: { ...statCellsOf(total), ...teamTotals, recordText: recordTextOf(teamTotals) },
+    totals: { ...statCellsOf(total), ...teamTotals, appearanceGames, lineupRecordedMatches,
+      eligibleMatchCount: eligibleMatches.length, recordText: recordTextOf(teamTotals) },
     message: '',
   });
 }

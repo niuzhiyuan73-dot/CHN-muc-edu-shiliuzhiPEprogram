@@ -1,0 +1,38 @@
+<template name="teamProfileView">
+  <view wx:if="{{loading}}" class="hint">加载中…</view>
+  <view wx:elif="{{error}}" class="hint">{{error}}</view>
+  <block wx:elif="{{profile}}">
+    <view class="hero"><view class="hero-title">我的球队</view><view class="hero-subtitle">{{profile.name}} · {{profile.totals.recordText}}</view></view>
+    <view class="card summary">
+      <view class="summary-cell"><view class="summary-value">{{profile.totals.appearanceGames}}</view><view class="summary-label">已记录出场</view></view>
+      <view class="summary-cell"><view class="summary-value">{{profile.isFootball ? profile.totals.goalsText : profile.totals.pointsText}}</view><view class="summary-label">累计{{profile.isFootball ? '进球' : '得分'}}</view></view>
+      <view class="summary-cell"><view class="summary-value">{{profile.totals.assistsText}}</view><view class="summary-label">累计助攻</view></view>
+    </view>
+    <view class="card">
+      <view class="card-title">我的球队</view>
+      <view wx:if="{{profile.teams.length === 0}}" class="hint-inline">还没有加入球队，可到「组队」申请加入或创建球队。</view>
+      <view wx:for="{{profile.teams}}" wx:key="teamId" class="row" data-teamid="{{item.teamId}}" bindtap="onOpenTeam">
+        <view class="row-main"><view class="row-title">{{item.name}}<text wx:if="{{item.isCaptain}}" class="tag">队长</text><text wx:if="{{!item.current}}" class="tag tag-muted">{{item.memberStatusLabel}}</text></view><view class="row-meta">{{item.memberCount}} 人 · {{item.recordText}}</view></view><view class="row-side"><view class="status">{{item.statusLabel}}</view><view class="arrow">›</view></view>
+      </view>
+    </view>
+    <view wx:if="{{profile.honors.length > 0}}" class="card">
+      <view class="card-title">团队荣誉</view>
+      <view wx:for="{{profile.honors}}" wx:key="eventId" class="honor"><view class="honor-medal">{{item.placementText}}</view><view class="honor-main"><view class="honor-event">{{item.eventName}}</view><view class="honor-team">{{item.teamName}} · 报名成员</view></view></view>
+    </view>
+    <view class="card">
+      <view class="card-title">参赛经历</view><view wx:if="{{profile.events.length === 0}}" class="hint-inline">还没有代表球队报名过赛事。</view>
+      <view wx:for="{{profile.events}}" wx:key="eventId" class="row" data-eventid="{{item.eventId}}" bindtap="onOpenEvent"><view class="row-main"><view class="row-title">{{item.name}}<text wx:if="{{item.placementText}}" class="tag tag-medal">{{item.placementText}}</text></view><view class="row-meta">{{item.teamName}} · {{item.recordText}}</view></view><view class="row-side"><view class="status">{{item.statusLabel}}</view><view class="arrow">›</view></view></view>
+    </view>
+    <view class="card">
+      <view class="card-title">{{profile.isFootball ? '足球' : '篮球'}}跨赛事累计</view>
+      <view class="hint-inline">只算已发布版本；「—」是未记录。每项场均仅按该项有记录的场次计算。</view>
+      <view class="hint-inline">球队已发布 {{profile.totals.eligibleMatchCount || 0}} 场，出场名单已记录 {{profile.totals.lineupRecordedMatches || 0}} 场；未记录名单不推定缺席。</view>
+      <view class="total-grid"><view wx:for="{{profile.statCells}}" wx:key="field" class="total-cell"><view class="total-label">{{item.label}}</view><view class="total-value">{{item.totalText}}</view><view class="row-meta">场均 {{item.perGameText}}</view><view class="row-meta">已记录 {{item.recordedMatches}} 场</view></view></view>
+      <view wx:if="{{profile.isFootball}}" class="hint-inline">点球大战不计进球；替补受牌不增加出场；第二黄和直接红牌分别记录，罚下不重复累计。</view>
+    </view>
+    <view class="card" wx:for="{{profile.statEvents}}" wx:key="eventId">
+      <view class="card-title">{{item.name}} · 本届统计</view><view class="row-meta">{{item.teamName}}</view>
+      <view class="season-stats"><view wx:for="{{item.statCells}}" wx:for-item="cell" wx:key="field" class="season-cell"><text>{{cell.label}} {{cell.totalText}}</text><text class="row-meta">（{{cell.recordedMatches}} 场）</text></view></view>
+    </view>
+  </block>
+</template>

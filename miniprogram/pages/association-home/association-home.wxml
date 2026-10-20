@@ -39,6 +39,9 @@
   <view wx:if="{{mounted.teams}}" hidden="{{activeTab !== 'teams'}}">
     <team-panel id="teams" />
   </view>
+  <view wx:if="{{mounted.myTeams}}" hidden="{{activeTab !== 'myTeams'}}">
+    <team-profile-panel id="myTeams" association="{{associationId}}" active="{{activeTab === 'myTeams'}}" />
+  </view>
   <view wx:if="{{mounted.rank}}" hidden="{{activeTab !== 'rank'}}">
     <rank-panel id="rank" />
   </view>

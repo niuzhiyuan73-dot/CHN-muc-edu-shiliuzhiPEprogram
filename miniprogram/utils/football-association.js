@@ -9,11 +9,11 @@ function createFootballAssociation() {
     shortName: '民大足球',
     sportName: '足球',
     logoGlyph: '足',
-    logoIcon: '',
+    logoIcon: '/assets/assoc/fb.png',
     theme: { primary: '#0D6B45', primaryDark: '#08492F', primaryLight: '#E7F3EC', accent: '#D4AF37' },
     sportType: 'team',
     teamSportFormat: 'football11',
-    capabilities: ['space', 'teams', 'events'],
+    capabilities: ['space', 'teams', 'myTeams', 'events'],
     footballRules: defaultRulesFor(),
     status: ASSOCIATION_STATUS.ACTIVE,
   };

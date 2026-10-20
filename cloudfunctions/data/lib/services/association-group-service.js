@@ -189,7 +189,8 @@ async function listAssociationGroups(payload = {}, ctx) {
     : '';
 
   return ok({ ok: true, canManage, hasMore, nextCursor,
-    groups: page.map(group => groupSummary(group, mine.has(group._id))), message: '' });
+    groups: page.map(group => ({ ...groupSummary(group, mine.has(group._id)),
+      canReadRoster: canManage || mine.has(group._id) })), message: '' });
 }
 
 async function getAssociationGroup(payload = {}, ctx) {

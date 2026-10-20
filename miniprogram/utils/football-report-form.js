@@ -19,6 +19,7 @@ function createReportForm(data) {
       const saved = report.sides?.[key] || data.lineups?.[key] || {};
       const sub = saved.substitutions || { status: 'none' };
       return { key, name: data[key === 'A' ? 'teamAName' : 'teamBName'],
+        recordedCount: (saved.players || []).length,
         coverage: Object.entries(FIELDS).map(([field, label]) => ({ field, label, index: Math.max(0, coverageKeys.indexOf(saved.coverage?.[field] || 'none')) })),
         players: (data.rosters?.[key] || []).map(p => {
           const hit = (saved.players || []).find(r => r.userId === p.userId);

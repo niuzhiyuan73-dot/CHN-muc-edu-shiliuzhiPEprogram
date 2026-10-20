@@ -247,6 +247,8 @@ Page({
           grouped.push(bucket);
         }
         bucket.matches.push(match);
+        bucket.canShift = event.canManage === true && ['scheduled', 'running'].includes(event.status)
+          && bucket.matches.some(row => row.status === 'scheduled' && row.matchTime);
       });
       this.setData({
         loading: false,

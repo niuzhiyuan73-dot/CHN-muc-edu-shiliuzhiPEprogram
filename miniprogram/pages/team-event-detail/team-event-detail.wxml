@@ -92,7 +92,7 @@
         <view class="round-head">
           <view class="round-label">{{item.label}}</view>
           <view
-            wx:if="{{canManage}}"
+            wx:if="{{item.canShift}}"
             class="mini"
             data-round="{{item.round}}"
             data-stage="{{item.stage}}"
@@ -154,13 +154,13 @@
               bindtap="onOpenStats"
             >{{match.status === 'live' ? '球员统计' : match.statPending && match.canPublish ? '审核统计' : '统计'}}</view>
             <view
-              wx:if="{{canManage && match.status !== 'canceled'}}"
+              wx:if="{{match.canSchedule}}"
               class="mini"
               data-matchid="{{match.matchId}}"
               bindtap="onOpenSchedule"
             >赛程</view>
             <view
-              wx:if="{{!isFootball && match.canRecord && match.status !== 'published' && match.status !== 'canceled'}}"
+              wx:if="{{!isFootball && match.canSetLineup}}"
               class="mini"
               data-matchid="{{match.matchId}}"
               bindtap="onOpenLineup"

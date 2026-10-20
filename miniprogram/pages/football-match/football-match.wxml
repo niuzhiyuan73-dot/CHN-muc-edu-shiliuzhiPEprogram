@@ -7,9 +7,10 @@
       <view class="muted" wx:if="{{!info.lineupOnly}}">公开成绩：{{publishedText}}</view>
       <view class="muted">{{info.lineupOnly ? "赛前单场名单；实际出场由赛后报告核对。" : "赛后报告；点球大战不计入正式进球。空白表示未知，0 表示已统计为零。"}}</view>
       <view wx:if="{{info.pending}}" class="warning">有待审核版本；审核前公开成绩保持原版。</view>
-      <view wx:if="{{!info.canEdit}}" class="muted">已发布报告 · 只读</view>
+      <view wx:if="{{!info.canEdit}}" class="muted">{{info.lineupOnly ? '本场名单 · 只读' : '已发布报告 · 只读'}}</view>
     </view>
     <view wx:if="{{notice}}" class="notice">{{notice}}</view>
+    <block wx:if="{{info.canEdit}}">
     <view class="card" wx:if="{{!info.lineupOnly}}">
       <view class="title">比赛结果</view>
       <picker range="{{kindLabels}}" value="{{form.kindIndex}}" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" data-field="kindIndex" bindchange="onPick"><view class="row">结果：{{kindLabels[form.kindIndex]}} ›</view></picker>
@@ -83,6 +84,28 @@
       <view class="muted">审核按钮处理上次提交的报告；表单新改动须先保存。</view>
       <button size="mini" disabled="{{busy}}" bindtap="refresh">刷新并恢复已保存报告</button>
     </view>
+    </block>
+    <block wx:else>
+      <view class="card" wx:if="{{!info.lineupOnly}}">
+        <view class="title">比赛结果 · {{publishedText}}</view>
+        <view class="row">常规 {{form.regulationA}} : {{form.regulationB}}</view>
+        <view wx:if="{{showExtra}}" class="row">加时阶段 {{form.extraA}} : {{form.extraB}}</view>
+        <view wx:if="{{showShootout}}" class="row">点球大战 {{form.shootoutA}} : {{form.shootoutB}}</view>
+        <view wx:if="{{form.note}}" class="muted">裁判报告：{{form.note}}</view>
+      </view>
+      <view wx:for="{{form.sides}}" wx:for-item="team" wx:key="key" class="card">
+        <view class="title">{{team.name}} · 名单与统计</view>
+        <view wx:if="{{!team.recordedCount}}" class="muted">本场名单未记录，不据此推定谁缺席。</view>
+        <view wx:for="{{team.coverage}}" wx:key="field" class="muted">{{item.label}}：{{coverageLabels[item.index]}}</view>
+        <view wx:for="{{team.players}}" wx:for-item="player" wx:key="userId" wx:if="{{player.selected}}" class="player">
+          <view>{{player.no}} 号 {{player.name}} · {{player.starter ? '首发' : '替补'}} · {{player.appeared ? '已出场' : '未出场'}}{{player.goalkeeper ? ' · 守门员' : ''}}</view>
+          <view class="stats-grid"><view wx:for="{{player.cells}}" wx:for-item="cell" wx:key="field" class="stat-cell">{{cell.label}} {{cell.value === '' ? '—' : cell.value}}</view></view>
+        </view>
+        <view class="muted">换人：{{subLabels[team.subIndex]}}</view>
+        <view wx:if="{{team.subIndex > 0}}" wx:for="{{team.subCells}}" wx:key="field" class="muted">{{item.label}}：{{item.value}}</view>
+      </view>
+      <view class="card" wx:if="{{goalRows.length}}"><view class="title">进球明细</view><view wx:for="{{goalRows}}" wx:key="index" class="goal-row">{{item.description}}</view></view>
+    </block>
     <view wx:if="{{audit.length > 0}}" class="card"><view class="title">修订记录</view><view wx:for="{{audit}}" wx:key="revision" class="muted">第 {{item.revision}} 版 · {{item.action}} · {{item.by}} · {{item.at}} · {{item.reason}}</view></view>
   </block>
 </view>

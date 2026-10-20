@@ -20,6 +20,7 @@ const associationScope = require('../../services/association-scope.js');
 const schoolSession = require('../../services/school-session.js');
 const { currentThemeClass } = require('../../services/branding.js');
 const { LEGACY_SCHOOL_ID } = require('../../utils/school.js');
+const { teamProfileView } = require('../../utils/team-profile-view');
 
 Page({
   data: {
@@ -58,7 +59,7 @@ Page({
         return undefined;
       }
       this.loaded = true;
-      this.setData({ loading: false, error: '', profile: result, isFootball: result.sportFormat === 'football11' });
+      this.setData({ loading: false, error: '', profile: teamProfileView(result), isFootball: result.sportFormat === 'football11' });
       return undefined;
     } catch (err) {
       console.error('[my-team-profile] 加载失败', err);

@@ -57,7 +57,7 @@
       </button>
 
       <!-- 建组表单。成员多选只列本协会在册会员（后端已过滤），不提供自行加入 -->
-      <view wx:if="{{showCreate}}" class="card">
+      <view wx:if="{{canManage && showCreate}}" class="card">
         <view class="card-title">新建小组</view>
         <view class="space-field">
           <text class="space-label">小组名称</text>
@@ -145,7 +145,7 @@
         <view wx:if="{{group.description}}" class="space-group-desc">{{group.description}}</view>
 
         <view class="space-group-actions">
-          <button class="btn btn-outline space-mini" data-groupid="{{group.groupId}}" bindtap="onToggleGroupDetail">
+          <button wx:if="{{group.canReadRoster}}" class="btn btn-outline space-mini" data-groupid="{{group.groupId}}" bindtap="onToggleGroupDetail">
             {{openGroupId === group.groupId ? '收起名单' : '查看名单'}}
           </button>
           <button wx:if="{{group.joined && !group.archived}}" class="btn btn-danger space-mini"
@@ -163,7 +163,7 @@
         </view>
 
         <!-- 编辑表单：管理者改组名 / 说明，提交带版本号 -->
-        <view wx:if="{{editingId === group.groupId}}" class="card space-edit">
+        <view wx:if="{{canManage && editingId === group.groupId}}" class="card space-edit">
           <view class="space-field">
             <text class="space-label">小组名称</text>
             <input class="search-input" value="{{groupForm.name}}" maxlength="30" placeholder="2～30 个字"
@@ -180,14 +180,14 @@
         </view>
 
         <!-- 名册：仅管理者与组员可见（后端 canReadRoster 已把关） -->
-        <view wx:if="{{openGroupId === group.groupId}}" class="space-roster">
+        <view wx:if="{{group.canReadRoster && openGroupId === group.groupId}}" class="space-roster">
           <view wx:if="{{detailLoading}}" class="space-roster-note">名单加载中…</view>
           <view wx:elif="{{detailMembers.length === 0}}" class="space-roster-note">暂无组员</view>
           <view wx:else>
             <view wx:for="{{detailMembers}}" wx:key="userId" wx:for-item="member" class="space-roster-row">
               <text class="space-roster-name">{{member.nickName}}</text>
               <text class="space-roster-meta">{{member.collegeName}}{{member.permissionLabel}}</text>
-              <button class="btn btn-danger space-mini" data-groupid="{{group.groupId}}"
+              <button wx:if="{{canManage}}" class="btn btn-danger space-mini" data-groupid="{{group.groupId}}"
                 data-userid="{{member.userId}}" bindtap="onRemoveMember" disabled="{{groupBusy}}">移出</button>
             </view>
           </view>
@@ -203,7 +203,7 @@
       </button>
 
       <!-- 发布表单：正文与分类复用全局公告的校验口径（announcement.validateAnnouncement） -->
-      <view wx:if="{{showNoticeCreate}}" class="card">
+      <view wx:if="{{canManage && showNoticeCreate}}" class="card">
         <view class="card-title">发布通知</view>
         <view class="space-field">
           <text class="space-label">标题</text>
@@ -263,7 +263,7 @@
           </view>
 
           <!-- 编辑表单 -->
-          <view wx:if="{{editingNoticeId === notice.noticeId}}" class="card space-edit">
+          <view wx:if="{{notice.canEdit && editingNoticeId === notice.noticeId}}" class="card space-edit">
             <view class="space-field">
               <text class="space-label">标题</text>
               <input class="search-input" value="{{noticeForm.title}}" maxlength="30" placeholder="2～30 个字"
@@ -317,7 +317,7 @@
       </button>
 
       <!-- 发布表单 -->
-      <view wx:if="{{showTrainingCreate}}" class="card">
+      <view wx:if="{{canManage && showTrainingCreate}}" class="card">
         <view class="card-title">发布训练</view>
         <view class="space-field">
           <text class="space-label">标题</text>
@@ -427,7 +427,7 @@
           </view>
 
           <!-- 编辑表单：与发布同一套字段 -->
-          <view wx:if="{{editingTrainingId === training.trainingId}}" class="card space-edit">
+          <view wx:if="{{canManage && editingTrainingId === training.trainingId}}" class="card space-edit">
             <view class="space-field">
               <text class="space-label">标题</text>
               <input class="search-input" value="{{trainingForm.title}}" maxlength="30" placeholder="2～30 个字"

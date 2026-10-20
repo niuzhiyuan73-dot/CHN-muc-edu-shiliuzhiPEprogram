@@ -1,4 +1,10 @@
 /* 我的球队与团队成绩 */
+.total-grid { display: flex; flex-wrap: wrap; gap: 16rpx; margin-top: 24rpx; }
+.total-cell { width: calc(50% - 8rpx); box-sizing: border-box; padding: 22rpx; border-radius: 12rpx; background: var(--color-bg, #f5f7f8); }
+.total-label { color: var(--color-text-secondary); font-size: 26rpx; }
+.total-value { font-size: 38rpx; font-weight: 600; margin: 8rpx 0; }
+.season-stats { display: flex; flex-wrap: wrap; gap: 16rpx; margin-top: 12rpx; }
+.season-cell { width: 100%; font-size: 27rpx; }
 .hero {
   padding: var(--space-lg) 0 var(--space-md);
 }

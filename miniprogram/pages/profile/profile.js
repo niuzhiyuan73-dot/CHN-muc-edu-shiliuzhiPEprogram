@@ -311,8 +311,7 @@ Page({
   /** 点头卡头像进个人详情页。等级分、赛季积分、走势、战绩这些细账都在那边 */
   /** 我的球队与团队成绩（仅团队项目显示入口） */
   onGoMyTeamProfile() {
-    const available = teamSportStrategyFor(this.currentAssociation())?.supportsMatchData !== false;
-    wx.navigateTo({ url: available ? '/pages/my-team-profile/my-team-profile' : '/pages/team-list/team-list?mine=1' });
+    wx.navigateTo({ url: `/pages/association-home/association-home?association=${encodeURIComponent(this.currentAssociation())}&tab=myTeams` });
   },
 
   onGoProfileDetail() {

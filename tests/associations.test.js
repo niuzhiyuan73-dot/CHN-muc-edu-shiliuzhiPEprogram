@@ -229,7 +229,7 @@ test('sportTypeOf / isTeamSport —— 球拍与团队两类，未知 id 按球�
 
 test('capabilitiesOf / workbenchTabsOf —— 团队运动没有排行榜与个人比赛页签', () => {
   assert.deepStrictEqual(capabilitiesOf('pkb'), ['space', 'rank', 'match', 'events']);
-  assert.deepStrictEqual(capabilitiesOf('bk'), ['space', 'teams', 'events']);
+  assert.deepStrictEqual(capabilitiesOf('bk'), ['space', 'teams', 'myTeams', 'events']);
 
   // 页签顺序固定：协会空间 → 组队 → 排行榜 → 比赛 → 赛事
   assert.deepStrictEqual(
@@ -238,7 +238,7 @@ test('capabilitiesOf / workbenchTabsOf —— 团队运动没有排行榜与个�
   );
   assert.deepStrictEqual(
     workbenchTabsOf('bk').map((def) => def.tab),
-    ['space', 'teams', 'events']
+    ['space', 'teams', 'myTeams', 'events']
   );
   assert.deepStrictEqual(workbenchTabsOf('bk')[1], { tab: 'teams', label: '组队' });
   // 未知协会给球拍组合，绝不返回空数组（空数组会让工作台一片空白）

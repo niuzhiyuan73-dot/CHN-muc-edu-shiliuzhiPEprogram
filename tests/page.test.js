@@ -7375,7 +7375,7 @@ test('录入页 —— 网球协会日常约球：盘制与每盘局数可选，
  * 会污染个人 Elo 与评级表。
  * ============================================================ */
 
-test('工作台 —— 篮球只给「协会空间 / 组队 / 赛事」，没有排行榜与比赛', async () => {
+test('工作台 —— 篮球提供协会空间、组队、我的球队、赛事，没有排行榜与比赛', async () => {
   const schoolSession = require('../miniprogram/services/school-session');
   const scope = require('../miniprogram/services/association-scope.js');
   schoolSession.reset();
@@ -7388,7 +7388,7 @@ test('工作台 —— 篮球只给「协会空间 / 组队 / 赛事」，没有
     assert.strictEqual(page.data.associationName, '民大篮球');
     assert.deepStrictEqual(
       page.data.tabs.map((item) => item.tab),
-      ['space', 'teams', 'events'],
+      ['space', 'teams', 'myTeams', 'events'],
       '团队运动不该出现排行榜与个人比赛页签'
     );
     assert.deepStrictEqual(
@@ -7396,7 +7396,7 @@ test('工作台 —— 篮球只给「协会空间 / 组队 / 赛事」，没有
       ['space'],
       '默认落在协会空间'
     );
-    assert.deepStrictEqual(page.data.mounted, { space: true, teams: false, events: false });
+    assert.deepStrictEqual(page.data.mounted, { space: true, teams: false, myTeams: false, events: false });
 
     // 旧链接带着该协会不提供的页签（tab=match）时不白屏，回落到第一个可用页签
     const stale = instantiate(associationHomeConfig);

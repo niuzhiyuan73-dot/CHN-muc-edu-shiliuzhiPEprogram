@@ -67,6 +67,7 @@ const SPORT_TYPE = {
 const CAPABILITY = {
   SPACE: 'space',
   TEAMS: 'teams',
+  MY_TEAMS: 'myTeams',
   RANK: 'rank',
   MATCH: 'match',
   EVENTS: 'events',
@@ -76,6 +77,7 @@ const CAPABILITY = {
 const CAPABILITY_TAB = {
   [CAPABILITY.SPACE]: { tab: CAPABILITY.SPACE, label: '协会空间' },
   [CAPABILITY.TEAMS]: { tab: CAPABILITY.TEAMS, label: '组队' },
+  [CAPABILITY.MY_TEAMS]: { tab: CAPABILITY.MY_TEAMS, label: '我的球队' },
   [CAPABILITY.RANK]: { tab: CAPABILITY.RANK, label: '排行榜' },
   [CAPABILITY.MATCH]: { tab: CAPABILITY.MATCH, label: '比赛' },
   [CAPABILITY.EVENTS]: { tab: CAPABILITY.EVENTS, label: '赛事' },
@@ -84,7 +86,7 @@ const CAPABILITY_TAB = {
 /** 球拍运动的能力组合 */
 const RACKET_CAPABILITIES = Object.freeze([CAPABILITY.SPACE, CAPABILITY.RANK, CAPABILITY.MATCH, CAPABILITY.EVENTS]);
 /** 团队运动的能力组合（没有排行榜与个人比赛入口） */
-const TEAM_CAPABILITIES = Object.freeze([CAPABILITY.SPACE, CAPABILITY.TEAMS, CAPABILITY.EVENTS]);
+const TEAM_CAPABILITIES = Object.freeze([CAPABILITY.SPACE, CAPABILITY.TEAMS, CAPABILITY.MY_TEAMS, CAPABILITY.EVENTS]);
 
 /**
  * 各协会共用的规则默认值。
@@ -410,7 +412,7 @@ function capabilitiesOf(id) {
  */
 function workbenchTabsOf(id) {
   const caps = capabilitiesOf(id);
-  return [CAPABILITY.SPACE, CAPABILITY.TEAMS, CAPABILITY.RANK, CAPABILITY.MATCH, CAPABILITY.EVENTS]
+  return [CAPABILITY.SPACE, CAPABILITY.TEAMS, CAPABILITY.MY_TEAMS, CAPABILITY.RANK, CAPABILITY.MATCH, CAPABILITY.EVENTS]
     .filter((tab) => caps.includes(tab))
     .map((tab) => ({ ...CAPABILITY_TAB[tab] }));
 }

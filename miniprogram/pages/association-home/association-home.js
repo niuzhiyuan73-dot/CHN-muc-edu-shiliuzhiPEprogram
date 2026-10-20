@@ -30,7 +30,7 @@ const scope = require('../../services/association-scope.js');
 
 /**
  * 页签不再写死。球拍运动是「协会空间 / 排行榜 / 比赛 / 赛事」，
- * 团队运动（篮球）是「协会空间 / 组队 / 赛事」——由注册表的 capabilities
+ * 团队运动是「协会空间 / 组队 / 我的球队 / 赛事」——由注册表的 capabilities
  * 生成，见 utils/associations.js 的 workbenchTabsOf。
  */
 /** 进入工作台的默认页签（每个协会的第一个页签都是协会空间） */
@@ -94,7 +94,7 @@ Page({
       themeClass: `assoc-${id}`,
       // 团队运动没有个人赛事，赛事页签改指向「团队赛事」
       isTeamSport: sportTypeOf(id) === SPORT_TYPE.TEAM,
-      // 名头副标题跟着页签走：篮球是「协会空间 · 组队 · 赛事」，
+      // 名头副标题跟着页签走：团队运动包含“我的球队”成绩页签，
       // 写死「排行榜 · 比赛」会让团队运动的名头与下面能点的页签对不上
       headNote: definitions.map((def) => def.label).join(' · '),
       activeTab: active,
@@ -105,6 +105,7 @@ Page({
   },
 
   onShow() {
+    if (isKnownAssociation(this.data.associationId)) scope.setAssociation(this.data.associationId);
     this.paintNav();
   },
 

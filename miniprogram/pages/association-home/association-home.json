@@ -5,7 +5,8 @@
     "match-panel": "/components/match-panel/match-panel",
     "events-panel": "/components/events-panel/events-panel",
     "team-panel": "/components/team-panel/team-panel",
-    "team-events-panel": "/components/team-events-panel/team-events-panel"
+    "team-events-panel": "/components/team-events-panel/team-events-panel",
+    "team-profile-panel": "/components/team-profile-panel/team-profile-panel"
   },
   "navigationBarTitleText": "协会",
   "enablePullDownRefresh": true,

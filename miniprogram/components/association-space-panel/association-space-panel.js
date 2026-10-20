@@ -332,6 +332,7 @@ Component({
         memberCount: row.memberCount || 0,
         revision: row.revision,
         joined: Boolean(row.joined),
+        canReadRoster: row.canReadRoster === true,
       };
     },
 
@@ -584,6 +585,7 @@ Component({
     onToggleGroupDetail(event) {
       const groupId = event.currentTarget.dataset.groupid;
       if (!groupId || this.data.groupBusy) return undefined;
+      if (!this.data.canManage && !this.data.groups.some(group => group.groupId === groupId && group.canReadRoster)) return undefined;
       if (this.data.openGroupId === groupId) {
         return this.setData({ openGroupId: '', detailMembers: [] });
       }
@@ -613,7 +615,7 @@ Component({
 
     onRemoveMember(event) {
       const { groupid: groupId, userid: userId } = event.currentTarget.dataset;
-      if (!groupId || !userId || this.data.groupBusy) return undefined;
+      if (!this.data.canManage || !groupId || !userId || this.data.groupBusy) return undefined;
       // write 成功后会 refresh 首屏；名册此刻可能已被收起，按需再展开并重拉。
       return this.write(() => this.api.removeAssociationGroupMember({ groupId, userId }), '已移出该成员')
         .then(() => (this.data.openGroupId === groupId ? this.loadGroupDetail(groupId) : undefined));

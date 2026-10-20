@@ -29,17 +29,6 @@
     <view class="entry-card-arrow">›</view>
   </view>
   <!--
-    团队项目（篮球等）才有「我的球队」：它的成绩挂在球队与赛事上，
-    与球拍运动的等级分是两套账，所以入口按当前协会显示，不混在一个页面里。
-  -->
-  <view wx:if="{{isTeamSport}}" class="card entry-card" bindtap="onGoMyTeamProfile">
-    <view class="entry-card-main">
-      <view class="entry-card-title">{{hasTeamStats ? '我的球队与团队成绩' : '我的球队'}}</view>
-      <view class="entry-card-hint">{{hasTeamStats ? '球队、参赛经历、团队荣誉与跨赛事累计' : '查看加入的球队、成员和入队申请'}}</view>
-    </view>
-    <view class="entry-card-arrow">›</view>
-  </view>
-  <!--
     管理入口。放在战绩之前：需要处理的事该排在浏览数据前面。
     没有权限时整张卡不渲染（visible），不是灰掉——灰按钮
     点不动还得让人猜为什么。

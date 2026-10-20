@@ -1,0 +1,2 @@
+<import src="../../templates/team-profile-view.wxml"/>
+<view class="{{themeClass}}"><template is="teamProfileView" data="{{loading,error,profile}}"/><button wx:if="{{error}}" bindtap="refresh">重试</button></view>

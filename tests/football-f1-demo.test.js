@@ -11,13 +11,13 @@ test('足球协会定义可供接入且不含篮球/Elo 配置，不提前修改
   const registeredBefore = isKnownAssociation('fb');
   const meta = createFootballAssociation();
   assert.equal(meta.id, 'fb'); assert.equal(meta.teamSportFormat, 'football11');
-  assert.deepEqual(meta.capabilities, ['space', 'teams', 'events']);
+  assert.deepEqual(meta.capabilities, ['space', 'teams', 'myTeams', 'events']);
   assert.equal(meta.basketballRules, undefined); assert.equal(meta.elo, undefined); assert.equal(meta.format, undefined);
   assert.equal(meta.footballRules.halfMinutes, 40);
   meta.footballRules.substitutions.limit = 99; meta.theme.primary = '#fff'; meta.capabilities.push('rank');
   assert.equal(createFootballAssociation().footballRules.substitutions.limit, 5);
   assert.equal(createFootballAssociation().theme.primary, '#0D6B45');
-  assert.deepEqual(createFootballAssociation().capabilities, ['space', 'teams', 'events']);
+  assert.deepEqual(createFootballAssociation().capabilities, ['space', 'teams', 'myTeams', 'events']);
   assert.equal(isKnownAssociation('fb'), registeredBefore);
 });
 

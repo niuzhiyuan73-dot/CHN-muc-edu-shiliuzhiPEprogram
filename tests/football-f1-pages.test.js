@@ -18,7 +18,7 @@ test('F1 足球工作台只提供空间/组队/赛事，旧个人榜单链接回
   page.onLoad({ association: 'fb', tab: 'rank' });
   assert.equal(page.data.associationId, 'fb');
   assert.equal(page.data.themeClass, 'assoc-fb');
-  assert.deepEqual(page.data.tabs.map(tab => tab.tab), ['space', 'teams', 'events']);
+  assert.deepEqual(page.data.tabs.map(tab => tab.tab), ['space', 'teams', 'myTeams', 'events']);
   assert.equal(page.data.activeTab, 'space');
 });
 
@@ -108,7 +108,7 @@ test('F1/F3 足球球队列表和球队详情接入团队成绩入口', t => {
       const profile = instantiate(loadPage('profile/profile.js'));
       profile.currentAssociation = () => 'fb'; profile.syncAssociationBadge(); profile.onGoMyTeamProfile();
       assert.equal(profile.data.hasTeamStats, true);
-      assert.match(navigations[0], /my-team-profile/);
+      assert.match(navigations[0], /association-home\?association=fb&tab=myTeams/);
     });
   });
 });

@@ -9,12 +9,15 @@
   tt.png   乒乓球：圆拍 + 短柄 + 球
   bd.png   羽毛球：球拍 + 球
   tn.png   网球：椭圆拍面 + 斜长柄 + 球
+  bk.png   篮球：球面缝线
+  fb.png   足球：中央五边形 + 球面拼接线
 
 图标一律白色（#FFFFFF）线条 + 透明底——颜色由底座（渐变）提供，
 新增协会时在 ICONS 里加一个绘制函数即可。
 """
 
 from pathlib import Path
+import math
 
 from PIL import Image, ImageDraw
 
@@ -107,9 +110,21 @@ def draw_bk(d) -> None:
     d.arc([(84, 40), (204, 248)], start=270, end=90, fill=WHITE, width=w - 2)
 
 
+def draw_fb(d) -> None:
+    """足球：球面外圈、中央五边形及五道拼接线，与已有白色线条图标一致。"""
+    w = 14
+    d.ellipse([(40, 40), (248, 248)], outline=WHITE, width=16)
+    angles = [-math.pi / 2 + i * 2 * math.pi / 5 for i in range(5)]
+    inner = [(round(144 + 47 * math.cos(a)), round(144 + 47 * math.sin(a))) for a in angles]
+    d.line(inner + [inner[0]], fill=WHITE, width=w, joint="curve")
+    for point, angle in zip(inner, angles):
+        outer = (round(144 + 99 * math.cos(angle)), round(144 + 99 * math.sin(angle)))
+        d.line([point, outer], fill=WHITE, width=w)
+
+
 def main() -> None:
     for name, draw_fn in (
-        ("pkb", draw_pkb), ("tt", draw_tt), ("bd", draw_bd), ("tn", draw_tn), ("bk", draw_bk),
+        ("pkb", draw_pkb), ("tt", draw_tt), ("bd", draw_bd), ("tn", draw_tn), ("bk", draw_bk), ("fb", draw_fb),
     ):
         save(render(draw_fn), f"{name}.png")
 

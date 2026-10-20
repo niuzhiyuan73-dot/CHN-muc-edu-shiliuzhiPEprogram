@@ -50,10 +50,10 @@ async function fixture(cloud = false) {
   return { repo, call, putTeam, rosterA, rosterB, eventId: created.eventId, db: cloudEnv && cloudEnv.db };
 }
 
-test('F1 足球注册：三页签、独立规则、校内启用配置与云端元数据一致', () => {
+test('F1 足球注册：团队页签、独立规则、校内启用配置与云端元数据一致', () => {
   const association = getAssociation('fb');
   assert.equal(association.teamSportFormat, 'football11');
-  assert.deepEqual(workbenchTabsOf('fb').map(tab => tab.tab), ['space', 'teams', 'events']);
+  assert.deepEqual(workbenchTabsOf('fb').map(tab => tab.tab), ['space', 'teams', 'myTeams', 'events']);
   assert.equal(basketballRulesOf('fb'), null);
   const mirror = require('../cloudfunctions/data/lib/utils/associations');
   assert.deepEqual(mirror.getAssociation('fb'), association);
