@@ -6,8 +6,13 @@
  * 【结构：项目就是杯赛】
  * 顶部项目来自协会注册表（匹克球 / 乒乓 / 羽球 / 网球 / 篮球 / 足球…），不是
  * 「一届杯赛的几个项目」——每个项目各自就是一个石榴籽杯。切换项目等于切换当前
- * 协会，下方列表就是该项目的学院赛。项目栏是等宽网格换行铺开，不做横向滚动：
- * 滚动会把后面的球类藏到屏幕外，连当前选中哪个都看不见。
+ * 协会，下方列表就是该项目的学院赛。
+ * 项目栏一屏只放三个，其余左滑：项目只会越加越多，全铺开会让页头随项目数量
+ * 膨胀；但当前项目必须看得见，所以切换后按 id 把它 scroll-into-view 滚进来。
+ *
+ * 【一个搜索框，两样东西】
+ * 关键词既匹配项目（本地算，命中即成行，点一下切过去），也匹配本项目里的赛事
+ * （服务端按名称/场地过滤，跨分页）。理由见 wxml 顶部注释。
  *
  * 【不设届次】
  * 同一项目一年可以发起多次，列表按**发起时间**归档；年份只作为筛选条件，
@@ -65,12 +70,16 @@ Page({
     busy: false,
     schoolId: '',
     themeClass: '',
-    /** 各球类项目：{ id, sportName, glyph } */
+    /** 各球类项目：{ id, sportName, shortName, name, glyph } */
     projects: [],
     projectId: '',
     projectName: '',
-    /** 搜索关键词：按赛事名称 / 场地匹配，空串等于不筛 */
+    /** 项目栏滚动定位：切换后把选中项滚进可视区，别把当前项目留在屏幕外 */
+    projectAnchor: '',
+    /** 搜索关键词：同时匹配项目与赛事（名称 / 场地） */
     keyword: '',
+    /** 关键词命中的项目（本地匹配；点一下即切换项目） */
+    projectMatches: [],
     rows: [],
     groups: [],
     total: 0,
@@ -91,6 +100,8 @@ Page({
     const projects = activeAssociations().map((assoc) => ({
       id: assoc.id,
       sportName: assoc.sportName,
+      shortName: assoc.shortName || '',
+      name: assoc.name || '',
       glyph: assoc.logoGlyph,
     }));
     const wanted = String(query.projectId || associationScope.getAssociation() || '');
@@ -107,6 +118,7 @@ Page({
       projects,
       projectId: current,
       projectName: this.sportNameOf(current, projects),
+      projectAnchor: this.anchorOf(current),
       themeClass: currentThemeClass(),
     });
     return this.reload();
@@ -137,6 +149,33 @@ Page({
   sportNameOf(id, projects) {
     const found = (projects || []).find((item) => item.id === id);
     return found ? found.sportName : '';
+  },
+
+  /** 项目栏的滚动锚点：scroll-into-view 认的是节点 id */
+  anchorOf(id) {
+    return id ? `proj-${id}` : '';
+  },
+
+  /**
+   * 关键词命中的项目。
+   *
+   * 【为什么在本地算】
+   * 项目清单来自 `utils/associations.js`，本来就在包里，不必为「搜项目」多跑一次
+   * 服务端。赛事搜索才需要请求（要跨分页），两者互不阻塞：项目结果立刻出，
+   * 赛事结果随请求回来再补上。
+   *
+   * 匹配项目名（篮球）、简称（民大篮球）、全称（中央民族大学篮球协会）与徽标字，
+   * 输入「篮」也能命中——学校里的习惯叫法本来就长短不一。
+   */
+  projectMatchesOf(keyword, projectId) {
+    const kw = String(keyword || '').trim().toLowerCase();
+    if (!kw) return [];
+    // 切换项目的当口，this.data.projectId 还是旧值，所以允许显式传入新选中的项目
+    const currentId = projectId === undefined ? this.data.projectId : projectId;
+    return (this.data.projects || [])
+      .filter((item) => [item.sportName, item.shortName, item.name, item.glyph]
+        .some((value) => String(value || '').toLowerCase().includes(kw)))
+      .map((item) => ({ ...item, current: item.id === currentId }));
   },
 
   /**
@@ -181,11 +220,11 @@ Page({
    * 【搜索时为什么不再分组】
    * 「报名中 / 进行中 / 已结束」是浏览时的组织方式。带着关键词来时，人关心的是
    * 「这几个名字里哪个是我要找的」，再按状态切三段只会把命中结果拆散。搜索时
-   * 聚成一组，把状态留在每行标签上。
+   * 聚成一组，把状态留在每行标签上。项目命中另起一组（见 wxml），与赛事结果并列。
    */
   groupOf(rows) {
     if (String(this.data.keyword || '').trim()) {
-      return rows.length > 0 ? [{ status: 'search', label: '搜索结果', rows }] : [];
+      return rows.length > 0 ? [{ status: 'search', label: '赛事结果', rows }] : [];
     }
     return STATUS_ORDER
       .map((item) => ({ ...item, rows: rows.filter((row) => row.status === item.status) }))
@@ -266,10 +305,10 @@ Page({
     return this.reload();
   },
 
-  /** 输入即筛：停顿 SEARCH_DEBOUNCE_MS 后再发请求，连打不逐个字都问服务端 */
+  /** 输入即筛：项目结果立刻出，赛事请求停顿 SEARCH_DEBOUNCE_MS 后再发 */
   onKeywordInput(event) {
     const keyword = String((event.detail && event.detail.value) || '');
-    this.update({ keyword });
+    this.update({ keyword, projectMatches: this.projectMatchesOf(keyword) });
     if (this.searchTimer) clearTimeout(this.searchTimer);
     this.searchTimer = setTimeout(() => {
       this.searchTimer = null;
@@ -292,8 +331,38 @@ Page({
       clearTimeout(this.searchTimer);
       this.searchTimer = null;
     }
-    this.update({ keyword: '' });
+    this.update({ keyword: '', projectMatches: [] });
     return this.reload({ silent: true });
+  },
+
+  /**
+   * 点搜索命中的项目：切过去，并把关键词清掉。
+   *
+   * 关键词在这里的语义是「项目名」，留着它去搜赛事只会得到零条——切换完就该
+   * 落到这个项目的正常浏览态。
+   */
+  onPickMatchedProject(event) {
+    const id = event.currentTarget.dataset.id;
+    if (!id) return undefined;
+    if (this.searchTimer) {
+      clearTimeout(this.searchTimer);
+      this.searchTimer = null;
+    }
+    this.applyProject(id);
+    this.update({
+      keyword: '',
+      projectMatches: [],
+      projectId: id,
+      projectName: this.sportNameOf(id, this.data.projects),
+      projectAnchor: this.anchorOf(id),
+      themeClass: currentThemeClass(),
+      rows: [],
+      groups: [],
+      total: 0,
+      offset: 0,
+      hasMore: false,
+    });
+    return this.reload();
   },
 
   onPickProject(event) {
@@ -303,7 +372,10 @@ Page({
     this.update({
       projectId: id,
       projectName: this.sportNameOf(id, this.data.projects),
+      projectAnchor: this.anchorOf(id),
       themeClass: currentThemeClass(),
+      // 项目变了，命中的项目行要重算「当前」标记；关键词保留，接着在新项目里搜赛事
+      projectMatches: this.projectMatchesOf(this.data.keyword, id),
       rows: [],
       groups: [],
       total: 0,

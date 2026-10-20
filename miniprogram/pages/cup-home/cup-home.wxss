@@ -17,23 +17,29 @@
   color: #6b7280;
 }
 
-/* 顶部项目切换：两行等宽网格铺开，六个项目也能一眼看全，不再横向藏起几个 */
+/* 顶部项目切换：一屏正好三个，其余左滑；选中项由 scroll-into-view 滚进可视区 */
 .cup-projects {
-  display: flex;
-  flex-wrap: wrap;
   box-sizing: border-box;
   width: 100%;
-  padding: 20rpx 32rpx 4rpx;
+  padding: 20rpx 0 8rpx;
+  white-space: nowrap;
+}
+
+.cup-projects-track {
+  display: inline-flex;
+  padding: 0 32rpx;
 }
 
 .cup-project {
   display: flex;
-  flex: 0 0 calc((100% - 32rpx) / 3);
+  flex: none;
+  /* 三个一屏：减掉左右留白 64rpx 与两道 16rpx 间距 */
+  width: calc((100vw - 96rpx) / 3);
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
   height: 72rpx;
-  margin: 0 16rpx 16rpx 0;
+  margin-right: 16rpx;
   border: 2rpx solid #e6e8ec;
   border-radius: 16rpx;
   background: #ffffff;
@@ -42,8 +48,7 @@
   line-height: 1;
 }
 
-/* 每行第三个不留右边距，格子才真正左对齐 */
-.cup-project:nth-child(3n) {
+.cup-project:last-child {
   margin-right: 0;
 }
 

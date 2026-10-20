@@ -141,20 +141,56 @@ test('发布页直接带 projectId 进入时锁定到该项目（不经杯赛首
 
 /* ------------------------------------------------------------ 项目栏与搜索 */
 
-test('项目栏：六个球类换行铺开，不再横向滚动藏起后面的项目', () => {
+test('项目栏：一屏三个、其余左滑，选中项自动滚进可视区', () => {
   const wxml = read('cup-home', 'wxml');
-  assert.ok(!/scroll-x/.test(wxml), '项目栏仍在横向滚动，后面的球类会被藏到屏幕外');
   const wxss = fs.readFileSync(path.join(MINI, 'pages', 'cup-home', 'cup-home.wxss'), 'utf8');
-  assert.ok(/\.cup-projects\s*\{[^}]*flex-wrap:\s*wrap/.test(wxss), '项目栏没有换行布局');
+
+  // 只露三个：宽度按「一屏减留白再三等分」算；多了靠横向滑动，不撑高页头
+  assert.ok(/\.cup-project\s*\{[^}]*width:\s*calc\(\(100vw - 96rpx\) \/ 3\)/.test(wxss),
+    '项目栏不是「一屏三个」的宽度');
+  assert.ok(/scroll-x/.test(wxml) && /scroll-into-view="\{\{projectAnchor\}\}"/.test(wxml),
+    '项目栏缺少横向滑动或选中项定位');
+
   // 选中态必须有实色，否则「当前是哪个项目」只能靠位置猜
   assert.ok(/\.cup-project\.is-active\s*\{[^}]*background:\s*#b23a2e/.test(wxss), '选中项目没有明显底色');
 
   const page = loadPage('cup-home');
-  const projects = page.data.projects;
-  assert.ok(Array.isArray(projects));
+  assert.equal(page.anchorOf('bk'), 'proj-bk', '滚动锚点要按项目 id 给出节点 id');
+  assert.equal(page.anchorOf(''), '');
 });
 
-test('搜索：输入防抖只发一次请求，结果聚成一组；清空后恢复状态分组', async () => {
+test('搜索：一个框同时搜项目与赛事，点项目即切换并清空关键词', async () => {
+  const { instantiate, withApi } = require('./helpers/page-harness');
+  await withApi({
+    listCollegeEvents: () => ({ ok: true, events: [], total: 0, hasMore: false, canManage: false }),
+  }, async () => {
+    const page = instantiate(loadPage('cup-home'));
+    await page.onLoad({ projectId: 'bk' });
+    assert.deepEqual(page.data.projectMatches, [], '没输入时不该有项目结果');
+
+    // 「篮球」既是项目名，也可能是赛事名：两样都要命中
+    page.onKeywordInput({ detail: { value: '篮球' } });
+    assert.deepEqual(page.data.projectMatches.map((item) => item.sportName), ['篮球']);
+    assert.equal(page.data.projectMatches[0].current, true, '当前项目要标出来');
+
+    // 换一个字继续搜：项目结果跟着变（本地即时，不等防抖）
+    page.onKeywordInput({ detail: { value: '足' } });
+    assert.deepEqual(page.data.projectMatches.map((item) => item.sportName), ['足球']);
+
+    // 简称、全称、徽标字也算命中，学校里的叫法长短不一
+    page.onKeywordInput({ detail: { value: '民大' } });
+    assert.ok(page.data.projectMatches.length >= 4, '按简称应能搜到多个项目');
+    page.onKeywordInput({ detail: { value: '足' } });
+    page.onPickMatchedProject({ currentTarget: { dataset: { id: 'fb' } } });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(page.data.projectId, 'fb', '点项目结果应切过去');
+    assert.equal(page.data.keyword, '', '切换后不该把项目名继续当赛事关键词');
+    assert.deepEqual(page.data.projectMatches, []);
+    assert.equal(page.data.projectAnchor, 'proj-fb');
+  });
+});
+
+test('搜索：赛事关键词防抖、结果聚成一组；清空后恢复状态分组', async () => {
   const { instantiate, withApi } = require('./helpers/page-harness');
   const all = [
     { eventId: 'e1', title: '2026 春季篮球联赛', location: '主体育馆', status: 2, statusLabel: '进行中', legPlanText: '', rosterText: '' },
@@ -198,7 +234,7 @@ test('搜索：输入防抖只发一次请求，结果聚成一组；清空后�
     assert.equal(calls[calls.length - 1][1].keyword, '篮球');
 
     assert.equal(page.data.total, 1);
-    assert.deepEqual(page.data.groups.map((group) => group.label), ['搜索结果'], '搜索时不再拆成状态分组');
+    assert.deepEqual(page.data.groups.map((group) => group.label), ['赛事结果'], '搜索时不再拆成状态分组');
     assert.equal(page.data.groups[0].rows[0].eventId, 'e1');
 
     // 清空：立刻重取，且请求里不再带关键词
