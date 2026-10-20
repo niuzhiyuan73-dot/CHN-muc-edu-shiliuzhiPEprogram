@@ -188,8 +188,35 @@ test('列表 / 详情：本协会可读，跨校读不到', async () => {
   assert.match(buaaGet.message, /不存在/);
 });
 
-/* ------------------------------------------------------------ 名单提交 */
+test('列表：关键词按名称与场地过滤，且在分页之前生效', async () => {
+  const repo = fixture();
+  await publish(repo, 'kw-1', { title: '2026 春季篮球联赛', location: '主体育馆' });
+  await publish(repo, 'kw-2', { title: '2026 秋季篮球联赛', location: '副体育馆' });
+  await publish(repo, 'kw-3', { title: '院际杯羽毛球赛', location: '综合馆' });
 
+  const byTitle = await call(repo, 'listCollegeEvents', { keyword: '篮球' });
+  assert.equal(byTitle.ok, true);
+  assert.equal(byTitle.total, 2, 'total 应是筛选后的口径');
+  assert.deepEqual(byTitle.events.map(row => row.title).sort(),
+    ['2026 春季篮球联赛', '2026 秋季篮球联赛']);
+
+  const byLocation = await call(repo, 'listCollegeEvents', { keyword: '综合' });
+  assert.equal(byLocation.total, 1);
+  assert.equal(byLocation.events[0].title, '院际杯羽毛球赛');
+
+  // 分页之前过滤：只取 1 条时拿到的必须是命中集里的第一条，而不是先切页再筛
+  const paged = await call(repo, 'listCollegeEvents', { keyword: '篮球', limit: 1 });
+  assert.equal(paged.total, 2);
+  assert.equal(paged.events.length, 1);
+  assert.equal(paged.hasMore, true);
+
+  // 空串 / 纯空格等于不筛；大小写与首尾空格不影响命中
+  assert.equal((await call(repo, 'listCollegeEvents', { keyword: '   ' })).total, 3);
+  assert.equal((await call(repo, 'listCollegeEvents', { keyword: '  篮球  ' })).total, 2);
+  assert.equal((await call(repo, 'listCollegeEvents', { keyword: '不存在的赛事' })).total, 0);
+});
+
+/* ------------------------------------------------------------ 名单提交 */
 test('名单：学院负责人只能交本学院，管理员可代交', async () => {
   const repo = fixture();
   const t = await publish(repo, 'r1');

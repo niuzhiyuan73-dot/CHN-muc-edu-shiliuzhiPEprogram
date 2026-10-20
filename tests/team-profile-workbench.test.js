@@ -108,8 +108,37 @@ for (const cloud of [false, true]) test(`篮球累计${cloud ? '云端协议2' :
   assert.equal(result.totals.pointsPerGame, 2.5); assert.equal(result.totals.reboundsRecordedMatches, 1);
   assert.equal(result.totals.reboundsPerGame, 2); assert.equal(result.totals.assistsText, '—');
   assert.equal(result.totals.eligibleMatchCount, 2); assert.equal(result.totals.lineupRecordedMatches, 1);
-  assert.equal(result.totals.appearanceGames, 1); assert.equal(result.totals.games, 2);
+  // 出场取「定过名单」与「本人这一场有统计」两处证据的并集：第二场没定名单但录了分，
+  // 那个人确实上过场；第三场还停在待审核（未发布），一分都不算。
+  assert.equal(result.totals.appearanceGames, 2); assert.equal(result.totals.statOnlyAppearanceGames, 1);
   assert.equal((await read()).totals.points, 5);
+});
+
+test('回归：名单为空但录过个人统计的场次仍算出场（已记录出场不再恒为 0）', async () => {
+  const repo = createSchoolMemoryRepo(createSchoolDemoSeed());
+  const scope = { schoolId: 'muc', association: 'bk' };
+  const actor = 'demo_muc_member';
+  await repo.teams.set('noLineupTeam', { _id: 'noLineupTeam', ...scope, name: '没定名单队', captainId: actor, status: 'active' });
+  await repo.teamEvents.set('noLineupEvent', { _id: 'noLineupEvent', ...scope, status: 'running', name: '没定名单赛' });
+  await repo.teamEventEntries.set('noLineupEntry', { _id: 'noLineupEntry', ...scope, eventId: 'noLineupEvent',
+    teamId: 'noLineupTeam', status: 'locked', roster: [{ userId: actor, name: '本人' }] });
+  // 一场已发布、比分与个人统计都录了，唯独没人点过「定出场名单」——计分台在名单为空时
+  // 按整份报名名单录分，这正是截图里「累计得分 73、已记录出场 0」的由来。
+  await repo.teamMatches.set('noLineupMatch', { _id: 'noLineupMatch', ...scope, eventId: 'noLineupEvent',
+    teamA: 'noLineupTeam', teamB: 'opponent', status: 'published', scoreA: 73, scoreB: 60, winner: 'A' });
+  await repo.teamMatchStats.set('noLineupStats', { _id: 'noLineupStats', ...scope, eventId: 'noLineupEvent',
+    matchId: 'noLineupMatch', teamId: 'noLineupTeam', status: 'published',
+    players: [{ userId: actor, points: 73, assists: 40 }],
+    published: { mode: 'basic', integrity: 'basic', players: [{ userId: actor, points: 73, assists: 40 }] } });
+
+  const ctx = await buildSchoolContext({ repo, actorId: actor, scope });
+  const { data } = await service.getMyTeamProfile({}, ctx);
+  assert.equal(data.ok, true, data.message);
+  assert.equal(data.totals.lineupRecordedMatches, 0, '前置条件：一场名单都没定');
+  assert.equal(data.totals.points, 73, '前置条件：本人统计已发布');
+  assert.equal(data.totals.appearanceGames, 1, `出场应回落到个人统计，实际 ${data.totals.appearanceGames}`);
+  assert.equal(data.totals.statOnlyAppearanceGames, 1, '这一场是「有统计、无名单」');
+  assert.ok(data.totals.appearanceGames <= data.totals.eligibleMatchCount, '出场不得超过球队已发布场次');
 });
 
 test('普通会员入口：服务端声明小组名单权限，非组员无查看入口，组员不能移出他人', async () => {

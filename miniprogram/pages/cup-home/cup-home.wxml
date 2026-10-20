@@ -2,6 +2,17 @@
   石榴籽杯：学院赛唯一入口。
   顶部按球类切项目（每个项目各自一个杯赛），下方是该项目历次学院赛，
   按发起时间归档；不设届次，年份只作筛选。
+
+  【项目栏为什么改成换行而不是横向滚动】
+  项目一多（匹克球 / 乒乓 / 羽球 / 网球 / 篮球 / 足球 …），横向滚动会把
+  后面几个整块藏到屏幕外，连「当前选中的是哪一个」都看不见——从别的页面
+  带着 association 进来时，人只会看到一排没选中的球类。改成等宽网格换行铺开，
+  六七个项目两行就能全部露出，选中的那个永远在可视区内。
+
+  【搜索为什么留在这一页】
+  一届杯赛的名字往往只差年份或组别（「2026 春季篮球联赛」「2026 秋季篮球联赛」），
+  靠年份 + 状态两个下拉翻，找起来比打字慢。搜索框与项目栏同属「先定位再浏览」
+  的入口，所以并排放在列表上方；输入即筛，按赛事名称与场地匹配。
 -->
 <view class="page-container {{themeClass}}">
 
@@ -10,7 +21,7 @@
     <view class="cup-subtitle">学院赛 · {{projectName}}</view>
   </view>
 
-  <scroll-view class="cup-projects" scroll-x enable-flex>
+  <view class="cup-projects">
     <view
       wx:for="{{projects}}"
       wx:key="id"
@@ -21,9 +32,38 @@
       <text class="cup-project-glyph">{{item.glyph}}</text>
       <text class="cup-project-name">{{item.sportName}}</text>
     </view>
-  </scroll-view>
+  </view>
 
-  <view wx:if="{{loading}}" class="loading">正在加载…</view>
+  <view class="cup-search">
+    <text class="cup-search-icon">🔍</text>
+    <input
+      class="cup-search-input"
+      type="text"
+      value="{{keyword}}"
+      placeholder="搜索赛事名称、场地"
+      placeholder-class="cup-search-placeholder"
+      confirm-type="search"
+      bindinput="onKeywordInput"
+      bindconfirm="onKeywordConfirm"
+    />
+    <view wx:if="{{keyword}}" class="cup-search-clear" catchtap="onClearKeyword">✕</view>
+  </view>
+
+  <view class="cup-toolbar">
+    <picker range="{{years}}" range-key="label" value="{{yearIndex}}" bindchange="onPickYear">
+      <view class="cup-filter">{{years[yearIndex].label}}</view>
+    </picker>
+    <picker range="{{statusOptions}}" range-key="label" value="{{statusIndex}}" bindchange="onPickStatus">
+      <view class="cup-filter">{{statusOptions[statusIndex].label}}</view>
+    </picker>
+    <view class="cup-total">共 {{total}} 场</view>
+  </view>
+
+  <view wx:if="{{canManage}}" class="cup-create">
+    <button class="btn btn-primary" bindtap="onCreate">发起学院赛</button>
+  </view>
+
+  <view wx:if="{{loading && rows.length === 0}}" class="loading">正在加载…</view>
 
   <view wx:elif="{{error}}" class="empty-state">
     <view class="empty-state-icon">⚠️</view>
@@ -32,24 +72,11 @@
   </view>
 
   <block wx:else>
-    <view class="cup-toolbar">
-      <picker range="{{years}}" range-key="label" value="{{yearIndex}}" bindchange="onPickYear">
-        <view class="cup-filter">{{years[yearIndex].label}}</view>
-      </picker>
-      <picker range="{{statusOptions}}" range-key="label" value="{{statusIndex}}" bindchange="onPickStatus">
-        <view class="cup-filter">{{statusOptions[statusIndex].label}}</view>
-      </picker>
-      <view class="cup-total">共 {{total}} 场</view>
-    </view>
-
-    <view wx:if="{{canManage}}" class="cup-create">
-      <button class="btn btn-primary" bindtap="onCreate">发起学院赛</button>
-    </view>
-
     <view wx:if="{{total === 0}}" class="empty-state">
-      <view class="empty-state-icon">🏆</view>
-      <view class="empty-state-text">本项目还没有学院赛</view>
-      <view wx:if="{{canManage}}" class="empty-state-hint">点上方「发起学院赛」开始第一场</view>
+      <view class="empty-state-icon">{{keyword ? '🔍' : '🏆'}}</view>
+      <view class="empty-state-text">{{keyword ? '没有匹配的学院赛' : '本项目还没有学院赛'}}</view>
+      <view wx:if="{{keyword}}" class="empty-state-hint">换个关键词，或清空搜索看全部</view>
+      <view wx:elif="{{canManage}}" class="empty-state-hint">点上方「发起学院赛」开始第一场</view>
     </view>
 
     <block wx:for="{{groups}}" wx:key="status" wx:for-item="group">

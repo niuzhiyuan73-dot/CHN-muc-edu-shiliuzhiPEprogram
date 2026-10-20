@@ -138,3 +138,103 @@ test('发布页直接带 projectId 进入时锁定到该项目（不经杯赛首
   page.applyProjectFromQuery({ projectId: 'tt' });
   assert.equal(scope.getAssociation(), 'tt');
 });
+
+/* ------------------------------------------------------------ 项目栏与搜索 */
+
+test('项目栏：六个球类换行铺开，不再横向滚动藏起后面的项目', () => {
+  const wxml = read('cup-home', 'wxml');
+  assert.ok(!/scroll-x/.test(wxml), '项目栏仍在横向滚动，后面的球类会被藏到屏幕外');
+  const wxss = fs.readFileSync(path.join(MINI, 'pages', 'cup-home', 'cup-home.wxss'), 'utf8');
+  assert.ok(/\.cup-projects\s*\{[^}]*flex-wrap:\s*wrap/.test(wxss), '项目栏没有换行布局');
+  // 选中态必须有实色，否则「当前是哪个项目」只能靠位置猜
+  assert.ok(/\.cup-project\.is-active\s*\{[^}]*background:\s*#b23a2e/.test(wxss), '选中项目没有明显底色');
+
+  const page = loadPage('cup-home');
+  const projects = page.data.projects;
+  assert.ok(Array.isArray(projects));
+});
+
+test('搜索：输入防抖只发一次请求，结果聚成一组；清空后恢复状态分组', async () => {
+  const { instantiate, withApi } = require('./helpers/page-harness');
+  const all = [
+    { eventId: 'e1', title: '2026 春季篮球联赛', location: '主体育馆', status: 2, statusLabel: '进行中', legPlanText: '', rosterText: '' },
+    { eventId: 'e2', title: '院际杯羽毛球赛', location: '综合馆', status: 0, statusLabel: '报名中', legPlanText: '', rosterText: '' },
+  ];
+  await withApi({
+    listCollegeEvents: (payload) => {
+      const rows = payload.keyword
+        ? all.filter((row) => row.title.includes(payload.keyword))
+        : all;
+      return { ok: true, events: rows, total: rows.length, hasMore: false, canManage: false };
+    },
+  }, async (calls) => {
+    const page = instantiate(loadPage('cup-home'));
+    await page.onLoad({});
+    assert.equal(page.data.total, 2);
+    assert.equal(page.data.groups.length, 2, '未搜索时按状态分组');
+
+    // 接管定时器：连打两下，只应留下最后一个待执行的回调
+    const pending = new Map();
+    const realSetTimeout = global.setTimeout;
+    const realClearTimeout = global.clearTimeout;
+    let seq = 0;
+    global.setTimeout = (fn) => { seq += 1; pending.set(seq, fn); return seq; };
+    global.clearTimeout = (id) => { pending.delete(id); };
+    let timerCount = 0;
+    try {
+      page.onKeywordInput({ detail: { value: '篮' } });
+      page.onKeywordInput({ detail: { value: '篮球' } });
+      timerCount = pending.size;
+    } finally {
+      global.setTimeout = realSetTimeout;
+      global.clearTimeout = realClearTimeout;
+    }
+    assert.equal(timerCount, 1, '防抖没有生效：每敲一个字都排了一次请求');
+
+    const before = calls.length;
+    for (const fn of pending.values()) fn();
+    await new Promise((resolve) => realSetTimeout(resolve, 10));
+    assert.equal(calls.length, before + 1, '一次搜索只发一次请求');
+    assert.equal(calls[calls.length - 1][1].keyword, '篮球');
+
+    assert.equal(page.data.total, 1);
+    assert.deepEqual(page.data.groups.map((group) => group.label), ['搜索结果'], '搜索时不再拆成状态分组');
+    assert.equal(page.data.groups[0].rows[0].eventId, 'e1');
+
+    // 清空：立刻重取，且请求里不再带关键词
+    await page.onClearKeyword();
+    await new Promise((resolve) => realSetTimeout(resolve, 10));
+    assert.equal(page.data.keyword, '');
+    assert.equal(calls[calls.length - 1][1].keyword, undefined, '清空后不该再带 keyword');
+    assert.equal(page.data.total, 2);
+    assert.equal(page.data.groups.length, 2);
+  });
+});
+
+test('搜索：过期响应不覆盖最新结果，后台重取不把列表切回加载中', async () => {
+  const { instantiate, withApi } = require('./helpers/page-harness');
+  let round = 0;
+  const resolvers = [];
+  await withApi({
+    listCollegeEvents: () => {
+      round += 1;
+      if (round === 1) return { ok: true, events: [], total: 0, hasMore: false, canManage: false };
+      return new Promise((resolve) => {
+        resolvers.push((total, title) => resolve({ ok: true, total, hasMore: false, canManage: false,
+          events: [{ eventId: `e${total}`, title, status: 0, statusLabel: '报名中', legPlanText: '', rosterText: '' }] }));
+      });
+    },
+  }, async () => {
+    const page = instantiate(loadPage('cup-home'));
+    await page.onLoad({});
+    const slow = page.reload({ silent: true });
+    assert.equal(page.data.loading, false, '搜索中的后台重取不应把整页切回「正在加载」');
+    const latest = page.reload({ silent: true });
+    // 故意让旧请求后回：最后落屏的必须是新请求那一份
+    resolvers[1](2, '新结果');
+    resolvers[0](9, '旧结果');
+    await Promise.all([slow, latest]);
+    assert.equal(page.data.total, 2, '过期响应把列表覆盖了');
+    assert.equal(page.data.groups[0].rows[0].title, '新结果');
+  });
+});

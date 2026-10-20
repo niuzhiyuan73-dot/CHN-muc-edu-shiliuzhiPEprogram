@@ -2689,17 +2689,43 @@ async function getMyTeamProfile(payload = {}, ctx) {
     teamTotals.draws += record.draws;
   }
 
-  // 球队参加过的场次与本人实际出场分开。没有单场名单时不凭报名或统计空格推定出场。
+  // 球队参加过的场次与本人实际出场分开。
+  //
+  // 【出场的两个证据】
+  //   1. 这一场定过出场名单，且名单里有我；
+  //   2. 这一场有我的个人统计（统计只在某一项真的填了数字时才落行，见
+  //      saveTeamMatchStats / writeLiveStats，所以「有行」本身就是上场的事实）。
+  // 两处取并集。只认名单会把「录了分却没定名单」的比赛全部算成没上场——
+  // 计分台在没定名单时按整份报名名单录分，这正是「已记录出场 0」的来源。
+  // 两处都没有的场次仍然不推定出场（没有证据就不编）。
+  const statMatchIds = new Set();
+  for (const doc of statDocs) {
+    if (!publishedIds.has(doc.matchId)) continue;
+    const snapshot = doc.published;
+    if (!snapshot || snapshot.integrity === TEAM_STAT_INTEGRITY.NONE) continue;
+    const rows = snapshot.mode === STAT_MODE.DETAILED
+      ? (snapshot.rows || [])
+      : (snapshot.players || []);
+    const appeared = rows.some(row => row && row.userId === targetId
+      && Object.keys(STAT_FIELDS).some(field => Number.isInteger(row[field])));
+    if (appeared) statMatchIds.add(doc.matchId);
+  }
+
   const eligibleMatches = matches.filter(match => match.status === TEAM_MATCH_STATUS.PUBLISHED
     && playedEntries.some(entry => entry.status === TEAM_ENTRY_STATUS.LOCKED && entry.eventId === match.eventId
       && [match.teamA, match.teamB].includes(entry.teamId)));
   let appearanceGames = 0;
   let lineupRecordedMatches = 0;
+  let statOnlyAppearanceGames = 0;
   for (const match of eligibleMatches) {
     const entry = playedEntries.find(row => row.eventId === match.eventId && [match.teamA, match.teamB].includes(row.teamId));
+    if (!entry) continue;
     const lineup = lineupOf(match, entry.teamId === match.teamA ? 'A' : 'B');
+    const inLineup = lineup.includes(targetId);
+    const hasStat = statMatchIds.has(match._id);
     if (lineup.length) lineupRecordedMatches += 1;
-    if (lineup.includes(targetId)) appearanceGames += 1;
+    if (inLineup || hasStat) appearanceGames += 1;
+    if (!inLineup && hasStat) statOnlyAppearanceGames += 1;
   }
 
   return ok({
@@ -2713,6 +2739,7 @@ async function getMyTeamProfile(payload = {}, ctx) {
     honors,
     statEvents,
     totals: { ...statCellsOf(total), ...teamTotals, appearanceGames, lineupRecordedMatches,
+      statOnlyAppearanceGames,
       eligibleMatchCount: eligibleMatches.length, recordText: recordTextOf(teamTotals) },
     message: '',
   });

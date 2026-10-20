@@ -26,7 +26,7 @@
     <view class="card">
       <view class="card-title">{{profile.isFootball ? '足球' : '篮球'}}跨赛事累计</view>
       <view class="hint-inline">只算已发布版本；「—」是未记录。每项场均仅按该项有记录的场次计算。</view>
-      <view class="hint-inline">球队已发布 {{profile.totals.eligibleMatchCount || 0}} 场，出场名单已记录 {{profile.totals.lineupRecordedMatches || 0}} 场；未记录名单不推定缺席。</view>
+      <view class="hint-inline">球队已发布 {{profile.totals.eligibleMatchCount || 0}} 场，其中 {{profile.totals.appearanceGames || 0}} 场有本人出场记录（出场名单或个人统计）；两处都没有的场次不推定出场。</view>
       <view class="total-grid"><view wx:for="{{profile.statCells}}" wx:key="field" class="total-cell"><view class="total-label">{{item.label}}</view><view class="total-value">{{item.totalText}}</view><view class="row-meta">场均 {{item.perGameText}}</view><view class="row-meta">已记录 {{item.recordedMatches}} 场</view></view></view>
       <view wx:if="{{profile.isFootball}}" class="hint-inline">点球大战不计进球；替补受牌不增加出场；第二黄和直接红牌分别记录，罚下不重复累计。</view>
     </view>

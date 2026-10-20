@@ -217,6 +217,13 @@ function finishedEvent() {
       recordedAt: ISO,
       publishedBy: 'demo_muc_admin',
       publishedAt: ISO,
+      // 这一届的名单赛前就定过：四队都按整份报名名单上场。
+      // 演示数据不写名单，会让「已记录出场」和名单页的「已定 / 未定」双双为 0，
+      // 看起来像功能坏了，而不是数据没填。
+      lineups: {
+        A: rosterOf(item.a).map(player => player.userId),
+        B: rosterOf(item.b).map(player => player.userId),
+      },
       revision: 2,
       createdAt: ISO,
       updatedAt: ISO,

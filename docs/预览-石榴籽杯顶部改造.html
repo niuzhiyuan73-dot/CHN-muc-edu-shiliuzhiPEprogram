@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>石榴籽杯顶部改造 · 静态预览</title>
+<style>
+  :root { --red: #b23a2e; --ink: #1f2329; --sub: #6b7280; --line: #e6e8ec; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 16px 48px; background: #f2f3f5; color: var(--ink);
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    display: flex; flex-direction: column; align-items: center; gap: 28px;
+  }
+  .caption { font-size: 13px; color: #8a8f99; letter-spacing: .5px; }
+  .phone {
+    width: 375px; background: #f7f8fa; border-radius: 22px; overflow: hidden;
+    box-shadow: 0 10px 34px rgba(31,35,41,.12);
+  }
+  .nav { height: 44px; display: flex; align-items: center; justify-content: center;
+    background: #fff; font-size: 15px; font-weight: 600; border-bottom: 1px solid var(--line); }
+  .page { padding-bottom: 20px; }
+  .header { padding: 18px 16px 6px; }
+  .title { font-size: 23px; font-weight: 600; letter-spacing: 1px; }
+  .subtitle { margin-top: 5px; font-size: 13px; color: var(--sub); }
+
+  /* 改前：横向滚动的 chip 行，后两个项目被截断 */
+  .old-projects { display: flex; gap: 8px; padding: 10px 16px 0; overflow: hidden; white-space: nowrap; }
+  .old-chip { flex: none; padding: 7px 15px; border: 1px solid var(--line); border-radius: 999px;
+    background: #fff; color: #5a606b; font-size: 14px; }
+  .old-chip.active { background: var(--red); border-color: var(--red); color: #fff; font-weight: 500; }
+
+  /* 改后：三列等宽网格，选中项实色 */
+  .projects { display: flex; flex-wrap: wrap; padding: 10px 16px 2px; }
+  .project {
+    display: flex; flex: 0 0 calc((100% - 16px) / 3); align-items: center; justify-content: center;
+    height: 36px; margin: 0 8px 8px 0; border: 1px solid var(--line); border-radius: 8px;
+    background: #fff; color: #5a606b; font-size: 14px;
+  }
+  .project:nth-child(3n) { margin-right: 0; }
+  .project.active { background: var(--red); border-color: var(--red); color: #fff; font-weight: 600; }
+  .glyph { margin-right: 4px; font-size: 13px; opacity: .7; }
+  .project.active .glyph { opacity: 1; }
+
+  .search { display: flex; align-items: center; height: 40px; margin: 4px 16px 0;
+    padding: 0 11px; border: 1px solid var(--line); border-radius: 999px; background: #fff; }
+  .search-icon { margin-right: 6px; font-size: 13px; opacity: .55; }
+  .search-input { flex: 1; border: 0; outline: 0; font-size: 14px; color: var(--ink); background: transparent; }
+  .search-input::placeholder { color: #b3b8c0; }
+  .search-clear { color: #9aa0a6; font-size: 12px; padding-left: 6px; }
+
+  .toolbar { display: flex; align-items: center; padding: 10px 16px 4px; }
+  .filter { padding: 5px 10px; margin-right: 8px; border-radius: 6px; border: 1px solid var(--line);
+    background: #fff; color: #4b5563; font-size: 13px; }
+  .total { margin-left: auto; color: #9aa0a6; font-size: 12px; }
+
+  .empty { padding: 48px 16px; text-align: center; }
+  .empty-icon { font-size: 30px; }
+  .empty-text { margin-top: 10px; font-size: 15px; color: #303540; }
+  .empty-hint { margin-top: 6px; font-size: 12px; color: #9aa0a6; }
+</style>
+</head>
+<body>
+  <div class="caption">改前：横向滚动，篮球 / 足球被推出屏幕</div>
+  <div class="phone">
+    <div class="nav">石榴籽杯</div>
+    <div class="page">
+      <div class="header">
+        <div class="title">石榴籽杯</div>
+        <div class="subtitle">学院赛 · 篮球</div>
+      </div>
+      <div class="old-projects">
+        <div class="old-chip">匹 匹克球</div>
+        <div class="old-chip">乒 乒乓球</div>
+        <div class="old-chip">羽 羽毛球</div>
+        <div class="old-chip">网 网球</div>
+      </div>
+      <div class="toolbar" style="padding-top:14px">
+        <div class="filter">全部年份</div>
+        <div class="filter">全部状态</div>
+        <div class="total">共 0 场</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="caption">改后：三列网格全部可见 + 搜索栏（静态预览，非真机）</div>
+  <div class="phone">
+    <div class="nav">石榴籽杯</div>
+    <div class="page">
+      <div class="header">
+        <div class="title">石榴籽杯</div>
+        <div class="subtitle">学院赛 · 篮球</div>
+      </div>
+      <div class="projects">
+        <div class="project"><span class="glyph">匹</span>匹克球</div>
+        <div class="project"><span class="glyph">乒</span>乒乓球</div>
+        <div class="project"><span class="glyph">羽</span>羽毛球</div>
+        <div class="project"><span class="glyph">网</span>网球</div>
+        <div class="project active"><span class="glyph">篮</span>篮球</div>
+        <div class="project"><span class="glyph">足</span>足球</div>
+      </div>
+      <div class="search">
+        <span class="search-icon">🔍</span>
+        <input class="search-input" placeholder="搜索赛事名称、场地" />
+      </div>
+      <div class="toolbar">
+        <div class="filter">全部年份</div>
+        <div class="filter">全部状态</div>
+        <div class="total">共 0 场</div>
+      </div>
+      <div class="empty">
+        <div class="empty-icon">🏆</div>
+        <div class="empty-text">本项目还没有学院赛</div>
+        <div class="empty-hint">点上方「发起学院赛」开始第一场</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

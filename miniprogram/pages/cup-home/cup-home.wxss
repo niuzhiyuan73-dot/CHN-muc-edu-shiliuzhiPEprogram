@@ -17,45 +17,95 @@
   color: #6b7280;
 }
 
-/* 顶部项目切换：横向滚动，三项一屏放得下，多了也不挤 */
+/* 顶部项目切换：两行等宽网格铺开，六个项目也能一眼看全，不再横向藏起几个 */
 .cup-projects {
+  display: flex;
+  flex-wrap: wrap;
   box-sizing: border-box;
   width: 100%;
-  padding: 20rpx 24rpx 8rpx;
-  white-space: nowrap;
+  padding: 20rpx 32rpx 4rpx;
 }
 
 .cup-project {
-  display: inline-flex;
+  display: flex;
+  flex: 0 0 calc((100% - 32rpx) / 3);
   align-items: center;
-  padding: 14rpx 30rpx;
-  margin-right: 16rpx;
+  justify-content: center;
+  box-sizing: border-box;
+  height: 72rpx;
+  margin: 0 16rpx 16rpx 0;
   border: 2rpx solid #e6e8ec;
-  border-radius: 999rpx;
+  border-radius: 16rpx;
   background: #ffffff;
   color: #5a606b;
   font-size: 28rpx;
   line-height: 1;
 }
 
-.cup-project:last-child {
-  margin-right: 24rpx;
+/* 每行第三个不留右边距，格子才真正左对齐 */
+.cup-project:nth-child(3n) {
+  margin-right: 0;
 }
 
 .cup-project.is-active {
   border-color: #b23a2e;
   background: #b23a2e;
   color: #ffffff;
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .cup-project-glyph {
-  margin-right: 10rpx;
+  margin-right: 8rpx;
   font-size: 26rpx;
+  opacity: 0.7;
 }
 
 .cup-project.is-active .cup-project-glyph {
   color: #ffffff;
+  opacity: 1;
+}
+
+/* 搜索：与项目栏同为「先定位再浏览」的入口，放在列表控件上方 */
+.cup-search {
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  height: 80rpx;
+  margin: 8rpx 32rpx 0;
+  padding: 0 22rpx;
+  border: 2rpx solid #e6e8ec;
+  border-radius: 999rpx;
+  background: #ffffff;
+}
+
+.cup-search-icon {
+  flex: none;
+  margin-right: 12rpx;
+  font-size: 26rpx;
+  opacity: 0.55;
+}
+
+.cup-search-input {
+  flex: 1;
+  min-width: 0;
+  height: 76rpx;
+  color: #1f2329;
+  font-size: 28rpx;
+}
+
+.cup-search-placeholder {
+  color: #b3b8c0;
+}
+
+.cup-search-clear {
+  flex: none;
+  width: 48rpx;
+  height: 48rpx;
+  margin-left: 8rpx;
+  color: #9aa0a6;
+  font-size: 24rpx;
+  line-height: 48rpx;
+  text-align: center;
 }
 
 /* 筛选条 */

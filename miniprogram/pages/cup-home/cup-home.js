@@ -4,8 +4,10 @@
  * 学院赛整体迁入本栏目后的唯一入口。
  *
  * 【结构：项目就是杯赛】
- * 顶部三个球类来自协会注册表，不是「一届杯赛的三个项目」——每个项目各自
- * 就是一个石榴籽杯。切换项目等于切换当前协会，下方列表就是该项目的学院赛。
+ * 顶部项目来自协会注册表（匹克球 / 乒乓 / 羽球 / 网球 / 篮球 / 足球…），不是
+ * 「一届杯赛的几个项目」——每个项目各自就是一个石榴籽杯。切换项目等于切换当前
+ * 协会，下方列表就是该项目的学院赛。项目栏是等宽网格换行铺开，不做横向滚动：
+ * 滚动会把后面的球类藏到屏幕外，连当前选中哪个都看不见。
  *
  * 【不设届次】
  * 同一项目一年可以发起多次，列表按**发起时间**归档；年份只作为筛选条件，
@@ -26,6 +28,8 @@ const { currentThemeClass } = require('../../services/branding.js');
 const { LEGACY_SCHOOL_ID } = require('../../utils/school.js');
 
 const PAGE_SIZE = 50;
+/** 输入停顿多久才发请求：按住键盘连打时不至于每敲一个字都问一次服务端 */
+const SEARCH_DEBOUNCE_MS = 300;
 
 /** 状态筛选项。value 用空串表示不限，其余是 COLLEGE_EVENT_STATUS 的数字值 */
 const STATUS_OPTIONS = [
@@ -61,10 +65,12 @@ Page({
     busy: false,
     schoolId: '',
     themeClass: '',
-    /** 三个球类项目：{ id, sportName, glyph } */
+    /** 各球类项目：{ id, sportName, glyph } */
     projects: [],
     projectId: '',
     projectName: '',
+    /** 搜索关键词：按赛事名称 / 场地匹配，空串等于不筛 */
+    keyword: '',
     rows: [],
     groups: [],
     total: 0,
@@ -113,6 +119,10 @@ Page({
 
   onUnload() {
     this.unloaded = true;
+    if (this.searchTimer) {
+      clearTimeout(this.searchTimer);
+      this.searchTimer = null;
+    }
   },
 
   onPullDownRefresh() {
@@ -157,35 +167,59 @@ Page({
   query(extra = {}) {
     const status = this.data.statusOptions[this.data.statusIndex] || { value: '' };
     const year = this.data.years[this.data.yearIndex] || { value: '' };
+    const keyword = String(this.data.keyword || '').trim();
     const payload = { limit: PAGE_SIZE, ...extra };
     if (status.value !== '') payload.status = Number(status.value);
     if (year.value) payload.year = year.value;
+    if (keyword) payload.keyword = keyword;
     return payload;
   },
 
-  /** 按状态分组；空组不渲染，避免页面上出现一串空标题 */
+  /**
+   * 按状态分组；空组不渲染，避免页面上出现一串空标题。
+   *
+   * 【搜索时为什么不再分组】
+   * 「报名中 / 进行中 / 已结束」是浏览时的组织方式。带着关键词来时，人关心的是
+   * 「这几个名字里哪个是我要找的」，再按状态切三段只会把命中结果拆散。搜索时
+   * 聚成一组，把状态留在每行标签上。
+   */
   groupOf(rows) {
+    if (String(this.data.keyword || '').trim()) {
+      return rows.length > 0 ? [{ status: 'search', label: '搜索结果', rows }] : [];
+    }
     return STATUS_ORDER
       .map((item) => ({ ...item, rows: rows.filter((row) => row.status === item.status) }))
       .filter((item) => item.rows.length > 0);
   },
 
-  async reload() {
+  /**
+   * 重取第一页。
+   *
+   * 【silent 与请求令牌】
+   * 边打字边搜时不能让整页回到「正在加载…」——那会把输入框一起换掉，键盘跟着收，
+   * 一个字都打不完整。所以搜索走 silent：保留旧列表，直到新结果回来再换。
+   * 令牌用来丢弃过期响应：连打三个字会发三次请求，先回的不一定是最后那个。
+   */
+  async reload(options = {}) {
+    const silent = options && options.silent === true;
+    const token = (this.requestToken || 0) + 1;
+    this.requestToken = token;
     if (!this.data.projectId) {
       this.update({ loading: false, error: '这所学校还没有启用任何协会' });
       return undefined;
     }
-    this.update({ loading: true, error: '' });
+    if (!silent) this.update({ loading: true, error: '' });
     this.rows = [];
     try {
       const result = await this.client().listCollegeEvents(this.query({ offset: 0 }));
-      if (this.unloaded) return undefined;
+      if (this.unloaded || token !== this.requestToken) return undefined;
       if (result && result.ok === false) throw new Error(result.message || '没有读取石榴籽杯的权限');
       const rows = result.events || [];
       this.rows = rows;
       this.loaded = true;
       this.update({
         loading: false,
+        error: '',
         rows,
         groups: this.groupOf(rows),
         total: Number(result.total) || rows.length,
@@ -195,7 +229,7 @@ Page({
         themeClass: currentThemeClass(),
       });
     } catch (err) {
-      if (this.unloaded) return undefined;
+      if (this.unloaded || token !== this.requestToken) return undefined;
       this.loaded = true;
       this.update({ loading: false, error: (err && err.message) || '加载失败' });
     }
@@ -230,6 +264,36 @@ Page({
   onPickStatus(event) {
     this.update({ statusIndex: Number(event.detail.value) });
     return this.reload();
+  },
+
+  /** 输入即筛：停顿 SEARCH_DEBOUNCE_MS 后再发请求，连打不逐个字都问服务端 */
+  onKeywordInput(event) {
+    const keyword = String((event.detail && event.detail.value) || '');
+    this.update({ keyword });
+    if (this.searchTimer) clearTimeout(this.searchTimer);
+    this.searchTimer = setTimeout(() => {
+      this.searchTimer = null;
+      if (this.unloaded) return;
+      this.reload({ silent: true });
+    }, SEARCH_DEBOUNCE_MS);
+  },
+
+  /** 键盘「搜索」键：不等防抖，立刻按当前输入筛一次 */
+  onKeywordConfirm() {
+    if (this.searchTimer) {
+      clearTimeout(this.searchTimer);
+      this.searchTimer = null;
+    }
+    return this.reload({ silent: true });
+  },
+
+  onClearKeyword() {
+    if (this.searchTimer) {
+      clearTimeout(this.searchTimer);
+      this.searchTimer = null;
+    }
+    this.update({ keyword: '' });
+    return this.reload({ silent: true });
   },
 
   onPickProject(event) {

@@ -235,6 +235,17 @@ async function listCollegeEvents(payload = {}, ctx) {
 
   let rows = (await ctx.repo.forScope(ctx).collegeEvents.list()).filter(isCollegeEventDoc);
   if (typeof payload.status === 'number') rows = rows.filter(row => row.status === payload.status);
+  // 关键词：按赛事名称 / 场地匹配，空串等于不筛选。
+  //
+  // 【为什么在服务端匹配，而不是页面拿到哪页就筛哪页】
+  // 列表是分页的（一次 50 条）。前端只筛当前页，等于「搜到的只是这一页里的命中」，
+  // 要一直点「加载更多」才可能翻到目标——那不是搜索，是碰运气。
+  // 放在分页之前过滤，total / hasMore 也跟着变成筛选后的口径，翻页才连贯。
+  const keyword = typeof payload.keyword === 'string' ? payload.keyword.trim().slice(0, 40).toLowerCase() : '';
+  if (keyword) {
+    rows = rows.filter(row => [row.title, row.location]
+      .some(value => String(value || '').toLowerCase().includes(keyword)));
+  }
   // 石榴籽杯按「发起时间」归档：同一年发起的赛事归在一起，不设届次。
   // 用 publishTime 而不是 startTime——一场比赛可以提前很久发布、也可以跨年开赛。
   if (payload.year) {
