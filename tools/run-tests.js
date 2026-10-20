@@ -36,7 +36,8 @@ const ROOT_DIR = path.resolve(__dirname, '..');
 const DEFAULTS = {
   root: path.join(ROOT_DIR, 'tests'),
   concurrency: Math.max(1, Math.min(os.cpus().length || 2, 8)),
-  // 8 分钟：演示种子扩容后 page.test.js 需要 5 分半左右（328s），5 分钟会误判成超时
+  // 8 分钟：最慢的 page.test.js 目前约 110 秒（292 条页面装配用例）。留足余量是
+  // 为了让慢机器与 CI 不误判成超时——真卡住时拿的是「谁卡了」，不是省那几分钟。
   timeout: 8 * 60 * 1000,
   slow: 60 * 1000,
   filter: '',
