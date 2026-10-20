@@ -3,7 +3,7 @@
 一个原生微信小程序（WXML / WXSS / JS，零框架），把校内**多个体育协会**的等级分、赛事、训练与校级活动装进同一套系统。
 
 - 当前基线：`d00226f`（网球计分落地）
-- 自检：`npm test` → **2565 通过 / 0 失败**（177 个套件 / 131 个测试文件）
+- 自检：`npm test` → **2599 通过 / 0 失败**（134 个测试文件 / 约 3 分钟）
 - 云端共享库：`npm run check:cloud-sync` → 77 个文件一致
 - 数据源：默认**本地模拟**（`miniprogram/config.js` 的 `CLOUD_ENV_ID` 为空），填入环境 ID 即切云端，页面代码一行不改
 
@@ -119,12 +119,23 @@ tools/                  镜像同步、导入工具、文档生成、图标生�
 ## 七、常用命令
 
 ```bash
-npm test                  # 全量单元与页面装配测试
+npm test                  # 全量测试（逐文件隔离 + 单文件硬超时 + 进度心跳）
+npm run test:node         # 原生 node --test，排查单个文件时用
 npm run test:watch        # 监听模式
 npm run test:py           # 导入工具的 Python 契约测试
 npm run sync:cloud        # 把纯逻辑镜像到 cloudfunctions/data/lib/
 npm run check:cloud-sync  # 只校验不写入（CI 用）
 node tools/acceptance-audit.cjs   # 验收探针
+```
+
+`npm test` 走 `tools/run-tests.js`，而不是裸的 `node --test`：单个测试文件超过 5 分钟
+会被杀掉并点名，运行期间每 15 秒打一行「正在跑谁」，慢文件在总结里单独列出。
+`tests/page.test.js` 一个文件就要约 170 秒（292 条页面装配用例），慢是正常的，
+但不该让整套测试因此「长时间没有输出」。
+
+```bash
+node tools/run-tests.js --filter page      # 只跑文件名含 page 的
+node tools/run-tests.js --timeout 120000   # 临时收紧单文件超时
 ```
 
 生成文档（Markdown 是唯一内容源，docx 是构建产物）：
