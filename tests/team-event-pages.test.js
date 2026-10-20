@@ -942,3 +942,39 @@ test('出场名单 —— 切到只读的一侧不给保存，少于最低人数
   assert.match(page.data.notice, /至少 2 人/);
   assert.equal(calls.filter(call => call[0] === 'saveTeamMatchLineup').length, 0);
 }));
+
+/* ============================================================
+ * 路由参数：真机把 query 原样透传（未解码）
+ * ============================================================ */
+
+test('赛事详情 —— 路由编号未解码时也能打开，并写回真实编号', () => withApi({
+  // 只认解码后的编号：这正是微信开发者工具 / 真机的行为差异
+  getTeamEvent: ({ eventId }) => (
+    eventId === 'tev:muc:bk:autumn'
+      ? detailFixture({ event: { ...EVENT, eventId } })
+      : { ok: false, message: '赛事不存在，或不在本协会' }
+  ),
+}, async (calls) => {
+  const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
+  // 跳转方 encodeURIComponent 之后，真机 onLoad 拿到的是 %3A 形式
+  await page.onLoad({ eventId: encodeURIComponent('tev:muc:bk:autumn') });
+
+  assert.equal(page.data.error, '', '不能因为没解码就报「赛事不存在」');
+  assert.equal(page.data.event.eventId, 'tev:muc:bk:autumn');
+  assert.equal(page.data.eventId, 'tev:muc:bk:autumn', '解析出的编号要写回 data，后续动作才用得上');
+  assert.deepEqual(
+    calls.filter(call => call[0] === 'getTeamEvent').map(call => call[1].eventId),
+    ['tev%3Amuc%3Abk%3Aautumn', 'tev:muc:bk:autumn'],
+    '先试原值，未命中再试解码值'
+  );
+}));
+
+test('赛事详情 —— 两个候选都查不到时，仍然给服务端的原话', () => withApi({
+  getTeamEvent: () => ({ ok: false, message: '赛事尚未发布' }),
+}, async () => {
+  const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
+  await page.onLoad({ eventId: 'tev%3Amuc%3Abk%3Aautumn' });
+
+  assert.equal(page.data.loading, false);
+  assert.equal(page.data.error, '赛事尚未发布');
+}));

@@ -19,6 +19,7 @@
  */
 
 const space = require('../../services/association-space.js');
+const { resolveRouteId } = require('../../utils/route-query.js');
 
 /** 统计指标：顺序即页面上的列顺序，label 给人看，max 只作提示 */
 const STAT_FIELDS = [
@@ -148,11 +149,27 @@ Page({
     }
     this.setData({ loading: true, error: '' });
     try {
-      const result = await space.forScope(this.scope).getTeamEvent({ eventId: this.data.eventId });
-      if (!result.ok) {
-        this.setData({ loading: false, error: result.message || '赛事加载失败' });
+      // 路由里的编号可能是「未解码」的：跳转方一律 `encodeURIComponent(事件编号)`，
+      // 而微信开发者工具 / 真机把 query 原样透传（`tev%3Amuc...`），服务端因此
+      // 查不到这场比赛，页面显示「赛事不存在」。探测出真实编号后写回 data，
+      // 后续录分 / 抽签 / 改赛程都用它（见 utils/route-query.js）。
+      const client = space.forScope(this.scope);
+      let failure = null;
+      const resolved = await resolveRouteId(this.data.eventId, async (candidate) => {
+        const response = await client.getTeamEvent({ eventId: candidate });
+        if (response && response.ok === true) return response;
+        failure = response;
+        return null;
+      });
+      if (!resolved.id) {
+        this.setData({
+          loading: false,
+          error: (failure && failure.message) || '赛事不存在，或不在本协会',
+        });
         return undefined;
       }
+      if (resolved.id !== this.data.eventId) this.setData({ eventId: resolved.id });
+      const result = resolved.result;
       const event = result.event;
       const totalRounds = event.draw && event.draw.size
         ? Math.round(Math.log2(event.draw.size))
