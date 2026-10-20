@@ -78,7 +78,7 @@ function canManageTeam(ctx, team, actorId) {
 }
 
 /** 列表行 / 详情用的球队视图。布尔量在这里算好，模板不写业务判断。 */
-function teamView(team, { dir, actorId, manage, membership }) {
+function teamView(team, { dir, actorId, manage, membership, memberCount }) {
   const active = isActiveMember(membership);
   return {
     teamId: team._id,
@@ -91,7 +91,9 @@ function teamView(team, { dir, actorId, manage, membership }) {
     statusLabel: TEAM_STATUS_LABEL[team.status] || team.status,
     captainId: team.captainId,
     captainName: nameOf(dir, team.captainId),
-    memberCount: Number(team.memberCount) || 0,
+    // 人数来自 team_members（在队状态），不是球队文档上的字段。
+    // 以前读 team.memberCount，库里从来没有这个字段，列表里永远是「0 人」。
+    memberCount: Number(memberCount != null ? memberCount : team.memberCount) || 0,
     createdAt: team.createdAt || null,
     isMine: active,
     isCaptain: team.captainId === actorId,
@@ -171,7 +173,8 @@ async function listTeams(payload = {}, ctx) {
     .map(team => {
       const rowsOfTeam = byTeam.get(team._id) || [];
       const membership = rowsOfTeam.find(row => row.userId === ctx.actorId);
-      return teamView(team, { dir, actorId: ctx.actorId, manage, membership });
+      const memberCount = rowsOfTeam.filter(row => row.status === TEAM_MEMBER_STATUS.ACTIVE).length;
+      return teamView(team, { dir, actorId: ctx.actorId, manage, membership, memberCount });
     })
     .filter(view => !mineOnly || view.isMine || view.isCaptain)
     .sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh-Hans-CN'))

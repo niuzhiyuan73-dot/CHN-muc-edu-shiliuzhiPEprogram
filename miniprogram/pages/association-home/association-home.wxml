@@ -14,7 +14,7 @@
     </view>
     <view class="ws-head-main">
       <view class="ws-head-name">{{associationName}}</view>
-      <view class="ws-head-note">协会空间 · 排行榜 · 比赛 · 赛事</view>
+      <view class="ws-head-note">{{headNote}}</view>
     </view>
   </view>
 
@@ -35,14 +35,9 @@
   <view wx:if="{{mounted.space}}" hidden="{{activeTab !== 'space'}}">
     <association-space-panel id="space" />
   </view>
-  <!-- 组队（团队运动专属）：球队面板在下一批接入，先用一句话说明现状，
-       避免点进一个空白页 -->
+  <!-- 组队（团队运动专属）：切到页签就能看到球队列表，不再多一次「进入组队」 -->
   <view wx:if="{{mounted.teams}}" hidden="{{activeTab !== 'teams'}}">
-    <view class="team-pending">
-      <view class="team-pending-title">组队</view>
-      <view class="team-pending-note">球队是长期存在的：建队需协会负责人审核，入队由队长审批；赛事报名时再从球队里选人。</view>
-      <view class="team-pending-btn" bindtap="onOpenTeams">进入组队</view>
-    </view>
+    <team-panel id="teams" />
   </view>
   <view wx:if="{{mounted.rank}}" hidden="{{activeTab !== 'rank'}}">
     <rank-panel id="rank" />
@@ -52,11 +47,7 @@
   </view>
   <view wx:if="{{mounted.events}}" hidden="{{activeTab !== 'events'}}">
     <!-- 团队运动的赛事是另一套（球队报名、抽签、录总分），不是个人赛事 -->
-    <view wx:if="{{isTeamSport}}" class="team-pending">
-      <view class="team-pending-title">团队赛事</view>
-      <view class="team-pending-note">建赛、报名审核、抽签编排、录分发布、结算名次，都在团队赛事里完成。</view>
-      <view class="team-pending-btn" bindtap="onOpenTeamEvents">进入团队赛事</view>
-    </view>
+    <team-events-panel wx:if="{{isTeamSport}}" id="events" />
     <events-panel wx:else id="events" />
   </view>
 

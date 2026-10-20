@@ -94,6 +94,9 @@ Page({
       themeClass: `assoc-${id}`,
       // 团队运动没有个人赛事，赛事页签改指向「团队赛事」
       isTeamSport: sportTypeOf(id) === SPORT_TYPE.TEAM,
+      // 名头副标题跟着页签走：篮球是「协会空间 · 组队 · 赛事」，
+      // 写死「排行榜 · 比赛」会让团队运动的名头与下面能点的页签对不上
+      headNote: definitions.map((def) => def.label).join(' · '),
       activeTab: active,
       tabs: definitions.map((def) => ({ ...def, active: def.tab === active })),
       mounted,
@@ -142,16 +145,6 @@ Page({
     if (typeof wx !== 'undefined' && typeof wx.setNavigationBarTitle === 'function') {
       wx.setNavigationBarTitle({ title: this.data.associationName || '协会' });
     }
-  },
-
-  /** 进团队赛事列表（团队运动专属） */
-  onOpenTeamEvents() {
-    return wx.navigateTo({ url: '/pages/team-event-list/team-event-list' });
-  },
-
-  /** 进组队页（团队运动专属） */
-  onOpenTeams() {
-    return wx.navigateTo({ url: '/pages/team-list/team-list' });
   },
 
   /** 切页签。首次切到某个页签时把它挂上 */

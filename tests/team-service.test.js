@@ -298,3 +298,27 @@ test('范围 —— 个人赛协会调球队接口直接拒绝', async () => {
   assert.equal(result.ok, false);
   assert.match(result.message, /团队项目/);
 });
+
+test('列表 —— 人数按在队成员算，不是球队文档上的字段', async () => {
+  const repo = fixture();
+  const teamId = await activeTeam(repo, '热浪队');
+  // 队长 1 人 + 两名通过审批的队员
+  await call(repo, 'applyToJoinTeam', { teamId }, { actor: 'u_m1' });
+  await call(repo, 'reviewTeamMember', { teamId, userId: 'u_m1', approve: true });
+  await call(repo, 'applyToJoinTeam', { teamId }, { actor: 'u_m2' });
+  await call(repo, 'reviewTeamMember', { teamId, userId: 'u_m2', approve: true });
+
+  const list = await call(repo, 'listTeams', {}, { actor: 'u_leader' });
+  const team = list.teams.find(row => row.teamId === teamId);
+  // 球队文档里从来没有 memberCount 字段；以前读它，列表里永远是「0 人」
+  assert.equal(team.memberCount, 3, '队长 + 2 名队员');
+
+  // 退队的人不算数
+  await call(repo, 'leaveTeam', { teamId }, { actor: 'u_m1' });
+  const after = await call(repo, 'listTeams', {}, { actor: 'u_leader' });
+  assert.equal(after.teams.find(row => row.teamId === teamId).memberCount, 2);
+
+  // 详情页与列表口径一致
+  const detail = await call(repo, 'getTeam', { teamId }, { actor: 'u_leader' });
+  assert.equal(detail.team.memberCount, 2);
+});

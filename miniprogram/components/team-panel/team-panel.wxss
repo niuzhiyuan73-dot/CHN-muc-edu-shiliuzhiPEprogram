@@ -1,0 +1,109 @@
+/* 组队页签：一行一队，与球队列表页同一视觉，但不需要搜索与建队入口 */
+.panel {
+  padding-bottom: var(--space-lg);
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: var(--space-md) 0 var(--space-sm);
+}
+
+.panel-title {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.panel-action {
+  font-size: 24rpx;
+  color: var(--color-primary);
+}
+
+.panel-hint {
+  padding: var(--space-lg) var(--space-md);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  font-size: 26rpx;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+.panel-more {
+  margin-top: var(--space-sm);
+  padding: var(--space-sm) 0;
+  font-size: 24rpx;
+  color: var(--color-primary);
+  text-align: center;
+}
+
+.team-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.team-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+}
+
+.team-avatar {
+  width: 84rpx;
+  height: 84rpx;
+  line-height: 84rpx;
+  text-align: center;
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 36rpx;
+  font-weight: 700;
+  flex: none;
+}
+
+.team-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.team-name {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.team-meta {
+  margin-top: 6rpx;
+  font-size: 24rpx;
+  color: var(--color-text-secondary);
+}
+
+.tag {
+  margin-left: var(--space-xs);
+  padding: 2rpx 12rpx;
+  border-radius: 20rpx;
+  font-size: 20rpx;
+  font-weight: 500;
+}
+
+.tag-mine {
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+}
+
+.tag-muted {
+  background: #F0F1F3;
+  color: var(--color-text-secondary);
+}
+
+.team-arrow {
+  color: var(--color-text-secondary);
+  font-size: 34rpx;
+}

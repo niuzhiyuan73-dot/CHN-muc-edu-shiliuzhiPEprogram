@@ -3,7 +3,9 @@
     "association-space-panel": "/components/association-space-panel/association-space-panel",
     "rank-panel": "/components/rank-panel/rank-panel",
     "match-panel": "/components/match-panel/match-panel",
-    "events-panel": "/components/events-panel/events-panel"
+    "events-panel": "/components/events-panel/events-panel",
+    "team-panel": "/components/team-panel/team-panel",
+    "team-events-panel": "/components/team-events-panel/team-events-panel"
   },
   "navigationBarTitleText": "协会",
   "enablePullDownRefresh": true,

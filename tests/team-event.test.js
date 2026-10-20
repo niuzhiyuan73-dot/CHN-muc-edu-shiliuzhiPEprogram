@@ -837,3 +837,26 @@ test('并发 —— 版本号对不上的录分、发布与统计都被拒', asy
   assert.equal(staleStats.ok, false);
   assert.match(staleStats.message, /统计刚被改过/);
 });
+
+test('文案 —— 赛事与比赛的审核状态是中文，不是英文枚举值', async () => {
+  const repo = fixtureFor(4, 5);
+  const { eventId } = await lockedEvent(repo);
+
+  const locked = (await call(repo, 'listTeamEvents', {})).events
+    .find(item => item.eventId === eventId);
+  assert.equal(locked.status, TEAM_EVENT_STATUS.LOCKED);
+  assert.equal(locked.statusLabel, '名单已锁定', '列表上要写中文，不能把枚举值直接铺出去');
+
+  await call(repo, 'drawTeamEvent', { eventId });
+  const scheduled = (await call(repo, 'listTeamEvents', {})).events
+    .find(item => item.eventId === eventId);
+  assert.equal(scheduled.statusLabel, '赛程已发布');
+
+  // 比赛状态同理：未开赛 → 待审核
+  const matches = (await call(repo, 'listTeamMatches', { eventId })).matches;
+  assert.equal(matches[0].statusLabel, '未开赛');
+  await call(repo, 'recordTeamMatch', { matchId: matches[0].matchId, scoreA: 80, scoreB: 70 });
+  const after = (await call(repo, 'getTeamEvent', { eventId })).matches
+    .find(item => item.matchId === matches[0].matchId);
+  assert.equal(after.statusLabel, '待审核', '录完等发布，文案要说人话');
+});

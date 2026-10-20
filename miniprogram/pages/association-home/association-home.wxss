@@ -95,38 +95,3 @@
   background: var(--color-primary);
 }
 
-/* 组队占位：球队面板上线前，别让这个页签点进去是一片空白 */
-.team-pending {
-  margin: var(--space-md) 0;
-  padding: var(--space-lg);
-  border-radius: var(--radius-lg);
-  background: var(--color-surface);
-  box-shadow: var(--shadow-card);
-  text-align: center;
-}
-
-.team-pending-title {
-  font-size: 30rpx;
-  font-weight: 600;
-  color: var(--color-text-primary);
-  margin-bottom: var(--space-sm);
-}
-
-.team-pending-note {
-  font-size: 26rpx;
-  line-height: 1.7;
-  color: var(--color-text-secondary);
-}
-
-.team-pending-btn {
-  display: inline-block;
-  margin-top: var(--space-md);
-  padding: 0 var(--space-xl);
-  height: 76rpx;
-  line-height: 76rpx;
-  border-radius: 38rpx;
-  background: var(--color-primary);
-  color: #fff;
-  font-size: 28rpx;
-  font-weight: 600;
-}

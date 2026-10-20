@@ -21,6 +21,7 @@ const { buildSchoolContext } = require('./school-context.js');
 const { schoolKey, schoolMemberKey, schoolMembershipKey, PLATFORM_STATUS } = require('../utils/school.js');
 const {
   TEAM_STATUS, TEAM_MEMBER_STATUS, TEAM_EVENT_STATUS, TEAM_ENTRY_STATUS, TEAM_MATCH_STATUS,
+  TEAM_EVENT_STATUS_LABEL, TEAM_ENTRY_STATUS_LABEL, TEAM_MATCH_STATUS_LABEL,
   BRACKET_STAGE, EVENT_BRONZE_MODE, TEAM_STAT_INTEGRITY, TEAM_STAT_STATUS,
 } = require('../utils/constants.js');
 const { EVENT_FORMAT } = require('../utils/constants.js');
@@ -132,7 +133,7 @@ function eventView(event, ctx, { manage, entryCount }) {
     name: event.name,
     format: event.format,
     status: event.status,
-    statusLabel: TEAM_EVENT_STATUS[event.status] || event.status,
+    statusLabel: TEAM_EVENT_STATUS_LABEL[event.status] || event.status,
     rulesText: formatBasketballRules(event.rules),
     rules: event.rules,
     bronzeMode: event.bronzeMode || EVENT_BRONZE_MODE.PLAYOFF,
@@ -185,7 +186,7 @@ function matchView(match, teamName, rights = {}) {
     forfeit: masked ? null : (match.forfeit || null),
     winner: masked ? null : (match.winner || null),
     status: match.status,
-    statusLabel: TEAM_MATCH_STATUS[match.status] || match.status,
+    statusLabel: TEAM_MATCH_STATUS_LABEL[match.status] || match.status,
     matchTime: match.matchTime || null,
     // 展示文本在服务端算好：云函数跑在 UTC，页面拿 ISO 自己格式化会差 8 小时
     matchTimeText: matchTimeText(match.matchTime),
@@ -257,7 +258,7 @@ async function getTeamEvent(payload = {}, ctx) {
       teamId: entry.teamId,
       teamName: teamName.get(entry.teamId) || '已归档球队',
       status: entry.status,
-      statusLabel: TEAM_ENTRY_STATUS[entry.status] || entry.status,
+      statusLabel: TEAM_ENTRY_STATUS_LABEL[entry.status] || entry.status,
       rosterCount: (entry.roster || []).length,
       lockedAt: entry.lockedAt || null,
       placement: Number(entry.placement) || null,

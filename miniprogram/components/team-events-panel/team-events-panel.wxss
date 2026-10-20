@@ -1,0 +1,110 @@
+/* 团队赛事页签：一行一届，与赛事列表页同一视觉 */
+.panel {
+  padding-bottom: var(--space-lg);
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: var(--space-md) 0 var(--space-sm);
+}
+
+.panel-title {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.panel-action {
+  font-size: 24rpx;
+  color: var(--color-primary);
+}
+
+.panel-hint {
+  padding: var(--space-lg) var(--space-md);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  font-size: 26rpx;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+.panel-more {
+  margin-top: var(--space-sm);
+  padding: var(--space-sm) 0;
+  font-size: 24rpx;
+  color: var(--color-primary);
+  text-align: center;
+}
+
+.event-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.event-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+}
+
+.event-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.event-name {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.event-meta {
+  margin-top: 6rpx;
+  font-size: 23rpx;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+.event-side {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex: none;
+}
+
+.status {
+  padding: 4rpx 14rpx;
+  border-radius: 20rpx;
+  font-size: 21rpx;
+  background: #F0F1F3;
+  color: var(--color-text-secondary);
+}
+
+.status-registration {
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+}
+
+.status-running,
+.status-locked {
+  background: #FFF4E5;
+  color: #B26A00;
+}
+
+.status-finished {
+  background: #E8F5E9;
+  color: #2E7D32;
+}
+
+.event-arrow {
+  font-size: 34rpx;
+  color: var(--color-text-secondary);
+}

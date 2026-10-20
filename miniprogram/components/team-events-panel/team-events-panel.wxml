@@ -1,0 +1,32 @@
+<!-- 团队赛事页签：直接列赛事，点一行进详情；建赛在列表页 -->
+<view class="panel {{themeClass}}">
+  <view class="panel-head">
+    <view class="panel-title">团队赛事</view>
+    <view class="panel-action" bindtap="onOpenAll">{{canManage ? '建赛 / 全部 ›' : '全部赛事 ›'}}</view>
+  </view>
+
+  <view wx:if="{{loading}}" class="panel-hint">加载中…</view>
+  <view wx:elif="{{error}}" class="panel-hint">{{error}}</view>
+  <view wx:elif="{{events.length === 0}}" class="panel-hint">{{emptyText}}</view>
+
+  <view wx:else class="event-list">
+    <view
+      wx:for="{{events}}"
+      wx:key="eventId"
+      class="event-row"
+      data-eventid="{{item.eventId}}"
+      bindtap="onOpenEvent"
+    >
+      <view class="event-main">
+        <view class="event-name">{{item.name}}</view>
+        <view class="event-meta">{{item.rulesText}}</view>
+        <view class="event-meta">{{item.entryCount}} 支球队报名</view>
+      </view>
+      <view class="event-side">
+        <view class="status status-{{item.status}}">{{item.statusLabel}}</view>
+        <view class="event-arrow">›</view>
+      </view>
+    </view>
+    <view wx:if="{{more > 0}}" class="panel-more" bindtap="onOpenAll">还有 {{more}} 届赛事，查看全部 ›</view>
+  </view>
+</view>

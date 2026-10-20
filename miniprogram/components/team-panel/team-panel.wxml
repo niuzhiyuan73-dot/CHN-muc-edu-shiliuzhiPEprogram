@@ -1,0 +1,33 @@
+<!-- 组队页签：直接列球队，点一行进详情；建队在列表页 -->
+<view class="panel {{themeClass}}">
+  <view class="panel-head">
+    <view class="panel-title">全部球队</view>
+    <view class="panel-action" bindtap="onOpenAll">建队 / 全部 ›</view>
+  </view>
+
+  <view wx:if="{{loading}}" class="panel-hint">加载中…</view>
+  <view wx:elif="{{error}}" class="panel-hint">{{error}}</view>
+  <view wx:elif="{{teams.length === 0}}" class="panel-hint">{{emptyText}}</view>
+
+  <view wx:else class="team-list">
+    <view
+      wx:for="{{teams}}"
+      wx:key="teamId"
+      class="team-row"
+      data-teamid="{{item.teamId}}"
+      bindtap="onOpenTeam"
+    >
+      <view class="team-avatar">{{item.initial}}</view>
+      <view class="team-main">
+        <view class="team-name">
+          {{item.name}}
+          <text wx:if="{{item.isMine}}" class="tag tag-mine">我的</text>
+          <text wx:if="{{item.status !== 'active'}}" class="tag tag-muted">{{item.statusLabel}}</text>
+        </view>
+        <view class="team-meta">队长 {{item.captainName}} · {{item.memberCount}} 人{{item.college ? ' · ' + item.college : ''}}</view>
+      </view>
+      <view class="team-arrow">›</view>
+    </view>
+    <view wx:if="{{more > 0}}" class="panel-more" bindtap="onOpenAll">还有 {{more}} 支球队，查看全部 ›</view>
+  </view>
+</view>
