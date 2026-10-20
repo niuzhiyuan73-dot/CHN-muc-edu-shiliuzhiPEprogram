@@ -81,6 +81,8 @@ const SCHOOL_SPACE_ACTIONS = Object.freeze([
   'reviewTeamMatchStats',
   // 团队赛事：单场赛程（时间 / 场地 / 裁判 / 记录员）与整轮顺延
   'getTeamMatchSchedule',         'updateTeamMatchSchedule',     'updateTeamRoundSchedule',
+  // 团队赛事：报名选人（球衣号）与单场出场名单
+  'getTeamEntryRoster',           'getTeamMatchLineup',          'saveTeamMatchLineup',
 ]);
 
 /** 跨校邀请赛（`forExchange` 声明，16 个）。 */

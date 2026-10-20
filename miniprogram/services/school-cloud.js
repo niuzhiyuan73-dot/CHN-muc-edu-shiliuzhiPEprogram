@@ -168,6 +168,10 @@ function forSchoolIdentity(input) {
     getTeamMatchSchedule: payload => request('getTeamMatchSchedule', payload),
     updateTeamMatchSchedule: payload => request('updateTeamMatchSchedule', payload),
     updateTeamRoundSchedule: payload => request('updateTeamRoundSchedule', payload),
+    // 团队赛事：报名选人与单场出场名单
+    getTeamEntryRoster: payload => request('getTeamEntryRoster', payload),
+    getTeamMatchLineup: payload => request('getTeamMatchLineup', payload),
+    saveTeamMatchLineup: payload => request('saveTeamMatchLineup', payload),
   });
 }
 

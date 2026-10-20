@@ -117,6 +117,12 @@ Page({
     scheduleEditing: null,
     /** 整轮顺延浮层：{ round, stage, label, minutes } */
     shiftEditing: null,
+    /** 报名选人浮层：{ teamId, teamName, min, max, members: [{ userId, name, noText, checked }] } */
+    entryEditing: null,
+    /** 出场名单浮层：{ matchId, revision, sides: [{ side, teamName, editable }], activeIndex } */
+    lineupEditing: null,
+    /** 当前编辑的那一侧的球员（摊平，模板不写下标路径） */
+    lineupPlayers: [],
     scheduleBusy: false,
     /** 统计指标列（顺序即页面列顺序） */
     statFields: STAT_FIELDS,
@@ -223,14 +229,226 @@ Page({
     return this.run('reviewTeamEntry', { eventId: this.data.eventId, teamId: teamid, approve: false }, '已退回');
   },
 
-  /** 队长为本队报名（管理者也能替任何一队补报） */
-  onSubmitEntry(event) {
+  /** 队长为本队报名：先选人再提交（管理者也能替任何一队补报） */
+  async onSubmitEntry(event) {
     const { teamid } = event.currentTarget.dataset;
-    return this.run('submitTeamEntry', {
-      eventId: this.data.eventId,
-      teamId: teamid,
-    }, '已提交报名，等协会负责人审核');
+    this.setData({ notice: '', noticeError: false });
+    try {
+      const result = await space.forScope(this.scope).getTeamEntryRoster({
+        eventId: this.data.eventId,
+        teamId: teamid,
+      });
+      if (!result || result.ok !== true) {
+        this.setData({ notice: (result && result.message) || '名单加载失败', noticeError: true });
+        return undefined;
+      }
+      if (result.canEdit !== true) {
+        this.setData({ notice: '当前不能修改这份名单（已锁定或赛事已开始）', noticeError: true });
+        return undefined;
+      }
+      this.setData({
+        entryEditing: {
+          teamId: teamid,
+          teamName: result.team.name,
+          min: Number(result.event.entryMin) || 5,
+          max: Number(result.event.entryMax) || 12,
+          status: result.status,
+          selectedCount: (result.members || []).filter(row => row.selected === true).length,
+          members: (result.members || []).map(row => ({
+            userId: row.userId,
+            name: row.name,
+            // 输入框要字符串：null 直接绑到 input 上会显示成「null」
+            noText: Number.isInteger(row.no) ? String(row.no) : '',
+            checked: row.selected === true,
+          })),
+        },
+      });
+      return undefined;
+    } catch (err) {
+      console.error('[team-event-detail] 报名名单加载失败', err);
+      this.setData({ notice: '名单加载失败，请稍后重试', noticeError: true });
+      return undefined;
+    }
   },
+
+  onCloseEntry() {
+    this.setData({ entryEditing: null, busy: false });
+  },
+
+  onToggleEntryMember(event) {
+    const { userid } = event.currentTarget.dataset;
+    const members = (this.data.entryEditing.members || []).map(row => (
+      row.userId === userid ? { ...row, checked: !row.checked } : row
+    ));
+    this.setData({
+      'entryEditing.members': members,
+      'entryEditing.selectedCount': members.filter(row => row.checked).length,
+    });
+  },
+
+  onInputJersey(event) {
+    const { userid } = event.currentTarget.dataset;
+    const value = event.detail.value;
+    const members = (this.data.entryEditing.members || []).map(row => (
+      row.userId === userid ? { ...row, noText: value } : row
+    ));
+    this.setData({ 'entryEditing.members': members });
+  },
+
+  async onSaveEntry() {
+    const editing = this.data.entryEditing;
+    if (!editing || this.data.busy) return undefined;
+    const chosen = editing.members.filter(row => row.checked);
+    if (chosen.length < editing.min) {
+      this.setData({
+        notice: `报名至少需要 ${editing.min} 人，当前选了 ${chosen.length} 人`,
+        noticeError: true,
+      });
+      return undefined;
+    }
+    const result = await this.run('submitTeamEntry', {
+      eventId: this.data.eventId,
+      teamId: editing.teamId,
+      roster: chosen.map(row => ({ userId: row.userId, no: row.noText })),
+    }, '已提交报名，等协会负责人审核');
+    if (!result || result.ok !== true) return result;
+    this.setData({ entryEditing: null });
+    if (result.resubmitted === true) {
+      this.setData({ notice: '名单已更新，需要协会负责人重新审核', noticeError: false });
+    } else if (Number(result.rosterCount) > 0) {
+      this.setData({ notice: `已报名 ${result.rosterCount} 人，等协会负责人审核`, noticeError: false });
+    }
+    return result;
+  },
+
+  /* ---------------- 单场出场名单 ---------------- */
+
+  /**
+   * 打开出场名单浮层。
+   *
+   * 两侧的球员先按「谁可以编辑」落到默认那一侧：队长进来就停在自己队，
+   * 管理员停在 A 侧。换边只是切换显示，勾选状态跟着走。
+   */
+  async onOpenLineup(event) {
+    const { matchid } = event.currentTarget.dataset;
+    this.setData({ notice: '', noticeError: false });
+    try {
+      const result = await space.forScope(this.scope).getTeamMatchLineup({ matchId: matchid });
+      if (!result || result.ok !== true) {
+        this.setData({ notice: (result && result.message) || '出场名单加载失败', noticeError: true });
+        return undefined;
+      }
+      const sides = (result.sides || []).map(row => ({
+        side: row.side,
+        teamName: row.teamName,
+        editable: row.editable === true,
+      }));
+      this.lineupBySide = (result.sides || []).map(row => ({
+        side: row.side,
+        players: (row.players || []).map(player => ({
+          userId: player.userId,
+          name: player.name,
+          no: Number.isInteger(player.no) ? player.no : null,
+          checked: player.checked === true,
+        })),
+      }));
+      const activeIndex = Math.max(0, sides.findIndex(row => row.editable));
+      this.setData({
+        lineupEditing: {
+          matchId: matchid,
+          revision: Number(result.revision) || 0,
+          minOnCourt: Number(result.minOnCourt) || 2,
+          sides,
+          activeIndex,
+        },
+        lineupPlayers: (this.lineupBySide[activeIndex] || {}).players || [],
+      });
+      return undefined;
+    } catch (err) {
+      console.error('[team-event-detail] 出场名单加载失败', err);
+      this.setData({ notice: '出场名单加载失败，请稍后重试', noticeError: true });
+      return undefined;
+    }
+  },
+
+  onCloseLineup() {
+    this.lineupBySide = null;
+    this.setData({ lineupEditing: null, lineupPlayers: [], busy: false });
+  },
+
+  onSwitchLineupSide(event) {
+    const index = Number(event.currentTarget.dataset.index);
+    if (!Number.isInteger(index) || index < 0) return;
+    const entry = (this.lineupBySide || [])[index] || { players: [] };
+    this.setData({
+      'lineupEditing.activeIndex': index,
+      lineupPlayers: entry.players || [],
+    });
+  },
+
+  onToggleLineupPlayer(event) {
+    const { userid } = event.currentTarget.dataset;
+    const editing = this.data.lineupEditing;
+    if (!editing) return;
+    const index = editing.activeIndex;
+    const entry = (this.lineupBySide || [])[index];
+    if (!entry) return;
+    entry.players = entry.players.map(row => (
+      row.userId === userid ? { ...row, checked: !row.checked } : row
+    ));
+    this.setData({ lineupPlayers: entry.players });
+  },
+
+  async onSaveLineup() {
+    const editing = this.data.lineupEditing;
+    if (!editing || this.data.busy) return undefined;
+    const index = editing.activeIndex;
+    const entry = (this.lineupBySide || [])[index];
+    const side = (editing.sides[index] || {}).side;
+    if (!entry || !side) return undefined;
+    if (!(editing.sides[index] || {}).editable) {
+      this.setData({ notice: '只能定自己队的出场名单', noticeError: true });
+      return undefined;
+    }
+    const players = entry.players.filter(row => row.checked).map(row => row.userId);
+    if (players.length < editing.minOnCourt) {
+      this.setData({
+        notice: `出场名单至少 ${editing.minOnCourt} 人（场上不足即判负）`,
+        noticeError: true,
+      });
+      return undefined;
+    }
+
+    this.setData({ busy: true, notice: '', noticeError: false });
+    try {
+      const result = await space.forScope(this.scope).saveTeamMatchLineup({
+        matchId: editing.matchId,
+        side,
+        players,
+        expectRevision: editing.revision,
+      });
+      if (!result || result.ok !== true) {
+        this.setData({
+          busy: false,
+          notice: (result && result.message) || '保存失败',
+          noticeError: true,
+        });
+        return undefined;
+      }
+      this.lineupBySide = null;
+      this.setData({
+        busy: false, lineupEditing: null, lineupPlayers: [], notice: '出场名单已保存', noticeError: false,
+      });
+      await this.refresh();
+      return undefined;
+    } catch (err) {
+      console.error('[team-event-detail] 出场名单保存失败', err);
+      this.setData({ busy: false, notice: '保存失败，请稍后重试', noticeError: true });
+      return undefined;
+    }
+  },
+
+  /* ---------------- 赛程：时间 / 场地 / 裁判 / 记录员 ---------------- */
 
   onLock() {
     return this.run('lockTeamEntries', { eventId: this.data.eventId }, '名单已锁定，接下来可以抽签');

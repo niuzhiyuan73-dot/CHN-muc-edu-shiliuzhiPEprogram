@@ -108,6 +108,23 @@ function personNameOf(user, fallbackId) {
 const eventKey = (seed, ctx) => schoolKey('tev', ctx.schoolId, ctx.association, seed);
 const entryKey = (eventId, teamId) => schoolKey('ten', eventId, teamId);
 
+/** 球衣号：0–99 的整数，空表示没登记（校园赛常见「先报名，号码后补」） */
+const JERSEY_MAX = 99;
+function toJerseyNo(value) {
+  if (value === null || value === undefined) return { ok: true, value: null };
+  const raw = String(value).trim();
+  if (raw === '') return { ok: true, value: null };
+  const number = Number(raw);
+  if (!Number.isInteger(number) || number < 0 || number > JERSEY_MAX) return { ok: false, value: null };
+  return { ok: true, value: number };
+}
+
+/** 某一侧已定的出场名单；空数组表示「还没定」，与「一个都不上」区分开 */
+function lineupOf(match, side) {
+  const lineups = (match && match.lineups) || {};
+  return Array.isArray(lineups[side]) ? lineups[side] : [];
+}
+
 /** 赛事视图：布尔量与文案在服务端算好 */
 function eventView(event, ctx, { manage, entryCount }) {
   return {
@@ -177,6 +194,8 @@ function matchView(match, teamName, rights = {}) {
     refereeName: match.refereeName || '',
     recorderId: match.recorderId || '',
     recorderName: match.recorderName || '',
+    // 两侧任一有值即视为「出场名单已定」：页面据此把按钮从「定出场」改成「改出场」
+    hasLineup: lineupOf(match, 'A').length > 0 || lineupOf(match, 'B').length > 0,
     // 版本号：调用方拿它做乐观锁，对不上就要求刷新
     revision: Number(match.revision) || 0,
     // 按钮显不显示由服务端定：页面拿不到「我是不是这队的队长」，
@@ -390,32 +409,143 @@ async function submitTeamEntry(payload = {}, ctx) {
 
   const members = (await repo.teamMembers.list())
     .filter(row => row.teamId === team._id && row.status === TEAM_MEMBER_STATUS.ACTIVE);
-  if (members.length < (Number(event.entryMin) || 5)) {
-    return ok(refused(`报名至少需要 ${event.entryMin || 5} 人，当前在队 ${members.length} 人`));
+  const entryMin = Number(event.entryMin) || 5;
+  const entryMax = Number(event.entryMax) || 12;
+
+  // 报名可以只带一部分队员：全队都报满再上场，替补席会挂着一堆不上场的人。
+  // 不传 roster 时保持旧口径（全队在队成员），老调用方与演示数据不受影响。
+  const memberIds = new Set(members.map(row => row.userId));
+  const incoming = Array.isArray(payload.roster)
+    ? payload.roster.map((row) => {
+      if (typeof row === 'string') return { userId: row.trim(), no: undefined };
+      return {
+        userId: String((row && row.userId) || '').trim(),
+        no: row ? row.no : undefined,
+      };
+    }).filter(row => row.userId)
+    : null;
+
+  if (incoming) {
+    const seen = new Set();
+    for (const row of incoming) {
+      if (!memberIds.has(row.userId)) return ok(refused('名单里有人不在本队，先处理入队再报名'));
+      if (seen.has(row.userId)) return ok(refused('名单里有重复的队员'));
+      seen.add(row.userId);
+    }
+  }
+  const chosen = incoming || members.map(row => ({ userId: row.userId, no: null }));
+  if (chosen.length < entryMin) {
+    return ok(refused(`报名至少需要 ${entryMin} 人，当前选了 ${chosen.length} 人`));
+  }
+  if (chosen.length > entryMax) {
+    return ok(refused(`报名最多 ${entryMax} 人，当前选了 ${chosen.length} 人`));
   }
 
   const now = ctx.now;
   const key = entryKey(event._id, team._id);
   const previous = await repo.teamEventEntries.getById(key);
   if (previous && previous.status === TEAM_ENTRY_STATUS.LOCKED) return ok(refused('名单已锁定，不能再改'));
-  if (previous && previous.status === TEAM_ENTRY_STATUS.SUBMITTED) {
-    return ok({ ok: true, eventId: event._id, teamId: team._id, status: previous.status, message: '' });
-  }
 
   const dir = await buildDirectory(ctx);
   const nameOf = userId => {
     const user = (dir.members || []).find(item => item._id === userId);
-    return (user && (user.nickName || user.realName)) || userId;
+    return (user && (user.realName || user.nickName)) || userId;
   };
+
+  // 球衣号：0–99，空表示没登记；同一支队内不许重号
+  const numbers = new Set();
+  const roster = [];
+  for (const row of chosen) {
+    const parsed = toJerseyNo(row.no);
+    if (!parsed.ok) return ok(refused('球衣号码需为 0–99 的整数'));
+    if (parsed.value !== null) {
+      if (numbers.has(parsed.value)) return ok(refused(`球衣号码 ${parsed.value} 重复了`));
+      numbers.add(parsed.value);
+    }
+    roster.push({ userId: row.userId, name: nameOf(row.userId), no: parsed.value });
+  }
+
+  // 已通过审核的报名被改动后要重新走一遍审核：内容变了，原来的签字就不算数了
+  const resubmitted = Boolean(previous && previous.status === TEAM_ENTRY_STATUS.APPROVED);
   await repo.teamEventEntries.set(key, {
     _id: key, schoolId: ctx.schoolId, association: ctx.association,
     eventId: event._id, teamId: team._id,
     status: TEAM_ENTRY_STATUS.SUBMITTED,
-    roster: members.map(row => ({ userId: row.userId, name: nameOf(row.userId) })),
+    roster,
     submittedBy: ctx.actorId, submittedAt: now, updatedAt: now,
     lockedAt: null,
+    ...(resubmitted ? { reviewedBy: null, reviewedAt: null } : {}),
   });
-  return ok({ ok: true, eventId: event._id, teamId: team._id, status: TEAM_ENTRY_STATUS.SUBMITTED, message: '' });
+  return ok({
+    ok: true,
+    eventId: event._id,
+    teamId: team._id,
+    status: TEAM_ENTRY_STATUS.SUBMITTED,
+    rosterCount: roster.length,
+    resubmitted,
+    message: '',
+  });
+}
+
+/**
+ * 报名选人面板：本队可报名的人 + 已选与已填的号码。
+ *
+ * 为什么要一个读接口，而不是让页面拿球队成员自己拼：可报名的人只算「在队」的，
+ * 而「队里现在有谁」与「报名名单上有谁」是两份数据——页面拼两遍迟早会把
+ * 退队的人又塞回名单里。
+ */
+async function getTeamEntryRoster(payload = {}, ctx) {
+  if (!ctx.actorId) return ok(refused('请先登录'));
+  if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
+
+  const repo = ctx.repo.forScope(ctx);
+  const event = await repo.teamEvents.getById(payload.eventId);
+  if (!inScope(event, ctx)) return ok(refused('赛事不存在，或不在本协会'));
+  const team = await repo.teams.getById(payload.teamId);
+  if (!inScope(team, ctx)) return ok(refused('球队不存在，或不在本协会'));
+
+  const manage = canManageAssociationSpace(ctx);
+  if (team.captainId !== ctx.actorId && !manage) {
+    return ok(refused('只有队长或协会负责人可以编辑报名名单'));
+  }
+
+  const members = (await repo.teamMembers.list())
+    .filter(row => row.teamId === team._id && row.status === TEAM_MEMBER_STATUS.ACTIVE);
+  const dir = await buildDirectory(ctx);
+  const nameOf = (userId) => {
+    const user = (dir.members || []).find(item => item._id === userId);
+    return (user && (user.realName || user.nickName)) || userId;
+  };
+
+  const entry = await repo.teamEventEntries.getById(entryKey(event._id, team._id));
+  const saved = new Map(((entry && entry.roster) || []).map(row => [row.userId, row.no]));
+  const hasSnapshot = saved.size > 0;
+
+  return ok({
+    ok: true,
+    event: {
+      eventId: event._id,
+      name: event.name,
+      entryMin: Number(event.entryMin) || 5,
+      entryMax: Number(event.entryMax) || 12,
+      status: event.status,
+    },
+    team: { teamId: team._id, name: team.name, captainId: team.captainId },
+    members: members.map(row => ({
+      userId: row.userId,
+      name: nameOf(row.userId),
+      // 已有名单就按名单回填勾选与号码；没有名单就默认全选、号码空着
+      no: hasSnapshot && saved.has(row.userId) && Number.isInteger(saved.get(row.userId))
+        ? saved.get(row.userId)
+        : null,
+      selected: hasSnapshot ? saved.has(row.userId) : true,
+    })),
+    status: entry ? entry.status : null,
+    canEdit: (team.captainId === ctx.actorId || manage)
+      && event.status === TEAM_EVENT_STATUS.REGISTRATION
+      && (!entry || entry.status !== TEAM_ENTRY_STATUS.LOCKED),
+    message: '',
+  });
 }
 
 /** 审核报名（协会负责人） */
@@ -470,6 +600,168 @@ async function lockTeamEntries(payload = {}, ctx) {
     revision: Number(event.revision || 1) + 1, updatedAt: now,
   });
   return ok({ ok: true, locked: entries.length, message: '' });
+}
+
+/* ---------------- 单场出场名单 ---------------- */
+
+/**
+ * 单场出场名单：从报名快照里勾「这一场真正上的人」。
+ *
+ * 【为什么报名与出场要分开】
+ * 报名是「这一届能上的 5–12 人」，出场是「这一场上了谁」。校园赛里两者经常
+ * 不一样：有人临时没来、有人只能打半场、有人毕业了但名字还在报名表上。
+ * 录分台按出场名单列格子，未上场的人就不会挂着一排 0 分——那比不显示更糟，
+ * 它会被当真。
+ *
+ * 【默认全选】
+ * 没定过出场名单时，所有报名队员都算「已上场」：绝大多数场次就是全队轮换，
+ * 让人先取消一遍再保存，是把简单的事做复杂。
+ */
+async function getTeamMatchLineup(payload = {}, ctx) {
+  if (!ctx.actorId) return ok(refused('请先登录'));
+  if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
+
+  const repo = ctx.repo.forScope(ctx);
+  const match = await repo.teamMatches.getById(payload.matchId);
+  if (!inScope(match, ctx)) return ok(refused('比赛不存在，或不在本协会'));
+  const event = await repo.teamEvents.getById(match.eventId);
+  if (!inScope(event, ctx)) return ok(refused('赛事不存在，或不在本协会'));
+
+  const teams = await repo.teams.list();
+  const teamById = new Map(teams.map(team => [team._id, team]));
+  const manage = canManageAssociationSpace(ctx);
+  const captainOfMatch = [match.teamA, match.teamB].some(
+    teamId => (teamById.get(teamId) || {}).captainId === ctx.actorId
+  );
+  // 出场名单里带着待审核比分（matchView 的可见性分层），只开给当事两队与管理者
+  if (!manage && !captainOfMatch) return ok(refused('只有参赛队队长或协会负责人可以查看出场名单'));
+  // 已发布的比赛名册已定稿：这时再改出场，等于改一份对外公布过的成绩
+  const canChange = match.status !== TEAM_MATCH_STATUS.PUBLISHED
+    && match.status !== TEAM_MATCH_STATUS.CANCELED
+    && event.status !== TEAM_EVENT_STATUS.FINISHED
+    && event.status !== TEAM_EVENT_STATUS.CANCELED;
+
+  const sides = [];
+  for (const side of ['A', 'B']) {
+    const teamId = side === 'A' ? match.teamA : match.teamB;
+    const team = teamById.get(teamId) || {};
+    const entry = await repo.teamEventEntries.getById(entryKey(event._id, teamId));
+    const roster = (entry && entry.roster) || [];
+    const saved = lineupOf(match, side);
+    sides.push({
+      side,
+      teamId,
+      teamName: team.name || '已归档球队',
+      players: roster.map(row => ({
+        userId: row.userId,
+        name: row.name || row.userId,
+        no: Number.isInteger(row.no) ? row.no : null,
+        checked: saved.length > 0 ? saved.includes(row.userId) : true,
+      })),
+      savedCount: saved.length,
+      editable: canChange && (manage || team.captainId === ctx.actorId),
+    });
+  }
+
+  return ok({
+    ok: true,
+    match: matchView(match, new Map(teams.map(team => [team._id, team.name])), {
+      canRecord: manage || captainOfMatch, canPublish: manage, canSeePending: true,
+    }),
+    revision: Number(match.revision) || 0,
+    // 规则快照里的「场上不足 N 人判负」：出场名单低于它就等于自己判负
+    minOnCourt: Number(event.rules && event.rules.minOnCourt) || 2,
+    sides,
+    canManage: manage,
+    message: '',
+  });
+}
+
+/**
+ * 定这一场的出场名单。
+ *
+ * 【为什么按「侧」保存】
+ * 队长只能定自己那一侧，管理员可以替两侧定。一次提交一侧，既贴合权限，
+ * 也让两侧的提交互不覆盖——两个人同时排阵不会互相把对方的选择冲掉。
+ */
+async function saveTeamMatchLineup(payload = {}, ctx) {
+  if (!ctx.actorId) return ok(refused('请先登录'));
+  if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
+
+  const side = payload.side === 'B' ? 'B' : (payload.side === 'A' ? 'A' : '');
+  if (!side) return ok(refused('缺少出场方（A / B）'));
+  const players = Array.isArray(payload.players)
+    ? payload.players.map(userId => String(userId || '').trim()).filter(Boolean)
+    : null;
+  if (!players) return ok(refused('缺少出场名单'));
+
+  const teamName = new Map(
+    (await ctx.repo.forScope(ctx).teams.list()).map(team => [team._id, team.name])
+  );
+
+  const result = await ctx.repo.transaction(async (root) => {
+    const tx = root.forScope({ schoolId: ctx.schoolId, association: ctx.association });
+    const fresh = await freshContext(root, ctx);
+    if (!assertTeamSport(fresh)) return refused('该协会不是团队项目');
+
+    const match = await tx.teamMatches.getById(payload.matchId);
+    if (!inScope(match, ctx)) return refused('比赛不存在，或不在本协会');
+    const event = await tx.teamEvents.getById(match.eventId);
+    if (!inScope(event, ctx)) return refused('赛事不存在，或不在本协会');
+    if (event.status === TEAM_EVENT_STATUS.FINISHED) return refused('赛事已结束，出场名单不能再改');
+    if (event.status === TEAM_EVENT_STATUS.CANCELED) return refused('赛事已取消');
+    if (match.status === TEAM_MATCH_STATUS.PUBLISHED) return refused('这场已发布，出场名单不能再改');
+    if (match.status === TEAM_MATCH_STATUS.CANCELED) return refused('这场已取消');
+
+    if (Number.isInteger(payload.expectRevision)
+      && payload.expectRevision !== (Number(match.revision) || 0)) {
+      return refused('这场比赛刚被改过，请刷新后重试');
+    }
+
+    const teamId = side === 'A' ? match.teamA : match.teamB;
+    const team = await tx.teams.getById(teamId);
+    if (!inScope(team, ctx)) return refused('球队不存在，或不在本协会');
+    if (!canManageAssociationSpace(fresh) && team.captainId !== fresh.actorId) {
+      return refused('只能定自己队的出场名单');
+    }
+
+    const entry = await tx.teamEventEntries.getById(entryKey(event._id, teamId));
+    const roster = ((entry && entry.roster) || []).slice();
+    if (roster.length === 0) return refused('这支队还没有锁定报名名单');
+    const rosterIds = new Set(roster.map(row => row.userId));
+
+    const seen = new Set();
+    for (const userId of players) {
+      if (!rosterIds.has(userId)) return refused('出场名单里有人不在报名名单中');
+      if (seen.has(userId)) return refused('出场名单里有重复的队员');
+      seen.add(userId);
+    }
+
+    const minOnCourt = Number(event.rules && event.rules.minOnCourt) || 2;
+    if (players.length < minOnCourt) {
+      return refused(`出场名单至少 ${minOnCourt} 人（场上不足 ${minOnCourt} 人判负）`);
+    }
+    if (players.length > roster.length) return refused('出场人数超过报名名单');
+
+    const nextRevision = (Number(match.revision) || 1) + 1;
+    const lineups = { ...(match.lineups || {}), [side]: players };
+    const next = {
+      ...match, lineups, revision: nextRevision, updatedAt: fresh.now,
+    };
+    await tx.teamMatches.set(match._id, next);
+
+    return {
+      ok: true,
+      side,
+      lineup: players,
+      revision: nextRevision,
+      match: matchView(next, teamName, {
+        canRecord: true, canPublish: canManageAssociationSpace(fresh), canSeePending: true,
+      }),
+      message: '',
+    };
+  });
+  return ok(result);
 }
 
 /* ---------------- 抽签与赛程 ---------------- */
@@ -805,7 +1097,11 @@ async function recordTeamMatch(payload = {}, ctx) {
       for (const teamId of [match.teamA, match.teamB]) {
         // 名单是「锁定那一刻的快照」，按确定性主键点读即可，事务内不必整表列
         const entry = await tx.teamEventEntries.getById(entryKey(event._id, teamId));
-        rosters.set(teamId, new Set(((entry && entry.roster) || []).map(row => row.userId)));
+        const side = teamId === match.teamA ? 'A' : 'B';
+        const lineup = lineupOf(match, side);
+        const ids = ((entry && entry.roster) || []).map(row => row.userId);
+        // 定过出场名单就只认上过场的人：没上的人不该在这场的统计里出现
+        rosters.set(teamId, new Set(lineup.length > 0 ? ids.filter(id => lineup.includes(id)) : ids));
         previousStats.set(teamId, await tx.teamMatchStats.getById(statDocKey(match._id, teamId)));
       }
     }
@@ -1578,7 +1874,15 @@ async function getTeamMatchStats(payload = {}, ctx) {
 
   const sides = [match.teamA, match.teamB].map((teamId) => {
     const entry = entries.find(row => row.eventId === event._id && row.teamId === teamId);
-    const roster = ((entry && entry.roster) || []).map(row => ({ userId: row.userId, name: row.name }));
+    const side = teamId === match.teamA ? 'A' : 'B';
+    const lineup = lineupOf(match, side);
+    const fullRoster = ((entry && entry.roster) || []).map(row => ({
+      userId: row.userId, name: row.name, no: Number.isInteger(row.no) ? row.no : null,
+    }));
+    // 定过出场名单就只列上过场的人：没上的人挂一排「未记录」，页面会以为是漏填
+    const roster = lineup.length > 0
+      ? fullRoster.filter(row => lineup.includes(row.userId))
+      : fullRoster;
     const doc = stats.find(row => row.teamId === teamId) || null;
     const effective = effectiveStatOf(doc, { editor });
     const rows = (effective && effective.rows) || [];
@@ -1684,9 +1988,13 @@ async function saveTeamMatchStats(payload = {}, ctx) {
     for (const teamId of [match.teamA, match.teamB]) {
       const entry = await tx.teamEventEntries.getById(entryKey(event._id, teamId));
       const doc = await tx.teamMatchStats.getById(statDocKey(match._id, teamId));
+      const sideKey = teamId === match.teamA ? 'A' : 'B';
+      const lineup = lineupOf(match, sideKey);
+      const rows = ((entry && entry.roster) || [])
+        .filter(row => lineup.length === 0 || lineup.includes(row.userId));
       sides.push({
         teamId,
-        roster: new Map(((entry && entry.roster) || []).map(row => [row.userId, row.name || row.userId])),
+        roster: new Map(rows.map(row => [row.userId, row.name || row.userId])),
         doc,
         rows: [],
         players: [],
@@ -1931,4 +2239,7 @@ module.exports = {
   getTeamMatchSchedule,
   updateTeamMatchSchedule,
   updateTeamRoundSchedule,
+  getTeamEntryRoster,
+  getTeamMatchLineup,
+  saveTeamMatchLineup,
 };

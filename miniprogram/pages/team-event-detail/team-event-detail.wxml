@@ -153,6 +153,12 @@
               data-matchid="{{match.matchId}}"
               bindtap="onOpenSchedule"
             >赛程</view>
+            <view
+              wx:if="{{match.canRecord && match.status !== 'published' && match.status !== 'canceled'}}"
+              class="mini"
+              data-matchid="{{match.matchId}}"
+              bindtap="onOpenLineup"
+            >{{match.hasLineup ? '改出场' : '定出场'}}</view>
           </view>
         </view>
       </view>
@@ -186,6 +192,71 @@
           <view class="row-name">{{item.teamName}}</view>
           <view class="row-meta">{{item.note}}</view>
         </view>
+      </view>
+    </view>
+
+    <!-- 报名选人浮层：勾人 + 填号码，不再默认带入全队 -->
+    <view wx:if="{{entryEditing}}" class="mask" bindtap="onCloseEntry"></view>
+    <view wx:if="{{entryEditing}}" class="sheet sheet-tall">
+      <view class="sheet-title">{{entryEditing.teamName}} · 报名名单</view>
+      <view class="sheet-sub">已选 {{entryEditing.selectedCount}} 人 · 上限 {{entryEditing.max}} 人 · 至少 {{entryEditing.min}} 人</view>
+      <scroll-view scroll-y class="stats-scroll">
+        <view wx:for="{{entryEditing.members}}" wx:key="userId" class="pick-row">
+          <view
+            class="pick-check {{item.checked ? 'pick-check-on' : ''}}"
+            data-userid="{{item.userId}}"
+            bindtap="onToggleEntryMember"
+          >{{item.checked ? '✓' : ''}}</view>
+          <view class="pick-name">{{item.name}}</view>
+          <input
+            class="pick-no"
+            type="number"
+            value="{{item.noText}}"
+            placeholder="号码"
+            data-userid="{{item.userId}}"
+            bindinput="onInputJersey"
+          />
+        </view>
+      </scroll-view>
+      <view class="sheet-note">
+        球衣号码 0–99，同队不能重号；不填也可以，先报名后补。改动已通过的名单会重新进审核。
+      </view>
+      <view class="sheet-actions">
+        <view class="btn btn-ghost" bindtap="onCloseEntry">取消</view>
+        <view class="btn btn-primary {{busy ? 'is-disabled' : ''}}" bindtap="onSaveEntry">提交报名</view>
+      </view>
+    </view>
+
+    <!-- 单场出场名单：从报名名单里勾这一场真正上的人 -->
+    <view wx:if="{{lineupEditing}}" class="mask" bindtap="onCloseLineup"></view>
+    <view wx:if="{{lineupEditing}}" class="sheet sheet-tall">
+      <view class="sheet-title">本场出场名单</view>
+      <view class="side-switch">
+        <view
+          wx:for="{{lineupEditing.sides}}"
+          wx:key="side"
+          class="side-tab {{index === lineupEditing.activeIndex ? 'side-tab-on' : ''}}"
+          data-index="{{index}}"
+          bindtap="onSwitchLineupSide"
+        >{{item.teamName}}{{item.editable ? '' : ' · 只读'}}</view>
+      </view>
+      <scroll-view scroll-y class="stats-scroll">
+        <view wx:for="{{lineupPlayers}}" wx:key="userId" class="pick-row">
+          <view
+            class="pick-check {{item.checked ? 'pick-check-on' : ''}}"
+            data-userid="{{item.userId}}"
+            bindtap="onToggleLineupPlayer"
+          >{{item.checked ? '✓' : ''}}</view>
+          <view class="pick-name">{{item.name}}</view>
+          <view class="pick-no-text">{{item.no === null ? '—' : item.no}}</view>
+        </view>
+      </scroll-view>
+      <view class="sheet-note">
+        没定过就默认全选。定过之后，统计面板只列上过场的人——没上场的人不该挂一排 0 分。
+      </view>
+      <view class="sheet-actions">
+        <view class="btn btn-ghost" bindtap="onCloseLineup">取消</view>
+        <view class="btn btn-primary {{busy ? 'is-disabled' : ''}}" bindtap="onSaveLineup">保存</view>
       </view>
     </view>
 

@@ -499,3 +499,84 @@
   flex: 1;
   min-width: 0;
 }
+
+/* 选人浮层（报名 / 出场）：一行一个人，勾选在左、号码在右 */
+.sheet-sub {
+  margin-bottom: var(--space-md);
+  font-size: 24rpx;
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+.pick-row {
+  display: flex;
+  align-items: center;
+  padding: var(--space-xs) 0;
+  border-bottom: 1rpx solid var(--color-border);
+}
+
+.pick-check {
+  width: 40rpx;
+  height: 40rpx;
+  flex: none;
+  margin-right: var(--space-sm);
+  border-radius: 8rpx;
+  border: 1rpx solid var(--color-border);
+  text-align: center;
+  line-height: 40rpx;
+  font-size: 26rpx;
+  color: transparent;
+}
+
+.pick-check-on {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+
+.pick-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 27rpx;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pick-no {
+  width: 140rpx;
+  flex: none;
+  text-align: right;
+  font-size: 27rpx;
+  color: var(--color-text-primary);
+}
+
+.pick-no-text {
+  width: 120rpx;
+  flex: none;
+  text-align: right;
+  font-size: 26rpx;
+  color: var(--color-text-secondary);
+}
+
+.side-switch {
+  display: flex;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+.side-tab {
+  flex: 1;
+  padding: 12rpx 0;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-subtle, #F5F6F8);
+  font-size: 25rpx;
+  text-align: center;
+  color: var(--color-text-secondary);
+}
+
+.side-tab-on {
+  background: var(--color-primary);
+  color: #fff;
+}

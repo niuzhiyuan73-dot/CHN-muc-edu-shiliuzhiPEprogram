@@ -191,7 +191,7 @@ test('赛事详情 —— 报名审核与锁定名单接的是对应接口', () 
   assert.equal(calls.filter(call => call[0] === 'lockTeamEntries').length, 1);
 }));
 
-test('赛事详情 —— 队长点「报名」把球队提交到这场比赛', () => withApi({
+test('赛事详情 —— 队长点「报名」先打开选人面板，勾完才提交', () => withApi({
   getTeamEvent: () => detailFixture({
     event: { ...EVENT, status: 'registration' },
     submitCandidates: [
@@ -199,7 +199,22 @@ test('赛事详情 —— 队长点「报名」把球队提交到这场比赛', 
       { teamId: 'tm_b', name: '闪电队', memberCount: 4, enough: false, need: 5 },
     ],
   }),
-  submitTeamEntry: () => ({ ok: true, status: 'submitted' }),
+  getTeamEntryRoster: () => ({
+    ok: true,
+    event: { eventId: 'tev_1', name: '秋季联赛', entryMin: 5, entryMax: 12, status: 'registration' },
+    team: { teamId: 'tm_a', name: '热浪队', captainId: 'u_cap' },
+    members: [
+      { userId: 'u_cap', name: '队长', no: 4, selected: true },
+      { userId: 'u_p1', name: '队员一', no: null, selected: true },
+      { userId: 'u_p2', name: '队员二', no: null, selected: true },
+      { userId: 'u_p3', name: '队员三', no: null, selected: true },
+      { userId: 'u_p4', name: '队员四', no: null, selected: true },
+      { userId: 'u_p5', name: '队员五', no: null, selected: false },
+    ],
+    status: null,
+    canEdit: true,
+  }),
+  submitTeamEntry: () => ({ ok: true, status: 'submitted', rosterCount: 6 }),
 }, async (calls) => {
   const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
   await page.onLoad({ eventId: 'tev_1' });
@@ -208,10 +223,37 @@ test('赛事详情 —— 队长点「报名」把球队提交到这场比赛', 
   assert.equal(page.data.submitCandidates[1].enough, false, '人数不足的队不该给报名按钮');
 
   await page.onSubmitEntry({ currentTarget: { dataset: { teamid: 'tm_a' } } });
+  assert.ok(page.data.entryEditing, '先开选人面板，不直接提交');
+  assert.equal(page.data.entryEditing.selectedCount, 5);
+  assert.equal(calls.filter(call => call[0] === 'submitTeamEntry').length, 0);
+
+  // 勾上第六个人并给两个号码，再提交
+  page.onToggleEntryMember({ currentTarget: { dataset: { userid: 'u_p5' } } });
+  page.onInputJersey({ currentTarget: { dataset: { userid: 'u_p5' } }, detail: { value: '9' } });
+  assert.equal(page.data.entryEditing.selectedCount, 6);
+  await page.onSaveEntry();
 
   const submitted = calls.find(call => call[0] === 'submitTeamEntry');
-  assert.deepEqual(submitted[1], { eventId: 'tev_1', teamId: 'tm_a' });
-  assert.match(page.data.notice, /等协会负责人审核/);
+  assert.equal(submitted[1].eventId, 'tev_1');
+  assert.equal(submitted[1].teamId, 'tm_a');
+  assert.deepEqual(submitted[1].roster[0], { userId: 'u_cap', no: '4' }, '号码按输入框字符串带回，服务端归一');
+  assert.equal(submitted[1].roster.length, 6);
+  assert.equal(submitted[1].roster[5].no, '9');
+  assert.equal(page.data.entryEditing, null, '提交成功收起面板');
+  assert.match(page.data.notice, /已报名 6 人/);
+}));
+
+test('赛事详情 —— 名单不能再改时，报名面板不打开', () => withApi({
+  getTeamEvent: () => detailFixture({ event: { ...EVENT, status: 'registration' } }),
+  getTeamEntryRoster: () => ({ ok: true, canEdit: false, members: [] }),
+}, async (calls) => {
+  const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
+  await page.onLoad({ eventId: 'tev_1' });
+  await page.onSubmitEntry({ currentTarget: { dataset: { teamid: 'tm_a' } } });
+
+  assert.equal(page.data.entryEditing, null);
+  assert.match(page.data.notice, /不能修改这份名单/);
+  assert.equal(calls.filter(call => call[0] === 'submitTeamEntry').length, 0);
 }));
 
 test('赛事详情 —— 抽签、排下一轮、结算都带赛事编号', () => withApi({
@@ -801,4 +843,102 @@ test('整轮顺延 —— 带上轮次与分钟数，跳过数要说清楚', () 
   assert.match(page.data.notice, /已顺延 1 场/);
   assert.match(page.data.notice, /跳过 1 场/);
   assert.equal(page.data.shiftEditing, null);
+}));
+
+/* ============================================================
+ * P2：单场出场名单
+ * ============================================================ */
+
+/** 一份出场名单面板：A 侧可编辑、B 侧只读 */
+function lineupPanel(overrides = {}) {
+  return {
+    ok: true,
+    match: { matchId: 'x_tev_1_r1_main_0', teamAName: '热浪队', teamBName: '闪电队' },
+    revision: 7,
+    minOnCourt: 2,
+    sides: [
+      {
+        side: 'A',
+        teamId: 'tm_a',
+        teamName: '热浪队',
+        editable: true,
+        players: [
+          { userId: 'ap1', name: 'a 球员1', no: 4, checked: true },
+          { userId: 'ap2', name: 'a 球员2', no: null, checked: true },
+          { userId: 'ap3', name: 'a 球员3', no: 8, checked: false },
+        ],
+      },
+      {
+        side: 'B',
+        teamId: 'tm_b',
+        teamName: '闪电队',
+        editable: false,
+        players: [{ userId: 'bp1', name: 'b 球员1', no: 5, checked: true }],
+      },
+    ],
+    canManage: true,
+    ...overrides,
+  };
+}
+
+test('出场名单 —— 默认停在可编辑的一侧，勾选按服务端回填', () => withApi({
+  getTeamEvent: () => detailFixture(),
+  getTeamMatchLineup: () => lineupPanel(),
+}, async () => {
+  const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
+  await page.onLoad({ eventId: 'tev_1' });
+  await page.onOpenLineup({ currentTarget: { dataset: { matchid: 'x_tev_1_r1_main_0' } } });
+
+  assert.ok(page.data.lineupEditing);
+  assert.equal(page.data.lineupEditing.activeIndex, 0, '停在能改的那一侧');
+  assert.equal(page.data.lineupEditing.minOnCourt, 2);
+  assert.deepEqual(page.data.lineupPlayers.map(row => row.userId), ['ap1', 'ap2', 'ap3']);
+  assert.deepEqual(page.data.lineupPlayers.map(row => row.checked), [true, true, false]);
+}));
+
+test('出场名单 —— 勾掉一人后保存，带上侧别与版本号', () => withApi({
+  getTeamEvent: () => detailFixture(),
+  // 最低 1 人：这条只验提交口径，人数下限另有专门的用例
+  getTeamMatchLineup: () => lineupPanel({ minOnCourt: 1 }),
+  saveTeamMatchLineup: () => ({ ok: true, side: 'A', lineup: ['ap1', 'ap2'], revision: 8 }),
+}, async (calls) => {
+  const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
+  await page.onLoad({ eventId: 'tev_1' });
+  await page.onOpenLineup({ currentTarget: { dataset: { matchid: 'x_tev_1_r1_main_0' } } });
+
+  page.onToggleLineupPlayer({ currentTarget: { dataset: { userid: 'ap2' } } });
+  await page.onSaveLineup();
+
+  const saved = calls.find(call => call[0] === 'saveTeamMatchLineup');
+  assert.equal(saved[1].matchId, 'x_tev_1_r1_main_0');
+  assert.equal(saved[1].side, 'A');
+  assert.deepEqual(saved[1].players, ['ap1'], '只提交勾上的人');
+  assert.equal(saved[1].expectRevision, 7);
+  assert.equal(page.data.lineupEditing, null);
+  assert.match(page.data.notice, /出场名单已保存/);
+}));
+
+test('出场名单 —— 切到只读的一侧不给保存，少于最低人数也不发请求', () => withApi({
+  getTeamEvent: () => detailFixture(),
+  getTeamMatchLineup: () => lineupPanel(),
+  saveTeamMatchLineup: () => ({ ok: true }),
+}, async (calls) => {
+  const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
+  await page.onLoad({ eventId: 'tev_1' });
+  await page.onOpenLineup({ currentTarget: { dataset: { matchid: 'x_tev_1_r1_main_0' } } });
+
+  // 切到 B 侧：只能看
+  page.onSwitchLineupSide({ currentTarget: { dataset: { index: 1 } } });
+  assert.deepEqual(page.data.lineupPlayers.map(row => row.userId), ['bp1']);
+  await page.onSaveLineup();
+  assert.match(page.data.notice, /只能定自己队/);
+  assert.equal(calls.filter(call => call[0] === 'saveTeamMatchLineup').length, 0);
+
+  // 回到 A 侧全取消：低于场上最低人数
+  page.onSwitchLineupSide({ currentTarget: { dataset: { index: 0 } } });
+  page.onToggleLineupPlayer({ currentTarget: { dataset: { userid: 'ap1' } } });
+  page.onToggleLineupPlayer({ currentTarget: { dataset: { userid: 'ap2' } } });
+  await page.onSaveLineup();
+  assert.match(page.data.notice, /至少 2 人/);
+  assert.equal(calls.filter(call => call[0] === 'saveTeamMatchLineup').length, 0);
 }));
