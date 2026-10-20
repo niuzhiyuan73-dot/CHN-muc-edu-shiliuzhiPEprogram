@@ -87,6 +87,7 @@
     <!-- 赛程 -->
     <view wx:if="{{rounds.length > 0}}" class="card">
       <view class="card-title">赛程</view>
+      <view wx:if="{{isFootball && footballByes.length > 0}}" class="hint-inline">首轮轮空：<text wx:for="{{footballByes}}" wx:key="*this">{{item}} </text>（直接晋级，不计比分或出场）</view>
       <view wx:for="{{rounds}}" wx:key="key" class="round">
         <view class="round-head">
           <view class="round-label">{{item.label}}</view>
@@ -124,30 +125,30 @@
             <text wx:if="{{match.recorderName}}">记录 {{match.recorderName}}</text>
           </view>
           <view class="match-actions">
-            <view wx:if="{{match.canRecord && (match.status === 'scheduled' || match.status === 'live')}}"
+            <view wx:if="{{!isFootball && match.canRecord && (match.status === 'scheduled' || match.status === 'live')}}"
               class="mini mini-primary" data-matchid="{{match.matchId}}" bindtap="onOpenLiveScore">
               {{match.status === 'live' ? '继续计分' : '实时计分'}}
             </view>
             <view
-              wx:if="{{match.canRecord && (match.status === 'scheduled' || match.status === 'reviewing')}}"
+              wx:if="{{!isFootball && match.canRecord && (match.status === 'scheduled' || match.status === 'reviewing')}}"
               class="mini mini-primary"
               data-matchid="{{match.matchId}}"
               bindtap="onOpenRecord"
             >{{match.status === 'reviewing' ? '重录' : '录分'}}</view>
             <view
-              wx:if="{{match.canPublish && match.status === 'reviewing'}}"
+              wx:if="{{!isFootball && match.canPublish && match.status === 'reviewing'}}"
               class="mini mini-primary"
               data-matchid="{{match.matchId}}"
               bindtap="onPublish"
             >发布</view>
             <view
-              wx:if="{{match.canPublish && match.status === 'reviewing'}}"
+              wx:if="{{!isFootball && match.canPublish && match.status === 'reviewing'}}"
               class="mini"
               data-matchid="{{match.matchId}}"
               bindtap="onRejectScore"
             >驳回</view>
             <view
-              wx:if="{{match.canRecord && match.status !== 'canceled'}}"
+              wx:if="{{!isFootball && match.canRecord && match.status !== 'canceled'}}"
               class="mini"
               data-matchid="{{match.matchId}}"
               bindtap="onOpenStats"
@@ -159,11 +160,13 @@
               bindtap="onOpenSchedule"
             >赛程</view>
             <view
-              wx:if="{{match.canRecord && match.status !== 'published' && match.status !== 'canceled'}}"
+              wx:if="{{!isFootball && match.canRecord && match.status !== 'published' && match.status !== 'canceled'}}"
               class="mini"
               data-matchid="{{match.matchId}}"
               bindtap="onOpenLineup"
             >{{match.hasLineup ? '改出场' : '定出场'}}</view>
+            <view wx:if="{{isFootball && match.status !== 'canceled' && (match.canRecord || match.status === 'published')}}" class="mini mini-primary" data-matchid="{{match.matchId}}" bindtap="onOpenFootball">{{match.canRecord ? '赛后报告 / 审核' : '查看赛后报告'}}</view>
+            <view wx:if="{{isFootball && match.canSetLineup && match.status === 'scheduled'}}" class="mini" data-matchid="{{match.matchId}}" data-lineup="true" bindtap="onOpenFootball">单场名单</view>
           </view>
         </view>
       </view>
@@ -188,7 +191,7 @@
       </view>
     </view>
 
-    <view wx:if="{{table.length > 0 && isFootball}}" class="card">
+    <view wx:if="{{table.length > 0 && isFootball && event.format === 'round_robin'}}" class="card">
       <view class="card-title">足球积分表</view>
       <view wx:for="{{table}}" wx:key="teamId" class="row">
         <view class="row-main">
@@ -280,6 +283,8 @@
     <view wx:if="{{scheduleEditing}}" class="mask" bindtap="onCloseSchedule"></view>
     <view wx:if="{{scheduleEditing}}" class="sheet">
       <view class="sheet-title">{{scheduleEditing.title}}</view>
+      <view wx:if="{{isFootball}}" class="ot-row"><text>预留时长（分钟）</text><input class="sheet-input" type="number" value="{{scheduleEditing.durationMinutes}}" data-field="durationMinutes" bindinput="onInputSchedule"/></view>
+      <view wx:if="{{isFootball}}" class="sheet-note">默认按常规、中场、可能加时及 20 分钟缓冲计算；只可延长。球队、场地、裁判不能重叠。</view>
       <view class="ot-row">
         <text>开赛时间</text>
         <input
@@ -447,7 +452,7 @@
     </view>
 
     <!-- 球员数据榜：只算已发布的比赛 -->
-    <view wx:if="{{playerStats.length > 0}}" class="card">
+    <view wx:if="{{playerStats.length > 0 && !isFootball}}" class="card">
       <view class="card-title">球员数据榜</view>
       <view class="table-head">
         <view class="col-name">球员</view>
@@ -466,6 +471,25 @@
         <view class="col">{{item.assistsText}}</view>
       </view>
       <view class="hint-inline">只统计已发布的比赛；没录的指标显示「—」，不计入场均。</view>
+    </view>
+    <view wx:if="{{isFootball}}" class="card">
+      <view class="card-title">射手榜 · 已录入统计</view>
+      <view class="hint-inline">{{footballCoverage || '尚无已发布统计'}}{{playerStatsError}}</view>
+      <view wx:for="{{playerStats}}" wx:key="userId" class="row"><view class="row-main"><view class="row-name">{{item.name}}</view><view class="row-meta">实际出场 {{item.games}} 场 · 进球记录 {{item.goalsRecordedMatches}} 场</view></view><view>{{item.goalsText}} 球</view></view>
+      <view class="card-title">助攻榜 · 已录入统计</view>
+      <view wx:for="{{footballAssists}}" wx:key="userId" class="row"><view class="row-main"><view class="row-name">{{item.name}}</view><view class="row-meta">助攻记录 {{item.assistsRecordedMatches}} 场</view></view><view>{{item.assistsText}} 次</view></view>
+    </view>
+    <view wx:if="{{rankingEditing}}" class="mask" bindtap="onCloseRanking"></view>
+    <view wx:if="{{rankingEditing}}" class="sheet sheet-tall">
+      <view class="sheet-title">同分名次 · 抽签确认</view>
+      <scroll-view scroll-y class="stats-scroll">
+        <view wx:for="{{rankingEditing}}" wx:for-item="group" wx:for-index="gi" wx:key="tieKey">
+          <view class="sheet-note">本组抽签后填写 1 起的顺序，各队不能重复。</view>
+          <view wx:for="{{group.rows}}" wx:key="teamId" class="ot-row"><text>{{item.name}}</text><input type="number" class="sheet-input" value="{{item.order}}" data-group="{{gi}}" data-index="{{index}}" data-field="order" bindinput="onRankingInput" placeholder="组内顺序"/></view>
+          <input class="sheet-input" value="{{group.reason}}" data-group="{{gi}}" data-field="reason" bindinput="onRankingInput" placeholder="抽签过程、结果及理由（必填）"/>
+        </view>
+      </scroll-view>
+      <view class="sheet-actions"><view class="btn btn-ghost" bindtap="onCloseRanking">取消</view><view class="btn btn-primary" bindtap="onConfirmRanking">保存确认并结算</view></view>
     </view>
   </block>
 </view>

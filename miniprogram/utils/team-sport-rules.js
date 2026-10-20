@@ -1,5 +1,5 @@
 /** 团队运动分派。运动身份来自协会注册表，不能由请求的 presetKey 决定。
- * football11 在 F0 只开放规则和积分；录分、名单及统计在后续批次接入。
+ * 足球只支持赛后报告，禁止进入篮球实时计分。
  */
 const basketball = require('./basketball-rules.js');
 const football = require('./football-rules.js');
@@ -39,7 +39,7 @@ const STRATEGIES = Object.freeze({
     defaultRules: football.defaultRulesFor,
     computeTable: computeFootballTable,
     supportsLiveScore: false,
-    supportsMatchData: false,
+    supportsMatchData: true,
   }),
 });
 

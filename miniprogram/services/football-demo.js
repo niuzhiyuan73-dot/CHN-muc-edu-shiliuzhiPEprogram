@@ -1,10 +1,9 @@
-/** 足球 F1 演示数据工厂，由 school-seed 按集合追加合并。
- * 只生成球队及报名阶段赛事，不虚构 F2 尚未交付的比赛成绩和个人技术统计。
- */
+/** 足球演示：保留报名流程，另给一届明确标注的已完赛示例用于查看成绩。 */
 const { MEMBER_SEED } = require('./seed.js');
 const { schoolKey, teamMemberKey } = require('../utils/school.js');
 const { normalizeFootballRules, DEFAULT_PRESET_KEY } = require('../utils/football-rules.js');
 const { TEAM_STATUS, TEAM_MEMBER_STATUS, TEAM_ENTRY_STATUS, TEAM_EVENT_STATUS } = require('../utils/constants.js');
+const { normalizeFootballReport, FIELDS } = require('../utils/football-report');
 const SCOPE = Object.freeze({ schoolId: 'muc', association: 'fb' });
 const ISO = '2026-10-20T01:00:00.000Z';
 const idOf = index => `u${String(index + 1).padStart(2, '0')}`;
@@ -52,9 +51,43 @@ function createFootballDemoContent() {
     reviewedBy: index === 0 ? 'demo_muc_admin' : null, reviewedAt: index === 0 ? ISO : null,
     lockedAt: null, placement: null, updatedAt: ISO, simulated: true,
   }));
+  const completedId = schoolKey('tev', SCOPE.schoolId, SCOPE.association, 'completed-demo');
+  const completedEntries = specs.map(spec => ({ ...teamEventEntries.find(e => e.teamId === spec.teamId),
+    _id: schoolKey('ten', completedId, spec.teamId), eventId: completedId, status: 'locked',
+    lockedAt: ISO, placement: spec === specs[0] ? 1 : 2 }));
+  teamEventEntries.push(...completedEntries);
+  const reportSides = {};
+  for (const [i, key] of ['A', 'B'].entries()) {
+    reportSides[key] = { players: completedEntries[i].roster.map((p, index) => ({
+      userId: p.userId, starter: index < 11, appeared: index < 11, goalkeeper: index === 0,
+      ...Object.fromEntries(Object.keys(FIELDS).map(field => [field, field === 'fouls' ? null : 0])),
+      goals: index === 0 ? 1 : 0, ownGoals: key === 'B' && index === 1 ? 1 : 0,
+      assists: key === 'A' && index === 1 ? 1 : 0,
+      yellowCards: key === 'A' && index === 11 ? 1 : 0,
+    })), coverage: Object.fromEntries(Object.keys(FIELDS).map(field => [field, field === 'fouls' ? 'none' : 'full'])),
+    substitutions: { status: 'full', regulationCount: 0, regulationOpportunities: 0, halfTimeCount: 0,
+      extraTimeCount: 0, extraTimeOpportunities: 0, extraBreakCount: 0, incomingIds: [] } };
+  }
+  const normalized = normalizeFootballReport({ result: { regulationScore: { A: 2, B: 1 } }, sides: reportSides,
+    goalEvents: [{ side: 'A', type: 'normal', scorerId: specs[0].ids[0], assistId: specs[0].ids[1] },
+      { side: 'B', type: 'normal', scorerId: specs[1].ids[0] }, { side: 'B', type: 'own_goal', scorerId: specs[1].ids[1] }] },
+  { rules, format: 'round_robin', rosters: { A: completedEntries[0].roster, B: completedEntries[1].roster } });
+  if (!normalized.ok) throw new Error(normalized.message);
+  const placements = specs.map((spec, i) => ({ teamId: spec.teamId, teamName: spec.name, rank: i + 1, note: i ? '亚军' : '冠军' }));
+  teamEvents.push({ ...teamEvents[0], _id: completedId, name: '足球循环赛（已完赛演示）', format: 'round_robin',
+    status: 'finished', lockedCount: 2, draw: { size: 2, roundCount: 1, slots: specs.map(s => s.teamId) },
+    placements, finishedAt: ISO, revision: 5 });
+  const matchId = `x_${completedId}_r1_group_0`;
+  const teamMatches = [{ _id: matchId, ...SCOPE, eventId: completedId, sportFormat: 'football11', rules,
+    teamA: specs[0].teamId, teamB: specs[1].teamId, round: 1, stage: 'group', slot: 0,
+    status: 'published', scoreA: 2, scoreB: 1, winner: 'A', forfeit: null, overtime: false,
+    footballPublished: normalized.value, footballPublishedRevision: 3, footballDraft: null,
+    revision: 3, recordedBy: 'demo_muc_admin', publishedBy: 'demo_muc_admin', publishedAt: ISO,
+    matchTime: '2026-10-19T06:00:00.000Z', durationMinutes: 110, location: '校足球场（演示）',
+    createdAt: ISO, updatedAt: ISO, simulated: true }];
   // 有效学校成员在启用的协会中默认就是普通会员，不需要额外写角色行。
   // 管理者使用已有 demo_muc_admin 学校角色；不让 u01 等普通演示账号额外升权。
-  return { teams, teamMembers, teamEvents, teamEventEntries, teamMatches: [], teamMatchStats: [], memberships: [] };
+  return { teams, teamMembers, teamEvents, teamEventEntries, teamMatches, teamMatchStats: [], memberships: [] };
 }
 
 module.exports = { createFootballDemoContent };

@@ -40,7 +40,8 @@
     "pages/team-event-list/team-event-list",
     "pages/team-event-detail/team-event-detail",
     "pages/my-team-profile/my-team-profile",
-    "pages/team-live-score/team-live-score"
+    "pages/team-live-score/team-live-score",
+    "pages/football-match/football-match"
   ],
   "window": {
     "backgroundTextStyle": "dark",

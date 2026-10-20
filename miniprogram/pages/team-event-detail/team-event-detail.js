@@ -133,6 +133,9 @@ Page({
     /** 球员数据榜 */
     playerStats: [],
     playerStatsError: '',
+    footballAssists: [],
+    footballCoverage: '',
+    rankingEditing: null,
     notice: '',
     noticeError: false,
   },
@@ -147,6 +150,7 @@ Page({
   onShow() {
     this.hidden = false;
     if (this.liveSubscription) this.liveSubscription.resume();
+    if (this.footballVisited) { this.footballVisited = false; return this.refresh(); }
   },
   onHide() {
     this.hidden = true;
@@ -254,6 +258,7 @@ Page({
         rounds: grouped,
         table: result.table || [],
         placements: result.placements || [],
+        footballByes: (event.draw?.byes || []).map(id => (result.entries || []).find(row => row.teamId === id)?.teamName || id),
         canManage: event.canManage === true,
       });
       if (event.supportsMatchData !== false) this.onLoadPlayerStats();
@@ -539,7 +544,40 @@ Page({
   },
 
   onSettle() {
+    if (this.data.isFootball && this.data.event.format === 'round_robin' && this.data.table.some(row => row.rank === null)) {
+      const groups = [];
+      for (const row of this.data.table.filter(r => r.rank === null)) {
+        let group = groups.find(g => g.tieKey === row.tieKey);
+        if (!group) { group = { tieKey: row.tieKey, rows: [], reason: '' }; groups.push(group); }
+        group.rows.push({ teamId: row.teamId, name: row.teamName, order: '' });
+      }
+      this.setData({ rankingEditing: groups }); return;
+    }
     return this.run('settleTeamEvent', { eventId: this.data.eventId }, '名次已结算');
+  },
+  onRankingInput(event) {
+    const { group, index, field } = event.currentTarget.dataset;
+    if (field === 'reason') this.setData({ [`rankingEditing[${group}].reason`]: event.detail.value });
+    else this.setData({ [`rankingEditing[${group}].rows[${index}].order`]: event.detail.value });
+  },
+  onCloseRanking() { this.setData({ rankingEditing: null }); },
+  async onConfirmRanking() {
+    const rankingDecisions = [];
+    for (const group of this.data.rankingEditing || []) {
+      const orders = group.rows.map(row => Number(row.order));
+      if (!group.reason.trim() || new Set(orders).size !== orders.length || orders.some(n => !Number.isInteger(n) || n < 1 || n > orders.length)) {
+        this.setData({ notice: '请填写每组抽签理由及不重复的组内顺序（1 起）', noticeError: true }); return;
+      }
+      rankingDecisions.push({ tieKey: group.tieKey, reason: group.reason,
+        teamIds: group.rows.slice().sort((a, b) => Number(a.order) - Number(b.order)).map(row => row.teamId) });
+    }
+    const result = await this.run('settleTeamEvent', { eventId: this.data.eventId, rankingDecisions }, '抽签结果已记录，名次已结算');
+    if (result?.ok) this.setData({ rankingEditing: null });
+  },
+  onOpenFootball(event) {
+    const { matchid, lineup } = event.currentTarget.dataset;
+    this.footballVisited = true;
+    return wx.navigateTo({ url: `/pages/football-match/football-match?matchId=${encodeURIComponent(matchid)}${lineup ? '&lineup=1' : ''}` });
   },
 
   /* ---------------- 个人统计 ---------------- */
@@ -748,7 +786,8 @@ Page({
         this.setData({ playerStats: [], playerStatsError: (result && result.message) || '' });
         return undefined;
       }
-      this.setData({ playerStats: result.players || [], playerStatsError: '' });
+      this.setData({ playerStats: result.players || [], playerStatsError: '',
+        footballAssists: result.assists || [], footballCoverage: result.coverageText || '' });
       return undefined;
     } catch (err) {
       console.error('[team-event-detail] 球员榜加载失败', err);
@@ -792,6 +831,8 @@ Page({
           revision: result.match.revision,
           matchTime: toInputTime(result.match.matchTime),
           location: result.match.location || '',
+          durationMinutes: result.match.durationMinutes || '',
+          requestId: `fb_schedule_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
           referees,
           recorders,
           refereeIndex: indexOf(referees, result.match.refereeId),
@@ -813,17 +854,21 @@ Page({
   },
 
   onInputSchedule(event) {
+    if (this.data.scheduleBusy) return;
     const field = event.currentTarget.dataset.field;
     if (!field) return;
     this.setData({ [`scheduleEditing.${field}`]: event.detail.value });
+    if (this.data.isFootball) this.setData({ 'scheduleEditing.requestId': `fb_schedule_${Date.now()}_${Math.random().toString(36).slice(2, 9)}` });
   },
 
   onPickSchedulePerson(event) {
+    if (this.data.scheduleBusy) return;
     const role = event.currentTarget.dataset.role;
     const index = Number(event.detail.value) || 0;
     this.setData(role === 'referee'
       ? { 'scheduleEditing.refereeIndex': index }
       : { 'scheduleEditing.recorderIndex': index });
+    if (this.data.isFootball) this.setData({ 'scheduleEditing.requestId': `fb_schedule_${Date.now()}_${Math.random().toString(36).slice(2, 9)}` });
   },
 
   async onSubmitSchedule() {
@@ -846,6 +891,7 @@ Page({
         recorderId,
         // 版本号来自打开浮层那一刻：期间有人改过就拒绝，不覆盖
         expectRevision: editing.revision,
+        ...(this.data.isFootball ? { requestId: editing.requestId, durationMinutes: Number(editing.durationMinutes) } : {}),
       });
       if (!result || result.ok !== true) {
         this.setData({
@@ -876,6 +922,8 @@ Page({
         stage: stage || '',
         label: label || `第 ${round} 轮`,
         minutes: '30',
+        revision: this.data.event?.revision,
+        requestId: `fb_shift_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
       },
       notice: '',
       noticeError: false,
@@ -887,7 +935,9 @@ Page({
   },
 
   onInputShift(event) {
+    if (this.data.scheduleBusy) return;
     this.setData({ 'shiftEditing.minutes': event.detail.value });
+    if (this.data.isFootball) this.setData({ 'shiftEditing.requestId': `fb_shift_${Date.now()}_${Math.random().toString(36).slice(2, 9)}` });
   },
 
   async onSubmitShift() {
@@ -900,6 +950,7 @@ Page({
         round: editing.round,
         stage: editing.stage,
         shiftMinutes: Number(editing.minutes),
+        ...(this.data.isFootball ? { requestId: editing.requestId, expectRevision: editing.revision } : {}),
       });
       if (!result || result.ok !== true) {
         this.setData({

@@ -90,7 +90,7 @@ for (const cloud of [false, true]) {
     assert.equal(detail.event.rules.halfMinutes, 35);
     assert.equal(detail.event.rules.eventRosterMax, 28);
     assert.equal(detail.event.rules.matchRosterMax, 18);
-    assert.equal(detail.event.supportsLiveScore, false); assert.equal(detail.event.supportsMatchData, false);
+    assert.equal(detail.event.supportsLiveScore, false); assert.equal(detail.event.supportsMatchData, true);
     assert.doesNotMatch(detail.event.rulesText, /淘汰赛|加时|犯离场/);
     const retried = await f.call('createTeamEvent', { ...input, rules: { ...input.rules, halfMinutes: 40 } });
     assert.equal(retried.eventId, created.eventId);

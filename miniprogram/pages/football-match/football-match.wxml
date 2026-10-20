@@ -1,0 +1,88 @@
+<view class="page-container {{themeClass}}">
+  <view wx:if="{{loading}}" class="hint">加载中…</view>
+  <view wx:elif="{{error}}" class="card">{{error}}<button bindtap="refresh">重试</button></view>
+  <block wx:elif="{{form}}">
+    <view class="card">
+      <view class="title">{{info.teamAName}} vs {{info.teamBName}}</view>
+      <view class="muted" wx:if="{{!info.lineupOnly}}">公开成绩：{{publishedText}}</view>
+      <view class="muted">{{info.lineupOnly ? "赛前单场名单；实际出场由赛后报告核对。" : "赛后报告；点球大战不计入正式进球。空白表示未知，0 表示已统计为零。"}}</view>
+      <view wx:if="{{info.pending}}" class="warning">有待审核版本；审核前公开成绩保持原版。</view>
+      <view wx:if="{{!info.canEdit}}" class="muted">已发布报告 · 只读</view>
+    </view>
+    <view wx:if="{{notice}}" class="notice">{{notice}}</view>
+    <view class="card" wx:if="{{!info.lineupOnly}}">
+      <view class="title">比赛结果</view>
+      <picker range="{{kindLabels}}" value="{{form.kindIndex}}" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" data-field="kindIndex" bindchange="onPick"><view class="row">结果：{{kindLabels[form.kindIndex]}} ›</view></picker>
+      <view class="row"><text>常规时间（必填）</text><input type="number" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" value="{{form.regulationA}}" data-field="regulationA" bindinput="onInput" placeholder="A"/><text>:</text><input type="number" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" value="{{form.regulationB}}" data-field="regulationB" bindinput="onInput" placeholder="B"/></view>
+      <view class="row"><text>半场（可留空）</text><input type="number" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" value="{{form.halfA}}" data-field="halfA" bindinput="onInput" placeholder="A"/><text>:</text><input type="number" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" value="{{form.halfB}}" data-field="halfB" bindinput="onInput" placeholder="B"/></view>
+      <block wx:if="{{showExtra}}">
+        <view class="row"><text>加时阶段进球</text><input type="number" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" value="{{form.extraA}}" data-field="extraA" bindinput="onInput" placeholder="A"/><text>:</text><input type="number" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" value="{{form.extraB}}" data-field="extraB" bindinput="onInput" placeholder="B"/></view>
+        <view class="row"><text>已按规程完成加时</text><switch checked="{{form.extraTimeCompleted}}" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" data-field="extraTimeCompleted" bindchange="onSwitch"/></view>
+      </block>
+      <block wx:if="{{showShootout}}">
+        <view class="row"><text>点球大战</text><input type="number" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" value="{{form.shootoutA}}" data-field="shootoutA" bindinput="onInput" placeholder="A"/><text>:</text><input type="number" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" value="{{form.shootoutB}}" data-field="shootoutB" bindinput="onInput" placeholder="B"/></view>
+        <view class="row"><text>已核对裁判点球报告</text><switch checked="{{form.refereeConfirmed}}" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" data-field="refereeConfirmed" bindchange="onSwitch"/></view>
+        <view class="muted">仅核验总比分与阶段关系，不自动验证逐罚程序。</view>
+      </block>
+      <block wx:if="{{form.kindIndex === 1}}">
+        <picker range="{{[info.teamAName, info.teamBName]}}" value="{{form.forfeitIndex}}" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" data-field="forfeitIndex" bindchange="onPick"><view class="row">弃权方：{{form.forfeitIndex === 0 ? info.teamAName : info.teamBName}} ›</view></picker>
+        <view class="row"><text>判定比分</text><input type="number" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" value="{{form.awardedA}}" data-field="awardedA" bindinput="onInput"/><text>:</text><input type="number" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" value="{{form.awardedB}}" data-field="awardedB" bindinput="onInput"/></view>
+        <view class="muted">常规栏保留实际比分；判定进球不分配给个人。</view>
+      </block>
+      <view wx:if="{{form.kindIndex === 2}}" class="warning">中断仅保存报告，不能作为最终成绩发布。裁判裁定后补录完赛或弃权。</view>
+      <textarea maxlength="500" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" value="{{form.note}}" data-field="note" bindinput="onInput" placeholder="裁判报告说明、人工纪律处罚；少于 11 人首发、弃权、中断须说明"/>
+      <textarea wx:if="{{info.needReview && info.canEdit}}" maxlength="500" disabled="{{busy}}" value="{{form.reason}}" data-field="reason" bindinput="onInput" placeholder="更正理由（必填）"/>
+    </view>
+    <view class="card">
+      <view class="title">单场名单与基础统计（可稍后补录）</view>
+      <view wx:if="{{info.lineupOnly && !info.lineupEditable[side.key]}}" class="warning">当前球队名单只读，请切换至自己管理的球队。</view><view class="tabs"><button wx:for="{{form.sides}}" wx:key="key" size="mini" data-index="{{index}}" bindtap="onSide">{{item.name}}</button></view>
+      <view class="muted">单场最多 {{info.rules.matchRosterMax}} 人；首发 7–11 人，首发须标明一位守门员。未出场替补可单独记牌。</view>
+      <view class="muted">可只录比分；未选择名单表示未记录，不能据此认定谁缺席。</view>
+      <button wx:if="{{info.canEdit}}" size="mini" disabled="{{busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" bindtap="onQuickLineup">选入名单并将前 11 人设为首发（请核对）</button>
+      <view wx:for="{{side.coverage}}" wx:if="{{!info.lineupOnly}}" wx:key="field" class="coverage-row">
+        <text>{{item.label}}覆盖范围</text><picker range="{{coverageLabels}}" value="{{item.index}}" data-field="{{item.field}}" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" bindchange="onCoverage"><view>{{coverageLabels[item.index]}} ›</view></picker>
+      </view>
+      <view wx:for="{{side.players}}" wx:for-item="player" wx:key="userId" class="player">
+        <view class="row"><text>{{player.no}} 号 {{player.name}}</text><text>列入本场</text><switch checked="{{player.selected}}" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" data-userid="{{player.userId}}" data-field="selected" bindchange="onPlayerFlag"/></view>
+        <block wx:if="{{player.selected}}">
+          <view class="flags">
+            <view>首发<switch checked="{{player.starter}}" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" data-userid="{{player.userId}}" data-field="starter" bindchange="onPlayerFlag"/></view>
+            <view>实际出场<switch checked="{{player.appeared}}" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" data-userid="{{player.userId}}" data-field="appeared" bindchange="onPlayerFlag"/></view>
+            <view>守门员<switch checked="{{player.goalkeeper}}" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" data-userid="{{player.userId}}" data-field="goalkeeper" bindchange="onPlayerFlag"/></view>
+          </view>
+          <view class="stats-grid" wx:if="{{!info.lineupOnly}}"><view wx:for="{{player.cells}}" wx:for-item="cell" wx:key="field" class="stat-cell"><text>{{cell.label}}</text><input type="number" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" value="{{cell.value}}" placeholder="未记录" data-userid="{{player.userId}}" data-field="{{cell.field}}" bindinput="onPlayerStat"/></view></view>
+        </block>
+      </view>
+      <block wx:if="{{!info.lineupOnly}}"><view class="title">换人摘要</view>
+      <picker range="{{subLabels}}" value="{{side.subIndex}}" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" bindchange="onSubStatus"><view class="row">{{subLabels[side.subIndex]}} ›</view></picker>
+      <block wx:if="{{side.subIndex > 0}}">
+        <view class="row" wx:for="{{side.subCells}}" wx:key="field"><text>{{item.label}}</text><input type="number" value="{{item.value}}" data-field="{{item.field}}" bindinput="onSubInput" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" placeholder="必填，无则 0"/></view>
+        <view class="muted">换入队员（复入模式按替换人次填写总额）：</view>
+        <checkbox-group bindchange="onIncoming"><label wx:for="{{side.players}}" wx:key="userId" wx:if="{{item.selected && item.appeared}}" class="check"><checkbox value="{{item.userId}}" checked="{{item.incoming}}" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}"/>{{item.name}}</label></checkbox-group>
+      </block>
+      <view class="muted">仅校验已有摘要，不代替现场换人程序核验；不完整时会标注覆盖范围。</view></block>
+    </view>
+    <view class="card" wx:if="{{!info.lineupOnly}}">
+      <view class="title">进球明细（助攻须关联进球）</view>
+      <view class="muted">可不记分钟；乌龙记在本方球员，计入对方比分。助攻仅适用于普通进球，每球最多一人。请同步核对上方个人进球和助攻总数。</view>
+      <view wx:for="{{goalRows}}" wx:key="index" class="goal-row"><text>{{item.description}}</text><button wx:if="{{info.canEdit}}" size="mini" data-index="{{index}}" bindtap="onDeleteGoal">移除</button></view>
+      <button wx:if="{{info.canEdit}}" disabled="{{busy}}" bindtap="onAddGoal">添加当前球队进球明细</button>
+      <view wx:if="{{goalEditor}}" class="goal-edit">
+        <picker range="{{goalEditor.scorerLabels}}" value="{{goalEditor.scorerIndex}}" data-field="scorerIndex" bindchange="onGoalPick"><view class="row">球员：{{goalEditor.scorerLabels[goalEditor.scorerIndex]}} ›</view></picker>
+        <picker range="{{goalTypes}}" value="{{goalEditor.typeIndex}}" data-field="typeIndex" bindchange="onGoalPick"><view class="row">类型：{{goalTypes[goalEditor.typeIndex]}} ›</view></picker>
+        <picker range="{{goalEditor.assistLabels}}" value="{{goalEditor.assistIndex}}" data-field="assistIndex" bindchange="onGoalPick"><view class="row">助攻：{{goalEditor.assistLabels[goalEditor.assistIndex]}} ›</view></picker>
+        <input type="number" value="{{goalEditor.minute}}" bindinput="onGoalMinute" placeholder="进球分钟（可留空）"/>
+        <view class="tabs"><button size="mini" bindtap="onCancelGoal">取消</button><button size="mini" bindtap="onSaveGoal">添加明细</button></view>
+      </view>
+    </view>
+    <view class="card" wx:if="{{info.report.warnings.length > 0}}"><view class="title">已保存报告的校验提示</view><view wx:for="{{info.report.warnings}}" wx:key="*this">{{item}}</view></view>
+    <view wx:if="{{preview}}" class="card"><view class="title">本次报告预览：{{preview.scoreText}}</view><view wx:for="{{preview.warnings}}" wx:key="*this" class="warning">{{item}}</view><view class="muted">统计覆盖范围与名单以以上选择为准。再次修改后会重新校验预览。</view></view>
+    <view class="card" wx:if="{{info.canEdit || info.canReview}}">
+      <button wx:if="{{info.canEdit}}" disabled="{{busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" bindtap="onSubmit">{{info.lineupOnly ? "保存当前球队名单" : preview ? "确认报告并提交审核" : "校验并预览报告"}}</button>
+      <view wx:if="{{info.canReview}}" class="tabs"><button disabled="{{busy}}" data-approve="true" bindtap="onReview">发布当前已提交版本</button><button disabled="{{busy}}" data-approve="false" bindtap="onReview">退回已提交版本</button></view>
+      <view class="muted">审核按钮处理上次提交的报告；表单新改动须先保存。</view>
+      <button size="mini" disabled="{{busy}}" bindtap="refresh">刷新并恢复已保存报告</button>
+    </view>
+    <view wx:if="{{audit.length > 0}}" class="card"><view class="title">修订记录</view><view wx:for="{{audit}}" wx:key="revision" class="muted">第 {{item.revision}} 版 · {{item.action}} · {{item.by}} · {{item.at}} · {{item.reason}}</view></view>
+  </block>
+</view>

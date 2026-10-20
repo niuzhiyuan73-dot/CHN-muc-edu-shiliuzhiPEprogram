@@ -58,7 +58,7 @@ Page({
         return undefined;
       }
       this.loaded = true;
-      this.setData({ loading: false, error: '', profile: result });
+      this.setData({ loading: false, error: '', profile: result, isFootball: result.sportFormat === 'football11' });
       return undefined;
     } catch (err) {
       console.error('[my-team-profile] 加载失败', err);

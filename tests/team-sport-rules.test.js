@@ -113,7 +113,7 @@ test('足球按独立规则建快照且详情走足球积分；不会出现篮�
   detail.table.forEach(row => { assert.equal(row.points, 1); assert.equal(row.draws, 1); assert.equal(row.rank, null); });
 });
 
-test('足球后端拒绝实时开台、操作和订阅，未实现的篮球名单/统计路径也不能误用', async t => {
+test('足球后端拒绝实时开台、操作和订阅；赛后接口拒绝缺少版本的篮球格式请求', async t => {
   footballMetadata(t);
   const { repo, call } = await fixture();
   await footballEvent(repo, { status: 'scheduled' });
@@ -128,11 +128,15 @@ test('足球后端拒绝实时开台、操作和订阅，未实现的篮球名�
     const denied = await call(action, payload);
     assert.equal(denied.ok, false); assert.match(denied.message, /不支持实时/);
   }
-  for (const action of ['getTeamMatchLineup', 'saveTeamMatchLineup', 'recordTeamMatch', 'publishTeamMatch',
-    'reviewTeamMatchStats', 'getTeamMatchStats', 'saveTeamMatchStats', 'getTeamEventPlayerStats', 'getMyTeamProfile', 'getTeamRecord']) {
+  for (const action of ['saveTeamMatchLineup', 'recordTeamMatch', 'publishTeamMatch',
+    'reviewTeamMatchStats', 'saveTeamMatchStats']) {
     const denied = await call(action, { matchId: 'fmatch', eventId: 'football', teamId: 'a', scoreA: 3, scoreB: 0 });
-    assert.equal(denied.ok, false, action); assert.match(denied.message, /尚未开放/, action);
+    assert.equal(denied.ok, false, action); assert.match(denied.message, /请求编号或比赛版本/, action);
   }
+  const lineup = await call('getTeamMatchLineup', { matchId: 'fmatch' });
+  assert.equal(lineup.minOnCourt, 7);
+  assert.equal((await call('getMyTeamProfile', {})).sportFormat, 'football11');
+  assert.equal((await call('getTeamRecord', { teamId: 'a' })).sportFormat, 'football11');
   assert.deepEqual(await repo.teamMatches.list(), before);
 });
 

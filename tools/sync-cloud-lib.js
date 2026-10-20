@@ -50,6 +50,7 @@ const MANIFEST = [
   'utils/football-rules.js',
   'utils/football-association.js',
   'utils/football-standings.js',
+  'utils/football-report.js',
   'utils/team-sport-rules.js',
   'utils/team-standings.js',
   'utils/school.js',
@@ -120,6 +121,8 @@ const MANIFEST = [
   // 团队运动（篮球/足球/排球）：球队与队员。云端与本地模拟共用同一份权限与幂等逻辑。
   'services/team-service.js',
   'services/team-event-service.js',
+  'services/football-match-service.js',
+  'services/football-schedule-service.js',
   'utils/basketball-live.js',
   'services/member-review.js',
   'services/announcement.js',

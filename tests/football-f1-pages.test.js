@@ -92,22 +92,23 @@ test('F1 足球报名页面选人及号码提交到现有接口，接口失败�
   });
 });
 
-test('F1 我的球队入口对足球打开球队列表，球队详情不加载尚未提供的成绩', t => {
+test('F1/F3 足球球队列表和球队详情接入团队成绩入口', t => {
   football(t);
   return withApi({ listTeams: () => ({ ok: true, teams: [], canManage: false }),
-    getTeam: () => ({ ok: true, team: { teamId: 'a', name: '自由队', sport: 'football' }, members: [] }) }, async calls => {
+    getTeam: () => ({ ok: true, team: { teamId: 'a', name: '自由队', sport: 'football' }, members: [] }),
+    getTeamRecord: () => ({ ok: true, overall: {}, seasons: [], recent: [] }) }, async calls => {
     const list = instantiate(loadPage('team-list/team-list.js'));
     await list.onLoad({ mine: '1' });
     assert.equal(calls[0][1].mine, true);
     const detail = instantiate(loadPage('team-detail/team-detail.js'));
     await detail.onLoad({ teamId: 'a' });
-    assert.equal(detail.data.recordSupported, false);
-    assert.equal(calls.some(call => call[0] === 'getTeamRecord'), false);
+    assert.equal(detail.data.recordSupported, true);
+    assert.equal(calls.some(call => call[0] === 'getTeamRecord'), true);
     await withWx(({ navigations }) => {
       const profile = instantiate(loadPage('profile/profile.js'));
       profile.currentAssociation = () => 'fb'; profile.syncAssociationBadge(); profile.onGoMyTeamProfile();
-      assert.equal(profile.data.hasTeamStats, false);
-      assert.match(navigations[0], /team-list\?mine=1/);
+      assert.equal(profile.data.hasTeamStats, true);
+      assert.match(navigations[0], /my-team-profile/);
     });
   });
 });

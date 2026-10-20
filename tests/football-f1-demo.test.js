@@ -34,7 +34,8 @@ test('足球演示可重复生成，和篮球各集合主键不冲突、不串�
     assert.equal(new Set(combined.map(row => row._id)).size, combined.length, collection);
   }
   assert.equal(JSON.stringify(basketball), before);
-  assert.deepEqual(football.teamMatches, []); assert.deepEqual(football.teamMatchStats, []);
+  assert.equal(football.teamMatches.length, 1); assert.deepEqual(football.teamMatchStats, []);
+  assert.equal(football.teamMatches[0].footballPublished.result.scoreA, 2);
   assert.deepEqual(football.memberships, [], '普通会员沿用学校身份，不在演示数据中额外升权');
 });
 
@@ -64,7 +65,7 @@ test('足球演示有两支跨学院十二人自由球队，名单人数与号�
       eventUsers.add(row.userId);
     }
   }
-  assert.deepEqual(new Set(content.teamEventEntries.map(row => row.status)), new Set(['approved', 'submitted']));
+  assert.deepEqual(new Set(content.teamEventEntries.filter(row => row.eventId === event._id).map(row => row.status)), new Set(['approved', 'submitted']));
   content.teamEvents[0].rules.substitutions.limit = 0;
   assert.equal(createFootballDemoContent().teamEvents[0].rules.substitutions.limit, 5);
 });

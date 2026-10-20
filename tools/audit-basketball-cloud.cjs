@@ -184,4 +184,4 @@ async function main() {
   return results;
 }
 if (require.main === module) main().then(results => console.log(JSON.stringify(results, null, 2))).catch(error => { console.error(error); process.exitCode = 1; });
-module.exports = { verifyCloudFixes: main, fixture };
+module.exports = { verifyCloudFixes: main, fixture, database };
