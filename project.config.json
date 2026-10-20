@@ -37,7 +37,9 @@
     "disableUseStrict": false,
     "condition": false,
     "swc": false,
-    "disableSWC": true
+    "disableSWC": true,
+    "ignoreDevUnusedFiles": false,
+    "ignoreUploadUnusedFiles": false
   },
   "condition": {
     "miniprogram": {
