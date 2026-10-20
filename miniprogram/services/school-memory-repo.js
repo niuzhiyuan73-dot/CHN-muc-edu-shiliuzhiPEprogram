@@ -175,7 +175,23 @@ function createSchoolMemoryRepo(seed = {}) {
   const repo = build(() => state, false);
   repo.transaction = fn => {
     const task = queue.then(async () => {
-      const scratch = Object.fromEntries(KEYS.map(key => [key, new Map([...state[key]].map(([id, doc]) => [id, clone(doc)]))]));
+      // 【为什么只浅拷贝 Map，不再深拷贝整个库（2026-10-20 性能修正）】
+      // 这里原先是 `new Map([...state[key]].map(([id, doc]) => [id, clone(doc)]))`
+      // ——每个事务先把 52 个集合、约两千条文档整份深拷贝一遍。而 build() 的
+      // 三个读写入口**本来就各自克隆**：getById 交出去的是副本、set 落进去的是
+      // 副本、list 返回的也是副本。也就是说，事务只需要隔离「写」；「读」的
+      // 隔离已经由那三处保证了，深拷贝这一层是重复劳动。
+      //
+      // 实测代价：page.test.js 的 292 条用例共耗 267s CPU，其中 clone 一项占
+      // 47.5%（127s），加上它触发的 GC 后内存仓储占 67.7%。成因是库里 61%
+      // 是从不被这些用例触碰的运动会演示数据（1202 条），每次都陪着一块儿拷。
+      //
+      // 浅拷贝为什么等价：doc 一旦从 Map 取出就已是对副本的再克隆，调用方怎么
+      // 改都碰不到库里的原件；任何写入都必须经过 set()，而 set() 存的是
+      // `clone({...doc, _id: id})`，只会写进 scratch 这张新 Map。所以回滚
+      // （丢掉 scratch）依然完整，提交（state = scratch）依然是整批替换。
+      // 前提是没有任何代码绕过 set 直接改 Map —— 本文件与全仓都没有这种写法。
+      const scratch = Object.fromEntries(KEYS.map(key => [key, new Map(state[key])]));
       const result = await fn(build(() => scratch, true));
       state = scratch;
       return result;
