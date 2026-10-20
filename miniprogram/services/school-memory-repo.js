@@ -2,8 +2,13 @@
 const { schoolScope } = require('../utils/school.js');
 const { MEET_COLLECTIONS, meetScope } = require('../utils/meet-scope.js');
 const clone = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
-const KEYS = ['users', 'schools', 'schoolAssociations', 'colleges', 'schoolMembers',
-  'schoolRoles', 'memberships', 'studentIdClaims', 'auditLogs',
+/**
+ * 带 eventId 的「从属集合」：按赛事取子集用 listByEvent（条件查询 + 索引），
+ * 不整表读完再内存过滤。顶层与 forScope 两处都要提供，方法面与云端
+ * （cloud-repo.js / school-repository.js）逐字一致，由契约测试守住。
+ */
+const EVENT_SCOPED = ['matches', 'eventSignups', 'collegeEntries', 'ties', 'lineups'];
+const KEYS = ['users', 'schools', 'schoolAssociations', 'colleges', 'schoolMembers', 'schoolRoles', 'memberships', 'studentIdClaims', 'auditLogs',
   'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
   'associationGroups', 'associationGroupMembers',
   'associationNotices', 'associationTrainings', 'trainingRegistrations',
@@ -73,6 +78,7 @@ function createSchoolMemoryRepo(seed = {}) {
     // `announcements` 2026-10-18 起也归到这一档：公告只有管理员能发，且发的是
     // 全校信息，不该因为发布时正停在哪家协会而只在那家协会可见。
     const SCHOOL_SCOPED = ['colleges', 'schoolMembers', 'schoolRoles', 'sportsMeetCollegeLeads', 'announcements'];
+    // 按赛事取子集用 listByEvent（清单见文件顶部的 EVENT_SCOPED）
     repo.forScope = input => {
       const scope = schoolScope(input);
       const result = { scope };
@@ -111,6 +117,13 @@ function createSchoolMemoryRepo(seed = {}) {
           insert: doc => write(doc._id, doc, 'insert'),
           update: (id, patch) => write(id, patch, 'update'),
         };
+        // 按赛事取子集：与云端 listByEvent 同口径（WHERE eventId = ?）。
+        // 云端若不用条件查询，就是整表翻页后内存过滤——比赛一多，打开一次详情
+        // 要读十几页 RPC，叠上每日读配额会撑不住（见 docs/数据库索引清单.md）。
+        if (EVENT_SCOPED.includes(key)) {
+          result[key].listByEvent = async eventId => (await repo[key].list())
+            .filter(doc => owns(doc) && doc.eventId === eventId);
+        }
       }
       if (!inTx) result.transaction = fn => repo.transaction(tx => fn(tx.forScope(scope)));
       return result;
@@ -169,6 +182,11 @@ function createSchoolMemoryRepo(seed = {}) {
     }
     repo.exchangeSignups.listByEvent = async eventId => (await repo.exchangeSignups.list()).filter(doc => doc.eventId === eventId);
     repo.exchangeMatches.listByEvent = async eventId => (await repo.exchangeMatches.list()).filter(doc => doc.eventId === eventId);
+    // 顶层同样按赛事取子集：业务里既有 ctx.repo.forScope(...).matches.listByEvent，
+    // 也有直接 ctx.repo.matches.listByEvent 的写法，两处都要有（与云端同口径）。
+    for (const key of EVENT_SCOPED) {
+      repo[key].listByEvent = async eventId => (await repo[key].list()).filter(doc => doc.eventId === eventId);
+    }
     repo.exchangeInvitations.listByScope = input => repo.forScope(input).exchangeInvitations.list();
     return repo;
   };

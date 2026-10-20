@@ -383,7 +383,7 @@ async function getSchoolEvent(payload = {}, ctx) {
   const mySignup = ctx.actorId
     ? await ctx.repo.eventSignups.getById(schoolEventSignupKey(doc._id, ctx.actorId, ctx))
     : null;
-  const signups = (await ctx.repo.forScope(ctx).eventSignups.list()).filter(row => row.eventId === doc._id);
+  const signups = await ctx.repo.forScope(ctx).eventSignups.listByEvent(doc._id);
 
   const state = signupStateOf(mySignup);
   const tally = tallySignups(signups);
@@ -472,8 +472,8 @@ async function listSchoolEventSignups(payload = {}, ctx) {
   const actor = legacyActorOf(ctx, dir);
   const memberById = new Map(dir.members.map(member => [member._id, member]));
 
-  const rows = (await ctx.repo.forScope(ctx).eventSignups.list())
-    .filter(row => row.eventId === doc._id && row.status !== SIGNUP_STATUS.CANCELED)
+  const rows = (await ctx.repo.forScope(ctx).eventSignups.listByEvent(doc._id))
+    .filter(row => row.status !== SIGNUP_STATUS.CANCELED)
     .sort((a, b) => (String(a.signTime || '') < String(b.signTime || '') ? -1 : 1));
 
   const signups = rows.map(row => {
@@ -538,8 +538,7 @@ async function signUpSchoolEvent(payload = {}, ctx) {
 
   // 本场赛事的报名台账快照：事务内不能列集合，而名额判断必须把「计数与台账分叉」
   // 的情形一并算上（见 occupiedSignupCount）。快照在事务外读，取大时刚好补它的陈旧。
-  const ledgerRows = (await ctx.repo.forScope(ctx).eventSignups.list())
-    .filter(row => row.eventId === payload.eventId);
+  const ledgerRows = await ctx.repo.forScope(ctx).eventSignups.listByEvent(payload.eventId);
   const ledgerTally = tallySignups(ledgerRows);
 
   const result = await ctx.repo.transaction(async tx => {
@@ -712,8 +711,8 @@ async function drawSchoolEvent(payload = {}, ctx) {
       ? '只能在报名阶段抽签' : '只有协会负责人及以上可以抽签'));
   }
 
-  const signups = (await scoped.eventSignups.list()).filter(row => row.eventId === doc._id);
-  const existing = (await scoped.matches.list()).filter(row => row.eventId === doc._id);
+  const signups = await scoped.eventSignups.listByEvent(doc._id);
+  const existing = await scoped.matches.listByEvent(doc._id);
   if (doc.draw && !canRedraw(existing)) return ok(refused('该赛事已有比赛确认生效，不能再重抽'));
 
   // 抽签种子：只认「调用方显式给的有限数字」（客户端传 Date.now() 供复核），
@@ -807,8 +806,7 @@ async function finishSchoolEvent(payload = {}, ctx) {
   if (!canReadAssociationSpace(ctx)) return ok(refused('没有读取协会空间的权限'));
 
   const dir = await buildDirectory(ctx);
-  const signups = (await ctx.repo.forScope(ctx).eventSignups.list())
-    .filter(row => row.eventId === payload.eventId);
+  const signups = await ctx.repo.forScope(ctx).eventSignups.listByEvent(payload.eventId);
 
   const result = await ctx.repo.transaction(async tx => {
     const gate = await freshActorGate(tx, ctx, dir);
@@ -864,8 +862,7 @@ async function advanceSchoolEvent(ctx, eventId) {
     return { ok: true, inserted: 0 };
   }
 
-  const matches = (await ctx.repo.forScope(ctx).matches.list())
-    .filter(row => row.eventId === eventId);
+  const matches = await ctx.repo.forScope(ctx).matches.listByEvent(eventId);
   const plan = planStageMatches({ event: doc, draw: doc.draw, matches });
   if (!plan.ok) return { ok: true, inserted: 0 };
 

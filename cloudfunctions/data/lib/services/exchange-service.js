@@ -258,16 +258,21 @@ async function checkInExchangeSignup(payload = {}, ctx) {
     const event = await tx.exchangeEvents.getById(payload.eventId);
     if (!managesExchange(event, fresh)) return refused('只有管理员或双方校管理员可以签到');
     if (event.status !== 'ready' && event.status !== 'drawn') return refused('名单锁定后才能签到');
-    const row = await tx.exchangeSignups.getById(signupKey(event._id, userId));
-    if (!row || row.status !== 'signed') return refused('这位参赛者不在名单里');
-    if (!isPlatformAdmin(fresh) && row.representedSchoolId !== fresh.schoolId) {
+    // 签到只认名册快照：不在名册上的人（含锁定前被剔除的失效身份）一律签不了。
+    const entrant = (Array.isArray(event.roster) ? event.roster : [])
+      .find(row => row.userId === userId);
+    if (!entrant) return refused('这位参赛者不在名单里');
+    if (!isPlatformAdmin(fresh) && entrant.representedSchoolId !== fresh.schoolId) {
       return refused('只能为本校参赛者签到');
     }
-    if (row.checkInTime) return { ok: true, event: summary(event), message: '' };
-    await tx.exchangeSignups.set(row._id, { ...row, checkInTime: fresh.now,
-      checkedInBy: fresh.actorId, revision: Number(row.revision || 1) + 1 });
-    await audit(tx, fresh, event, 'checkInExchangeSignup');
-    return { ok: true, event: summary(event), message: '' };
+    const checkIns = event.checkIns || {};
+    if (checkIns[userId]) return { ok: true, event: summary(event), message: '' };
+    // 一个人一条签到，写的仍是赛事这一个文档：操作数与人数无关。
+    // revision 一起 +1，让并发的两次签到在云端撞上写冲突后重试，不会互相覆盖。
+    const next = { ...event, checkIns: { ...checkIns, [userId]: fresh.now }, revision: event.revision + 1 };
+    await tx.exchangeEvents.set(event._id, next);
+    await audit(tx, fresh, next, 'checkInExchangeSignup');
+    return { ok: true, event: summary(next), message: '' };
   }));
 }
 
@@ -345,49 +350,102 @@ async function cancelExchangeEvent(payload = {}, ctx) {
  *
  * @param {Object} payload { eventId, reason? }
  */
+/**
+ * 锁名前复查：报名者此刻还能不能代表这个学校参赛。
+ *
+ * 【为什么放在事务外】（2026-10-21 云端容量改造）
+ * 每人要读会员、用户、学校三张表。原实现把这段读放在事务里，于是事务操作数
+ * 随人数线性增长（3 读 + 1 写 / 人），200 人报名就是 800 次——超出云开发事务
+ * 总操作数上限（约 100）整整 8 倍，**跨校赛根本锁不上名单**。
+ * 现在这段只在事务外按主键读（不占事务预算），事务里只留「版本比对 + 一次写」。
+ *
+ * @param {Object} repo 仓储
+ * @param {Array<Object>} signups 状态为 signed 的报名行
+ * @returns {Promise<{roster:Array<Object>, pruned:Array<Object>}>}
+ */
+async function reviewEntrants(repo, signups) {
+  const roster = [];
+  const pruned = [];
+  for (const row of signups) {
+    const [member, user, school] = await Promise.all([
+      repo.schoolMembers.getById(row.schoolMemberId),
+      repo.users.getById(row.userId),
+      repo.schools.getById(row.representedSchoolId),
+    ]);
+    const valid = member && member.userId === row.userId && member.schoolId === row.representedSchoolId &&
+      member.status === 'active' && user && user.platformStatus === 'active' &&
+      user.primarySchoolId === row.representedSchoolId && school && school.status === 'active';
+    if (!valid) {
+      pruned.push({ userId: row.userId, representedSchoolId: row.representedSchoolId });
+      continue;
+    }
+    // 名册条目带齐下游要用的四样：身份、代表学校、昵称、校名。
+    // 抽签 / 录分 / 名次 / 签到从此只读这份名册，不再回查报名表。
+    roster.push({
+      userId: row.userId,
+      representedSchoolId: row.representedSchoolId,
+      schoolId: row.representedSchoolId,
+      schoolMemberId: row.schoolMemberId,
+      nickName: row.nickName || '',
+      schoolName: row.schoolName || '',
+    });
+  }
+  return { roster, pruned };
+}
+
+/**
+ * 锁定报名名单 —— 产出一份**名册快照**。
+ *
+ * 【为什么是快照，而不是把每条报名改成 locked】（2026-10-21）
+ * 原实现逐条改报名状态，事务操作数 ≈ 4N。云开发事务总操作数上限约 100，
+ * 跨校邀请赛按 200 人报名算就是 800 次，功能直接不可用；而本地测试只有
+ * 2~4 人，永远照不出来。
+ *
+ * 语义上本来也该是快照：「锁定」是一次**事件**，产出的是「这一场谁上场」的
+ * 名册，不是对 N 条报名记录的状态迁移。锁定之后抽签、录分、名次、签到全部
+ * 读这份名册，报名表退化为历史流水。
+ *
+ * 现在的操作数是**常数**：读赛事 1 + 写赛事 1 + 审计 1~2，与人多人少无关。
+ *
+ * 【身份复查没有丢】
+ * 退学 / 转校 / 停用的报名者仍在锁定前剔除（见 reviewEntrants），只是这段读
+ * 移到了事务外；剔除结果记进 prunedSignups 供追溯。报名行本身不再改写——
+ * 锁定后本来就不允许再报名或移除，历史保持原样。
+ */
 async function lockExchangeRoster(payload = {}, ctx) {
   const snapshot = await ctx.repo.exchangeEvents.getById(payload.eventId);
   if (!eventMatches(snapshot, ctx) || snapshot.schoolId !== ctx.schoolId || !manages(ctx)) return ok(refused('只有主办学校可以锁定名单'));
-  const roster = (await ctx.repo.exchangeSignups.listByEvent(snapshot._id)).filter(row => row.status === 'signed');
+  if (snapshot.status !== 'signup') return ok(refused('名单已锁定'));
+  const signups = (await ctx.repo.exchangeSignups.listByEvent(snapshot._id)).filter(row => row.status === 'signed');
+  const reviewed = await reviewEntrants(ctx.repo, signups);
   return ok(await ctx.repo.transaction(async tx => {
     const fresh = await freshContext(tx, ctx);
     const event = await tx.exchangeEvents.getById(payload.eventId);
     if (!eventMatches(event, fresh) || event.schoolId !== fresh.schoolId || !manages(fresh)) return refused('只有主办学校可以锁定名单');
     if (event.status !== 'signup') return refused('名单已锁定');
+    // 复查期间可能有人报名或退出：版本不一致就要求重来，避免锁进一份过期名册。
     if (event.revision !== snapshot.revision) return refused('报名名单已变化，请刷新后重试');
     if (Object.values(event.invitations).some(value => value === 'pending')) return refused('请等待受邀学校处理邀请');
-    if (event.signupCount < 2 || Object.values(event.schoolCounts).filter(count => count > 0).length < 2) return refused('至少需要两校各有一名参赛者');
-    if (roster.length !== event.signupCount) return refused('报名计数不一致，请联系管理员');
-    // 失效身份处理：报名之后退学 / 转校 / 停用的人已经没有代表该校参赛的资格，
-    // 在这里移除并释放名额（与训练「本人失效自动移除报名」同一处理），
-    // 否则一场邀请赛会因为某个人退学而永远锁不上名单。
-    const pruned = [];
+    if (signups.length !== event.signupCount) return refused('报名计数不一致，请联系管理员');
+
+    const { roster, pruned } = reviewed;
+    if (roster.length < 2 || new Set(roster.map(row => row.representedSchoolId)).size < 2) {
+      return refused(pruned.length
+        ? '清理失效身份后不足两校各一名参赛者，请补充报名'
+        : '至少需要两校各有一名参赛者');
+    }
+    // 名额计数按名册重算，与锁定后的权威来源保持一致
+    const schoolCounts = {};
     for (const row of roster) {
-      const [member, user, school] = await Promise.all([
-        tx.schoolMembers.getById(row.schoolMemberId),
-        tx.users.getById(row.userId),
-        tx.schools.getById(row.representedSchoolId),
-      ]);
-      const valid = member && member.userId === row.userId && member.schoolId === row.representedSchoolId &&
-        member.status === 'active' && user && user.platformStatus === 'active' &&
-        user.primarySchoolId === row.representedSchoolId && school && school.status === 'active';
-      if (valid) continue;
-      const removed = { ...row, status: 'removed', removedBy: fresh.actorId, removedAt: fresh.now,
-        removeReason: '参赛身份已失效', revision: Number(row.revision || 1) + 1 };
-      await tx.exchangeSignups.set(removed._id, removed);
-      pruned.push({ userId: row.userId, representedSchoolId: row.representedSchoolId });
-    }
-    const schoolCounts = { ...event.schoolCounts };
-    for (const row of pruned) {
-      schoolCounts[row.representedSchoolId] = Math.max(0, (schoolCounts[row.representedSchoolId] || 0) - 1);
-    }
-    const signupCount = event.signupCount - pruned.length;
-    if (pruned.length > 0 && (signupCount < 2 ||
-        Object.values(schoolCounts).filter(count => count > 0).length < 2)) {
-      return refused('清理失效身份后不足两校各一名参赛者，请补充报名');
+      schoolCounts[row.representedSchoolId] = (schoolCounts[row.representedSchoolId] || 0) + 1;
     }
     const next = { ...event, status: 'ready', lockedAt: fresh.now, lockedBy: fresh.actorId,
-      signupCount, schoolCounts, prunedSignups: pruned, revision: event.revision + 1 };
+      roster,        // 名册快照：锁定之后唯一的参赛者来源
+      checkIns: {},  // 签到表 userId → 时间；逐人一条，仍只写这一个文档
+      signupCount: roster.length,
+      schoolCounts,
+      prunedSignups: pruned,
+      revision: event.revision + 1 };
     await tx.exchangeEvents.set(event._id, next);
     await audit(tx, fresh, next, 'lockExchangeRoster');
     if (pruned.length > 0) await audit(tx, fresh, next, 'pruneInvalidExchangeSignups');
@@ -395,9 +453,17 @@ async function lockExchangeRoster(payload = {}, ctx) {
   }));
 }
 
-// 名单锁定后，由报名记录构造参赛者映射；used by draw/score/ranking。
-async function entrantsOf(repo, eventId) {
-  const rows = (await repo.exchangeSignups.listByEvent(eventId)).filter(row => row.status === 'signed');
+/**
+ * 名册快照 → 参赛者。
+ *
+ * 锁定之后唯一的来源是 `event.roster`（见 lockExchangeRoster），不再回查报名表：
+ * 报名表在锁定后不会变化，回查既多一次读，也让「谁在名单上」有两个答案。
+ *
+ * @param {Object} event 赛事文档
+ * @returns {{rows: Array<Object>, map: Map<string, {userId:string, schoolId:string}>}}
+ */
+function entrantsOf(event) {
+  const rows = Array.isArray(event.roster) ? event.roster : [];
   return { rows, map: new Map(rows.map(row => [row.userId, { userId: row.userId, schoolId: row.representedSchoolId }])) };
 }
 
@@ -409,7 +475,7 @@ async function drawExchangeEvent(payload = {}, ctx) {
   if (snapshot.status === 'finished') return ok(refused('赛事已结束，不能再抽签'));
   const existing = await ctx.repo.exchangeMatches.listByEvent(snapshot._id);
   if (existing.some(match => match.status === 'active')) return ok(refused('已有比赛确认生效，不能再抽签'));
-  const { rows, map } = await entrantsOf(ctx.repo, snapshot._id);
+  const { rows, map } = entrantsOf(snapshot);
   if (rows.length < 2) return ok(refused('至少需要两名参赛者才能抽签'));
   // 种子只认「本身就是有限数字」的入参：Number(null)===0、Number('')===0，
   // 从前 null/空串会落成确定性种子，跨校签位可被穷举复现（2026-10-17 审计 C6）。
@@ -493,7 +559,7 @@ async function submitExchangeScore(payload = {}, ctx) {
   if (!Number.isInteger(scoreA) || !Number.isInteger(scoreB) || scoreA < 0 || scoreB < 0 ||
       scoreA > 99 || scoreB > 99) return ok(refused('请填写有效的比分'));
   if (scoreA === scoreB) return ok(refused('淘汰赛不能打平'));
-  const { map } = await entrantsOf(ctx.repo, snapshot._id);
+  const { map } = entrantsOf(snapshot);
   const existing = await ctx.repo.exchangeMatches.listByEvent(snapshot._id);
   const preview = { ...match, scoreA, scoreB, winner: scoreA > scoreB ? match.playerA : match.playerB, status: 'active' };
   const ledger = existing.map(row => row._id === match._id ? preview : row);
@@ -537,7 +603,7 @@ async function confirmExchangeRanking(payload = {}, ctx) {
   if (!managesExchange(snapshot, ctx)) return ok(refused('只有管理员或双方校管理员可以确认名次'));
   if (!snapshot.draw) return ok(refused('请先抽签'));
   if (snapshot.status === 'finished') return ok(refused('名次已确认'));
-  const { rows } = await entrantsOf(ctx.repo, snapshot._id);
+  const { rows } = entrantsOf(snapshot);
   const existing = await ctx.repo.exchangeMatches.listByEvent(snapshot._id);
   const placed = placementsFromExchange({ event: snapshot, draw: snapshot.draw, matches: existing });
   if (!placed.ok) return ok(refused(placed.message));
@@ -576,7 +642,16 @@ async function getExchangeEvents(_payload, ctx) {
 async function getExchangeEvent(payload = {}, ctx) {
   const event = await ctx.repo.exchangeEvents.getById(payload.eventId);
   if (!canSee(event, ctx)) return ok(refused('赛事不存在或没有访问权限'));
-  const rows = (await ctx.repo.exchangeSignups.listByEvent(event._id)).filter(row => row.status === 'signed');
+  // 参赛者来源分两段，别混：
+  //   · 已锁定 → 只认名册快照（锁定后报名表不再变化，也不再有权威）
+  //   · 报名中 → 读报名表，页面要靠它显示「已报名」和当前名单
+  // 签到时间挂在赛事的 checkIns 上（userId → 时间），与名册同一个文档。
+  const locked = event.status !== 'signup';
+  const checkIns = event.checkIns || {};
+  const rows = locked
+    ? (Array.isArray(event.roster) ? event.roster : [])
+      .map(row => ({ ...row, checkInTime: checkIns[row.userId] || null }))
+    : (await ctx.repo.exchangeSignups.listByEvent(event._id)).filter(row => row.status === 'signed');
   const byUser = new Map(rows.map(row => [row.userId, row]));
   const canManage = managesExchange(event, ctx);
   const existingMatches = await ctx.repo.exchangeMatches.listByEvent(event._id);

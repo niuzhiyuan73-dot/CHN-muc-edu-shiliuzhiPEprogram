@@ -304,8 +304,12 @@ test('签到：名单锁定后由管理员代签，重复签到幂等，不能�
   assert.equal(signed.ok, true, signed.message);
   const again = await call(repo, 'checkInExchangeSignup', { eventId: id, userId: 'demo_muc_member' });
   assert.equal(again.ok, true, '重复签到幂等');
-  const rows = await repo.exchangeSignups.listByEvent(id);
-  assert.equal(rows.filter(row => row.checkInTime).length, 1, '只落一次签到时间');
+  // 签到落在赛事的 checkIns 上（userId → 时间），不再改写报名行：
+  // 锁定之后参赛者只认名册快照，签到写回报名表会让「谁在名单上」出现两个答案。
+  const afterCheckIn = await repo.exchangeEvents.getById(id);
+  assert.deepEqual(Object.keys(afterCheckIn.checkIns), ['demo_muc_member'], '只记一次签到');
+  const detail = await call(repo, 'getExchangeEvent', { eventId: id });
+  assert.equal(detail.participants.filter(row => row.checkedIn).length, 1, '详情里只有一人已签到');
 
   // 民大管理员只能替民大的人签；普通会员不能替别人签
   assert.equal((await call(repo, 'checkInExchangeSignup', { eventId: id, userId: 'demo_buaa_member' })).ok, false);
@@ -441,10 +445,13 @@ test('失效身份在锁定名单时被清理并释放名额，仍够两校则�
   assert.equal(event.signupCount, 3, '失效者不再占名额');
   assert.equal(event.schoolCounts.buaa, 1);
   assert.deepEqual(event.prunedSignups.map(row => row.userId), ['demo_buaa_admin']);
-  const pruned = await repo.exchangeSignups.getById(require('../miniprogram/utils/school')
+  // 报名行不再被改写：锁定是「产出一份名册」，不是对每条报名做状态迁移。
+  // 失效者只是不进名册，历史报名记录保持原样（锁定后本来也不允许再改动）。
+  const untouched = await repo.exchangeSignups.getById(require('../miniprogram/utils/school')
     .schoolKey('xs', id, 'demo_buaa_admin'));
-  assert.equal(pruned.status, 'removed');
-  assert.equal(pruned.removeReason, '参赛身份已失效');
+  assert.equal(untouched.status, 'signed', '报名行不应被改写');
+  assert.deepEqual(event.roster.map(row => row.userId).sort(),
+    ['demo_buaa_member', 'demo_muc_admin', 'demo_muc_member'], '名册里没有失效者');
 
   // 只剩一校有人时：清理后锁定被拒，并说明原因
   // （先把上一步停用的北航管理员学籍恢复——受邀校的邀请处理也要靠它）
@@ -608,4 +615,106 @@ test('六种赛制都能从创建走到确认名次：名次连续无空洞、�
       assert.equal(places.includes(value), true, `${format} 名次 ${value} 有人认领`);
     }
   }
+});
+
+/* ============================================================
+ * 云端容量：锁名单的事务操作数必须与人头数无关（2026-10-21）
+ * ============================================================
+ * 云开发事务只支持单记录操作，单事务操作数上限约 100（未公示，社区实践值；
+ * 见 cloudfunctions/data/src/adapters/cloud-repo.js 的 TX_OPERATION_BUDGET）。
+ *
+ * 旧实现逐条改写报名记录，事务操作数 ≈ 4N：跨校赛 200 人报名就是 800 次，
+ * **功能直接不可用**。而本地测试长期只有 2~4 人，永远照不出来。
+ *
+ * 这组用例把「操作数与人数无关」钉住：2 人与 4 人两场，事务内读写次数必须
+ * 完全相等，且总数是个位数。以后谁再往锁定路径里加逐人循环，这里立刻变红。
+ * ============================================================ */
+
+/**
+ * 给事务对象套一层操作计数，口径与云端适配器一致（getById 算 1 读，
+ * set/add 算 1 写）。forScope 这类返回子仓储的方法，返回的对象同样被计数。
+ *
+ * @param {Object} repo 仓储
+ * @returns {{reads:number, writes:number}} 会被就地累加
+ */
+function countTransactionOps(repo) {
+  const stats = { reads: 0, writes: 0 };
+  const isCollection = value => value && typeof value === 'object' && typeof value.getById === 'function';
+  const spyCollections = target => new Proxy(target, {
+    get(object, method) {
+      const value = object[method];
+      if (typeof value !== 'function') return value;
+      if (/^(getById|get|list|listBy[A-Za-z]+)$/.test(method)) {
+        return (...args) => { stats.reads += 1; return value.apply(object, args); };
+      }
+      if (/^(set|insert|update|remove|add)$/.test(method)) {
+        return (...args) => { stats.writes += 1; return value.apply(object, args); };
+      }
+      return value.bind(object);
+    },
+  });
+  const spyRepo = target => new Proxy(target, {
+    get(object, key) {
+      const value = object[key];
+      if (isCollection(value)) return spyCollections(value);
+      if (typeof value === 'function') {
+        return (...args) => {
+          const out = value.apply(object, args);
+          // forScope / forMeet 返回的子仓储继续计数；Promise 与方法返回值原样放行
+          if (out && typeof out === 'object' && typeof out.then !== 'function' && !isCollection(out)) {
+            return spyRepo(out);
+          }
+          return out;
+        };
+      }
+      return value;
+    },
+  });
+  const original = repo.transaction;
+  repo.transaction = fn => original(async tx => fn(spyRepo(tx)));
+  return stats;
+}
+
+/** 造一场「已接受邀请 + 若干人报名」的赛事，尚未锁定 */
+async function signedUp(repo, entrants, requestId) {
+  const id = await create(repo, { requestId, quota: 12, schoolQuotas: { muc: 6, buaa: 6 } });
+  await accept(repo, id);
+  for (const [actor, schoolId] of entrants) await signup(repo, id, actor, schoolId);
+  return id;
+}
+
+test('锁名单的事务操作数与人头数无关（云端 100 次上限下仍能锁）', async () => {
+  const pair = [['demo_muc_member', 'muc'], ['demo_buaa_member', 'buaa']];
+  const quad = [...pair, ['demo_muc_admin', 'muc'], ['demo_buaa_admin', 'buaa']];
+
+  const two = fixture();
+  const twoId = await signedUp(two, pair, 'ops_two');
+  const twoOps = countTransactionOps(two);
+  assert.equal((await call(two, 'lockExchangeRoster', { eventId: twoId })).ok, true);
+
+  const four = fixture();
+  const fourId = await signedUp(four, quad, 'ops_four');
+  const fourOps = countTransactionOps(four);
+  assert.equal((await call(four, 'lockExchangeRoster', { eventId: fourId })).ok, true);
+
+  assert.equal(fourOps.reads, twoOps.reads, '人头翻倍，事务内读取次数必须不变');
+  assert.equal(fourOps.writes, twoOps.writes, '人头翻倍，事务内写入次数必须不变');
+  assert.ok(twoOps.reads + twoOps.writes <= 10,
+    `锁名单应在个位数操作内完成，实际 读${twoOps.reads} 写${twoOps.writes}`);
+});
+
+test('锁定后名册是唯一参赛者来源：抽签与详情都读它', async () => {
+  const repo = fixture();
+  const id = await readyFour(repo);
+  const event = await repo.exchangeEvents.getById(id);
+  assert.equal(event.roster.length, 4, '名册应记下四名参赛者');
+  assert.deepEqual(event.checkIns, {}, '锁定瞬间还没有人签到');
+
+  const detail = await call(repo, 'getExchangeEvent', { eventId: id });
+  assert.equal(detail.participants.length, 4);
+  assert.deepEqual(
+    detail.participants.map(row => row.userId).sort(),
+    event.roster.map(row => row.userId).sort(),
+    '详情里的参赛者必须与名册一一对应',
+  );
 });

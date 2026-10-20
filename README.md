@@ -56,6 +56,8 @@
 
 有效角色是合成的：`schoolAdmin` > `associationLeader` > `collegeLeader` > 会员。详见 [云开发控制台操作指南](docs/云开发控制台操作指南.md) 第五节。
 
+**部署时别漏了索引**：本地 mock 用内存 Map，没有索引概念；云端缺索引就是全表扫，表现为「列表页越用越慢、读配额见底」。要建哪些索引见 [数据库索引清单](docs/数据库索引清单.md)。
+
 ## 四、计分与积分规则
 
 ### 4.1 等级分（Elo）
@@ -120,6 +122,19 @@ cloudfunctions/data      唯一云函数：协议 2 请求信封 + 仓储 + 事�
 - 只有「我的」页对 `packageMember` 做 wifi 预下载；其余按需拉取——四个包全预载等于把分包的意义抵消掉。
 - 测试别写死 `pages/<名>/<名>`：用 `tests/helpers/page-registry.js` 的 `pageFileOf(name)` / `pagePathOf(name)` 从 `app.json` 查。分包页面**不在** `app.pages` 里，判断注册要用 `isRegistered(name)`。
 - 引用方向由 `tests/subpackage-boundaries.test.js` 守着，把 WXSS `@import`、WXML `import/include/wxs`、`usingComponents`、`require` 四种形式全查一遍。这类错误单元测试天然看不见，只有编译器会报。
+
+### 5.2 容量边界（云端约束）
+
+本地 mock 用内存仓储，**没有事务操作数上限、没有索引、没有读配额**——这三件事只在云端成立，所以都做成了显式约束，而不是等它上线后自发暴露。
+
+| 约束 | 现状 | 守在哪 |
+|---|---|---|
+| 单事务操作数 ≤ 100 | 锁名单 **8 次**（与人数无关）；建小组 ≤ 30 人（约 90 次）；跨校名额 ≤ 128 | `TX_OPERATION_BUDGET` 守卫 + `exchange-service.test.js` 的操作数用例 |
+| 整表读放大 | 已把 7 处「整表读 + 内存过滤」改成按 `eventId` 的条件查询 | `docs/数据库索引清单.md` 第四节 |
+| 索引缺失 | 需在控制台按清单建（本地无从验证） | `docs/数据库索引清单.md` |
+| 展示时区 | 固定东八区，与运行环境无关（云函数是 UTC） | `format.test.js` 的 `TZ=UTC` 子进程用例 |
+
+**跨校邀请赛为什么能撑住上万人**：锁名单产出的是一份**名册快照**（写在赛事文档上），不是逐条改报名记录。锁定之后抽签、录分、名次、签到全读这份名册，报名表退化为历史流水。所以单场 200 人报名时，事务操作数仍是 8 次。
 
 ## 六、目录
 

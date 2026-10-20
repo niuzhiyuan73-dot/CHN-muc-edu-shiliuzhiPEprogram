@@ -21,6 +21,9 @@ const SCHOOL_COLLECTIONS = ['schools', 'schoolAssociations', 'colleges', 'school
 // 公告 2026-10-18 起并入这一档——只有管理员能发、发的是全校信息，
 // 不能因为发布时当前协会不同而只在那家协会可见。
 const SCHOOL_ONLY = ['colleges', 'schoolMembers', 'schoolRoles', 'sportsMeetCollegeLeads', 'announcements'];
+// 带 eventId 的从属集合：按赛事取子集走 listByEvent（条件查询），不再整表读完
+// 再内存过滤。与内存仓储 school-memory-repo.js 的 EVENT_SCOPED 一一对应。
+const EVENT_SCOPED = ['matches', 'eventSignups', 'collegeEntries', 'ties', 'lineups'];
 const SCOPED_COLLECTIONS = [
   'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
   ...SCHOOL_ONLY, 'schoolAssociations', 'memberships',
@@ -101,6 +104,15 @@ function buildScoped(repo, io, inTx, options) {
       insert: (doc) => write(doc._id, doc, 'insert'),
       update: (id, patch) => write(id, patch, 'update'),
     };
+    // 按赛事取子集：条件**一起下推到查询**（范围字段 + eventId），而不是读全表
+    // 再在内存里过滤。内存仓储有同名方法（school-memory-repo.js 的 listByEvent），
+    // 两端方法面由 tests/for-scope-contract.test.js 逐字守住。
+    if (EVENT_SCOPED.includes(key)) {
+      const scopeFields = SCHOOL_ONLY.includes(key)
+        ? { schoolId: scope.schoolId }
+        : { schoolId: scope.schoolId, association: scope.association };
+      result[key].listByEvent = (eventId) => io.query(key, { ...scopeFields, eventId });
+    }
   }
   if (!inTx) result.transaction = (fn) => repo.transaction((tx) => fn(surfaceOf(tx, scope)));
   return result;

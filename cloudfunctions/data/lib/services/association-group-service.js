@@ -35,8 +35,16 @@ const {
 const ok = data => ({ ok: true, data });
 const refused = (message, extra = {}) => ({ ok: false, message, ...extra });
 
-/** 单次创建/批量添加的成员上限；更多成员分批添加，不静默截断 */
-const MAX_MEMBERS_PER_WRITE = 50;
+/**
+ * 单次创建/批量添加的成员上限。更多成员分批添加，不静默截断。
+ *
+ * 【为什么是 30，不是 50】（2026-10-21 云端容量对齐）
+ * 建小组 / 批量加人都在**一个事务**里跑，每名成员约 3 次操作（1 写 + 2 读）。
+ * 云开发事务总操作数上限约 100（见 cloud-repo.js 的 TX_OPERATION_BUDGET），
+ * 50 人就是约 150 次——超出上限，本地内存仓储无此约束所以一直没暴露。
+ * 30 人约 90 次，留出余量；要更多人就分几批加。
+ */
+const MAX_MEMBERS_PER_WRITE = 30;
 const MAX_NAME_LENGTH = 30;
 const MAX_DESCRIPTION_LENGTH = 300;
 const GROUP_LIST_LIMIT = 50;

@@ -827,6 +827,19 @@ function demoExchangeDocs(now, schoolNames) {
   events.push(drawnEvent);
   for (const schoolId of participantSchoolIds) invitations.push(invitationOf(drawnId, schoolId));
   for (const entrant of entrants) signups.push(signupOf(drawnEvent, entrant));
+  // 名册快照：已锁定（这里表现为「已抽签」）的赛事，参赛者只认这份名册。
+  // 演示数据不带上它，详情页的参赛者一栏会是空的。
+  drawnEvent.roster = signups
+    .filter(row => row.eventId === drawnId)
+    .map(row => ({
+      userId: row.userId,
+      representedSchoolId: row.representedSchoolId,
+      schoolId: row.representedSchoolId,
+      schoolMemberId: row.schoolMemberId,
+      nickName: row.nickName,
+      schoolName: row.schoolName,
+    }));
+  drawnEvent.checkIns = {};
 
   return { events, invitations, signups, matches };
 }
