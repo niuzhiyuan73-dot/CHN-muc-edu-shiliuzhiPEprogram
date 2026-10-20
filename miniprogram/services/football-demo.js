@@ -4,8 +4,9 @@ const { schoolKey, teamMemberKey } = require('../utils/school.js');
 const { normalizeFootballRules, DEFAULT_PRESET_KEY } = require('../utils/football-rules.js');
 const { TEAM_STATUS, TEAM_MEMBER_STATUS, TEAM_ENTRY_STATUS, TEAM_EVENT_STATUS } = require('../utils/constants.js');
 const { normalizeFootballReport, FIELDS } = require('../utils/football-report');
+const { demoIso } = require('./demo-clock.js');
 const SCOPE = Object.freeze({ schoolId: 'muc', association: 'fb' });
-const ISO = '2026-10-20T01:00:00.000Z';
+const ISO = demoIso(0);
 const idOf = index => `u${String(index + 1).padStart(2, '0')}`;
 const nameOf = userId => {
   const member = MEMBER_SEED[Number(userId.slice(1)) - 1];
@@ -41,7 +42,7 @@ function createFootballDemoContent() {
   const teamEvents = [{ _id: eventId, ...SCOPE, name: '自由组队足球杯（报名中）', sportFormat: 'football11',
     rules, format: 'single_elim', statPolicy: 'basic', bronzeMode: 'playoff', status: TEAM_EVENT_STATUS.REGISTRATION,
     entryMin: rules.eventRosterMin, entryMax: rules.eventRosterMax, lockedCount: 0,
-    startTime: '2026-11-01T01:00:00.000Z', location: '校足球场', revision: 1,
+    startTime: demoIso(12), location: '校足球场', revision: 1,
     createdBy: 'demo_muc_admin', createdAt: ISO, updatedAt: ISO, simulated: true }];
   const teamEventEntries = specs.map((spec, index) => ({
     _id: schoolKey('ten', eventId, spec.teamId), ...SCOPE, eventId, teamId: spec.teamId,
@@ -75,7 +76,8 @@ function createFootballDemoContent() {
   if (!normalized.ok) throw new Error(normalized.message);
   const placements = specs.map((spec, i) => ({ teamId: spec.teamId, teamName: spec.name, rank: i + 1, note: i ? '亚军' : '冠军' }));
   teamEvents.push({ ...teamEvents[0], _id: completedId, name: '足球循环赛（已完赛演示）', format: 'round_robin',
-    status: 'finished', lockedCount: 2, draw: { size: 2, roundCount: 1, slots: specs.map(s => s.teamId) },
+    status: 'finished', startTime: demoIso(-1), lockedCount: 2,
+    draw: { size: 2, roundCount: 1, slots: specs.map(s => s.teamId) },
     placements, finishedAt: ISO, revision: 5 });
   const matchId = `x_${completedId}_r1_group_0`;
   const teamMatches = [{ _id: matchId, ...SCOPE, eventId: completedId, sportFormat: 'football11', rules,
@@ -83,7 +85,7 @@ function createFootballDemoContent() {
     status: 'published', scoreA: 2, scoreB: 1, winner: 'A', forfeit: null, overtime: false,
     footballPublished: normalized.value, footballPublishedRevision: 3, footballDraft: null,
     revision: 3, recordedBy: 'demo_muc_admin', publishedBy: 'demo_muc_admin', publishedAt: ISO,
-    matchTime: '2026-10-19T06:00:00.000Z', durationMinutes: 110, location: '校足球场（演示）',
+    matchTime: demoIso(-1), durationMinutes: 110, location: '校足球场（演示）',
     createdAt: ISO, updatedAt: ISO, simulated: true }];
   // 有效学校成员在启用的协会中默认就是普通会员，不需要额外写角色行。
   // 管理者使用已有 demo_muc_admin 学校角色；不让 u01 等普通演示账号额外升权。
@@ -136,7 +138,7 @@ function createFootballDemoContent() {
   const springId = schoolKey('tev', SCOPE.schoolId, SCOPE.association, 'spring-league');
   extraEvents.push(extraEvent('spring-league', {
     name: '春季足球联赛（双回合）', format: 'round_robin', status: 'finished',
-    startTime: '2026-04-06T06:00:00.000Z', location: '校足球场',
+    startTime: demoIso(-197), location: '校足球场',
     draw: { size: 2, roundCount: 2, slots: specs.map(s => s.teamId) },
     placements: [{ teamId: specs[0].teamId, teamName: specs[0].name, rank: 1, note: '冠军' },
       { teamId: specs[1].teamId, teamName: specs[1].name, rank: 2, note: '亚军' }],
@@ -144,28 +146,28 @@ function createFootballDemoContent() {
   }));
   extraEntries.push(...lockedEntriesOf(springId));
   extraMatches.push(
-    playedMatch(springId, 1, 'group', 0, 2, 1, '2026-04-06T06:00:00.000Z'),
-    playedMatch(springId, 2, 'group', 0, 2, 1, '2026-04-13T06:00:00.000Z'),
+    playedMatch(springId, 1, 'group', 0, 2, 1, demoIso(-197)),
+    playedMatch(springId, 2, 'group', 0, 2, 1, demoIso(-190)),
   );
 
   // 2. 单败决赛（已结束）：与循环赛错开，演示「一局定胜负」的名次形状
   const cupId = schoolKey('tev', SCOPE.schoolId, SCOPE.association, 'autumn-cup');
   extraEvents.push(extraEvent('autumn-cup', {
     name: '秋季足球杯（决赛）', format: 'single_elim', status: 'finished',
-    startTime: '2026-09-21T06:00:00.000Z', location: '校足球场',
+    startTime: demoIso(-29), location: '校足球场',
     draw: { size: 2, roundCount: 1, slots: specs.map(s => s.teamId) },
     placements: [{ teamId: specs[1].teamId, teamName: specs[1].name, rank: 1, note: '冠军' },
       { teamId: specs[0].teamId, teamName: specs[0].name, rank: 2, note: '亚军' }],
     finishedAt: ISO, revision: 3,
   }));
   extraEntries.push(...lockedEntriesOf(cupId));
-  extraMatches.push(playedMatch(cupId, 1, 'main', 0, 1, 3, '2026-09-21T06:00:00.000Z'));
+  extraMatches.push(playedMatch(cupId, 1, 'main', 0, 1, 3, demoIso(-29)));
 
   // 3. 报名中：两支都还在等审核，与既有「报名中」那届的审核态错开
   const winterId = schoolKey('tev', SCOPE.schoolId, SCOPE.association, 'winter-friendly');
   extraEvents.push(extraEvent('winter-friendly', {
     name: '冬季足球友谊赛（报名中）', format: 'single_elim', status: 'registration',
-    startTime: '2026-12-05T06:00:00.000Z', location: '校足球场', lockedCount: 0, revision: 1,
+    startTime: demoIso(46), location: '校足球场', lockedCount: 0, revision: 1,
   }));
   extraEntries.push(...specs.map(spec => ({
     _id: schoolKey('ten', winterId, spec.teamId), ...SCOPE, eventId: winterId, teamId: spec.teamId,
@@ -178,7 +180,7 @@ function createFootballDemoContent() {
   const youthId = schoolKey('tev', SCOPE.schoolId, SCOPE.association, 'youth-invite');
   extraEvents.push(extraEvent('youth-invite', {
     name: '青年足球邀请赛（待抽签）', format: 'single_elim', status: 'locked',
-    startTime: '2026-11-14T06:00:00.000Z', location: '校足球场', revision: 2,
+    startTime: demoIso(25), location: '校足球场', revision: 2,
   }));
   extraEntries.push(...lockedEntriesOf(youthId));
 

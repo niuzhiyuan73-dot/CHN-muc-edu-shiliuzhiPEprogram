@@ -42,15 +42,59 @@ const {
   MEET_COLLECTIONS, meetSessionKey,
 } = require('../utils/meet-scope.js');
 const { COLLEGES } = require('../utils/constants.js');
+const { demoDay, demoYear } = require('./demo-clock.js');
 
 const SCHOOL = 'muc'; // 中央民族大学，与学校演示种子同一所学校
-const MEET_NAME = '第 59 届田径运动会（演示）';
-const DRAFT_NAME = '第 58 届田径运动会（演示草稿）';
+const DAY_MS = 24 * 60 * 60 * 1000;
+const pad2 = value => String(value).padStart(2, '0');
+
+/**
+ * 本届运动会的开赛日：演示锚点后 4 天。
+ *
+ * 【为什么不再写死 10-24（2026-10-20 修正）】
+ * 原先三届运动会钉在 2025 / 2026 / 2027 的 10-24，报名窗口写死
+ * 10-01～12-31。这种写死只在「录数据的那几天」成立：一旦当下时间越过窗口，
+ * 演示就自相矛盾——届还标着「报名中」，报名却会被窗口条件挡回去。
+ *
+ * 现在本届开赛排在锚点后 4 天（报名已开、尚未开赛），上一届 / 下一届按整年
+ * 平移。锚点本身见 demo-clock.js：同一天内恒定，跨天整体前移。
+ */
+const MEET_DAY_OFFSET = 4;
+/** 报名窗口：开赛前 23 天打开、之后 68 天截止（沿用原先 10-01～12-31 的跨度） */
+const WINDOW_OPEN_DAYS = -23;
+const WINDOW_CLOSE_DAYS = 68;
+
+/** 某一届的开赛日：月日沿用本届，只换年份 */
+function meetDayOf(year) {
+  const base = demoDay(MEET_DAY_OFFSET);
+  return new Date(year, base.getMonth(), base.getDate(), 9, 0, 0, 0);
+}
+
+/** 日期文本 YYYY-MM-DD（排期、报名窗口都按它拼） */
+function dateText(date) {
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+}
+
+/** 把某届的开赛日挪到指定的时:分，用于「创建届」的时间戳 */
+function meetAt(year, hour, minute) {
+  const day = meetDayOf(year);
+  return new Date(day.getFullYear(), day.getMonth(), day.getDate(), hour, minute, 0, 0);
+}
+
+/** 届次名：2026 年是第 59 届（1967 起算），年份一滚，届次跟着滚 */
+const ordinalOf = year => year - 1967;
+
+const CURRENT_YEAR = demoYear();
+const MEET_NAME = `第 ${ordinalOf(CURRENT_YEAR)} 届田径运动会（演示）`;
+const DRAFT_NAME = `第 ${ordinalOf(CURRENT_YEAR) - 1} 届田径运动会（演示草稿）`;
 // 两届的创建时间必须错开：meetId 由「学校 + 创建秒数」生成，同一秒建两届
 // 会拿到同一个编号（createSportsMeet 对同人同秒是幂等的，会把草稿当成主届）。
-const T0 = new Date('2026-10-24T08:00:00Z'); // 草稿届
-const T1 = new Date('2026-10-24T08:10:00Z'); // 主届（之后全程用它）
-const WINDOW = { openAt: '2026-10-01T00:00', closeAt: '2026-12-31T23:59' };
+const T0 = meetAt(CURRENT_YEAR - 1, 8, 0); // 草稿届
+const T1 = meetAt(CURRENT_YEAR, 8, 10); // 主届（之后全程用它）
+const WINDOW = {
+  openAt: `${dateText(new Date(meetDayOf(CURRENT_YEAR).getTime() + WINDOW_OPEN_DAYS * DAY_MS))}T00:00`,
+  closeAt: `${dateText(new Date(meetDayOf(CURRENT_YEAR).getTime() + WINDOW_CLOSE_DAYS * DAY_MS))}T23:59`,
+};
 
 const JUDGES = ['m_j1', 'm_j2', 'm_j3'];
 const JUDGE_NAMES = { m_j1: '张裁判', m_j2: '李裁判', m_j3: '王裁判' };
@@ -185,11 +229,12 @@ async function call(fn, payload, ctx, what) {
 async function runMeetDemo(options = {}) {
   const meetName = options.meetName || MEET_NAME;
   const draftName = options.draftName || DRAFT_NAME;
-  const year = options.year || 2026;
-  const date = options.date || '2026-10-24';
-  const endDate = options.endDate || '2026-10-25';
-  const draftDate = `${year - 1}-10-24`;
-  const draftEnd = `${year - 1}-10-25`;
+  const year = options.year || CURRENT_YEAR;
+  const date = options.date || dateText(meetDayOf(year));
+  const endDate = options.endDate || dateText(new Date(meetDayOf(year).getTime() + DAY_MS));
+  // 草稿届同理跟着年份走：原先写死 `${year - 1}-10-24`
+  const draftDate = options.draftDate || dateText(meetDayOf(year - 1));
+  const draftEnd = options.draftEnd || dateText(new Date(meetDayOf(year - 1).getTime() + DAY_MS));
   const t0 = options.t0 || T0;
   const t1 = options.t1 || T1;
   const window = options.window || WINDOW;
@@ -515,34 +560,48 @@ function scheduleFor(date) {
 }
 
 /**
- * 三届运动会（2026-10-20 扩容）。
+ * 三届运动会：上一届 / 本届 / 下一届（2026-10-20 扩容）。
  *
- * 原来只有一届，现在 2025 / 2026 / 2027 各一届：届数 ×3，
- * 秩序册、报名、成绩、名次也跟着 ×3。三届都由同一段真实服务链路跑出来，
- * 只是届名、年份与排期日期不同——手写第二份数据迟早与算法分叉。
+ * 原来只有一届，现在三届：届数 ×3，秩序册、报名、成绩、名次也跟着 ×3。
+ * 三届都由同一段真实服务链路跑出来，只是届名、年份与排期日期不同——
+ * 手写第二份数据迟早与算法分叉。
  *
  * 【为什么年份要错开而不是复制同一届】
  * meetId 由「学校 + 创建秒」生成，复制同一届只会拿到同一个编号；
  * 而成绩时间要与届的报名窗口对得上，所以年份、窗口、排期三者一起平移。
+ *
+ * 【为什么年份是算出来的】
+ * 原先写死 2025 / 2026 / 2027。这类常量只能保证「写下的那一年」是对的，
+ * 到了第二年，「本届」就变成历史上的一届、报名窗口也早已关闭。现在从
+ * 演示锚点推：本届 = 当年，另两届各差一年。
  */
-const MEET_EDITIONS = [
-  { year: 2025, meetName: '第 58 届田径运动会（演示）', draftName: '第 57 届田径运动会（演示草稿）' },
-  { year: 2026, meetName: MEET_NAME, draftName: DRAFT_NAME },
-  { year: 2027, meetName: '第 60 届田径运动会（演示）', draftName: '第 59 届田径运动会（演示草稿）' },
-];
+const MEET_EDITIONS = [CURRENT_YEAR - 1, CURRENT_YEAR, CURRENT_YEAR + 1];
 
-function editionOptions(edition) {
-  const year = edition.year;
+/**
+ * 某一届的完整运行参数。
+ *
+ * 日期全部由 `meetDayOf(year)` 派生：月日沿用本届开赛日，只换年份。
+ * 这样三届之间的间隔正好一年，排期、报名窗口、成绩时间不用各算一套。
+ *
+ * @param {number} year
+ * @returns {Object}
+ */
+function editionOptions(year) {
+  const day = meetDayOf(year);
+  const draft = meetDayOf(year - 1);
+  const windowOf = (offsetDays) => dateText(new Date(day.getTime() + offsetDays * DAY_MS));
   return {
-    meetName: edition.meetName,
-    draftName: edition.draftName,
+    meetName: `第 ${ordinalOf(year)} 届田径运动会（演示）`,
+    draftName: `第 ${ordinalOf(year) - 1} 届田径运动会（演示草稿）`,
     year,
-    date: `${year}-10-24`,
-    endDate: `${year}-10-25`,
-    t0: new Date(`${year}-10-24T08:00:00Z`),
-    t1: new Date(`${year}-10-24T08:10:00Z`),
-    window: { openAt: `${year}-10-01T00:00`, closeAt: `${year}-12-31T23:59` },
-    schedule: scheduleFor(`${year}-10-24`),
+    date: dateText(day),
+    endDate: dateText(new Date(day.getTime() + DAY_MS)),
+    draftDate: dateText(draft),
+    draftEnd: dateText(new Date(draft.getTime() + DAY_MS)),
+    t0: meetAt(year - 1, 8, 0),
+    t1: meetAt(year, 8, 10),
+    window: { openAt: `${windowOf(WINDOW_OPEN_DAYS)}T00:00`, closeAt: `${windowOf(WINDOW_CLOSE_DAYS)}T23:59` },
+    schedule: scheduleFor(dateText(day)),
   };
 }
 
@@ -557,15 +616,26 @@ function editionOptions(edition) {
  * 三届跑一遍要近一秒，而 mock 每次 reset 都会取一次（page 测试里 reset 几十次）。
  * 所以跑一遍后留一份快照，之后每次给**深拷贝**：既不多花时间，也不会让某个
  * 用例改坏的数据串到下一个用例。
+ *
+ * 【快照为什么存成 JSON 字符串，而不是存对象再 clone】
+ * 1. 不能只给引用：memRepos 的 set 存的就是这个对象，两个用例拿到同一份文档，
+ *    一个改比分会把另一个的断言改坏（页面用例确实会写）。
+ * 2. 不能用 structuredClone：它不在微信小程序支持的 API 列表里。iOS 逻辑层
+ *    跑的是系统 JavaScriptCore，要 iOS 15.4+ 才有这个方法；而 CLOUD_ENV_ID
+ *    默认留空、默认走 mock，每次 reset 都会走到这里——低版本真机会直接
+ *    `structuredClone is not defined`，演示数据装不上，整个 mock 面全废。
+ * 3. 记录里只有字符串 / 数字 / 布尔 / null 与普通数组（全部由服务链路产出后落
+ *    内存仓储，没有 Date、没有 undefined、没有函数），JSON 一趟与结构化拷贝
+ *    等价。序列化只做一次，之后每次只 parse，比每次重新 stringify 快一个量级。
  */
-let meetRecordsSnapshot = null;
+let meetRecordsSnapshotJson = null;
 
 async function createMeetDemoRecords() {
-  if (meetRecordsSnapshot) return structuredClone(meetRecordsSnapshot);
+  if (meetRecordsSnapshotJson) return JSON.parse(meetRecordsSnapshotJson);
   const records = {};
   const seen = new Map();
-  for (const edition of MEET_EDITIONS) {
-    const { repo } = await runMeetDemo(editionOptions(edition));
+  for (const year of MEET_EDITIONS) {
+    const { repo } = await runMeetDemo(editionOptions(year));
     for (const key of DUMP_KEYS) {
       records[key] = records[key] || [];
       const ids = seen.get(key) || new Set();
@@ -577,8 +647,8 @@ async function createMeetDemoRecords() {
       seen.set(key, ids);
     }
   }
-  meetRecordsSnapshot = structuredClone(records);
-  return structuredClone(meetRecordsSnapshot);
+  meetRecordsSnapshotJson = JSON.stringify(records);
+  return JSON.parse(meetRecordsSnapshotJson);
 }
 
 module.exports = { runMeetDemo, createMeetDemoRecords, SCHOOL, MEET_NAME };

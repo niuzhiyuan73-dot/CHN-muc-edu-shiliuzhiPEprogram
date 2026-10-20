@@ -30,13 +30,20 @@ const {
   TEAM_MATCH_STATUS, EVENT_FORMAT, EVENT_BRONZE_MODE, BRACKET_STAGE,
 } = require('../utils/constants.js');
 const { normalizeBasketballRules } = require('../utils/basketball-rules.js');
+const { demoIso, demoAt } = require('./demo-clock.js');
 
 const SCHOOL_ID = 'muc';
 const ASSOCIATION = 'bk';
 const SCOPE = { schoolId: SCHOOL_ID, association: ASSOCIATION };
-/** 与其它演示内容同一个时间锚点：每次 reset 得到完全一样的数据 */
-const NOW = new Date('2026-03-01T09:00:00Z');
-const ISO = NOW.toISOString();
+/**
+ * 与其它演示内容同一个时间锚点（见 demo-clock.js）。
+ *
+ * 【为什么不再写死 2026-03-01】
+ * 写死的锚点会让「报名中 / 进行中」的赛事在几个月后变成一堆开赛在过去的
+ * 记录——状态是存下来的字段，不会跟着时间走。改用会滚的锚点后，同一天内
+ * 反复 reset 仍然完全一致，跨天则整体前移，演示数据不会烂掉。
+ */
+const ISO = demoIso(0);
 
 /** 旧演示账号 u01–u24 的昵称，名单快照里要写当时的名字 */
 const NICK = new Map(MEMBER_SEED.map((item, index) => [`u${String(index + 1).padStart(2, '0')}`, item.nickName]));
@@ -172,7 +179,9 @@ function finishedEvent() {
     status: TEAM_EVENT_STATUS.FINISHED,
     entryMin: rules.rosterMin,
     entryMax: rules.rosterMax,
-    startTime: '2026-03-01T09:00:00.000Z',
+    // 已结束的一届：开赛落在 30 天前，finishedAt 用锚点（今天 09:00），
+    // 「先开赛、后结束」的顺序才成立
+    startTime: demoIso(-30),
     location: '体育馆主馆',
     lockedCount: 4,
     finishedAt: ISO,
@@ -211,7 +220,7 @@ function finishedEvent() {
       forfeit: null,
       winner,
       status: TEAM_MATCH_STATUS.PUBLISHED,
-      matchTime: '2026-03-01T09:00:00.000Z',
+      matchTime: demoIso(-30),
       location: '体育馆主馆',
       recordedBy: 'demo_muc_admin',
       recordedAt: ISO,
@@ -316,7 +325,8 @@ function registrationEvent() {
     status: TEAM_EVENT_STATUS.REGISTRATION,
     entryMin: rules.rosterMin,
     entryMax: rules.rosterMax,
-    startTime: '2026-04-10T09:00:00.000Z',
+    // 报名中的一届：开赛排在 12 天后，报名期落在「今天往前」这一段的语义才对
+    startTime: demoIso(12),
     location: '东体育馆',
     lockedCount: 0,
     revision: 1,
@@ -371,7 +381,7 @@ function scaledTeamEvents() {
     name: '院际篮球循环赛',
     format: EVENT_FORMAT.ROUND_ROBIN,
     status: TEAM_EVENT_STATUS.FINISHED,
-    startTime: '2025-11-08T09:00:00.000Z',
+    startTime: demoIso(-120),
     location: '体育馆副馆',
     lockedCount: 4,
     finishedAt: ISO,
@@ -401,7 +411,7 @@ function scaledTeamEvents() {
     forfeit: null,
     winner: scoreA > scoreB ? 'A' : 'B',
     status: TEAM_MATCH_STATUS.PUBLISHED,
-    matchTime: `2025-11-${String(8 + Math.floor(index / 2)).padStart(2, '0')}T09:00:00.000Z`,
+    matchTime: demoAt(-120 + Math.floor(index / 2), 9),
     location: '体育馆副馆',
     recordedBy: 'demo_muc_admin',
     recordedAt: ISO,
@@ -426,7 +436,7 @@ function scaledTeamEvents() {
     name: '冬季篮球邀请赛',
     format: EVENT_FORMAT.SINGLE_ELIM,
     status: TEAM_EVENT_STATUS.RUNNING,
-    startTime: '2026-02-14T09:00:00.000Z',
+    startTime: demoIso(-6),
     location: '体育馆主馆',
     lockedCount: 4,
     draw: { size: 4, roundCount: 2, slots: [teamId(heat), teamId(flash), teamId(rock), teamId(wind)] },
@@ -451,7 +461,7 @@ function scaledTeamEvents() {
     forfeit: null,
     winner: 'A',
     status: TEAM_MATCH_STATUS.PUBLISHED,
-    matchTime: `2026-02-14T${index === 0 ? '09' : '10'}:30:00.000Z`,
+    matchTime: demoAt(-6, index === 0 ? 9 : 10, 30),
     location: '体育馆主馆',
     recordedBy: 'demo_muc_admin',
     recordedAt: ISO,
@@ -468,7 +478,7 @@ function scaledTeamEvents() {
     name: '秋季篮球联赛（报名中）',
     format: EVENT_FORMAT.SINGLE_ELIM,
     status: TEAM_EVENT_STATUS.REGISTRATION,
-    startTime: '2026-09-12T09:00:00.000Z',
+    startTime: demoIso(25),
     location: '东体育馆',
   });
   const autumnEntries = [
@@ -481,7 +491,7 @@ function scaledTeamEvents() {
     name: '春季篮球杯（待开赛）',
     format: EVENT_FORMAT.SINGLE_ELIM,
     status: TEAM_EVENT_STATUS.SCHEDULED,
-    startTime: '2026-04-18T09:00:00.000Z',
+    startTime: demoIso(160),
     location: '体育馆主馆',
     lockedCount: 4,
     draw: { size: 4, roundCount: 2, slots: [teamId(flash), teamId(heat), teamId(wind), teamId(rock)] },

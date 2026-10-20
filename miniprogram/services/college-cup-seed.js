@@ -37,10 +37,13 @@ const {
 } = require('../utils/constants.js');
 const { normalizeBasketballRules } = require('../utils/basketball-rules.js');
 const { normalizeFootballRules, DEFAULT_PRESET_KEY } = require('../utils/football-rules.js');
+// 届次的年份与「进行中」那一届的时间线都跟着锚点滚，见 demo-clock.js
+const { demoIso, demoAt, demoYear } = require('./demo-clock.js');
 
 const SCHOOL_ID = 'muc';
 const ADMIN_ID = 'demo_muc_admin';
-const ISO = '2026-03-01T09:00:00.000Z';
+/** 审计类时间戳统一取锚点（今天 09:00），不参与「赛事是否过期」的判断 */
+const ISO = demoIso(0);
 
 /** 会员按学院分桶：学院赛名单只能写本学院的人 */
 const MEMBERS_BY_COLLEGE = (() => {
@@ -103,6 +106,42 @@ function bracketOf(colleges, ongoingRound = 0) {
   return ongoingRound > 0 ? rounds.filter(row => row.round <= ongoingRound) : rounds;
 }
 
+/**
+ * 一届杯赛的时间线。
+ * ============================================================
+ * 【历史届与进行中届为什么要分开算】
+ * 历史届已经打完，开赛钉在当年 5-18 就行——它永远在过去，不会与「现在」冲突。
+ * 进行中的一届却不能钉日期：原先三年全写死（2024 / 2025 / 2026），2026 那届
+ * 标着「进行中」却停在 5 月 18 日。今天（2026-10-20）打开就是「一场进行了
+ * 五个月的学院赛」，界面上自相矛盾，而且再过几个月只会更离谱。
+ *
+ * 所以进行中的一届相对演示锚点排：开赛落在 6 天前（半决赛打完一半，正打到
+ * 一半），报名与抽签在开赛前 20 天。锚点本身见 demo-clock.js，同一天内恒定。
+ *
+ * @param {number} year 届次（同时进标题）
+ * @param {boolean} ongoing 是否进行中
+ * @returns {{startTime:string, publishTime:string, startedAt:string,
+ *   finishedAt:(string|undefined), matchTime:(slot:number)=>string}}
+ */
+function timelineOf(year, ongoing) {
+  if (!ongoing) {
+    return {
+      startTime: `${year}-05-18T09:00:00.000Z`,
+      publishTime: `${year}-05-01T09:00:00.000Z`,
+      startedAt: `${year}-05-18T09:00:00.000Z`,
+      finishedAt: `${year}-05-20T18:00:00.000Z`,
+      matchTime: slot => `${year}-05-18T09:${String(slot * 20).padStart(2, '0')}:00.000Z`,
+    };
+  }
+  return {
+    startTime: demoAt(-6, 9),
+    publishTime: demoIso(-20),
+    startedAt: demoAt(-6, 9),
+    finishedAt: undefined,
+    matchTime: slot => demoAt(-6, 9, slot * 20),
+  };
+}
+
 /** 一场小项：赢家按「签位靠前的一方」定，比分固定 11:5（网球 6:3） */
 function legOf(discipline, tennis, aWins = true) {
   return {
@@ -132,6 +171,7 @@ function racketCup({ association, sportName, year, colleges, disciplines, ongoin
   const eventId = collegeEventKey(`cup-${association}-${year}`, scope);
   const rounds = bracketOf(colleges, ongoing ? 2 : 0);
   const finished = !ongoing;
+  const tl = timelineOf(year, ongoing);
 
   const entries = colleges.map((college) => {
     const row = collegeRow(college);
@@ -262,8 +302,8 @@ function racketCup({ association, sportName, year, colleges, disciplines, ongoin
     seedColleges: colleges.slice(),
     results: placements,
     location: association === 'tn' ? '网球场' : '学校体育馆',
-    startTime: `${year}-05-18T09:00:00.000Z`,
-    publishTime: `${year}-05-01T09:00:00.000Z`,
+    startTime: tl.startTime,
+    publishTime: tl.publishTime,
     courtCount: 4,
     pinned: false,
     publisherId: ADMIN_ID,
@@ -271,8 +311,8 @@ function racketCup({ association, sportName, year, colleges, disciplines, ongoin
     draw: { size: colleges.length, roundCount: bracketOf(colleges).length, slots: colleges.slice(), byes: [], seeds: [] },
     fingerprint: JSON.stringify([`${year}`, association, colleges.length]),
     revision: finished ? 4 : 3,
-    startedAt: `${year}-05-18T09:00:00.000Z`,
-    ...(finished ? { finishedAt: `${year}-05-20T18:00:00.000Z` } : {}),
+    startedAt: tl.startedAt,
+    ...(finished ? { finishedAt: tl.finishedAt } : {}),
     updatedAt: ISO,
   };
 
@@ -286,6 +326,7 @@ function teamCup({ association, sportName, year, ongoing = false }) {
   const colleges = FOUR_COLLEGES.slice();
   const football = association === 'fb';
   const rules = football ? normalizeFootballRules({ presetKey: DEFAULT_PRESET_KEY }) : normalizeBasketballRules({ presetKey: 'fiba-4x10' });
+  const tl = timelineOf(year, ongoing);
 
   // 院队：系统预置的学院代表队。演示里每队 5 人（24 名种子会员够 4 队），
   // 真实规则的人数下限由赛事 rules 决定，这里只求界面读得出「几院几人」。
@@ -381,7 +422,7 @@ function teamCup({ association, sportName, year, ongoing = false }) {
       recordedBy: ADMIN_ID,
       publishedBy: ADMIN_ID,
       publishedAt: ISO,
-      matchTime: `${year}-05-18T09:${String(slot * 20).padStart(2, '0')}:00.000Z`,
+      matchTime: tl.matchTime(slot),
       location: '学校体育馆',
       createdAt: ISO,
       updatedAt: ISO,
@@ -415,7 +456,7 @@ function teamCup({ association, sportName, year, ongoing = false }) {
     cupMode: CUP_MODE.COLLEGE,
     entryMin: rules.eventRosterMin || rules.rosterMin,
     entryMax: rules.eventRosterMax || rules.rosterMax,
-    startTime: `${year}-05-18T09:00:00.000Z`,
+    startTime: tl.startTime,
     location: '学校体育馆',
     lockedCount: colleges.length,
     draw: { size: colleges.length, roundCount: 2, slots: colleges.map(college => teamIdFor(college)) },
@@ -424,7 +465,7 @@ function teamCup({ association, sportName, year, ongoing = false }) {
     createdBy: ADMIN_ID,
     createdAt: ISO,
     updatedAt: ISO,
-    ...(ongoing ? {} : { finishedAt: `${year}-05-20T18:00:00.000Z` }),
+    ...(ongoing ? {} : { finishedAt: tl.finishedAt }),
   };
 
   return {
@@ -452,17 +493,17 @@ function createCollegeCupContent() {
   for (const project of racketProjects) {
     const cups = [
       racketCup({
-        association: project.association, sportName: project.sportName, year: 2024,
+        association: project.association, sportName: project.sportName, year: demoYear() - 2,
         colleges: EIGHT_COLLEGES, disciplines: [LEG_DISCIPLINE.MS],
       }),
       racketCup({
-        association: project.association, sportName: project.sportName, year: 2025,
+        association: project.association, sportName: project.sportName, year: demoYear() - 1,
         colleges: FOUR_COLLEGES, disciplines: [LEG_DISCIPLINE.MS, LEG_DISCIPLINE.WS],
       }),
     ];
     if (project.ongoing) {
       cups.push(racketCup({
-        association: project.association, sportName: project.sportName, year: 2026,
+        association: project.association, sportName: project.sportName, year: demoYear(),
         colleges: EIGHT_COLLEGES, disciplines: [LEG_DISCIPLINE.MS], ongoing: true,
       }));
     }
@@ -479,12 +520,12 @@ function createCollegeCupContent() {
     { association: 'fb', sportName: '足球', ongoing: false },
   ]) {
     const cups = [
-      teamCup({ association: project.association, sportName: project.sportName, year: 2024 }),
-      teamCup({ association: project.association, sportName: project.sportName, year: 2025 }),
+      teamCup({ association: project.association, sportName: project.sportName, year: demoYear() - 2 }),
+      teamCup({ association: project.association, sportName: project.sportName, year: demoYear() - 1 }),
     ];
     if (project.ongoing) {
       cups.push(teamCup({
-        association: project.association, sportName: project.sportName, year: 2026, ongoing: true,
+        association: project.association, sportName: project.sportName, year: demoYear(), ongoing: true,
       }));
     }
     for (const cup of cups) {

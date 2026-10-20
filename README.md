@@ -3,7 +3,7 @@
 一个原生微信小程序（WXML / WXSS / JS，零框架），把校内**多个体育协会**的等级分、赛事、训练与校级活动装进同一套系统。
 
 - 当前进度：篮球五人制与实时计分已落地；足球 F0—F3 已完成，支持赛后报告与成绩；足球/篮球已有协会内“我的球队”累计统计页签
-- 自检：`npm test` → **2808 项用例通过 / 0 失败**（152 个测试文件 / 135.3 秒）
+- 自检：`npm test` → **2847 项用例通过 / 0 失败 / 0 超时**（155 个测试文件 / 约 294 秒）
 - 云端共享库：`npm run check:cloud-sync` → 85 个文件一致
 - 数据源：默认**本地模拟**（`miniprogram/config.js` 的 `CLOUD_ENV_ID` 为空），填入环境 ID 即切云端，页面代码一行不改
 
@@ -85,13 +85,13 @@
 ## 五、技术架构
 
 ```
-pages / components        界面（39 个页面 + 面板组件）
+pages / components        界面（42 个页面 + 面板组件）
         │
 services                 视图模型 + 数据源门面（MOCK / CLOUD 同一套接口）
         │
 utils                    纯函数：计分、抽签、分组、榜单、积分、权限
         │
-        ├── tools/sync-cloud-lib.js ──逐字节镜像──▶ cloudfunctions/data/lib/（73 文件）
+        ├── tools/sync-cloud-lib.js ──逐字节镜像──▶ cloudfunctions/data/lib/（85 文件）
         │
 cloudfunctions/data      唯一云函数：协议 2 请求信封 + 仓储 + 事务
         └── src/core      身份上下文、路由、四个领域的 action handler（共 187 个）
@@ -104,7 +104,7 @@ cloudfunctions/data      唯一云函数：协议 2 请求信封 + 仓储 + 事�
 ## 六、目录
 
 ```
-miniprogram/            小程序源码（app.json 35 页）
+miniprogram/            小程序源码（app.json 42 页）
   components/           面板组件：赛事、榜单、比赛、协会空间
   pages/                页面
   services/             视图模型与数据源
@@ -179,4 +179,5 @@ python tools/md-to-docx.py docs/交接说明.md 交接说明.docx
 - **真实云端验收未完成**：事务并发、真机表现、历史数据迁移都需要在云环境操作，本地只覆盖到内存仓储与页面装配。
 - **`rankings` 集合已删除**：等级分改为落库结算后不再读写它，常量、仓储适配与内存实现一并清掉。
 - **旧协议 1 已完全下线**：不带 `protocolVersion: 2` 的请求一律返回「请升级客户端」。
+- **演示数据的时间锚点会滚动**：`services/demo-clock.js` 取「当天 09:00」，同一天内多次 reset 结果完全一致，跨天则整体前移——演示里「报名中」的赛事因此始终排在将来。`tests/demo-seed-freshness.test.js` 守着这条不变量（状态与开赛时间必须自洽）。
 - **演示数据仅本地有效**：`school-mock` 的数据在内存里，重开小程序即回到种子状态。

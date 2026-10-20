@@ -25,6 +25,8 @@ const { buildSchoolApplication } = require('./school-member.js');
 // 演示邀请赛的签表由**赛制引擎现算**（两个都是纯函数），与 drawExchangeEvent
 // 走同一段代码；手写签表迟早与引擎分叉，演示数据一旦分叉就会误导人。
 const { planExchangeDraw, planExchangeMatches } = require('./exchange-plan.js');
+// 演示数据的时间锚点：四个种子文件共用同一份，见 demo-clock.js
+const { DAY_MS, demoToday } = require('./demo-clock.js');
 
 const iso = value => new Date(value).toISOString();
 
@@ -139,8 +141,26 @@ function createSchoolDemoSeed() {
  * 用例才能对着确切条数与名次断言。
  * ============================================================ */
 
-/** 演示内容的时间锚点（固定值，保证可复现）。 */
-const DEMO_CONTENT_NOW = new Date('2026-03-01T09:00:00Z');
+/**
+ * 演示内容的时间锚点：**当天 09:00（本地时区）**。
+ *
+ * 【为什么不再钉死一个日期（2026-10-20 修正）】
+ * 原来这里是 `new Date('2026-03-01T09:00:00Z')`——一个写死的常量。问题在于
+ * 赛事的**状态是存下来的字段**（有 results 即「已结束」，否则「报名中」），
+ * 不是按当前时间算的；而首页「近期赛事」按开赛时间升序展示。锚点一旦过去，
+ * 用户看到的就是一批「报名中」却开赛在半年前的赛事，逻辑上自相矛盾。
+ * 实测 2026-10-20 时，种子里 24 场赛事没有一场开赛时间晚于当天。
+ *
+ * 锚点本身收敛在 `services/demo-clock.js`，四个种子文件共用同一份，
+ * 免得像从前那样各写各的日期、各过各的期。这里只是转出一层，
+ * 让本文件里的调用点不必改口径。
+ *
+ * 【需要绝对固定时间的用例】
+ * 自己把 now 传进来（`createSchoolDemoContent({ now })`），不要依赖这个锚点。
+ *
+ * @returns {Date}
+ */
+const demoContentNow = demoToday;
 /** 民大匹克球协会：既有用例（首页 / 榜单 / 公告）默认落在这里。 */
 const DEMO_CONTENT_SCOPE = Object.freeze({ schoolId: 'muc', association: 'pkb' });
 /** 发布者取自种子用户里已存在的账号，台账里「谁发的」才追溯得到。 */
@@ -151,8 +171,6 @@ const CONTENT_PUBLISHERS = Object.freeze({
 
 /** 规格里出现的学校（去重）：公告按学校各造一份，不能按协会重复造。 */
 const distinctSchoolsOf = (specs) => [...new Set(specs.map((spec) => spec.schoolId))];
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** 取构建结果里的记录；表单写错时把第一个错误抛出来，别把半截记录塞进种子。 */
 function builtRecordOf(built, what) {
@@ -211,14 +229,14 @@ const RACKET_SCALE_EVENTS = Object.freeze({
   pkb: Object.freeze([
     { title: '民大匹克球秋季联赛', startOffsetDays: -63, quota: 24, finished: true },
     { title: '民大匹克球院系对抗赛', startOffsetDays: -42, quota: 32, finished: true },
-    { title: '民大匹克球混双公开赛', startOffsetDays: -21, quota: 24 },
+    { title: '民大匹克球混双公开赛', startOffsetDays: 19, quota: 24 },
     { title: '民大匹克球新生挑战赛', startOffsetDays: 5, quota: 16 },
     { title: '民大匹克球夜场积分赛', startOffsetDays: 12, quota: 16 },
     { title: '民大匹克球年终总决赛', startOffsetDays: 26, quota: 32 },
   ]),
   tt: Object.freeze([
     { title: '民大乒乓球院系团体赛', startOffsetDays: -49, quota: 16, finished: true },
-    { title: '民大乒乓球双打邀请赛', startOffsetDays: -28, quota: 24 },
+    { title: '民大乒乓球双打邀请赛', startOffsetDays: 15, quota: 24 },
     { title: '民大乒乓球新生杯', startOffsetDays: 8, quota: 16 },
     { title: '民大乒乓球年终总决赛', startOffsetDays: 21, quota: 32 },
   ]),
@@ -848,13 +866,16 @@ function demoTransferApplication(now) {
  * 半截演示（名次里全是编号）。school-mock.reset() 按 content 的键名整批挂表，
  * 新增 exchangeEvents / schoolMembers 等键不需要它改一行代码。
  *
+ * @param {Object} [options]
+ * @param {Date|string|number} [options.now] 时间锚点，缺省取「当天 09:00」
+ *   （见 demoContentNow）。需要绝对固定日期的用例显式传它。
  * @returns {{announcements: Array<Object>, events: Array<Object>, matches: Array<Object>,
  *   eventSignups: Array<Object>, exchangeEvents: Array<Object>,
  *   exchangeInvitations: Array<Object>, exchangeSignups: Array<Object>,
  *   exchangeMatches: Array<Object>, schoolMembers: Array<Object>}}
  */
-function createSchoolDemoContent() {
-  const now = DEMO_CONTENT_NOW;
+function createSchoolDemoContent(options = {}) {
+  const now = options.now ? new Date(options.now) : demoContentNow();
   const content = { announcements: [], events: [], matches: [], eventSignups: [] };
   // 结算状态与评级文档在一次内容构建内累积：同范围的比赛共享一条结算链
   // （settlementSeq 连续），跨范围各持一份；评级文档随 content.memberRatings
