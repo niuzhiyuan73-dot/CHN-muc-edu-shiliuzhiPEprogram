@@ -289,7 +289,11 @@ test('列表 —— 待审的队只给管理者看；我的球队筛选按成员
   await call(repo, 'applyToJoinTeam', { teamId: activeId }, { actor: 'u_m2' });
   await call(repo, 'reviewTeamMember', { teamId: activeId, userId: 'u_m2', approve: true });
   const mine = await call(repo, 'listTeams', { mine: true }, { actor: 'u_m2' });
-  assert.deepEqual(mine.teams.map(team => team.name), ['热浪队']);
+  // 本院院队自动出现在「我的球队」里，排在自由球队之前（不必先被挑进队）：
+  // 这是院队详情唯一的页面入口，缺了它负责人就没法挑人（2026-10-20 修复）。
+  assert.equal(mine.teams[0].isCollegeTeam, true);
+  assert.equal(mine.teams[0].isMine, true);
+  assert.deepEqual(mine.teams.slice(1).map(team => team.name), ['热浪队']);
 });
 
 test('范围 —— 个人赛协会调球队接口直接拒绝', async () => {

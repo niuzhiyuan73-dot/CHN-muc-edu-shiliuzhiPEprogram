@@ -75,6 +75,10 @@ async function buildDirectory(ctx) {
     memberIds: active.map(item => item.userId),
     activeMemberIds: activeUsers.map(item => item.userId),
     members: active.map(item => userById.get(item.userId)).filter(Boolean),
+    // 学院目录：院队按它派生（一个学院一支，编号确定性），读路径不必等 teams 集合里有记录
+    colleges: colleges
+      .map(item => ({ collegeId: item.collegeId, name: item.name }))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh-Hans-CN')),
     actorCollege: nameByCollegeId.get(collegeIdOf.get(ctx.actorId)) || '',
     collegeIdOf: userId => collegeIdOf.get(userId) || '',
     collegeNameById: collegeId => nameByCollegeId.get(collegeId) || '',

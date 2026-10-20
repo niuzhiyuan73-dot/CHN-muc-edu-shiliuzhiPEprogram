@@ -99,6 +99,62 @@ function collegeTeamNameOf(dir, collegeId) {
   return name ? `${name}代表队` : '';
 }
 
+/**
+ * 由球队编号反查学院编号。
+ *
+ * 院队编号是 `teamKey` 派生的指纹，不可逆；但学院目录只有二十来条，
+ * 逐条算一遍比在库里另存一张映射表更省事，也不会出现「映射表过期」。
+ */
+function collegeIdOfTeamId(dir, teamId, ctx) {
+  const target = String(teamId || '');
+  if (!target) return '';
+  const hit = (dir.colleges || []).find(row => collegeTeamKey(row.collegeId, ctx) === target);
+  return hit ? hit.collegeId : '';
+}
+
+/**
+ * 派生一条院队（不落库）。
+ *
+ * 「系统预置」的语义是「不需要任何人创建，它就该在」。所以读路径（我的球队、
+ * 报名候选）用派生对象，写路径（挑人、报名）才在 `ensureCollegeTeam` 里落库。
+ * 这样新库里一条记录都没有时，负责人也不会看不到自己的院队。
+ */
+function virtualCollegeTeam(ctx, dir, collegeId, memberCount = 0) {
+  const name = collegeTeamNameOf(dir, collegeId);
+  if (!name) return null;
+  const strategy = teamSportStrategyFor(ctx.association);
+  return {
+    _id: collegeTeamKey(collegeId, ctx),
+    schoolId: ctx.schoolId,
+    association: ctx.association,
+    sport: strategy && strategy.sportFormat === 'football11' ? 'football' : 'basketball',
+    name,
+    college: dir.collegeNameById(collegeId),
+    collegeId,
+    type: TEAM_TYPE.COLLEGE,
+    status: TEAM_STATUS.ACTIVE,
+    // 院队不设队长，管理权挂在学院角色上
+    captainId: '',
+    memberCount,
+    createdAt: null,
+  };
+}
+
+/**
+ * 按球队编号取院队，缺失时就地补建。
+ *
+ * 给「报名」用：新库里院队还没落库时，报名不能因为「球队不存在」被挡回去——
+ * 编号本身就是「它该存在」的凭证。学院编号从目录反查，补建仍是幂等的那一条。
+ */
+async function resolveCollegeTeam(teamId, ctx) {
+  const dir = await buildDirectory(ctx);
+  const collegeId = collegeIdOfTeamId(dir, teamId, ctx);
+  if (!collegeId) return { ok: false, message: '学院代表队不存在' };
+  const team = await ensureCollegeTeam(ctx, collegeId, dir);
+  if (!team) return { ok: false, message: '学院代表队初始化失败，请稍后重试' };
+  return { ok: true, team, dir };
+}
+
 /** 队长或协会管理者；院队没有队长，管理权看学院角色 */
 function canManageTeam(ctx, team, actorId) {
   if (!team) return false;
@@ -220,6 +276,32 @@ async function listTeams(payload = {}, ctx) {
     .sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh-Hans-CN'))
     .slice(0, TEAM_LIST_LIMIT);
 
+  // 我的球队：本院用户自动含本院院队（无需加入），排在自由球队之前。
+  // 组队列表本身仍不列院队——那会把自由组队淹掉；但「我的球队」里少了院队，
+  // 院队详情就没有入口，负责人挑人只能靠报名面板兜着（2026-10-20 修复）。
+  if (mineOnly) {
+    const myCollegeId = dir.collegeIdOf(ctx.actorId);
+    if (myCollegeId) {
+      const teamId = collegeTeamKey(myCollegeId, ctx);
+      const count = members
+        .filter(row => row.teamId === teamId && row.status === TEAM_MEMBER_STATUS.ACTIVE).length;
+      const collegeTeam = virtualCollegeTeam(ctx, dir, myCollegeId, count);
+      const hitKeyword = Boolean(collegeTeam)
+        && (!keyword || String(collegeTeam.name).toLowerCase().includes(keyword));
+      if (collegeTeam && hitKeyword) {
+        rows.unshift({
+          ...teamView(collegeTeam, {
+            dir, actorId: ctx.actorId, manage: canManageTeam(ctx, collegeTeam, ctx.actorId),
+            membership: null, memberCount: count,
+          }),
+          // 本院即代表本院出战，不要求先被挑进队：我的球队里它恒算「我的」
+          isMine: true,
+          mineLabel: '本院',
+        });
+      }
+    }
+  }
+
   return ok({ ok: true, teams: rows, canManage: manage, message: '' });
 }
 
@@ -232,10 +314,16 @@ async function getTeam(payload = {}, ctx) {
   if (!canReadAssociationSpace(ctx)) return ok(refused('账号或本校在册会员身份已失效，无权访问本协会'));
   if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
 
-  const team = await loadTeam(ctx.repo.forScope(ctx), ctx, payload.teamId);
+  const dir = await buildDirectory(ctx);
+  let team = await loadTeam(ctx.repo.forScope(ctx), ctx, payload.teamId);
+  // 院队是惰性预置的：编号能对上学院目录就先补建再读。
+  // 少了这一步，「我的球队」里点进院队会先被 getTeam 报「球队不存在」。
+  if (!team) {
+    const ensured = await resolveCollegeTeam(payload.teamId, ctx);
+    if (ensured.ok) team = ensured.team;
+  }
   if (!team) return ok(refused('球队不存在，或不在本协会'));
 
-  const dir = await buildDirectory(ctx);
   const manage = canManageTeam(ctx, team, ctx.actorId);
   const rows = (await ctx.repo.forScope(ctx).teamMembers.list()).filter(row => row.teamId === team._id);
   const membership = rows.find(row => row.userId === ctx.actorId);
@@ -622,6 +710,8 @@ async function getCollegeTeam(payload = {}, ctx) {
   if (!collegeId && payload.teamId) {
     const found = await ctx.repo.forScope(ctx).teams.getById(String(payload.teamId));
     if (inScope(found, ctx) && isCollegeTeam(found)) collegeId = found.collegeId || '';
+    // 还没落库的院队：编号由学院目录派生，反查一次照样能进（补建交给下面的 ensure）
+    if (!collegeId) collegeId = collegeIdOfTeamId(dir, payload.teamId, ctx);
   }
   if (!collegeId) collegeId = mine;
   if (!collegeId) return ok(refused('你还没有归属学院，暂时没有学院代表队'));
@@ -858,4 +948,6 @@ module.exports = {
   addCollegeTeamMembers,
   removeCollegeTeamMember,
   collegeMemberCandidates,
+  // 给「报名」用：按编号取院队，缺失时就地补建（见 resolveCollegeTeam）
+  resolveCollegeTeam,
 };

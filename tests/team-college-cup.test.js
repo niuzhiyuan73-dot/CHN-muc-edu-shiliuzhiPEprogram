@@ -41,6 +41,8 @@ function fixture() {
   seed.memberships.find(row => row.userId === 'staff_c01').role = 'staff';
   seed.memberships.find(row => row.userId === 'staff_c02').role = 'staff';
   for (let i = 1; i <= 5; i += 1) add(`c02_p${i}`, 'c02');
+  // c03：有会员、但从来没有学院负责人（校管代报的场景）
+  for (let i = 1; i <= 5; i += 1) add(`c03_p${i}`, 'c03');
   add('c01_p1', 'c01');
   add('u_leader', 'c01');
   seed.memberships.find(row => row.userId === 'u_leader').role = 'leader';
@@ -285,10 +287,107 @@ test('学院赛：关键词按赛事名与场地过滤，不影响普通赛事�
   assert.equal(status.status, TEAM_EVENT_STATUS.REGISTRATION);
 });
 
+/* ------------------------------------------------------------ 惰性预置的补建 */
+
+test('学院赛：全新库里院队还没落过库，负责人照样看得到、报得上名', async () => {
+  const repo = fixture();
+  const eventId = await collegeCup(repo);
+  assert.equal((await repo.teams.list()).length, 0, '前置：建赛不预置院队');
+
+  // 报名候选按学院目录派生，不依赖 teams 集合里有没有这条记录
+  const detail = await call(repo, 'getTeamEvent', { eventId }, 'staff_c02');
+  assert.equal(detail.submitCandidates.length, 1);
+  assert.equal(detail.submitCandidates[0].teamId, collegeTeamId('c02'));
+  assert.match(detail.submitCandidates[0].name, /代表队$/);
+  assert.equal(detail.submitCandidates[0].actionText, '为本学院报名');
+  assert.equal(detail.entryPanel.mode, 'college_staff');
+  assert.match(detail.entryPanel.hint, /为本学院报名/);
+
+  // 直接调报名：不再被「球队不存在或未通过审核」挡回去，报名时就地补建院队
+  const submitted = await call(repo, 'submitTeamEntry', {
+    eventId, teamId: collegeTeamId('c02'),
+    roster: ['c02_p1', 'c02_p2', 'c02_p3', 'c02_p4', 'c02_p5'],
+  }, 'staff_c02');
+  assert.equal(submitted.ok, true, submitted.message);
+
+  const created = (await repo.teams.list()).filter(row => row.collegeId === 'c02');
+  assert.equal(created.length, 1, '补建是幂等的，只出一条');
+  assert.equal(created[0].type, TEAM_TYPE.COLLEGE);
+  assert.equal(created[0]._id, collegeTeamId('c02'));
+  assert.equal((await repo.teamEventEntries.list()).filter(row => row.eventId === eventId).length, 1);
+});
+
+test('学院赛：没有负责人的学院，校管也能代报名；普通会员只看到说明', async () => {
+  const repo = fixture();
+  const eventId = await collegeCup(repo);
+
+  // 普通会员：没有入口，但要说清「由学院负责人提交」，不能让人以为页面坏了
+  const memberView = await call(repo, 'getTeamEvent', { eventId }, 'c02_p5');
+  assert.deepEqual(memberView.submitCandidates, []);
+  assert.equal(memberView.entryPanel.mode, 'member');
+  assert.match(memberView.entryPanel.hint, /学院负责人/);
+
+  // 校管：候选 = 全校学院目录（一人一条），文案是「代 X 学院报名」
+  const adminView = await call(repo, 'getTeamEvent', { eventId }, 'u_leader');
+  const collegeCount = (await repo.forScope(SCOPE).colleges.list()).length;
+  assert.equal(adminView.entryPanel.mode, 'school_admin');
+  assert.match(adminView.entryPanel.hint, /代任意学院报名/);
+  assert.equal(adminView.submitCandidates.length, collegeCount);
+  const c03Row = adminView.submitCandidates.find(row => row.collegeId === 'c03');
+  assert.ok(c03Row, '无负责人的学院也在候选里');
+  assert.match(c03Row.actionText, /^代 .+ 报名$/);
+
+  // c03 从来没有负责人：校管代报照样成功，院队按编号补建
+  const submitted = await call(repo, 'submitTeamEntry', {
+    eventId, teamId: collegeTeamId('c03'),
+    roster: ['c03_p1', 'c03_p2', 'c03_p3', 'c03_p4', 'c03_p5'],
+  }, 'u_leader');
+  assert.equal(submitted.ok, true, submitted.message);
+  const after = await call(repo, 'getTeamEvent', { eventId }, 'u_leader');
+  assert.equal(after.submitCandidates.some(row => row.collegeId === 'c03'), false, '报过的学院不再出现在候选里');
+  assert.equal(after.entries.length, 1);
+  assert.match(after.entries[0].collegeName, /学院/);
+});
+
+test('我的球队：本院院队自动在列表里，排在自由球队之前；组队列表仍不列院队', async () => {
+  const repo = fixture();
+  const free = await call(repo, 'createTeamApplication', { name: '野球队', requestId: 'req_mine_free' }, 'c02_p1');
+  await call(repo, 'reviewTeamApplication', { teamId: free.teamId, approve: true }, 'u_leader');
+
+  // 普通会员、且没被挑进院队：本院院队仍在「我的球队」里
+  const mine = await call(repo, 'listTeams', { mine: true }, 'c02_p1');
+  assert.equal(mine.teams[0].isCollegeTeam, true);
+  assert.equal(mine.teams[0].teamId, collegeTeamId('c02'));
+  assert.equal(mine.teams[0].isMine, true, '本院即算我的球队，不必先被挑进队');
+  assert.equal(mine.teams[0].memberCount, 0);
+  assert.ok(mine.teams.some(row => row.teamId === free.teamId));
+
+  // 组队列表（不带 mine）仍不列院队：二十来支院队会把自由组队淹掉
+  const all = await call(repo, 'listTeams', {}, 'c02_p1');
+  assert.equal(all.teams.some(row => row.isCollegeTeam), false);
+});
+
+test('学院赛：院队没落库时，点进详情与开报名名单都能就地补建', async () => {
+  const repo = fixture();
+  const eventId = await collegeCup(repo);
+  assert.equal((await repo.teams.list()).length, 0, '前置：一条院队都没有');
+
+  // 我的球队 → 点院队 → getTeam：先补建再读，不该报「球队不存在」
+  const detail = await call(repo, 'getTeam', { teamId: collegeTeamId('c02') }, 'c02_p5');
+  assert.equal(detail.ok, true, detail.message);
+  assert.equal(detail.team.isCollegeTeam, true);
+  assert.equal((await repo.teams.list()).filter(row => row.collegeId === 'c02').length, 1);
+
+  // 「代 X 学院报名」点进去开名单面板：候选池是本院会员
+  const roster = await call(repo, 'getTeamEntryRoster', { eventId, teamId: collegeTeamId('c03') }, 'u_leader');
+  assert.equal(roster.ok, true, roster.message);
+  assert.equal(roster.team.isCollegeTeam, true);
+  assert.equal(roster.members.length, 5, 'c03 的 5 名会员都可被挑');
+});
+
 /* ------------------------------------------------------------ 页面 */
 
-const path = require('node:path');
-const fs = require('node:fs');
+const path = require('node:path');const fs = require('node:fs');
 const { loadPage, instantiate, withApi } = require('./helpers/page-harness.js');
 
 test('球队详情：院队不显示申请与归档，负责人有「添加队员」和「移出」', async () => {
@@ -365,4 +464,16 @@ test('赛事列表：从杯赛页带 cupMode 进来，建赛请求把标记一�
     await plain.onSubmitCreate();
     assert.equal('cupMode' in calls.find(call => call[0] === 'createTeamEvent')[1], false);
   });
+});
+
+test('页面：工作台赛事列表给学院赛打标签、报名数按学院表达', () => {
+  const wxml = fs.readFileSync(path.join(__dirname, '../miniprogram/pages/team-event-list/team-event-list.wxml'), 'utf8');
+  assert.ok(/item\.isCollegeCup.*学院赛/.test(wxml), '赛事列表行没有「学院赛」标签');
+  assert.ok(/个学院.*支球队|支球队.*个学院/.test(wxml), '报名单位没有按学院赛切换');
+});
+
+test('页面：我的球队里院队不写「队长」，标成学院队', () => {
+  const wxml = fs.readFileSync(path.join(__dirname, '../miniprogram/pages/team-list/team-list.wxml'), 'utf8');
+  assert.ok(/item\.isCollegeTeam.*学院队/s.test(wxml), '院队行没有按学院队展示');
+  assert.ok(/mineLabel/.test(wxml), '院队应有「本院」标签');
 });

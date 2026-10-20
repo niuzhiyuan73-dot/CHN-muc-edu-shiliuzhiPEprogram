@@ -48,10 +48,13 @@
       <view class="team-main">
         <view class="team-name">
           {{item.name}}
-          <text wx:if="{{item.isMine}}" class="tag tag-mine">我的</text>
+          <text wx:if="{{item.mineLabel}}" class="tag tag-mine">{{item.mineLabel}}</text>
+          <text wx:elif="{{item.isMine}}" class="tag tag-mine">我的</text>
           <text wx:if="{{item.status !== 'active'}}" class="tag tag-muted">{{item.statusLabel}}</text>
         </view>
-        <view class="team-meta">队长 {{item.captainName}} · {{item.memberCount}} 人{{item.college ? ' · ' + item.college : ''}}</view>
+        <!-- 院队没有队长：管理权挂在学院负责人身上，写「队长」只会显示成空白 -->
+        <view wx:if="{{item.isCollegeTeam}}" class="team-meta">学院队 · {{item.memberCount}} 人{{item.college ? ' · ' + item.college : ''}}</view>
+        <view wx:else class="team-meta">队长 {{item.captainName}} · {{item.memberCount}} 人{{item.college ? ' · ' + item.college : ''}}</view>
       </view>
       <view class="team-arrow">›</view>
     </view>

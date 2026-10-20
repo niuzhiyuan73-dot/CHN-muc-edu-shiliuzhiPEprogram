@@ -171,6 +171,23 @@ test('赛事详情 —— 缺少赛事编号时给一句人话，不发请求', 
   assert.equal(calls.length, 0);
 }));
 
+test('赛事详情 —— 报名面板的身份文案与按钮文案由服务端下发', () => withApi({
+  getTeamEvent: () => detailFixture({
+    event: { ...EVENT, status: 'registration', isCollegeCup: true },
+    entryPanel: { mode: 'school_admin', hint: '你是校级 / 协会管理员：可代任意学院报名，报名后仍需审核。' },
+    submitCandidates: [
+      { teamId: 'tm_c02', name: '民族学与社会学学院代表队', enough: true, actionText: '代 民族学与社会学学院 报名' },
+    ],
+  }),
+}, async () => {
+  const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
+  await page.onLoad({ eventId: 'tev_1' });
+
+  assert.equal(page.data.entryPanel.mode, 'school_admin');
+  assert.match(page.data.entryPanel.hint, /代任意学院报名/);
+  assert.match(page.data.submitCandidates[0].actionText, /^代 /);
+}));
+
 test('赛事详情 —— 报名审核与锁定名单接的是对应接口', () => withApi({
   getTeamEvent: () => detailFixture({ event: { ...EVENT, status: 'registration' } }),
   reviewTeamEntry: () => ({ ok: true }),

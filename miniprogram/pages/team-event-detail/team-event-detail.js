@@ -92,6 +92,8 @@ Page({
     entries: [],
     /** 我能替哪几支队报名（服务端算，已报过的不在里面） */
     submitCandidates: [],
+    /** 报名面板的身份文案：{ mode: college_staff|school_admin|member|free, hint } */
+    entryPanel: { mode: 'free', hint: '' },
     /** 按轮次分组的赛程：[{ round, label, matches: [] }] */
     rounds: [],
     table: [],
@@ -257,6 +259,8 @@ Page({
         isFootball: event.sportFormat === 'football11',
         entries: result.entries || [],
         submitCandidates: result.submitCandidates || [],
+        // 报名面板的身份文案由服务端给（学院负责人 / 校管代报 / 普通会员），模板不判权
+        entryPanel: result.entryPanel || { mode: 'free', hint: '' },
         rounds: grouped,
         table: result.table || [],
         placements: result.placements || [],

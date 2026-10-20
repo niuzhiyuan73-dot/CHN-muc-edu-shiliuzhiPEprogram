@@ -56,9 +56,12 @@
       bindtap="onOpenEvent"
     >
       <view class="event-main">
-        <view class="event-name">{{item.name}}</view>
+        <view class="event-name">
+          {{item.name}}
+          <text wx:if="{{item.isCollegeCup}}" class="tag tag-rank">学院赛</text>
+        </view>
         <view class="event-meta">{{item.rulesText}}</view>
-        <view class="event-meta">{{item.entryCount}} 支球队报名</view>
+        <view class="event-meta">{{item.entryCount}} {{item.isCollegeCup ? '个学院' : '支球队'}}报名</view>
       </view>
       <view class="event-side">
         <view class="status status-{{item.status}}">{{item.statusLabel}}</view>
