@@ -6,6 +6,7 @@ const {
 } = require('../utils/constants.js');
 const { allAssociations } = require('../utils/associations.js');
 const { createTeamDemoContent } = require('./team-demo.js');
+const { createFootballDemoContent } = require('./football-demo.js');
 const {
   schoolAssociationKey, collegeKey, schoolMemberKey, schoolRoleKey,
   schoolMembershipKey, schoolEventKey, schoolEventSignupKey, schoolMatchKey,
@@ -665,6 +666,10 @@ function createSchoolDemoContent() {
   // 团队运动（篮球）的演示内容：一支打完的淘汰赛 + 一支报名中的赛事。
   // 只造民大篮球——切到别的协会仍是空态，才看得出「这个协会没有球队」。
   Object.assign(content, createTeamDemoContent());
+  // 足球各集合追加，不能覆盖既有篮球球队/报名/角色。
+  for (const [key, rows] of Object.entries(createFootballDemoContent())) {
+    content[key] = [...(content[key] || []), ...rows];
+  }
   return content;
 }
 

@@ -18,6 +18,7 @@ const schoolSession = require('../../services/school-session.js');
 const { currentThemeClass } = require('../../services/branding.js');
 const { LEGACY_SCHOOL_ID } = require('../../utils/school.js');
 const { RULE_PRESETS, DEFAULT_PRESET_KEY } = require('../../utils/basketball-rules.js');
+const { teamSportStrategyFor } = require('../../utils/team-sport-rules.js');
 
 /** 首版支持的赛制：与 team-event-service 的 FORMATS 保持一致 */
 const FORMAT_OPTIONS = [
@@ -44,6 +45,7 @@ Page({
     canManage: false,
     /** 建赛表单 */
     creating: false,
+    isFootball: false,
     submitting: false,
     newName: '',
     formatOptions: FORMAT_OPTIONS,
@@ -58,7 +60,8 @@ Page({
     const schoolId = schoolSession.getSchoolId() || LEGACY_SCHOOL_ID;
     const association = associationScope.getAssociation();
     this.scope = { schoolId, association };
-    this.setData({ themeClass: currentThemeClass() });
+    this.setData({ themeClass: currentThemeClass(),
+      isFootball: teamSportStrategyFor(association)?.sportFormat === 'football11' });
     return this.refresh();
   },
 
@@ -88,6 +91,7 @@ Page({
   },
 
   onCloseCreate() {
+    if (this.data.submitting) return;
     this.setData({ creating: false, submitting: false });
   },
 
@@ -104,6 +108,7 @@ Page({
   },
 
   async onSubmitCreate() {
+    if (this.data.isFootball) return undefined;
     if (this.data.submitting) return undefined;
     this.setData({ submitting: true, notice: '', noticeError: false });
     try {
@@ -134,5 +139,22 @@ Page({
     return wx.navigateTo({
       url: `/pages/team-event-detail/team-event-detail?eventId=${encodeURIComponent(eventid)}`,
     });
+  },
+
+  async onFootballSubmit(event) {
+    if (!this.data.isFootball || this.data.submitting) return;
+    this.setData({ submitting: true, notice: '', noticeError: false });
+    try {
+      const result = await space.forScope(this.scope).createTeamEvent(event.detail);
+      if (!result || !result.ok) {
+        this.setData({ submitting: false, noticeError: true, notice: result?.message || '建赛失败' });
+        return;
+      }
+      this.setData({ submitting: false, creating: false, noticeError: false, notice: '赛事已创建，可以开始收报名' });
+      await this.refresh();
+    } catch (error) {
+      console.error('[team-event-list] 足球建赛失败', error);
+      this.setData({ submitting: false, noticeError: true, notice: '建赛失败，请重试' });
+    }
   },
 });

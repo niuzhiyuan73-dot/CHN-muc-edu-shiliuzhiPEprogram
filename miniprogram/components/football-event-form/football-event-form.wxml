@@ -1,0 +1,56 @@
+<view wx:if="{{ready}}" class="football-form">
+  <view class="form-title">{{preview ? '确认赛事规则' : '新建十一人制足球赛事'}}</view>
+  <view class="form-note">允许本校成员自由组队，跨学院组合也可报名。采用赛后录分。</view>
+  <view wx:if="{{serverError}}" class="form-error" role="alert">{{serverError}}</view>
+  <view wx:if="{{error && !preview}}" class="form-error" role="alert">{{error}}</view>
+
+  <view wx:if="{{!preview}}">
+    <view class="form-field">
+      <view class="field-label">规则预设</view>
+      <picker range="{{presetOptions}}" range-key="label" value="{{presetIndex}}" bindchange="onPreset" disabled="{{submitting || pending}}">
+        <view class="field-choice">{{presetLabel}} ▾</view>
+      </picker>
+    </view>
+    <view wx:if="{{customized}}" class="form-note">已自定义部分规则</view>
+    <view wx:for="{{fields}}" wx:key="key" class="form-field {{item.error ? 'field-invalid' : ''}}">
+      <view class="field-label">{{item.label}}</view>
+      <input wx:if="{{item.kind === 'text' || item.kind === 'number'}}" class="field-input"
+        type="{{item.kind === 'number' ? 'number' : 'text'}}" maxlength="{{item.kind === 'text' ? 30 : 16}}"
+        value="{{item.value}}" data-field="{{item.key}}" bindinput="onInput" disabled="{{submitting || pending}}" />
+      <picker wx:elif="{{item.kind === 'select'}}" range="{{item.options}}" range-key="label"
+        value="{{item.selectedIndex}}" data-field="{{item.key}}" bindchange="onSelect" disabled="{{submitting || pending}}">
+        <view class="field-choice">{{item.selectedLabel}} ▾</view>
+      </picker>
+      <view wx:elif="{{item.kind === 'quota'}}" class="quota-controls">
+        <picker range="{{item.options}}" range-key="label" value="{{item.selectedIndex}}"
+          data-field="{{item.key}}" bindchange="onQuotaMode" disabled="{{submitting || pending}}">
+          <view class="field-choice">{{item.selectedLabel}} ▾</view>
+        </picker>
+        <input wx:if="{{item.showNumber}}" class="field-input quota-input" type="number" maxlength="16"
+          value="{{item.value}}" data-field="{{item.key}}" bindinput="onInput" disabled="{{submitting || pending}}" />
+      </view>
+      <switch wx:elif="{{item.kind === 'switch'}}" checked="{{item.value}}" color="#0D6B45"
+        data-field="{{item.key}}" bindchange="onSwitch" disabled="{{submitting || pending}}" />
+      <view wx:if="{{item.note}}" class="field-note">{{item.note}}</view>
+      <view wx:if="{{item.error}}" class="field-error">{{item.error}}</view>
+    </view>
+  </view>
+
+  <view wx:else class="preview-heading">
+    <view class="preview-name">{{previewName}}</view>
+    <view class="form-note">{{previewFormat}} · {{presetLabel}}{{customized ? ' · 已自定义' : ''}}</view>
+  </view>
+
+  <view wx:if="{{summary}}" class="rules-summary">
+    <view class="summary-title">规则摘要</view>
+    <view wx:for="{{summaryLines}}" wx:key="*this" class="summary-line">{{item}}</view>
+  </view>
+  <view class="form-note">创建后即开放报名并锁定规则，请核对人数、时长和决胜方式。</view>
+  <view class="form-actions">
+    <button wx:if="{{!preview}}" class="form-button secondary" bindtap="onCancel" disabled="{{submitting || pending}}">取消</button>
+    <button wx:else class="form-button secondary" bindtap="onBack" disabled="{{submitting || pending}}">返回修改</button>
+    <button wx:if="{{!preview}}" class="form-button primary" bindtap="onPreview" disabled="{{submitting || pending}}">预览规则</button>
+    <button wx:else class="form-button primary" bindtap="onSubmit" loading="{{submitting || pending}}"
+      disabled="{{submitting || pending}}">创建并开放报名</button>
+  </view>
+</view>

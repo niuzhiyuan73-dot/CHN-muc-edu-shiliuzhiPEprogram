@@ -97,6 +97,8 @@ Page({
     table: [],
     placements: [],
     canManage: false,
+    supportsMatchData: true,
+    isFootball: false,
     /** 当前要录分的那一场 */
     recording: null,
     scoreA: '',
@@ -156,6 +158,11 @@ Page({
   },
 
   watchScores(matches) {
+    if (this.data.event && this.data.event.supportsLiveScore === false) {
+      if (this.liveSubscription) this.liveSubscription();
+      this.liveSubscription = null;
+      return;
+    }
     const ids = matches.filter(match => ['scheduled', 'live'].includes(match.status)).map(match => match.matchId);
     this.liveSubscription = watchLiveScores(ids, scores => {
       if (this.destroyed) return;
@@ -182,6 +189,7 @@ Page({
   },
 
   onOpenLiveScore(event) {
+    if (this.data.event && this.data.event.supportsLiveScore === false) return;
     const { matchid } = event.currentTarget.dataset;
     wx.navigateTo({ url: `/pages/team-live-score/team-live-score?matchId=${encodeURIComponent(matchid)}` });
   },
@@ -239,6 +247,8 @@ Page({
       this.setData({
         loading: false,
         event,
+        supportsMatchData: event.supportsMatchData !== false,
+        isFootball: event.sportFormat === 'football11',
         entries: result.entries || [],
         submitCandidates: result.submitCandidates || [],
         rounds: grouped,
@@ -246,7 +256,8 @@ Page({
         placements: result.placements || [],
         canManage: event.canManage === true,
       });
-      this.onLoadPlayerStats();
+      if (event.supportsMatchData !== false) this.onLoadPlayerStats();
+      else this.setData({ playerStats: [], playerStatsError: '' });
       this.watchScores(result.matches || []);
       return undefined;
     } catch (err) {

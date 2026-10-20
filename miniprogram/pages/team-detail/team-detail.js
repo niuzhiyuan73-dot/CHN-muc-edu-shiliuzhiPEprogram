@@ -17,6 +17,7 @@ const associationScope = require('../../services/association-scope.js');
 const schoolSession = require('../../services/school-session.js');
 const { currentThemeClass } = require('../../services/branding.js');
 const { LEGACY_SCHOOL_ID } = require('../../utils/school.js');
+const { teamSportStrategyFor } = require('../../utils/team-sport-rules.js');
 
 Page({
   data: {
@@ -31,6 +32,7 @@ Page({
     pendingCount: 0,
     /** 战绩（getTeamRecord）：总胜负 + 历届 + 近期；归档后照样能看 */
     record: null,
+    recordSupported: true,
     /** 战绩单独失败不影响球员名单，所以错误只落在这一块 */
     recordError: '',
     /** 动作进行中，防连点 */
@@ -80,6 +82,10 @@ Page({
    * 与「谁能改这支队的名单」是两件事。
    */
   async loadRecord() {
+    if (teamSportStrategyFor(this.scope?.association)?.supportsMatchData === false) {
+      this.setData({ recordSupported: false, record: null, recordError: '' });
+      return;
+    }
     try {
       const result = await space.forScope(this.scope).getTeamRecord({ teamId: this.data.teamId });
       if (!result || result.ok !== true) {

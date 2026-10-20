@@ -8,7 +8,9 @@
   <view wx:if="{{notice}}" class="notice {{noticeError ? 'notice-error' : ''}}">{{notice}}</view>
 
   <!-- 建赛表单：赛制与规则一旦建库就不再变，所以放在创建时选 -->
-  <view wx:if="{{creating}}" class="card">
+  <football-event-form wx:if="{{creating && isFootball}}" submitting="{{submitting}}"
+    server-error="{{noticeError ? notice : ''}}" bindsubmit="onFootballSubmit" bindcancel="onCloseCreate" />
+  <view wx:if="{{creating && !isFootball}}" class="card">
     <view class="card-title">新建赛事</view>
     <input
       class="create-input"

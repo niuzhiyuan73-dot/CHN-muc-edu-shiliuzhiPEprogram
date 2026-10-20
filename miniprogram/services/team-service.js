@@ -33,6 +33,7 @@ const {
   TEAM_STATUS, TEAM_STATUS_LABEL, TEAM_MEMBER_STATUS, TEAM_MEMBER_STATUS_LABEL,
 } = require('../utils/constants.js');
 const { sportTypeOf, allAssociations, SPORT_TYPE } = require('../utils/associations.js');
+const { teamSportStrategyFor } = require('../utils/team-sport-rules.js');
 
 const ok = data => ({ ok: true, data });
 const refused = (message, extra = {}) => ({ ok: false, message, ...extra });
@@ -86,7 +87,7 @@ function teamView(team, { dir, actorId, manage, membership, memberCount }) {
     name: team.name,
     // 队名首字做占位「队徽」：在服务端算好，模板不写下标取值
     initial: String(team.name || '?').slice(0, 1),
-    sport: team.sport || 'basketball',
+    sport: team.sport || (teamSportStrategyFor(team.association)?.sportFormat === 'football11' ? 'football' : 'basketball'),
     college: team.college || '',
     status: team.status,
     statusLabel: TEAM_STATUS_LABEL[team.status] || team.status,
@@ -268,7 +269,8 @@ async function createTeamApplication(payload = {}, ctx) {
     const now = fresh.now;
     await tx.teams.set(teamId, {
       _id: teamId, schoolId: fresh.schoolId, association: fresh.association,
-      sport: 'basketball', name: name.value, college,
+      sport: teamSportStrategyFor(fresh.association)?.sportFormat === 'football11' ? 'football' : 'basketball',
+      name: name.value, college,
       captainId: fresh.actorId, status: TEAM_STATUS.PENDING,
       memberCount: 1, revision: 1, requestId: token,
       createdBy: fresh.actorId, createdAt: now, updatedAt: now,

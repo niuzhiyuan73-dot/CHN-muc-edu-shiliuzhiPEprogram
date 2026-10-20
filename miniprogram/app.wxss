@@ -440,3 +440,10 @@ page {
   --color-primary-light: #fff3e0;
   --color-accent: #f9a825;
 }
+
+.assoc-fb {
+  --color-primary: #0d6b45;
+  --color-primary-dark: #08492f;
+  --color-primary-light: #e7f3ec;
+  --color-accent: #d4af37;
+}

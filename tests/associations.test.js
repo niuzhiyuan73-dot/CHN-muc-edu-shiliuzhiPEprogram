@@ -28,6 +28,7 @@ const {
 const { ASSOCIATION_STATUS } = require('../miniprogram/utils/constants.js');
 const { isValidFormat } = require('../miniprogram/utils/match-format.js');
 const { isValidBasketballRules } = require('../miniprogram/utils/basketball-rules.js');
+const { isValidFootballRules } = require('../miniprogram/utils/football-rules.js');
 
 const DEST_ROOT = path.join(__dirname, '..', 'cloudfunctions', 'data', 'lib');
 
@@ -73,7 +74,10 @@ test('每个协会的字段齐全，且规则默认值合法', () => {
       assert.ok(!a.capabilities.includes('match'), `${a.id} 团队运动不该有个人比赛页签`);
       assert.strictEqual(a.format, undefined, `${a.id} 团队运动不该带个人赛制`);
       assert.strictEqual(a.elo, undefined, `${a.id} 团队运动不该带 Elo 配置`);
-      assert.ok(isValidBasketballRules(a.basketballRules), `${a.id}.basketballRules 不合法`);
+      if (a.teamSportFormat === 'football11') {
+        assert.ok(isValidFootballRules(a.footballRules), `${a.id}.footballRules 不合法`);
+        assert.strictEqual(a.basketballRules, undefined);
+      } else assert.ok(isValidBasketballRules(a.basketballRules), `${a.id}.basketballRules 不合法`);
       continue;
     }
 

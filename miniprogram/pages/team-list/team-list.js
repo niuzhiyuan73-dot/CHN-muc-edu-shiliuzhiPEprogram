@@ -42,7 +42,8 @@ Page({
     noticeError: false,
   },
 
-  onLoad() {
+  onLoad(options = {}) {
+    if (options.mine === '1') this.setData({ mineOnly: true });
     const schoolId = schoolSession.getSchoolId() || LEGACY_SCHOOL_ID;
     const association = associationScope.getAssociation();
     this.scope = { schoolId, association };

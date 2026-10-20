@@ -46,6 +46,11 @@ const MANIFEST = [
   // 篮球规则快照：赛事创建时定节数/节长/犯规上限，云端开赛与本地模拟
   // 必须用同一份判定（否则「5 人可开赛」会在一端放行、另一端拒绝）。
   'utils/basketball-rules.js',
+  // 足球 F0：规则与积分按运动分派，云端不可回退到篮球规则。
+  'utils/football-rules.js',
+  'utils/football-association.js',
+  'utils/football-standings.js',
+  'utils/team-sport-rules.js',
   'utils/team-standings.js',
   'utils/school.js',
   // 运动会范围与确定性主键：云端仓储的 forMeet 与本地模拟端读同一份，

@@ -21,6 +21,7 @@ const { isMock } = require('../../services/runtime-mode.js');
 const { resetBranding } = require('../../services/branding.js');
 const associationScope = require('../../services/association-scope.js');
 const { isTeamSport } = require('../../utils/associations.js');
+const { teamSportStrategyFor } = require('../../utils/team-sport-rules.js');
 
 Page({
   data: {
@@ -47,6 +48,7 @@ Page({
      * 入口只在团队项目下出现（见 pages/my-team-profile）。
      */
     isTeamSport: false,
+    hasTeamStats: true,
   },
 
   onLoad() {
@@ -127,9 +129,11 @@ Page({
   syncAssociationBadge() {
     const id = this.currentAssociation();
     const teamSport = isTeamSport(id);
+    const hasTeamStats = teamSportStrategyFor(id)?.supportsMatchData !== false;
     const patch = {};
     if (id !== this.data.associationId) patch.associationId = id;
     if (teamSport !== this.data.isTeamSport) patch.isTeamSport = teamSport;
+    if (hasTeamStats !== this.data.hasTeamStats) patch.hasTeamStats = hasTeamStats;
     if (Object.keys(patch).length > 0) this.setData(patch);
   },
 
@@ -307,7 +311,8 @@ Page({
   /** 点头卡头像进个人详情页。等级分、赛季积分、走势、战绩这些细账都在那边 */
   /** 我的球队与团队成绩（仅团队项目显示入口） */
   onGoMyTeamProfile() {
-    wx.navigateTo({ url: '/pages/my-team-profile/my-team-profile' });
+    const available = teamSportStrategyFor(this.currentAssociation())?.supportsMatchData !== false;
+    wx.navigateTo({ url: available ? '/pages/my-team-profile/my-team-profile' : '/pages/team-list/team-list?mine=1' });
   },
 
   onGoProfileDetail() {

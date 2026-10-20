@@ -17,7 +17,7 @@
     <view wx:if="{{notice}}" class="notice {{noticeError ? 'notice-error' : ''}}">{{notice}}</view>
 
     <!-- 管理动作：按状态只显示此刻该做的那一个 -->
-    <view wx:if="{{canManage}}" class="action-bar">
+    <view wx:if="{{canManage && supportsMatchData}}" class="action-bar">
       <view
         wx:if="{{event.status === 'registration'}}"
         class="btn btn-primary"
@@ -170,7 +170,7 @@
     </view>
 
     <!-- 积分表 -->
-    <view wx:if="{{table.length > 0}}" class="card">
+    <view wx:if="{{table.length > 0 && !isFootball}}" class="card">
       <view class="card-title">积分表</view>
       <view class="table-head">
         <view class="col-name">球队</view>
@@ -185,6 +185,17 @@
         <view class="col">{{item.wins}}</view>
         <view class="col">{{item.losses}}</view>
         <view class="col">{{item.diff > 0 ? '+' : ''}}{{item.diff}}</view>
+      </view>
+    </view>
+
+    <view wx:if="{{table.length > 0 && isFootball}}" class="card">
+      <view class="card-title">足球积分表</view>
+      <view wx:for="{{table}}" wx:key="teamId" class="row">
+        <view class="row-main">
+          <view class="row-name">{{item.rank === null ? '同分待确认' : item.rank + '.'}} {{item.teamName}}</view>
+          <view class="row-meta">{{item.played}} 场 · {{item.wins}} 胜 {{item.draws}} 平 {{item.losses}} 负 · 进 {{item.goalsFor}} / 失 {{item.goalsAgainst}}</view>
+        </view>
+        <view>{{item.points}} 分</view>
       </view>
     </view>
 

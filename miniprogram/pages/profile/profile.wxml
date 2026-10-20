@@ -34,8 +34,8 @@
   -->
   <view wx:if="{{isTeamSport}}" class="card entry-card" bindtap="onGoMyTeamProfile">
     <view class="entry-card-main">
-      <view class="entry-card-title">我的球队与团队成绩</view>
-      <view class="entry-card-hint">球队、参赛经历、团队荣誉与跨赛事累计</view>
+      <view class="entry-card-title">{{hasTeamStats ? '我的球队与团队成绩' : '我的球队'}}</view>
+      <view class="entry-card-hint">{{hasTeamStats ? '球队、参赛经历、团队荣誉与跨赛事累计' : '查看加入的球队、成员和入队申请'}}</view>
     </view>
     <view class="entry-card-arrow">›</view>
   </view>

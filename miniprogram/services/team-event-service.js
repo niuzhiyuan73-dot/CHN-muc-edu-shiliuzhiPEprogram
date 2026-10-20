@@ -27,13 +27,13 @@ const {
   BRACKET_STAGE, EVENT_BRONZE_MODE, TEAM_STAT_INTEGRITY, TEAM_STAT_STATUS,
 } = require('../utils/constants.js');
 const { EVENT_FORMAT } = require('../utils/constants.js');
-const { normalizeBasketballRules, formatBasketballRules, DEFAULT_PRESET_KEY } = require('../utils/basketball-rules.js');
+const { teamSportStrategyFor } = require('../utils/team-sport-rules.js');
 const { sportTypeOf } = require('../utils/associations.js');
 const { drawBracket } = require('../utils/bracket.js');
 const { roundRobinRounds } = require('../utils/standings.js');
 const { createSeededRandom, shuffle } = require('../utils/random.js');
 const { eventMatchKey, planNextRound } = require('./draw.js');
-const { computeTeamTable, computeTeamPlacements, isFinal } = require('../utils/team-standings.js');
+const { computeTeamPlacements, isFinal } = require('../utils/team-standings.js');
 
 const ok = data => ({ ok: true, data });
 const refused = (message, extra = {}) => ({ ok: false, message, ...extra });
@@ -54,6 +54,11 @@ function assertTeamSport(ctx) {
   return sportTypeOf(ctx.association) === 'team';
 }
 
+function supportsMatchData(ctx, event, match) {
+  const strategy = teamSportStrategyFor(ctx.association, event);
+  return Boolean(strategy && strategy.supportsMatchData
+    && (!match || match.sportFormat === undefined || match.sportFormat === strategy.sportFormat));
+}
 
 function inScope(doc, ctx) {
   return Boolean(doc) && doc.schoolId === ctx.schoolId && doc.association === ctx.association;
@@ -131,13 +136,17 @@ function lineupOf(match, side) {
 
 /** 赛事视图：布尔量与文案在服务端算好 */
 function eventView(event, ctx, { manage, entryCount }) {
+  const strategy = teamSportStrategyFor(ctx.association, event);
   return {
     eventId: event._id,
     name: event.name,
     format: event.format,
     status: event.status,
     statusLabel: TEAM_EVENT_STATUS_LABEL[event.status] || event.status,
-    rulesText: formatBasketballRules(event.rules),
+    sportFormat: strategy ? strategy.sportFormat : null,
+    supportsLiveScore: Boolean(strategy && strategy.supportsLiveScore),
+    supportsMatchData: Boolean(strategy && strategy.supportsMatchData),
+    rulesText: strategy ? strategy.formatRules(event.rules, event.format) : '',
     rules: event.rules,
     bronzeMode: event.bronzeMode || EVENT_BRONZE_MODE.PLAYOFF,
     statPolicy: event.statPolicy || STAT_MODE.BASIC,
@@ -171,7 +180,8 @@ function matchView(match, teamName, rights = {}) {
   // 未发布且无权查看待审核：数字、胜方、加时、弃权一律不下发
   const masked = !isPublished && rights.canSeePending !== true;
   const showScore = hasScore && !masked;
-  const live = match.status === TEAM_MATCH_STATUS.LIVE
+  const strategy = teamSportStrategyFor(match.association, { sportFormat: match.sportFormat });
+  const live = strategy && strategy.supportsLiveScore && match.status === TEAM_MATCH_STATUS.LIVE
     ? basketballLiveView(match.liveScore, false) : null;
   return {
     matchId: match._id,
@@ -276,11 +286,13 @@ async function getTeamEvent(payload = {}, ctx) {
     .filter(match => match.eventId === event._id)
     .sort((a, b) => (Number(a.round) - Number(b.round)) || (Number(a.slot) - Number(b.slot)));
   // 积分表对所有人可见（它就是赛程的一部分），名次只认赛事上已结算的那份
-  const table = computeTeamTable({
+  const strategy = teamSportStrategyFor(ctx.association, event);
+  if (!strategy) return ok(refused('赛事运动规则与协会不符'));
+  const table = strategy.computeTable({
     entries: entries
       .filter(entry => entry.status === TEAM_ENTRY_STATUS.LOCKED)
       .map(entry => ({ teamId: entry.teamId, teamName: teamName.get(entry.teamId) || entry.teamId })),
-    matches,
+    matches, rules: event.rules, rankingDecisions: event.rankingDecisions || [],
   });
 
   // 哪些比赛的统计还有未审核的新版本：赛程列表上要能看见「统计待审核」，
@@ -296,8 +308,8 @@ async function getTeamEvent(payload = {}, ctx) {
     );
     // 管理者与参赛队队长既录分也看得到自己录的待审核数字；其余人只看「待审核」
     return {
-      canRecord: manage || captain || match.recorderId === ctx.actorId,
-      canPublish: manage,
+      canRecord: strategy.supportsMatchData && (manage || captain || match.recorderId === ctx.actorId),
+      canPublish: strategy.supportsMatchData && manage,
       canSeePending: manage || captain || match.recorderId === ctx.actorId,
       statPending: pendingStatMatches.has(match._id),
     };
@@ -406,8 +418,17 @@ async function createTeamEvent(payload = {}, ctx) {
   const format = FORMATS.includes(payload.format) ? payload.format : EVENT_FORMAT.SINGLE_ELIM;
   const token = payload.requestId;
   if (typeof token !== 'string' || !REQUEST_ID_PATTERN.test(token)) return ok(refused('创建请求编号无效'));
-  const rules = normalizeBasketballRules({
-    presetKey: payload.presetKey || DEFAULT_PRESET_KEY,
+  const strategy = teamSportStrategyFor(ctx.association);
+  if (!strategy || (payload.sportFormat !== undefined && payload.sportFormat !== strategy.sportFormat)) {
+    return ok(refused('赛事运动规则与协会不符'));
+  }
+  if (payload.rules !== undefined && (!payload.rules || typeof payload.rules !== 'object' || Array.isArray(payload.rules))) {
+    return ok(refused('规则配置不合法'));
+  }
+  if (payload.presetKey !== undefined && payload.rules && payload.rules.presetKey !== undefined
+    && payload.presetKey !== payload.rules.presetKey) return ok(refused('规则预设配置不一致'));
+  const rules = strategy.normalizeRules({
+    presetKey: payload.presetKey === undefined ? strategy.defaultPresetKey : payload.presetKey,
     ...(payload.rules || {}),
   });
   if (!rules) return ok(refused('规则配置不合法'));
@@ -431,9 +452,9 @@ async function createTeamEvent(payload = {}, ctx) {
   const now = ctx.now;
   await ctx.repo.forScope(ctx).teamEvents.set(eventId, {
     _id: eventId, schoolId: ctx.schoolId, association: ctx.association,
-    name, format, rules, bronzeMode, statPolicy, status: TEAM_EVENT_STATUS.REGISTRATION,
-    entryMin: rules.rosterMin,
-    entryMax: rules.rosterMax,
+    name, format, rules, sportFormat: strategy.sportFormat, bronzeMode, statPolicy, status: TEAM_EVENT_STATUS.REGISTRATION,
+    entryMin: rules.eventRosterMin === undefined ? rules.rosterMin : rules.eventRosterMin,
+    entryMax: rules.eventRosterMax === undefined ? rules.rosterMax : rules.eventRosterMax,
     // 赛程的时间与地点在建赛时给一次，之后每场可单独改
     startTime: String(payload.startTime || '') || null,
     location: String(payload.location || '').trim(),
@@ -452,6 +473,11 @@ async function submitTeamEntry(payload = {}, ctx) {
   const event = await repo.teamEvents.getById(payload.eventId);
   if (!inScope(event, ctx)) return ok(refused('赛事不存在，或不在本协会'));
   if (event.status !== TEAM_EVENT_STATUS.REGISTRATION) return ok(refused('赛事当前不开放报名'));
+  const strategy = teamSportStrategyFor(ctx.association, event);
+  if (!strategy) return ok(refused('赛事运动规则与协会不符'));
+  const football = strategy.sportFormat === 'football11';
+  if (football && !strategy.normalizeRules(event.rules)) return ok(refused('足球规则配置不合法'));
+  if (football && payload.roster !== undefined && !Array.isArray(payload.roster)) return ok(refused('报名名单格式不合法'));
 
   const team = await repo.teams.getById(payload.teamId);
   if (!inScope(team, ctx) || team.status !== TEAM_STATUS.ACTIVE) return ok(refused('球队不存在或未通过审核'));
@@ -486,6 +512,7 @@ async function submitTeamEntry(payload = {}, ctx) {
     }
   }
   const chosen = incoming || members.map(row => ({ userId: row.userId, no: null }));
+  if (football && incoming && incoming.length !== payload.roster.length) return ok(refused('报名名单里有空白或无效队员'));
   if (chosen.length < entryMin) {
     return ok(refused(`报名至少需要 ${entryMin} 人，当前选了 ${chosen.length} 人`));
   }
@@ -528,15 +555,24 @@ async function submitTeamEntry(payload = {}, ctx) {
     lockedAt: null,
     ...(resubmitted ? { reviewedBy: null, reviewedAt: null } : {}),
   };
+  // 所有有效报名变动都会递增赛事版本；事务内比较完整快照，封住查询后的新增行窗口。
+  if (football) {
+    const chosenIds = new Set(roster.map(row => row.userId));
+    const occupied = (await repo.teamEventEntries.list()).find(entry => entry.eventId === event._id
+      && entry.teamId !== team._id
+      && [TEAM_ENTRY_STATUS.SUBMITTED, TEAM_ENTRY_STATUS.APPROVED, TEAM_ENTRY_STATUS.LOCKED].includes(entry.status)
+      && (entry.roster || []).some(row => chosenIds.has(row.userId)));
+    if (occupied) return ok(refused('名单中有球员已代表本届赛事的其他球队报名，请调整名单'));
+  }
   const submitted = await ctx.repo.transaction(async root => {
     const fresh = await freshContext(root, ctx);
-    if (!canReadAssociationSpace(fresh)) return refused('账号或本校身份已失效');
     if (!canReadAssociationSpace(fresh)) return refused('账号或本校身份已失效');
     const tx = root.forScope(fresh);
     const currentEvent = await tx.teamEvents.getById(event._id);
     const currentTeam = await tx.teams.getById(team._id);
     const currentEntry = await tx.teamEventEntries.getById(key);
     if (!currentEvent || currentEvent.status !== TEAM_EVENT_STATUS.REGISTRATION) return refused('赛事当前不开放报名');
+    if (football && !sameRecord(currentEvent, event)) return refused('赛事或报名刚被改过，请刷新后重试');
     if (!currentTeam || currentTeam.status !== TEAM_STATUS.ACTIVE
       || (currentTeam.captainId !== fresh.actorId && !canManageAssociationSpace(fresh))) return refused('当前无报名权限');
     if (currentEntry && currentEntry.status === TEAM_ENTRY_STATUS.LOCKED) return refused('名单已锁定，不能再改');
@@ -544,6 +580,13 @@ async function submitTeamEntry(payload = {}, ctx) {
     for (const row of roster) {
       const member = await tx.teamMembers.getById(teamMemberKey(team._id, row.userId));
       if (!member || member.status !== TEAM_MEMBER_STATUS.ACTIVE) return refused('名单里有人已不在本队，请刷新后重试');
+      if (football) {
+        const user = await root.users.getById(row.userId);
+        const schoolMember = await root.schoolMembers.getById(schoolMemberKey(row.userId, fresh.schoolId));
+        if (!user || user.platformStatus !== PLATFORM_STATUS.ACTIVE || user.primarySchoolId !== fresh.schoolId
+          || !schoolMember || schoolMember.userId !== row.userId || schoolMember.schoolId !== fresh.schoolId
+          || schoolMember.status !== 'active') return refused('名单中有球员的本校在册身份已失效，请调整名单');
+      }
     }
     await tx.teamEventEntries.set(key, nextEntry);
     await tx.teamEvents.set(event._id, { ...currentEvent,
@@ -691,12 +734,14 @@ async function getTeamMatchLineup(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
   if (!canReadAssociationSpace(ctx)) return ok(refused('账号或本校在册会员身份已失效，无权访问本协会'));
   if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
+  if (!supportsMatchData(ctx)) return ok(refused('该运动的录分、名单及统计功能尚未开放'));
 
   const repo = ctx.repo.forScope(ctx);
   const match = await repo.teamMatches.getById(payload.matchId);
   if (!inScope(match, ctx)) return ok(refused('比赛不存在，或不在本协会'));
   const event = await repo.teamEvents.getById(match.eventId);
   if (!inScope(event, ctx)) return ok(refused('赛事不存在，或不在本协会'));
+  if (!supportsMatchData(ctx, event, match)) return ok(refused('赛事运动规则与协会不符，或统计功能尚未开放'));
 
   const teams = await repo.teams.list();
   const teamById = new Map(teams.map(team => [team._id, team]));
@@ -759,6 +804,7 @@ async function saveTeamMatchLineup(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
   if (!canReadAssociationSpace(ctx)) return ok(refused('账号或本校在册会员身份已失效，无权访问本协会'));
   if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
+  if (!supportsMatchData(ctx)) return ok(refused('该运动的录分、名单及统计功能尚未开放'));
 
   const side = payload.side === 'B' ? 'B' : (payload.side === 'A' ? 'A' : '');
   if (!side) return ok(refused('缺少出场方（A / B）'));
@@ -781,6 +827,7 @@ async function saveTeamMatchLineup(payload = {}, ctx) {
     if (!inScope(match, ctx)) return refused('比赛不存在，或不在本协会');
     const event = await tx.teamEvents.getById(match.eventId);
     if (!inScope(event, ctx)) return refused('赛事不存在，或不在本协会');
+    if (!supportsMatchData(fresh, event, match)) return refused('赛事运动规则与协会不符，或录分功能尚未开放');
     if (event.status === TEAM_EVENT_STATUS.FINISHED) return refused('赛事已结束，出场名单不能再改');
     if (event.status === TEAM_EVENT_STATUS.CANCELED) return refused('赛事已取消');
     if (match.status === TEAM_MATCH_STATUS.PUBLISHED) return refused('这场已发布，出场名单不能再改');
@@ -849,11 +896,13 @@ async function saveTeamMatchLineup(payload = {}, ctx) {
 
 /** 一场待打的比赛。比分留空 = 还没打，与「打了 0 分」区分开 */
 function matchDocOf({ event, ctx, round, stage, slot, teamA, teamB, now }) {
+  const strategy = teamSportStrategyFor(ctx.association, event);
   return {
     _id: eventMatchKey(event._id, round, stage, slot),
     schoolId: ctx.schoolId,
     association: ctx.association,
     eventId: event._id,
+    sportFormat: strategy ? strategy.sportFormat : null,
     round,
     stage,
     slot,
@@ -980,6 +1029,7 @@ async function listTeamMatches(payload = {}, ctx) {
   const repo = ctx.repo.forScope(ctx);
   const event = await repo.teamEvents.getById(payload.eventId);
   if (!inScope(event, ctx)) return ok(refused('赛事不存在，或不在本协会'));
+  if (!teamSportStrategyFor(ctx.association, event)) return ok(refused('赛事运动规则与协会不符'));
 
   const teams = await repo.teams.list();
   const teamName = new Map(teams.map(team => [team._id, team.name]));
@@ -1115,6 +1165,7 @@ async function recordTeamMatch(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
   if (!canReadAssociationSpace(ctx)) return ok(refused('账号或本校在册会员身份已失效，无权访问本协会'));
   if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
+  if (!supportsMatchData(ctx)) return ok(refused('该运动的录分、名单及统计功能尚未开放'));
 
   const stats = Array.isArray(payload.stats) ? payload.stats : [];
   const result = await ctx.repo.transaction(async (root) => {
@@ -1131,6 +1182,7 @@ async function recordTeamMatch(payload = {}, ctx) {
 
     const event = await tx.teamEvents.getById(match.eventId);
     if (!inScope(event, ctx)) return refused('赛事不存在，或不在本协会');
+    if (!supportsMatchData(fresh, event, match)) return refused('赛事运动规则与协会不符，或录分功能尚未开放');
     if (event.status === TEAM_EVENT_STATUS.FINISHED) return refused('赛事已结束，不能再录分');
     if (event.status !== TEAM_EVENT_STATUS.SCHEDULED && event.status !== TEAM_EVENT_STATUS.RUNNING) {
       return refused('赛事当前不可录分');
@@ -1278,6 +1330,7 @@ async function publishTeamMatch(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
   if (!canReadAssociationSpace(ctx)) return ok(refused('账号或本校在册会员身份已失效，无权访问本协会'));
   if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
+  if (!supportsMatchData(ctx)) return ok(refused('该运动的录分、名单及统计功能尚未开放'));
   if (!canManageAssociationSpace(ctx)) return ok(refused('只有协会负责人及以上可以发布成绩'));
 
   const result = await ctx.repo.transaction(async (root) => {
@@ -1305,7 +1358,7 @@ async function publishTeamMatch(payload = {}, ctx) {
       statDocs.set(teamId, await tx.teamMatchStats.getById(statDocKey(match._id, teamId)));
     }
     const event = await tx.teamEvents.getById(match.eventId);
-    if (!inScope(event, ctx)) {
+    if (!inScope(event, ctx) || !supportsMatchData(fresh, event, match)) {
       return refused('赛事运动规则与协会不符，或成绩发布功能尚未开放');
     }
 
@@ -1385,6 +1438,7 @@ async function reviewTeamMatchStats(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
   if (!canReadAssociationSpace(ctx)) return ok(refused('账号或本校在册会员身份已失效，无权访问本协会'));
   if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
+  if (!supportsMatchData(ctx)) return ok(refused('该运动的录分、名单及统计功能尚未开放'));
   if (!canManageAssociationSpace(ctx)) return ok(refused('只有协会负责人及以上可以审核统计'));
 
   const result = await ctx.repo.transaction(async (root) => {
@@ -1396,7 +1450,7 @@ async function reviewTeamMatchStats(payload = {}, ctx) {
     const match = await tx.teamMatches.getById(payload.matchId);
     if (!inScope(match, ctx)) return refused('比赛不存在，或不在本协会');
     const event = await tx.teamEvents.getById(match.eventId);
-    if (!inScope(event, ctx)) {
+    if (!inScope(event, ctx) || !supportsMatchData(fresh, event, match)) {
       return refused('赛事运动规则与协会不符，或统计功能尚未开放');
     }
     if (match.status !== TEAM_MATCH_STATUS.PUBLISHED) {
@@ -1837,13 +1891,16 @@ async function settleTeamEvent(payload = {}, ctx) {
   const teams = await repo.teams.list();
   const teamName = new Map(teams.map(team => [team._id, team.name]));
 
-  const table = computeTeamTable({
+  const strategy = teamSportStrategyFor(ctx.association, event);
+  if (!strategy) return ok(refused('赛事运动规则与协会不符'));
+  const table = strategy.computeTable({
     entries: entries.map(entry => ({ teamId: entry.teamId, teamName: teamName.get(entry.teamId) })),
-    matches,
+    matches, rules: event.rules, rankingDecisions: event.rankingDecisions || [],
   });
 
   let placements;
   if (event.format === EVENT_FORMAT.ROUND_ROBIN) {
+    if (table.some(row => row.rank === null)) return ok(refused('同分球队的名次待确认，不能结算'));
     placements = table.map(row => ({
       rank: row.rank,
       teamId: row.teamId,
@@ -1952,12 +2009,14 @@ async function getTeamMatchStats(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
   if (!canReadAssociationSpace(ctx)) return ok(refused('账号或本校在册会员身份已失效，无权访问本协会'));
   if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
+  if (!supportsMatchData(ctx)) return ok(refused('该运动的录分、名单及统计功能尚未开放'));
 
   const repo = ctx.repo.forScope(ctx);
   const match = await repo.teamMatches.getById(payload.matchId);
   if (!inScope(match, ctx)) return ok(refused('比赛不存在，或不在本协会'));
   const event = await repo.teamEvents.getById(match.eventId);
   if (!inScope(event, ctx)) return ok(refused('赛事不存在，或不在本协会'));
+  if (!supportsMatchData(ctx, event, match)) return ok(refused('赛事运动规则与协会不符，或统计功能尚未开放'));
 
   const entries = await repo.teamEventEntries.list();
   const teams = await repo.teams.list();
@@ -2063,6 +2122,7 @@ async function saveTeamMatchStats(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
   if (!canReadAssociationSpace(ctx)) return ok(refused('账号或本校在册会员身份已失效，无权访问本协会'));
   if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
+  if (!supportsMatchData(ctx)) return ok(refused('该运动的录分、名单及统计功能尚未开放'));
 
   const result = await ctx.repo.transaction(async (root) => {
     const tx = root.forScope({ schoolId: ctx.schoolId, association: ctx.association });
@@ -2075,6 +2135,7 @@ async function saveTeamMatchStats(payload = {}, ctx) {
     if (!inScope(match, ctx)) return refused('比赛不存在，或不在本协会');
     const event = await tx.teamEvents.getById(match.eventId);
     if (!inScope(event, ctx)) return refused('赛事不存在，或不在本协会');
+    if (!supportsMatchData(fresh, event, match)) return refused('赛事运动规则与协会不符，或录分功能尚未开放');
     if (event.status === TEAM_EVENT_STATUS.FINISHED) return refused('赛事已结束，统计不能再改');
     if (match.status === TEAM_MATCH_STATUS.CANCELED) return refused('这场已取消');
     if (match.status === TEAM_MATCH_STATUS.LIVE) return refused('请在实时计分台记录球员统计');
@@ -2240,6 +2301,7 @@ async function getTeamEventPlayerStats(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
   if (!canReadAssociationSpace(ctx)) return ok(refused('账号或本校在册会员身份已失效，无权访问本协会'));
   if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
+  if (!supportsMatchData(ctx)) return ok(refused('该运动的录分、名单及统计功能尚未开放'));
 
   const repo = ctx.repo.forScope(ctx);
   const event = await repo.teamEvents.getById(payload.eventId);
@@ -2419,6 +2481,7 @@ async function getMyTeamProfile(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
   if (!canReadAssociationSpace(ctx)) return ok(refused('账号或本校在册会员身份已失效，无权访问本协会'));
   if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
+  if (!supportsMatchData(ctx)) return ok(refused('该运动的录分、名单及统计功能尚未开放'));
 
   const targetId = payload.userId ? String(payload.userId) : ctx.actorId;
   const manage = canManageAssociationSpace(ctx);
@@ -2602,6 +2665,7 @@ async function getTeamRecord(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
   if (!canReadAssociationSpace(ctx)) return ok(refused('账号或本校在册会员身份已失效，无权访问本协会'));
   if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
+  if (!supportsMatchData(ctx)) return ok(refused('该运动的录分、名单及统计功能尚未开放'));
 
   const repo = ctx.repo.forScope(ctx);
   const team = await repo.teams.getById(payload.teamId);
@@ -2784,6 +2848,11 @@ async function liveWriteTarget(root, ctx, matchId) {
   if (!inScope(event, fresh) || ![TEAM_EVENT_STATUS.SCHEDULED, TEAM_EVENT_STATUS.RUNNING].includes(event.status)) {
     return { error: '赛事当前不可计分' };
   }
+  const strategy = teamSportStrategyFor(fresh.association, event);
+  if (!strategy || !strategy.supportsLiveScore
+    || (match.sportFormat !== undefined && match.sportFormat !== strategy.sportFormat)) {
+    return { error: '该运动不支持实时计分' };
+  }
   if (!(await canRecordTeamMatch(match, fresh, tx))) return { error: '你无权为这场比赛计分' };
   return { fresh, tx, match, event };
 }
@@ -2900,6 +2969,8 @@ async function updateTeamLiveScore(payload = {}, ctx) {
 /** 观众读摘要，不下发操作流水；待审核分数仍沿用既有可见性规则。 */
 async function getTeamLiveScores(payload = {}, ctx) {
   if (!ctx.actorId || !canReadAssociationSpace(ctx) || !assertTeamSport(ctx)) return ok(refused('没有本协会的读取权限'));
+  const strategy = teamSportStrategyFor(ctx.association);
+  if (!strategy || !strategy.supportsLiveScore) return ok(refused('该运动不支持实时计分'));
   const ids = [...new Set((Array.isArray(payload.matchIds) ? payload.matchIds : [])
     .filter(id => typeof id === 'string' && id))];
   if (ids.length > 50) return ok(refused('一次最多查询 50 场比赛'));
@@ -2909,6 +2980,10 @@ async function getTeamLiveScores(payload = {}, ctx) {
     const batch = await Promise.all(ids.slice(index, index + 10).map(async id => {
       const match = await repo.teamMatches.getById(id);
       if (!inScope(match, ctx)) return null;
+      const event = await repo.teamEvents.getById(match.eventId);
+      const matchStrategy = inScope(event, ctx) && teamSportStrategyFor(ctx.association, event);
+      if (!matchStrategy || !matchStrategy.supportsLiveScore
+        || (match.sportFormat !== undefined && match.sportFormat !== matchStrategy.sportFormat)) return null;
       const editor = await canRecordTeamMatch(match, ctx, repo);
       const view = matchView(match, null, { canRecord: editor, canSeePending: editor });
       return { matchId: id, live: view.live, scoreText: view.scoreText,

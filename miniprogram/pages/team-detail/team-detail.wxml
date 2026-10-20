@@ -62,7 +62,7 @@
     </view>
 
     <!-- 战绩：总胜负 + 历届名次 + 近期几场。只算已发布的比赛 -->
-    <view class="card">
+    <view wx:if="{{recordSupported}}" class="card">
       <view class="card-head">
         <view class="card-title">球队战绩</view>
         <view wx:if="{{record}}" class="badge">{{record.overall.winRateText}} 胜率</view>

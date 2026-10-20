@@ -39,6 +39,7 @@ const {
 } = require('./match-format.js');
 const { RATED_PAIR_LIMIT, ASSOCIATION_STATUS } = require('./constants.js');
 const { defaultRulesFor } = require('./basketball-rules.js');
+const { createFootballAssociation } = require('./football-association.js');
 
 /**
  * 运动类型。
@@ -123,6 +124,7 @@ function baseRules() {
 function teamRules(presetKey) {
   return {
     sportType: SPORT_TYPE.TEAM,
+    teamSportFormat: 'basketball5',
     capabilities: TEAM_CAPABILITIES.slice(),
     basketballRules: defaultRulesFor(presetKey),
   };
@@ -259,6 +261,7 @@ const ASSOCIATIONS = [
     ...teamRules(),
     status: ASSOCIATION_STATUS.ACTIVE,
   },
+  createFootballAssociation(),
 ];
 
 /**
@@ -421,7 +424,8 @@ function workbenchTabsOf(id) {
 function basketballRulesOf(id) {
   try {
     const assoc = getAssociation(id);
-    if (assoc.sportType !== SPORT_TYPE.TEAM) return null;
+    if (assoc.sportType !== SPORT_TYPE.TEAM || !assoc.basketballRules
+      || (assoc.teamSportFormat && assoc.teamSportFormat !== 'basketball5')) return null;
     return { ...assoc.basketballRules };
   } catch (err) {
     return null;

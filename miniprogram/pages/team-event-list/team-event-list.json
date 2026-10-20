@@ -1,4 +1,6 @@
 {
   "navigationBarTitleText": "团队赛事",
-  "usingComponents": {}
+  "usingComponents": {
+    "football-event-form": "/components/football-event-form/football-event-form"
+  }
 }
