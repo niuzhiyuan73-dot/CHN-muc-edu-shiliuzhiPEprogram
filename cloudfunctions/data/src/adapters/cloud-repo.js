@@ -29,12 +29,11 @@ const PAGE_SIZE = 100;
 /** 单次整表读超过这个条数就告警：云端每翻一页是一次 RPC，深翻页同时放大耗时与读配额 */
 const DEEP_READ_WARN = 500;
 
-/**
- * 事务写入预算：云数据库事务的操作数上限**未公示**（社区实践约 100 个写/事务，
- * 超限时整个事务报错且文案晦涩）。超过预算当场抛出可操作的中文错误——失败得早、
- * 失败得明白；没超则一切照旧。可用环境变量 TX_WRITE_BUDGET 调整（真机验收校准后）。
- */
-const TX_WRITE_BUDGET = Number(process.env.TX_WRITE_BUDGET) > 0 ? Number(process.env.TX_WRITE_BUDGET) : 200;
+/** 官方事务上限 100 个读写操作；环境变量只允许收紧，不能放大云端上限。 */
+const TX_OPERATION_BUDGET = Math.min(100, Number(process.env.TX_OPERATION_BUDGET) > 0
+  ? Math.floor(Number(process.env.TX_OPERATION_BUDGET)) : 100);
+const TX_WRITE_BUDGET = Math.min(TX_OPERATION_BUDGET, Number(process.env.TX_WRITE_BUDGET) > 0
+  ? Math.floor(Number(process.env.TX_WRITE_BUDGET)) : TX_OPERATION_BUDGET);
 
 /** 单事务写操作超过这个数就留痕：真机验收时用来核对云端到底能吃多少 */
 const TX_WARN_WRITES = Number(process.env.TX_WARN_WRITES) > 0 ? Number(process.env.TX_WARN_WRITES) : 50;
@@ -422,25 +421,39 @@ function buildCollections(scope, inTx) {
  */
 function instrumentTransaction(transaction) {
   const stats = { writes: 0, reads: 0 };
-
+  const reads = new Map();
   const budgetGuard = () => {
-    if (stats.writes > TX_WRITE_BUDGET) {
-      throw new Error(
-        `单个事务已写入 ${stats.writes} 次，超过写入预算（${TX_WRITE_BUDGET} 次）：`
-        + '云数据库事务的操作数上限未公示，超限会在事务中途整体报错。请分批处理，'
-        + '或按真机验收结果调整环境变量 TX_WRITE_BUDGET。',
-      );
+    if (stats.reads + stats.writes > TX_OPERATION_BUDGET || stats.writes > TX_WRITE_BUDGET) {
+      throw new Error(`事务读写总操作预算不足（读 ${stats.reads} / 写 ${stats.writes}，上限 ${TX_OPERATION_BUDGET}）：请缩小本次处理范围`);
     }
   };
-
   const wrapCollection = (name, collection) => ({
     doc: (id) => {
       const ref = collection.doc(id);
+      const key = JSON.stringify([name, id]);
       return {
-        get: async () => { stats.reads += 1; return ref.get(); },
-        set: async (arg) => { stats.writes += 1; budgetGuard(); return ref.set(arg); },
-        update: async (arg) => { stats.writes += 1; budgetGuard(); return ref.update(arg); },
-        remove: async () => { stats.writes += 1; budgetGuard(); return ref.remove(); },
+        get: async () => {
+          if (!reads.has(key)) {
+            stats.reads += 1; budgetGuard();
+            reads.set(key, Promise.resolve().then(() => ref.get()));
+          }
+          // 事务内的同一条数据只点读一次，归属复查也复用同一快照；不给调用方可变缓存。
+          return stripForStorage(await reads.get(key));
+        },
+        set: async (arg) => {
+          stats.writes += 1; budgetGuard();
+          const result = await ref.set(arg);
+          reads.set(key, Promise.resolve({ data: { ...stripForStorage(arg.data), _id: id } }));
+          return result;
+        },
+        update: async (arg) => {
+          stats.writes += 1; budgetGuard();
+          const result = await ref.update(arg); reads.delete(key); return result;
+        },
+        remove: async () => {
+          stats.writes += 1; budgetGuard();
+          const result = await ref.remove(); reads.set(key, Promise.resolve({ data: null })); return result;
+        },
       };
     },
     add: async (arg) => { stats.writes += 1; budgetGuard(); return collection.add(arg); },
@@ -477,7 +490,7 @@ function createRepo(db) {
         if (instrumented.stats.writes >= TX_WARN_WRITES) {
           console.warn(
             `[data] 事务操作数告警：写 ${instrumented.stats.writes} 次 / 读 ${instrumented.stats.reads} 次`
-            + `（预算 ${TX_WRITE_BUDGET} 写）。云端事务上限未公示，请在真机验收时重点核对。`,
+            + `（总操作预算 ${TX_OPERATION_BUDGET}）。`,
           );
         }
       }

@@ -20,6 +20,7 @@
 
 const space = require('../../services/association-space.js');
 const { resolveRouteId } = require('../../utils/route-query.js');
+const { watchLiveScores } = require('../../services/live-watch.js');
 
 /** 统计指标：顺序即页面上的列顺序，label 给人看，max 只作提示 */
 const STAT_FIELDS = [
@@ -141,6 +142,50 @@ Page({
     return this.refresh();
   },
 
+  onShow() {
+    this.hidden = false;
+    if (this.liveSubscription) this.liveSubscription.resume();
+  },
+  onHide() {
+    this.hidden = true;
+    if (this.liveSubscription) this.liveSubscription.pause();
+  },
+  onUnload() {
+    this.destroyed = true;
+    if (this.liveSubscription) this.liveSubscription();
+  },
+
+  watchScores(matches) {
+    const ids = matches.filter(match => ['scheduled', 'live'].includes(match.status)).map(match => match.matchId);
+    this.liveSubscription = watchLiveScores(ids, scores => {
+      if (this.destroyed) return;
+      const byId = new Map(scores.map(score => [score.matchId, score]));
+      this.setData({ rounds: this.data.rounds.map(round => ({ ...round,
+        matches: round.matches.map(match => {
+          const score = byId.get(match.matchId);
+          return score ? { ...match, live: score.live, status: score.status,
+            statusLabel: score.statusLabel, scoreText: score.scoreText, revision: score.revision,
+            scoreA: score.scoreA, scoreB: score.scoreB, overtime: score.overtime,
+            forfeit: score.forfeit, winner: score.winner } : match;
+        }),
+      })) });
+    }, { fetch: async matchIds => {
+      const scores = [];
+      for (let i = 0; i < matchIds.length; i += 50) {
+        const result = await space.forScope(this.scope).getTeamLiveScores({ matchIds: matchIds.slice(i, i + 50) });
+        if (!result || !result.ok) throw new Error('比分暂时无法更新');
+        scores.push(...result.scores);
+      }
+      return scores;
+    } });
+    if (this.hidden) this.liveSubscription.pause();
+  },
+
+  onOpenLiveScore(event) {
+    const { matchid } = event.currentTarget.dataset;
+    wx.navigateTo({ url: `/pages/team-live-score/team-live-score?matchId=${encodeURIComponent(matchid)}` });
+  },
+
   /** 取详情。所有动作做完都回到这里，页面状态永远只有一个来源 */
   async refresh() {
     if (!this.data.eventId) {
@@ -202,6 +247,7 @@ Page({
         canManage: event.canManage === true,
       });
       this.onLoadPlayerStats();
+      this.watchScores(result.matches || []);
       return undefined;
     } catch (err) {
       console.error('[team-event-detail] 加载失败', err);
@@ -496,6 +542,8 @@ Page({
    */
   async onOpenStats(event) {
     const { matchid } = event.currentTarget.dataset;
+    const match = this.data.rounds.flatMap(round => round.matches).find(row => row.matchId === matchid);
+    if (match && match.status === 'live') return this.onOpenLiveScore(event);
     this.setData({ notice: '', noticeError: false });
     try {
       const result = await space.forScope(this.scope).getTeamMatchStats({ matchId: matchid });

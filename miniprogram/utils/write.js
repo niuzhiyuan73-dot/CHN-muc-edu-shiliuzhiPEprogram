@@ -107,6 +107,8 @@ const SCHOOL_WRITE_ACTIONS = [
   // 团队赛事：抽签 / 录分 / 发布 / 下一轮 / 结算
   'drawTeamEvent',
   'recordTeamMatch',
+  'startTeamLiveScore',
+  'updateTeamLiveScore',
   'publishTeamMatch',
   'advanceTeamRound',
   'settleTeamEvent',

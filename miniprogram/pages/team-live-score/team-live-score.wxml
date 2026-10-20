@@ -1,0 +1,71 @@
+<view class="page-container {{themeClass}}">
+  <view wx:if="{{loading}}" class="hint">正在恢复计分台…</view>
+  <view wx:elif="{{error}}" class="hint"><text>{{error}}</text><button bindtap="onReload">重新载入</button></view>
+  <block wx:elif="{{live}}">
+    <view class="live-header">
+      <view class="header-status"><text class="period">{{live.periodLabel}}</text><text class="save-state {{failed ? 'save-error' : ''}}">{{submitted ? '已提交 · 等待审核' : failed ? '未同步' : pendingCount > 0 ? '保存中' : '已保存'}}</text></view>
+      <view class="header-actions">
+        <button wx:if="{{view !== 'main' && view !== 'player'}}" disabled="{{pendingCount > 0}}" bindtap="onMain">返回计分</button>
+        <button wx:if="{{view === 'main'}}" disabled="{{pendingCount > 0}}" bindtap="onOpenStats">技术统计</button>
+        <button wx:if="{{!submitted && view === 'main'}}" disabled="{{pendingCount > 0 || !live.canUndo || failed}}" bindtap="onUndo">撤销</button>
+        <button wx:if="{{!submitted && view === 'main'}}" disabled="{{pendingCount > 0 || failed || (live.period >= live.regulationPeriods && live.scoreA !== live.scoreB)}}" bindtap="onNextPeriod">{{live.period >= live.regulationPeriods ? '进入加时' : '结束本节'}}</button>
+        <button wx:if="{{!submitted && view === 'main'}}" disabled="{{pendingCount > 0 || failed || live.period < live.regulationPeriods}}" bindtap="onFinish">提交审核</button>
+        <button bindtap="onExit">返回赛程</button>
+      </view>
+    </view>
+    <view class="workspace">
+      <view wx:if="{{view === 'main' || view === 'player'}}" class="court-layout">
+        <view class="score-column">
+          <view class="section-title">球队总分</view>
+          <view class="scoreboard">
+            <view class="team">
+              <view class="team-name">{{teamAName}}</view><view class="points">{{live.scoreA}}</view>
+              <view class="score-buttons"><button wx:for="{{[1,2,3]}}" wx:key="*this" data-side="A" data-points="{{item}}" disabled="{{submitted || failed || controlsPending || view === 'player'}}" bindtap="onScore">+{{item}}</button></view>
+            </view>
+            <text class="separator">:</text>
+            <view class="team">
+              <view class="team-name">{{teamBName}}</view><view class="points">{{live.scoreB}}</view>
+              <view class="score-buttons"><button wx:for="{{[1,2,3]}}" wx:key="*this" data-side="B" data-points="{{item}}" disabled="{{submitted || failed || controlsPending || view === 'player'}}" bindtap="onScore">+{{item}}</button></view>
+            </view>
+          </view>
+          <view class="note">未知得分者可直接加球队分</view>
+        </view>
+        <view class="player-slot">
+        <view wx:if="{{view === 'main'}}" class="player-column">
+          <view class="section-heading"><text class="section-title">场上球员 · {{courtCount}} / 5</text><button disabled="{{submitted || failed || pendingCount > 0}}" bindtap="onOpenSubstitute">换人</button></view>
+          <view class="side-tabs"><button class="{{activeSide === 'A' ? 'active' : ''}}" data-side="A" bindtap="onSelectSide">{{teamAName}}</button><button class="{{activeSide === 'B' ? 'active' : ''}}" data-side="B" bindtap="onSelectSide">{{teamBName}}</button></view>
+          <view class="court-players">
+            <button wx:for="{{playerChoices}}" wx:key="userId" class="player-row" data-userid="{{item.userId}}" disabled="{{submitted || failed || pendingCount > 0}}" bindtap="onSelectPlayer"><text>{{item.label}}</text><text class="row-action">记一笔 ›</text></button>
+            <view wx:if="{{courtCount === 0}}" class="note">本场无可用球员名单</view>
+          </view>
+          <view class="note">{{courtCount < 5 ? '名单不足 5 人，请核对赛前出场名单' : '首发默认名单前 5 人，可通过换人调整'}}</view>
+        </view>
+      <view wx:if="{{view === 'player'}}" class="action-panel">
+        <view class="section-heading action-heading"><text class="section-title">{{selectedPlayerName}}</text><button class="cancel-player" disabled="{{pendingCount > 0}}" bindtap="onCancelPlayer">取消返回</button></view>
+        <view class="player-score-mode"><text>只补个人得分，不改球队总分</text><switch checked="{{onlyPlayerPoints}}" bindchange="onTogglePlayerOnly" disabled="{{pendingCount > 0 || failed}}" color="#b6652b" /></view>
+        <view class="player-score-buttons"><button wx:for="{{[1,2,3]}}" wx:key="*this" data-points="{{item}}" bindtap="onPlayerScore" disabled="{{submitted || failed || pendingCount > 0}}">{{onlyPlayerPoints ? '个人' : '得分'}} +{{item}}</button><button data-field="points" data-delta="-1" bindtap="onStat" disabled="{{submitted || failed || pendingCount > 0 || !canDecreasePoints}}">个人 −1</button></view>
+        <view class="stat-grid"><view wx:for="{{statButtons}}" wx:key="field" class="stat-tile"><view class="stat-title">{{item.label}} <text>{{item.valueText}}</text></view><view class="stat-actions"><button data-field="{{item.field}}" data-delta="-1" bindtap="onStat" disabled="{{submitted || failed || pendingCount > 0 || !item.canDecrease}}">−1</button><button data-field="{{item.field}}" data-delta="1" bindtap="onStat" disabled="{{submitted || failed || pendingCount > 0}}">+1</button></view></view></view>
+      </view>
+        </view>
+      </view>
+      <view wx:elif="{{view === 'substitute'}}" class="substitution-panel">
+        <view class="section-heading"><text class="section-title">{{activeSide === 'A' ? teamAName : teamBName}} · 换人</text><text class="note">选一人下场、一人上场，统计保留</text></view>
+        <view class="substitution-columns">
+          <view class="substitution-column"><text class="column-title">下场 · 当前场上</text><view class="court-players"><button wx:for="{{playerChoices}}" wx:key="userId" class="player-row {{item.selected ? 'active' : ''}}" data-userid="{{item.userId}}" disabled="{{pendingCount > 0 || failed}}" bindtap="onChooseOut">{{item.label}}</button></view></view>
+          <view class="substitution-column"><view class="section-heading"><text class="column-title">上场 · 替补</text><view class="pagination"><button data-kind="bench" data-delta="-1" bindtap="onPage" disabled="{{benchPage === 0 || pendingCount > 0}}">‹</button><text>{{benchPage + 1}}/{{benchPages}}</text><button data-kind="bench" data-delta="1" bindtap="onPage" disabled="{{benchPage + 1 >= benchPages || pendingCount > 0}}">›</button></view></view><view class="court-players"><button wx:for="{{benchChoices}}" wx:key="userId" class="player-row {{item.selected ? 'active' : ''}}" data-userid="{{item.userId}}" disabled="{{pendingCount > 0 || failed}}" bindtap="onChooseIn">{{item.label}}</button><view wx:if="{{benchChoices.length === 0}}" class="note">没有可换上的替补</view></view></view>
+        </view>
+        <button class="confirm-button" disabled="{{!outId || !inId || pendingCount > 0 || failed}}" bindtap="onSubstitute">确认换人</button>
+      </view>
+      <view wx:elif="{{view === 'stats'}}" class="totals-panel">
+        <view class="side-tabs"><button class="{{activeSide === 'A' ? 'active' : ''}}" data-side="A" bindtap="onSelectSide">{{teamAName}}</button><button class="{{activeSide === 'B' ? 'active' : ''}}" data-side="B" bindtap="onSelectSide">{{teamBName}}</button><button class="{{totalsKind === 'players' ? 'active' : ''}}" data-kind="players" bindtap="onTotalsKind">整场技术统计</button><button class="{{totalsKind === 'periods' ? 'active' : ''}}" data-kind="periods" bindtap="onTotalsKind">分节比分</button></view>
+        <block wx:if="{{totalsKind === 'players'}}">
+          <view class="totals-table"><view class="totals-row table-heading"><text class="player-name">球员</text><text wx:for="{{statFields}}" wx:key="field">{{item.label}}</text></view><view wx:for="{{playerTotals}}" wx:key="userId" class="totals-row"><text class="player-name">{{item.no === null ? '' : item.no + ' · '}}{{item.name}}</text><text wx:for="{{item.cells}}" wx:for-item="cell" wx:key="field">{{cell.text}}</text></view></view>
+          <view class="pagination"><button data-kind="totals" data-delta="-1" bindtap="onPage" disabled="{{totalsPage === 0}}">上一页</button><text>{{totalsPage + 1}} / {{totalsPages}}</text><button data-kind="totals" data-delta="1" bindtap="onPage" disabled="{{totalsPage + 1 >= totalsPages}}">下一页</button></view>
+        </block>
+        <block wx:else><view class="totals-table"><view class="period-row table-heading"><text>节次</text><text>{{teamAName}}</text><text>{{teamBName}}</text></view><view wx:for="{{shownPeriods}}" wx:key="label" class="period-row"><text>{{item.label}}</text><text>{{item.scoreA}}</text><text>{{item.scoreB}}</text></view></view><view class="pagination"><button data-kind="period" data-delta="-1" bindtap="onPage" disabled="{{periodPage === 0}}">上一页</button><text>{{periodPage + 1}} / {{periodPages}}</text><button data-kind="period" data-delta="1" bindtap="onPage" disabled="{{periodPage + 1 >= periodPages}}">下一页</button></view></block>
+        <view class="team-summary"><text wx:for="{{teamDifferences}}" wx:key="side">{{item.name}}：总分 {{item.teamScore}} / 个人合计 {{item.playerScore}} · {{item.differenceText}}</text></view>
+      </view>
+    </view>
+    <view class="feedback-bar"><text class="notice">{{notice || (storageError ? '本机未同步操作暂时无法留存，请保存后退出' : '比分与个人统计允许不一致 · 结束后需审核')}}</text><view wx:if="{{failed}}" class="retry-actions"><button bindtap="onRetry">重试保存</button><button bindtap="onReload">重新载入</button></view></view>
+  </block>
+</view>

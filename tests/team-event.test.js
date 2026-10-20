@@ -359,10 +359,11 @@ test('录分 —— 平局、非法比分、越权都被拦下', async () => {
   assert.equal(stranger.ok, false);
   assert.match(stranger.message, /队长/);
 
-  // 参赛队队长可以录
+  // 抽签次序会随赛事版本变化，按实际对阵找队长，不依赖某个固定随机结果。
+  const captain = (await repo.teams.getById(row.teamA)).captainId;
   const okAsCaptain = await call(repo, 'recordTeamMatch', {
     matchId: row.matchId, scoreA: 80, scoreB: 70,
-  }, 'u_t0c');
+  }, captain);
   assert.equal(okAsCaptain.ok, true, okAsCaptain.message);
 });
 

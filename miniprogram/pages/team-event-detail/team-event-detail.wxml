@@ -114,6 +114,7 @@
             <text wx:if="{{match.matchTimeText}}">{{match.matchTimeText}}</text>
             <text wx:if="{{match.location}}">{{match.location}}</text>
             <text>{{match.statusLabel}}</text>
+            <text wx:if="{{match.live}}" class="tag">{{match.live.periodLabel}} · 非最终结果</text>
             <text wx:if="{{match.overtime}}" class="tag tag-ot">加时</text>
             <text wx:if="{{match.forfeit}}" class="tag tag-ot">{{match.forfeit === 'A' ? match.teamAName : match.teamBName}} 弃权</text>
             <text wx:if="{{match.statPending}}" class="tag tag-ot">统计待审核</text>
@@ -123,6 +124,10 @@
             <text wx:if="{{match.recorderName}}">记录 {{match.recorderName}}</text>
           </view>
           <view class="match-actions">
+            <view wx:if="{{match.canRecord && (match.status === 'scheduled' || match.status === 'live')}}"
+              class="mini mini-primary" data-matchid="{{match.matchId}}" bindtap="onOpenLiveScore">
+              {{match.status === 'live' ? '继续计分' : '实时计分'}}
+            </view>
             <view
               wx:if="{{match.canRecord && (match.status === 'scheduled' || match.status === 'reviewing')}}"
               class="mini mini-primary"
@@ -146,7 +151,7 @@
               class="mini"
               data-matchid="{{match.matchId}}"
               bindtap="onOpenStats"
-            >{{match.statPending && match.canPublish ? '审核统计' : '统计'}}</view>
+            >{{match.status === 'live' ? '球员统计' : match.statPending && match.canPublish ? '审核统计' : '统计'}}</view>
             <view
               wx:if="{{canManage && match.status !== 'canceled'}}"
               class="mini"

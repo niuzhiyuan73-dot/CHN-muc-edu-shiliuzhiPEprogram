@@ -56,6 +56,9 @@ function fingerprint(view) {
     view.gamesB,
     view.gameIndex,
     view.status,
+    // 篮球同一入口：换节和结束也要通知，不只比较总分。
+    view.revision,
+    view.scoreText,
   ].join(':');
 }
 
@@ -96,13 +99,16 @@ function clearTimer(target) {
  * @param {Object} target
  */
 async function poll(target) {
-  if (!target || target.stopped || target.paused) return;
+  if (!target || target.stopped || target.paused || target.inFlight) return;
+  target.inFlight = true;
 
   let views;
   try {
     views = await target.fetch(target.ids);
   } catch (err) {
     return undefined; // 这一拍失败：不回调、不重试，下一拍照常
+  } finally {
+    target.inFlight = false;
   }
   // 等待期间页面可能已经取消订阅或隐藏了
   if (!target || target.stopped || target.paused) return undefined;
@@ -137,6 +143,8 @@ function schedule(target) {
   target.timer = setInterval(() => {
     poll(target);
   }, POLL_INTERVAL);
+  // Node 页面装配环境不因后台轮询常驻；微信的数值句柄没有此方法。
+  if (target.timer && typeof target.timer.unref === 'function') target.timer.unref();
 }
 
 /** 停掉当前订阅 */

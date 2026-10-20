@@ -25,8 +25,9 @@
  * ============================================================
  */
 
-const { canManageAssociationSpace, canParticipateInAssociation } = require('./association-space-permission.js');
+const { canManageAssociationSpace, canParticipateInAssociation, canReadAssociationSpace } = require('./association-space-permission.js');
 const { buildDirectory } = require('./school-actor.js');
+const { buildSchoolContext } = require('./school-context.js');
 const { teamKey, teamMemberKey } = require('../utils/school.js');
 const {
   TEAM_STATUS, TEAM_STATUS_LABEL, TEAM_MEMBER_STATUS, TEAM_MEMBER_STATUS_LABEL,
@@ -150,6 +151,7 @@ async function membershipMap(repo) {
  */
 async function listTeams(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
+  if (!canReadAssociationSpace(ctx)) return ok(refused('账号或本校在册会员身份已失效，无权访问本协会'));
   if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
 
   const dir = await buildDirectory(ctx);
@@ -189,6 +191,7 @@ async function listTeams(payload = {}, ctx) {
  */
 async function getTeam(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
+  if (!canReadAssociationSpace(ctx)) return ok(refused('账号或本校在册会员身份已失效，无权访问本协会'));
   if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
 
   const team = await loadTeam(ctx.repo.forScope(ctx), ctx, payload.teamId);
@@ -227,6 +230,7 @@ async function getTeam(payload = {}, ctx) {
  */
 async function createTeamApplication(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
+  if (!canReadAssociationSpace(ctx)) return ok(refused('账号或本校在册会员身份已失效，无权访问本协会'));
   if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
   if (!canParticipateInAssociation(ctx)) return ok(refused('只有本协会在册会员可以申请建队'));
 
@@ -253,22 +257,26 @@ async function createTeamApplication(payload = {}, ctx) {
   }
 
   const result = await ctx.repo.transaction(async tx => {
+    const fresh = await buildSchoolContext({ repo: tx, actorId: ctx.actorId,
+      scope: { schoolId: ctx.schoolId, association: ctx.association }, now: ctx.now });
+    if (!canParticipateInAssociation(fresh)) return refused('只有本校在册会员可以操作');
+
     // 事务内只写：先点读确认没有被并发请求抢先建出来（同编号重试的幂等）
     const again = await tx.teams.getById(teamId);
-    if (inScope(again, ctx)) return { ok: true, teamId, message: '' };
+    if (inScope(again, fresh)) return { ok: true, teamId, message: '' };
 
-    const now = ctx.now;
+    const now = fresh.now;
     await tx.teams.set(teamId, {
-      _id: teamId, schoolId: ctx.schoolId, association: ctx.association,
+      _id: teamId, schoolId: fresh.schoolId, association: fresh.association,
       sport: 'basketball', name: name.value, college,
-      captainId: ctx.actorId, status: TEAM_STATUS.PENDING,
+      captainId: fresh.actorId, status: TEAM_STATUS.PENDING,
       memberCount: 1, revision: 1, requestId: token,
-      createdBy: ctx.actorId, createdAt: now, updatedAt: now,
+      createdBy: fresh.actorId, createdAt: now, updatedAt: now,
     });
-    await tx.teamMembers.set(teamMemberKey(teamId, ctx.actorId), {
-      _id: teamMemberKey(teamId, ctx.actorId),
-      schoolId: ctx.schoolId, association: ctx.association,
-      teamId, userId: ctx.actorId, role: 'captain', status: TEAM_MEMBER_STATUS.ACTIVE,
+    await tx.teamMembers.set(teamMemberKey(teamId, fresh.actorId), {
+      _id: teamMemberKey(teamId, fresh.actorId),
+      schoolId: fresh.schoolId, association: fresh.association,
+      teamId, userId: fresh.actorId, role: 'captain', status: TEAM_MEMBER_STATUS.ACTIVE,
       joinedAt: now, updatedAt: now,
     });
     return { ok: true, teamId, message: '' };
@@ -282,22 +290,27 @@ async function createTeamApplication(payload = {}, ctx) {
  */
 async function reviewTeamApplication(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
+  if (!canReadAssociationSpace(ctx)) return ok(refused('账号或本校在册会员身份已失效，无权访问本协会'));
   if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
   if (!canManageAssociationSpace(ctx)) return ok(refused('只有协会负责人及以上可以审核建队'));
 
   const approve = payload.approve === true;
   const result = await ctx.repo.transaction(async tx => {
-    const team = await loadTeam(tx, ctx, payload.teamId);
+    const fresh = await buildSchoolContext({ repo: tx, actorId: ctx.actorId,
+      scope: { schoolId: ctx.schoolId, association: ctx.association }, now: ctx.now });
+    if (!canManageAssociationSpace(fresh)) return refused('当前已无审核建队权限');
+
+    const team = await loadTeam(tx, fresh, payload.teamId);
     if (!team) return refused('球队不存在，或不在本协会');
     if (team.status !== TEAM_STATUS.PENDING) return refused('这支球队不在待审核状态');
 
-    const now = ctx.now;
+    const now = fresh.now;
     await tx.teams.set(team._id, {
       ...team,
       status: approve ? TEAM_STATUS.ACTIVE : TEAM_STATUS.REJECTED,
       reason: approve ? '' : String(payload.reason || '').trim().slice(0, 100),
       revision: Number(team.revision || 1) + 1,
-      reviewedBy: ctx.actorId, reviewedAt: now, updatedAt: now,
+      reviewedBy: fresh.actorId, reviewedAt: now, updatedAt: now,
     });
     return { ok: true, teamId: team._id, status: approve ? TEAM_STATUS.ACTIVE : TEAM_STATUS.REJECTED, message: '' };
   });
@@ -307,24 +320,29 @@ async function reviewTeamApplication(payload = {}, ctx) {
 /** 本人申请入队。重复申请幂等；被拒/离队后可重新申请。 */
 async function applyToJoinTeam(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
+  if (!canReadAssociationSpace(ctx)) return ok(refused('账号或本校在册会员身份已失效，无权访问本协会'));
   if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
   if (!canParticipateInAssociation(ctx)) return ok(refused('只有本协会在册会员可以加入球队'));
 
   const result = await ctx.repo.transaction(async tx => {
-    const team = await loadTeam(tx, ctx, payload.teamId);
+    const fresh = await buildSchoolContext({ repo: tx, actorId: ctx.actorId,
+      scope: { schoolId: ctx.schoolId, association: ctx.association }, now: ctx.now });
+    if (!canParticipateInAssociation(fresh)) return refused('只有本校在册会员可以操作');
+
+    const team = await loadTeam(tx, fresh, payload.teamId);
     if (!team) return refused('球队不存在，或不在本协会');
     if (team.status !== TEAM_STATUS.ACTIVE) return refused('这支球队当前不接受入队申请');
 
-    const key = teamMemberKey(team._id, ctx.actorId);
+    const key = teamMemberKey(team._id, fresh.actorId);
     const existing = await tx.teamMembers.getById(key);
     if (isActiveMember(existing)) return { ok: true, status: TEAM_MEMBER_STATUS.ACTIVE, message: '你已在这支球队中' };
     if (existing && existing.status === TEAM_MEMBER_STATUS.PENDING) {
       return { ok: true, status: TEAM_MEMBER_STATUS.PENDING, message: '' };
     }
-    const now = ctx.now;
+    const now = fresh.now;
     await tx.teamMembers.set(key, {
-      _id: key, schoolId: ctx.schoolId, association: ctx.association,
-      teamId: team._id, userId: ctx.actorId, role: 'member',
+      _id: key, schoolId: fresh.schoolId, association: fresh.association,
+      teamId: team._id, userId: fresh.actorId, role: 'member',
       status: TEAM_MEMBER_STATUS.PENDING, note: String(payload.note || '').trim().slice(0, 60),
       joinedAt: existing && existing.joinedAt ? existing.joinedAt : null,
       updatedAt: now,
@@ -340,25 +358,30 @@ async function applyToJoinTeam(payload = {}, ctx) {
  */
 async function reviewTeamMember(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
+  if (!canReadAssociationSpace(ctx)) return ok(refused('账号或本校在册会员身份已失效，无权访问本协会'));
   if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
 
   const approve = payload.approve === true;
   const result = await ctx.repo.transaction(async tx => {
-    const team = await loadTeam(tx, ctx, payload.teamId);
+    const fresh = await buildSchoolContext({ repo: tx, actorId: ctx.actorId,
+      scope: { schoolId: ctx.schoolId, association: ctx.association }, now: ctx.now });
+    if (!canReadAssociationSpace(fresh)) return refused('账号或本校身份已失效');
+
+    const team = await loadTeam(tx, fresh, payload.teamId);
     if (!team) return refused('球队不存在，或不在本协会');
-    if (!canManageTeam(ctx, team, ctx.actorId)) return refused('只有队长或协会负责人可以审批入队');
+    if (!canManageTeam(fresh, team, fresh.actorId)) return refused('只有队长或协会负责人可以审批入队');
 
     const key = teamMemberKey(team._id, payload.userId);
     const row = await tx.teamMembers.getById(key);
     if (!row || row.teamId !== team._id) return refused('找不到这条入队申请');
     if (row.status !== TEAM_MEMBER_STATUS.PENDING) return refused('这条申请已经处理过了');
 
-    const now = ctx.now;
+    const now = fresh.now;
     await tx.teamMembers.set(key, {
       ...row,
       status: approve ? TEAM_MEMBER_STATUS.ACTIVE : TEAM_MEMBER_STATUS.REJECTED,
       joinedAt: approve ? now : null,
-      reviewedBy: ctx.actorId, reviewedAt: now, updatedAt: now,
+      reviewedBy: fresh.actorId, reviewedAt: now, updatedAt: now,
     });
     if (approve) {
       await tx.teams.set(team._id, {
@@ -377,19 +400,24 @@ async function reviewTeamMember(payload = {}, ctx) {
  */
 async function leaveTeam(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
+  if (!canReadAssociationSpace(ctx)) return ok(refused('账号或本校在册会员身份已失效，无权访问本协会'));
   if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
 
   const result = await ctx.repo.transaction(async tx => {
-    const team = await loadTeam(tx, ctx, payload.teamId);
+    const fresh = await buildSchoolContext({ repo: tx, actorId: ctx.actorId,
+      scope: { schoolId: ctx.schoolId, association: ctx.association }, now: ctx.now });
+    if (!canReadAssociationSpace(fresh)) return refused('账号或本校身份已失效');
+
+    const team = await loadTeam(tx, fresh, payload.teamId);
     if (!team) return refused('球队不存在，或不在本协会');
-    if (team.captainId === ctx.actorId) {
+    if (team.captainId === fresh.actorId) {
       return refused('队长不能直接退队：请先转让队长，或直接归档这支球队');
     }
-    const key = teamMemberKey(team._id, ctx.actorId);
+    const key = teamMemberKey(team._id, fresh.actorId);
     const row = await tx.teamMembers.getById(key);
     if (!isActiveMember(row)) return refused('你不在队中');
 
-    const now = ctx.now;
+    const now = fresh.now;
     await tx.teamMembers.set(key, { ...row, status: TEAM_MEMBER_STATUS.LEFT, leftAt: now, updatedAt: now });
     await tx.teams.set(team._id, {
       ...team, memberCount: Math.max(0, (Number(team.memberCount) || 1) - 1), updatedAt: now,
@@ -402,12 +430,17 @@ async function leaveTeam(payload = {}, ctx) {
 /** 转让队长（队长本人或协会管理者）。目标必须是在队成员。 */
 async function transferTeamCaptain(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
+  if (!canReadAssociationSpace(ctx)) return ok(refused('账号或本校在册会员身份已失效，无权访问本协会'));
   if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
 
   const result = await ctx.repo.transaction(async tx => {
-    const team = await loadTeam(tx, ctx, payload.teamId);
+    const fresh = await buildSchoolContext({ repo: tx, actorId: ctx.actorId,
+      scope: { schoolId: ctx.schoolId, association: ctx.association }, now: ctx.now });
+    if (!canReadAssociationSpace(fresh)) return refused('账号或本校身份已失效');
+
+    const team = await loadTeam(tx, fresh, payload.teamId);
     if (!team) return refused('球队不存在，或不在本协会');
-    if (!canManageTeam(ctx, team, ctx.actorId)) return refused('只有队长或协会负责人可以转让队长');
+    if (!canManageTeam(fresh, team, fresh.actorId)) return refused('只有队长或协会负责人可以转让队长');
     if (team.status === TEAM_STATUS.ARCHIVED) return refused('已归档的球队不能转让队长');
 
     const targetKey = teamMemberKey(team._id, payload.userId);
@@ -415,7 +448,7 @@ async function transferTeamCaptain(payload = {}, ctx) {
     if (!isActiveMember(target)) return refused('只能把队长转给在队队员');
     if (target.userId === team.captainId) return refused('他已经是队长了');
 
-    const now = ctx.now;
+    const now = fresh.now;
     const currentKey = teamMemberKey(team._id, team.captainId);
     const current = await tx.teamMembers.getById(currentKey);
     if (current) {
@@ -433,18 +466,23 @@ async function transferTeamCaptain(payload = {}, ctx) {
 /** 归档球队（= 解散，不物理删除）。历史比赛与统计仍可查。 */
 async function archiveTeam(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
+  if (!canReadAssociationSpace(ctx)) return ok(refused('账号或本校在册会员身份已失效，无权访问本协会'));
   if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
 
   const result = await ctx.repo.transaction(async tx => {
-    const team = await loadTeam(tx, ctx, payload.teamId);
+    const fresh = await buildSchoolContext({ repo: tx, actorId: ctx.actorId,
+      scope: { schoolId: ctx.schoolId, association: ctx.association }, now: ctx.now });
+    if (!canReadAssociationSpace(fresh)) return refused('账号或本校身份已失效');
+
+    const team = await loadTeam(tx, fresh, payload.teamId);
     if (!team) return refused('球队不存在，或不在本协会');
-    if (!canManageTeam(ctx, team, ctx.actorId)) return refused('只有队长或协会负责人可以归档球队');
+    if (!canManageTeam(fresh, team, fresh.actorId)) return refused('只有队长或协会负责人可以归档球队');
     if (team.status === TEAM_STATUS.ARCHIVED) return { ok: true, message: '' };
 
-    const now = ctx.now;
+    const now = fresh.now;
     await tx.teams.set(team._id, {
       ...team, status: TEAM_STATUS.ARCHIVED,
-      archivedBy: ctx.actorId, archivedAt: now,
+      archivedBy: fresh.actorId, archivedAt: now,
       revision: Number(team.revision || 1) + 1, updatedAt: now,
     });
     return { ok: true, message: '' };

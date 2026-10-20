@@ -1,0 +1,42 @@
+page { height: 100%; overflow: hidden; background: #f3f4f6; }
+.page-container { position: fixed; top: 0; right: 0; bottom: 0; left: 0; min-height: 0; height: auto; width: auto; box-sizing: border-box; overflow: hidden; display: flex; flex-direction: column; padding: 5px max(8px, env(safe-area-inset-right)) max(2px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); background: var(--color-bg, #f3f4f6); color: var(--color-text, #20242b); font-size: 13px; }
+button { margin: 0; padding: 0 8px; height: 30px; min-height: 0; line-height: 30px; font-size: 13px; border-radius: 7px; background: #edf0f4; color: #283442; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+button::after { border: none; }
+button[disabled] { opacity: .45; color: #64748b; }
+.hint { margin: auto; text-align: center; }.hint button { margin-top: 12px; }
+.live-header, .header-status, .header-actions, .section-heading, .side-tabs, .pagination, .retry-actions { display: flex; align-items: center; gap: 6px; }
+.live-header { height: 34px; flex-shrink: 0; justify-content: space-between; }.header-status { flex-shrink: 0; }.header-actions { min-width: 0; }
+.period { font-size: 16px; font-weight: 700; }.save-state { font-size: 11px; color: #278056; }.save-error { color: #b43b26; }
+.workspace { box-sizing: border-box; flex: 1; min-height: 0; overflow: hidden; padding-top: 4px; }
+.court-layout { height: 100%; display: flex; gap: 8px; }
+.score-column, .player-column, .action-panel, .substitution-panel, .totals-panel { box-sizing: border-box; border-radius: 10px; padding: 8px; background: var(--color-card, #fff); min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.score-column { width: 41%; flex-shrink: 0; }.player-slot { position: relative; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }.player-column { height: 100%; width: 100%; }.substitution-panel, .totals-panel { height: 100%; }
+.section-title { font-size: 15px; font-weight: 700; }.section-heading { justify-content: space-between; flex-shrink: 0; min-height: 26px; }.section-heading button { height: 26px; line-height: 26px; }
+.scoreboard { display: flex; align-items: center; gap: 4px; flex: 1; min-height: 0; }.team { flex: 1; min-width: 0; text-align: center; }.team-name { font-size: 16px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.points { font-size: 42px; font-size: clamp(32px, 10vh, 58px); line-height: 1.35; font-weight: 800; font-variant-numeric: tabular-nums; }.separator { font-size: 24px; }.score-buttons { display: flex; gap: 4px; }.score-buttons button { padding: 0; flex: 1; height: 38px; line-height: 38px; font-size: 18px; background: #fff0e4; color: #a54b16; }
+.note { font-size: 11px; line-height: 16px; color: #718096; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex-shrink: 0; }.score-column > .note { text-align: center; }
+.side-tabs { margin: 3px 0; flex-shrink: 0; }.side-tabs button { flex: 1; min-width: 0; }.active { background: #b65e26; color: #fff; }
+.court-players { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 3px; padding: 3px 0; }.player-row { flex: 1; min-height: 0; height: auto; line-height: normal; display: flex; align-items: center; justify-content: space-between; text-align: left; }.player-row text:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.row-action { flex-shrink: 0; font-size: 11px; color: #9a592c; margin-left: 8px; }
+.player-score-mode { display: flex; align-items: center; justify-content: space-between; height: 32px; flex-shrink: 0; }.player-score-mode switch { transform: scale(.65); transform-origin: right center; }
+.player-score-buttons { display: flex; gap: 8px; flex-shrink: 0; margin: 4px 0; }.player-score-buttons button { flex: 1; background: #fff0e4; color: #a54b16; height: 36px; line-height: 36px; }
+.stat-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 6px; flex: 1; min-height: 0; padding-top: 4px; }.stat-tile { background: #f5f7fa; padding: 3px 6px; border-radius: 7px; display: flex; flex-direction: column; justify-content: center; min-height: 0; }.stat-title { display: flex; justify-content: space-between; line-height: 20px; }.stat-title text { color: #718096; }.stat-actions { display: flex; gap: 5px; }.stat-actions button { flex: 1; }
+.substitution-columns { display: flex; flex: 1; min-height: 0; gap: 12px; }.substitution-column { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; }.column-title { height: 26px; line-height: 26px; }.substitution-column .section-heading { height: 26px; }.confirm-button { flex-shrink: 0; background: #b65e26; color: white; margin-top: 4px; }
+.pagination { justify-content: center; flex-shrink: 0; font-size: 11px; height: 28px; }.pagination button { height: 25px; line-height: 25px; font-size: 11px; }.totals-table { flex: 1; min-height: 0; display: flex; flex-direction: column; }.totals-row, .period-row { display: flex; flex: 1; min-height: 0; align-items: center; border-bottom: 1px solid #edf0f4; }.totals-row text { flex: 1; text-align: center; min-width: 0; }.totals-row .player-name { flex: 2.2; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.table-heading { color: #718096; font-size: 11px; }.period-row text { flex: 1; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.team-summary { display: flex; gap: 16px; font-size: 11px; line-height: 20px; flex-shrink: 0; }.team-summary text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.feedback-bar { height: 28px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; }.notice { flex: 1; min-width: 0; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #976431; }.retry-actions button { height: 25px; line-height: 25px; font-size: 11px; }
+@media (max-height: 320px) { .page-container { padding-top: 2px; }.live-header { height: 30px; }.score-column, .player-column, .action-panel, .substitution-panel, .totals-panel { padding: 5px 8px; }.player-score-mode { height: 26px; }.player-score-buttons button { height: 30px; line-height: 30px; }.stat-title { line-height: 16px; }.stat-actions button { height: 25px; line-height: 25px; }.feedback-bar { height: 24px; }.stat-grid { gap: 4px; padding-top: 0; } }
+
+.section-heading .section-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 球员操作覆盖右侧，不进入名单文档流，也不撑高计分台。 */
+.action-panel { position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 2; height: auto; padding: 6px; background: var(--color-card, #fff); }
+.action-heading { height: 26px; min-height: 26px; gap: 4px; }
+.action-heading .section-title { font-size: 13px; }
+.cancel-player { flex-shrink: 0; padding: 0 7px; font-size: 12px; background: #edf0f4; color: #283442; }
+.action-panel .player-score-mode { height: 26px; font-size: 11px; }
+.action-panel .player-score-mode switch { flex-shrink: 0; }
+.action-panel .player-score-buttons { gap: 4px; margin: 3px 0; }
+.action-panel .player-score-buttons button { height: 30px; line-height: 30px; padding: 0 2px; min-width: 0; font-size: 12px; }
+.action-panel .stat-grid { gap: 4px; padding-top: 2px; }
+.action-panel .stat-tile { padding: 2px 4px; }
+.action-panel .stat-title { font-size: 12px; line-height: 16px; }
+.action-panel .stat-actions { gap: 3px; }
+.action-panel .stat-actions button { height: 26px; line-height: 26px; min-width: 0; padding: 0 2px; font-size: 12px; }

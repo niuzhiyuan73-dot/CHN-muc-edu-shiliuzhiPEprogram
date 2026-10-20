@@ -17,9 +17,8 @@
  *   3. **总结台账**：文件数、通过/失败/超时、总耗时，以及超过慢阈值的文件。
  *      慢文件点名比「总耗时变长了」有用得多——回归时第一个要看的就是它。
  *
- * 【为什么只看退出码，不解析 TAP】
- * 判一个文件过没过，`node --test <file>` 的退出码已经足够；解析 TAP 只会
- * 让这个工具多一份需要维护的格式。失败时把子进程的输出尾巴打出来即可。
+ * 文件通过与否只看退出码；固定 TAP 输出，仅从汇总行统计用例数，
+ * 避免 Node 默认 reporter 随版本或终端环境切换后把总数统计为 0。
  *
  * 用法：
  *   node tools/run-tests.js                     # 跑 tests/ 下全部
@@ -128,7 +127,7 @@ function runFile(file, options) {
     // 汇报，退出码不再代表「这个文件过没过」，失败会被当成通过。
     const env = { ...process.env };
     delete env.NODE_TEST_CONTEXT;
-    const child = spawn(process.execPath, ['--test', file], {
+    const child = spawn(process.execPath, ['--test', '--test-reporter=tap', file], {
       cwd: ROOT_DIR,
       env,
       stdio: ['ignore', 'pipe', 'pipe'],

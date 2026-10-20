@@ -225,3 +225,27 @@ describe('实时比分轮询适配器 —— 取数器必填', () => {
     assert.equal(typeof off, 'function', '空名单仍应返回可用的取消句柄');
   });
 });
+
+test('篮球轮询：总分相同但节次版本变化仍回调，慢请求不并发堆积', async t => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  let calls = 0;
+  let release;
+  const seen = [];
+  const off = watchLiveScores(['basketball'], rows => seen.push(rows), { fetch: async () => {
+    calls += 1;
+    if (calls === 1) await new Promise(resolve => { release = resolve; });
+    return [{ matchId: 'basketball', pointsA: 2, pointsB: 2,
+      status: 'live', revision: calls, live: { period: calls } }];
+  } });
+  try {
+    t.mock.timers.tick(POLL_INTERVAL * 3);
+    await flush();
+    assert.equal(calls, 1, '未返回的请求不能堆积');
+    release();
+    await flush();
+    t.mock.timers.tick(POLL_INTERVAL);
+    await flush();
+    assert.equal(seen.length, 2, '换节也必须更新观众页面');
+    assert.equal(seen[1][0].live.period, 2);
+  } finally { off(); }
+});

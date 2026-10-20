@@ -6,7 +6,7 @@
 .head-name {
   font-size: 40rpx;
   font-weight: 700;
-  color: var(--color-text-primary);
+  color: var(--color-text, #1f2329);
 }
 
 .head-meta {
@@ -90,9 +90,9 @@
 }
 
 .btn-ghost {
-  background: var(--color-surface);
+  background: var(--color-card, #ffffff);
   color: var(--color-text-secondary);
-  box-shadow: var(--shadow-card);
+  box-shadow: var(--shadow-card, 0 2rpx 12rpx rgba(0, 0, 0, 0.04));
 }
 
 .is-disabled {
@@ -103,8 +103,8 @@
   margin-bottom: var(--space-md);
   padding: var(--space-md);
   border-radius: var(--radius-lg);
-  background: var(--color-surface);
-  box-shadow: var(--shadow-card);
+  background: var(--color-card, #ffffff);
+  box-shadow: var(--shadow-card, 0 2rpx 12rpx rgba(0, 0, 0, 0.04));
 }
 
 .card-title {
@@ -150,7 +150,7 @@
 
 .row-name {
   font-size: 28rpx;
-  color: var(--color-text-primary);
+  color: var(--color-text, #1f2329);
 }
 
 .row-meta {
@@ -225,7 +225,7 @@
   border-radius: var(--radius-md);
   background: var(--color-bg-subtle, #F5F6F8);
   font-size: 27rpx;
-  color: var(--color-text-primary);
+  color: var(--color-text, #1f2329);
   text-align: right;
 }
 
@@ -256,7 +256,7 @@
 }
 
 .side-win {
-  color: var(--color-text-primary);
+  color: var(--color-text, #1f2329);
   font-weight: 700;
 }
 
@@ -266,7 +266,7 @@
   text-align: center;
   font-size: 30rpx;
   font-weight: 700;
-  color: var(--color-text-primary);
+  color: var(--color-text, #1f2329);
 }
 
 .match-meta {
@@ -297,7 +297,7 @@
 }
 
 .table-row {
-  color: var(--color-text-primary);
+  color: var(--color-text, #1f2329);
 }
 
 .col-name {
@@ -320,18 +320,29 @@
 
 .mask {
   position: fixed;
+  z-index: 1100;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   inset: 0;
   background: rgba(0, 0, 0, 0.45);
 }
 
 .sheet {
   position: fixed;
+  z-index: 1101;
   left: 0;
   right: 0;
   bottom: 0;
   padding: var(--space-lg);
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-  background: var(--color-surface);
+  background: var(--color-card, #ffffff);
+  color: var(--color-text, #1f2329);
+  box-sizing: border-box;
+  padding-bottom: calc(var(--space-lg) + env(safe-area-inset-bottom));
+  max-height: 90vh;
+  overflow-y: auto;
 }
 
 .sheet-title {
@@ -412,7 +423,7 @@
   border-radius: var(--radius-md);
   background: var(--color-bg-subtle, #F5F6F8);
   font-size: 27rpx;
-  color: var(--color-text-primary);
+  color: var(--color-text, #1f2329);
 }
 
 .forfeit-note {
@@ -467,7 +478,7 @@
   flex: 1;
   min-width: 0;
   font-size: 26rpx;
-  color: var(--color-text-primary);
+  color: var(--color-text, #1f2329);
 }
 
 .stats-col {
@@ -538,7 +549,7 @@
   flex: 1;
   min-width: 0;
   font-size: 27rpx;
-  color: var(--color-text-primary);
+  color: var(--color-text, #1f2329);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -549,7 +560,7 @@
   flex: none;
   text-align: right;
   font-size: 27rpx;
-  color: var(--color-text-primary);
+  color: var(--color-text, #1f2329);
 }
 
 .pick-no-text {

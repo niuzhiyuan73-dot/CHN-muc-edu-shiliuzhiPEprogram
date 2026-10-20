@@ -85,6 +85,7 @@ const SCHOOL_SPACE_ACTIONS = Object.freeze([
   'getTeamEntryRoster',           'getTeamMatchLineup',          'saveTeamMatchLineup',
   // 团队赛事：个人团队档案（我的球队 / 参赛经历 / 荣誉 / 跨赛事累计）与球队战绩
   'getMyTeamProfile',             'getTeamRecord',
+  'startTeamLiveScore',           'updateTeamLiveScore',         'getTeamLiveScores',
 ]);
 
 /** 跨校邀请赛（`forExchange` 声明，16 个）。 */

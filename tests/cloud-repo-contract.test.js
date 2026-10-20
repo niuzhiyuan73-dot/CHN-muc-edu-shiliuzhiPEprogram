@@ -236,14 +236,14 @@ test('文档不存在仍然降级成 null（与集合不存在区分开）', asy
 test('事务写入超过预算时抛出可操作错误，且 bolt 之前已写的操作被带到错误信息里', async () => {
   const db = database();
   const cloud = createRepo(db);
-  // 预算默认 200；这里用 210 条写入探到护栏（内存桩无上限，正好验证护栏本身）。
+  // 读写预算默认 100；这里用 210 条写入探到护栏（内存桩无上限，正好验证护栏本身）。
   await assert.rejects(
     () => cloud.transaction(async (tx) => {
       for (let i = 0; i < 210; i += 1) {
         await tx.matches.set(`m_${i}`, { _id: `m_${i}`, eventId: 'e1' });
       }
     }),
-    /超过写入预算/,
+    /事务读写总操作预算不足/,
   );
 });
 
@@ -277,4 +277,19 @@ test('写库把 Date 规格成 ISO 绝对串（含嵌套），undefined 字段�
   assert.equal('note' in stored, false, 'undefined 字段不落库（两种仓储可见字段集一致）');
   // 读回来是串，业务侧 new Date(x) 照吃——读路径无需配套改动
   assert.equal(new Date(stored.startTime).getTime(), at.getTime());
+});
+
+
+test('事务按读写总数检查上限，同一文档重复点读使用事务快照', async () => {
+  const cloud = createRepo(database());
+  await assert.rejects(cloud.transaction(async tx => {
+    for (let i = 0; i < 101; i++) await tx.matches.getById(`missing_${i}`);
+  }), /事务读写总操作预算不足/);
+  await cloud.transaction(async tx => {
+    for (let i = 0; i < 150; i++) assert.equal(await tx.matches.getById('same'), null);
+    await tx.matches.set('same', { _id: 'same', value: 1 });
+    const first = await tx.matches.getById('same');
+    first.value = 9;
+    assert.equal((await tx.matches.getById('same')).value, 1);
+  });
 });
