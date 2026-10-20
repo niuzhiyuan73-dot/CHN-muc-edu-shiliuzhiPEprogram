@@ -91,8 +91,8 @@ test('我的球队 —— 点球队与点赛事都带上编码后的编号', () 
   page.onOpenTeam({ currentTarget: { dataset: { teamid: 'tm:1' } } });
   page.onOpenEvent({ currentTarget: { dataset: { eventid: 'tev:1' } } });
 
-  assert.equal(navigations[0], '/pages/team-detail/team-detail?teamId=tm%3A1');
-  assert.equal(navigations[1], '/pages/team-event-detail/team-event-detail?eventId=tev%3A1');
+  assert.equal(navigations[0], '/packageTeam/team-detail/team-detail?teamId=tm%3A1');
+  assert.equal(navigations[1], '/packageTeam/team-event-detail/team-event-detail?eventId=tev%3A1');
 })));
 
 test('我的球队 —— 取数失败给一句人话，不停在加载态', () => withApi({

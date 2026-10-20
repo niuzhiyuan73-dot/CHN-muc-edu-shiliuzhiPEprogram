@@ -378,7 +378,7 @@ Component({
      * 办妥后回到本页时，工作台的 show 生命周期会触发重刷。
      */
     onGoSchoolIdentity() {
-      return wx.navigateTo({ url: '/pages/school-identity/school-identity' });
+      return wx.navigateTo({ url: '/packageMember/school-identity/school-identity' });
     },
 
     /* ============================================================
@@ -731,7 +731,7 @@ Component({
     onOpenMember(event) {
       const userId = event.currentTarget.dataset.userid;
       if (!userId) return undefined;
-      return wx.navigateTo({ url: `/pages/member/member?userId=${userId}` });
+      return wx.navigateTo({ url: `/packageMember/member/member?userId=${userId}` });
     },
 
     /* ============================================================

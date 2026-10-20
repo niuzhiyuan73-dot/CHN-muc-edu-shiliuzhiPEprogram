@@ -268,7 +268,7 @@ Component({
         return;
       }
 
-      wx.navigateTo({ url: '/pages/match-entry/match-entry' });
+      wx.navigateTo({ url: '/packageEvent/match-entry/match-entry' });
     },
 
     /** 访客的空态里给一个登录入口——没有身份就没有「自己的比赛」 */
@@ -282,7 +282,7 @@ Component({
       if (this.data.demoSchool) return undefined;
       const userId = event.currentTarget.dataset.userId;
       if (!userId) return;
-      wx.navigateTo({ url: `/pages/member/member?userId=${encodeURIComponent(userId)}` });
+      wx.navigateTo({ url: `/packageMember/member/member?userId=${encodeURIComponent(userId)}` });
     },
 
     /**
@@ -293,7 +293,7 @@ Component({
     onRecordMatch(event) {
       const matchId = event.currentTarget.dataset.matchId;
       if (!matchId) return;
-      wx.navigateTo({ url: `/pages/match-entry/match-entry?matchId=${encodeURIComponent(matchId)}` });
+      wx.navigateTo({ url: `/packageEvent/match-entry/match-entry?matchId=${encodeURIComponent(matchId)}` });
     },
 
     /* ---------- 确认 ---------- */

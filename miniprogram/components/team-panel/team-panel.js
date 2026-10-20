@@ -103,12 +103,12 @@ Component({
 
     onOpenTeam(event) {
       const { teamid } = event.currentTarget.dataset;
-      return wx.navigateTo({ url: `/pages/team-detail/team-detail?teamId=${encodeURIComponent(teamid)}` });
+      return wx.navigateTo({ url: `/packageTeam/team-detail/team-detail?teamId=${encodeURIComponent(teamid)}` });
     },
 
     /** 建队 / 全部球队 / 我的球队，都在列表页里 */
     onOpenAll() {
-      return wx.navigateTo({ url: '/pages/team-list/team-list' });
+      return wx.navigateTo({ url: '/packageTeam/team-list/team-list' });
     },
   },
 });

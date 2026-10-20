@@ -103,13 +103,13 @@ Component({
     onOpenEvent(event) {
       const { eventid } = event.currentTarget.dataset;
       return wx.navigateTo({
-        url: `/pages/team-event-detail/team-event-detail?eventId=${encodeURIComponent(eventid)}`,
+        url: `/packageTeam/team-event-detail/team-event-detail?eventId=${encodeURIComponent(eventid)}`,
       });
     },
 
     /** 建赛与全部赛事都在列表页 */
     onOpenAll() {
-      return wx.navigateTo({ url: '/pages/team-event-list/team-event-list' });
+      return wx.navigateTo({ url: '/packageTeam/team-event-list/team-event-list' });
     },
   },
 });

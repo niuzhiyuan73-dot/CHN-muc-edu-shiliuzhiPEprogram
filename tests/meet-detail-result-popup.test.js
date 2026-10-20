@@ -15,7 +15,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const PAGE = '../miniprogram/pages/meet-detail/meet-detail';
+const PAGE = '../miniprogram/packageMeet/meet-detail/meet-detail';
 
 function loadPage() {
   const saved = global.Page;

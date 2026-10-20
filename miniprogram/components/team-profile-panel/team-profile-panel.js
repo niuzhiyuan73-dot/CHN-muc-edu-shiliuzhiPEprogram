@@ -27,7 +27,7 @@ Component({
       } catch (_) { if (request === this.loadRequest) this.setData({ loading: false, profile: null, error: '团队成绩加载失败，请重试' }); }
     },
     onPullDownRefresh() { return this.refresh().finally(() => { if (typeof wx !== 'undefined' && wx.stopPullDownRefresh) wx.stopPullDownRefresh(); }); },
-    onOpenTeam(event) { return wx.navigateTo({ url: `/pages/team-detail/team-detail?teamId=${encodeURIComponent(event.currentTarget.dataset.teamid)}` }); },
-    onOpenEvent(event) { return wx.navigateTo({ url: `/pages/team-event-detail/team-event-detail?eventId=${encodeURIComponent(event.currentTarget.dataset.eventid)}` }); },
+    onOpenTeam(event) { return wx.navigateTo({ url: `/packageTeam/team-detail/team-detail?teamId=${encodeURIComponent(event.currentTarget.dataset.teamid)}` }); },
+    onOpenEvent(event) { return wx.navigateTo({ url: `/packageTeam/team-event-detail/team-event-detail?eventId=${encodeURIComponent(event.currentTarget.dataset.eventid)}` }); },
   },
 });

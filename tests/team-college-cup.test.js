@@ -391,7 +391,7 @@ const path = require('node:path');const fs = require('node:fs');
 const { loadPage, instantiate, withApi } = require('./helpers/page-harness.js');
 
 test('球队详情：院队不显示申请与归档，负责人有「添加队员」和「移出」', async () => {
-  const wxml = fs.readFileSync(path.join(__dirname, '../miniprogram/pages/team-detail/team-detail.wxml'), 'utf8');
+  const wxml = fs.readFileSync(path.join(__dirname, '../miniprogram/packageTeam/team-detail/team-detail.wxml'), 'utf8');
   assert.ok(/onOpenPick/.test(wxml) && /onSavePick/.test(wxml), '院队挑人面板没接上');
   assert.ok(/onRemoveMember/.test(wxml), '院队缺「移出」');
   assert.ok(/team\.isCollegeTeam && canPickMembers/.test(wxml), '挑人入口必须同时受院队与负责人两个条件约束');
@@ -421,7 +421,7 @@ test('球队详情：院队不显示申请与归档，负责人有「添加队�
 });
 
 test('赛事详情：学院赛有标签与说明，报名单位按学院表达', () => {
-  const wxml = fs.readFileSync(path.join(__dirname, '../miniprogram/pages/team-event-detail/team-event-detail.wxml'), 'utf8');
+  const wxml = fs.readFileSync(path.join(__dirname, '../miniprogram/packageTeam/team-event-detail/team-event-detail.wxml'), 'utf8');
   assert.ok(/event\.isCollegeCup/.test(wxml), '详情页没有学院赛标记');
   assert.ok(/个学院/.test(wxml), '学院赛的报名单位应显示为「个学院」而不是「支球队」');
   assert.ok(/还没有学院报名/.test(wxml), '学院赛的空态文案没换');
@@ -429,7 +429,7 @@ test('赛事详情：学院赛有标签与说明，报名单位按学院表达',
 });
 
 test('赛事列表：从杯赛页带 cupMode 进来时建赛面板标明学院赛', () => {
-  const wxml = fs.readFileSync(path.join(__dirname, '../miniprogram/pages/team-event-list/team-event-list.wxml'), 'utf8');
+  const wxml = fs.readFileSync(path.join(__dirname, '../miniprogram/packageTeam/team-event-list/team-event-list.wxml'), 'utf8');
   assert.ok(/isCollegeCup \? '发起学院赛' : '新建赛事'/.test(wxml), '建赛面板标题没按杯赛模式切换');
   assert.ok(/一院一队/.test(wxml), '学院赛建赛时没有交代报名规则');
 
@@ -467,13 +467,13 @@ test('赛事列表：从杯赛页带 cupMode 进来，建赛请求把标记一�
 });
 
 test('页面：工作台赛事列表给学院赛打标签、报名数按学院表达', () => {
-  const wxml = fs.readFileSync(path.join(__dirname, '../miniprogram/pages/team-event-list/team-event-list.wxml'), 'utf8');
+  const wxml = fs.readFileSync(path.join(__dirname, '../miniprogram/packageTeam/team-event-list/team-event-list.wxml'), 'utf8');
   assert.ok(/item\.isCollegeCup.*学院赛/.test(wxml), '赛事列表行没有「学院赛」标签');
   assert.ok(/个学院.*支球队|支球队.*个学院/.test(wxml), '报名单位没有按学院赛切换');
 });
 
 test('页面：我的球队里院队不写「队长」，标成学院队', () => {
-  const wxml = fs.readFileSync(path.join(__dirname, '../miniprogram/pages/team-list/team-list.wxml'), 'utf8');
+  const wxml = fs.readFileSync(path.join(__dirname, '../miniprogram/packageTeam/team-list/team-list.wxml'), 'utf8');
   assert.ok(/item\.isCollegeTeam.*学院队/s.test(wxml), '院队行没有按学院队展示');
   assert.ok(/mineLabel/.test(wxml), '院队应有「本院」标签');
 });

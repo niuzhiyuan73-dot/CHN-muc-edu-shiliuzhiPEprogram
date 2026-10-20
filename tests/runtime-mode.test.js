@@ -27,6 +27,9 @@ const path = require('node:path');
 const runtime = require('../miniprogram/services/runtime-mode.js');
 
 const MINIPROGRAM = path.join(__dirname, '..', 'miniprogram');
+// 页面已按域拆进 5 个分包；要扫「所有页面」必须从 app.json 取目录，
+// 写死 pages/ 只会扫到主包那 5 页，其余 37 页静默漏检。
+const { pageDirs } = require('./helpers/page-registry.js');
 const FACADE_REF = 'services/index.js';
 const FACADE_REQUIRE = "require('./index.js')";
 
@@ -119,7 +122,7 @@ describe('P10-a 解耦 —— 学校维度与页面层不再依赖旧门面', ()
 
   test('页面与组件都不再 require 旧门面', () => {
     const files = [
-      ...jsFiles(path.join(MINIPROGRAM, 'pages')),
+      ...pageDirs().flatMap((dir) => jsFiles(dir)),
       ...jsFiles(path.join(MINIPROGRAM, 'components')),
     ];
     assert.deepEqual(

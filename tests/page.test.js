@@ -276,38 +276,38 @@ function instantiate(config) {
 
 const indexConfig = loadPage('pages/index/index.js');
 const profileConfig = loadPage('pages/profile/profile.js');
-const memberConfig = loadPage('pages/member/member.js');
+const memberConfig = loadPage('packageMember/member/member.js');
 const rankConfig = loadPage('components/rank-panel/rank-panel.js');
 const loginConfig = loadPage('pages/login/login.js');
 const matchConfig = loadPage('components/match-panel/match-panel.js');
-const matchEntryConfig = loadPage('pages/match-entry/match-entry.js');
-const memberReviewConfig = loadPage('pages/member-review/member-review.js');
-const announcementsConfig = loadPage('pages/announcements/announcements.js');
-const announcementManageConfig = loadPage('pages/announcement-manage/announcement-manage.js');
-const announcementEditConfig = loadPage('pages/announcement-edit/announcement-edit.js');
-const profileEditConfig = loadPage('pages/profile-edit/profile-edit.js');
-const profileDetailConfig = loadPage('pages/profile-detail/profile-detail.js');
+const matchEntryConfig = loadPage('packageEvent/match-entry/match-entry.js');
+const memberReviewConfig = loadPage('packageMember/member-review/member-review.js');
+const announcementsConfig = loadPage('packageMember/announcements/announcements.js');
+const announcementManageConfig = loadPage('packageMember/announcement-manage/announcement-manage.js');
+const announcementEditConfig = loadPage('packageMember/announcement-edit/announcement-edit.js');
+const profileEditConfig = loadPage('packageMember/profile-edit/profile-edit.js');
+const profileDetailConfig = loadPage('packageMember/profile-detail/profile-detail.js');
 const eventsConfig = loadPage('components/events-panel/events-panel.js');
-const eventDetailConfig = loadPage('pages/event-detail/event-detail.js');
-const eventEditConfig = loadPage('pages/event-edit/event-edit.js');
-const eventPlacementConfig = loadPage('pages/event-placement/event-placement.js');
-const collegeEventEditConfig = loadPage('pages/college-event-edit/college-event-edit.js');
-const collegeEntryConfig = loadPage('pages/college-entry/college-entry.js');
-const collegeEntryReviewConfig = loadPage('pages/college-entry-review/college-entry-review.js');
-const collegeEventDetailConfig = loadPage('pages/college-event-detail/college-event-detail.js');
-const collegeLineupConfig = loadPage('pages/college-lineup/college-lineup.js');
-const collegeMatchConfig = loadPage('pages/college-match/college-match.js');
-const collegePlacementConfig = loadPage('pages/college-placement/college-placement.js');
-const eventListConfig = loadPage('pages/event-list/event-list.js');
-const liveScoreConfig = loadPage('pages/live-score/live-score.js');
+const eventDetailConfig = loadPage('packageEvent/event-detail/event-detail.js');
+const eventEditConfig = loadPage('packageEvent/event-edit/event-edit.js');
+const eventPlacementConfig = loadPage('packageEvent/event-placement/event-placement.js');
+const collegeEventEditConfig = loadPage('packageCollege/college-event-edit/college-event-edit.js');
+const collegeEntryConfig = loadPage('packageCollege/college-entry/college-entry.js');
+const collegeEntryReviewConfig = loadPage('packageCollege/college-entry-review/college-entry-review.js');
+const collegeEventDetailConfig = loadPage('packageCollege/college-event-detail/college-event-detail.js');
+const collegeLineupConfig = loadPage('packageCollege/college-lineup/college-lineup.js');
+const collegeMatchConfig = loadPage('packageCollege/college-match/college-match.js');
+const collegePlacementConfig = loadPage('packageCollege/college-placement/college-placement.js');
+const eventListConfig = loadPage('packageEvent/event-list/event-list.js');
+const liveScoreConfig = loadPage('packageTeam/live-score/live-score.js');
 const associationConfig = loadPage('pages/association/association.js');
 const associationHomeConfig = loadPage('pages/association-home/association-home.js');
 const spacePanelConfig = loadPage('components/association-space-panel/association-space-panel.js');
-const cupHomeConfig = loadPage('pages/cup-home/cup-home.js');
-const teamListConfig = loadPage('pages/team-list/team-list.js');
-const teamDetailConfig = loadPage('pages/team-detail/team-detail.js');
-const teamEventListConfig = loadPage('pages/team-event-list/team-event-list.js');
-const teamEventDetailConfig = loadPage('pages/team-event-detail/team-event-detail.js');
+const cupHomeConfig = loadPage('packageCollege/cup-home/cup-home.js');
+const teamListConfig = loadPage('packageTeam/team-list/team-list.js');
+const teamDetailConfig = loadPage('packageTeam/team-detail/team-detail.js');
+const teamEventListConfig = loadPage('packageTeam/team-event-list/team-event-list.js');
+const teamEventDetailConfig = loadPage('packageTeam/team-event-detail/team-event-detail.js');
 
 // 写接口（确认 / 撤销 / 录入）只改内存，跑完一条用例就得把内存退回种子状态，
 // 否则上一条确认过的比赛会让下一条拿到的榜单与台账都不一样
@@ -480,7 +480,7 @@ test('首页 —— 点近期赛事的一条会进详情', async () => {
   calls.navigations.length = 0;
   page.onOpenEvent({ currentTarget: { dataset: { eventId: target } } });
   assert.deepStrictEqual(calls.navigations, [
-    `/pages/event-detail/event-detail?eventId=${encodeURIComponent(target)}`,
+    `/packageEvent/event-detail/event-detail?eventId=${encodeURIComponent(target)}`,
   ], '赛事编号进 URL 前编码（编号含冒号等特殊字符）');
 
   // 没有编号的空白行不该乱跳
@@ -718,7 +718,7 @@ test('我的页 —— 点头卡头像进个人详情页', async () => {
 
   calls.navigations.length = 0;
   page.onGoProfileDetail();
-  assert.deepStrictEqual(calls.navigations, ['/pages/profile-detail/profile-detail']);
+  assert.deepStrictEqual(calls.navigations, ['/packageMember/profile-detail/profile-detail']);
 });
 
 test('我的页 —— 荣誉跨协会聚合：汇总数字等于各分组名次之和', async () => {
@@ -838,7 +838,7 @@ test('我的页 —— 管理员看到审核入口，点进去跳转审核页', 
 
     calls.navigations.length = 0;
     page.onGoReview();
-    assert.deepStrictEqual(calls.navigations, ['/pages/member-review/member-review']);
+    assert.deepStrictEqual(calls.navigations, ['/packageMember/member-review/member-review']);
   } finally {
     fx.restore();
   }
@@ -900,7 +900,7 @@ test('我的页 —— 平台管理员看到公告管理入口，点进去跳转
 
     calls.navigations.length = 0;
     page.onGoAnnouncementsAdmin();
-    assert.deepStrictEqual(calls.navigations, ['/pages/announcement-manage/announcement-manage']);
+    assert.deepStrictEqual(calls.navigations, ['/packageMember/announcement-manage/announcement-manage']);
   } finally {
     fx.restore();
   }
@@ -1222,7 +1222,7 @@ test('个人详情 —— 点交锋记录里的人会跳到对方主页', async 
 
   calls.navigations.length = 0;
   page.onOpenMember({ currentTarget: { dataset: { userId: 'u01' } } });
-  assert.deepStrictEqual(calls.navigations, ['/pages/member/member?userId=u01']);
+  assert.deepStrictEqual(calls.navigations, ['/packageMember/member/member?userId=u01']);
 });
 
 test('个人详情 —— 点到自己不会再跳一层', async () => {
@@ -1242,7 +1242,7 @@ test('个人详情 —— 修改头像入口跳到编辑资料页', async () => 
 
   calls.navigations.length = 0;
   page.onGoProfileEdit();
-  assert.deepStrictEqual(calls.navigations, ['/pages/profile-edit/profile-edit']);
+  assert.deepStrictEqual(calls.navigations, ['/packageMember/profile-edit/profile-edit']);
 });
 
 test('个人详情 —— 详情页里再点头像不跳转', async () => {
@@ -1426,7 +1426,7 @@ test('排行榜 —— 点榜上的人会跳到他的主页', async () => {
 
   calls.navigations.length = 0;
   page.onOpenMember({ currentTarget: { dataset: { userId: 'u01' } } });
-  assert.deepStrictEqual(calls.navigations, ['/pages/member/member?userId=u01']);
+  assert.deepStrictEqual(calls.navigations, ['/packageMember/member/member?userId=u01']);
 });
 
 test('排行榜 —— 下拉刷新会收起刷新动画', async () => {
@@ -1763,7 +1763,7 @@ eventPanelTest('赛事页 —— 点榜上的人会跳到他的主页', async ()
 
   calls.navigations.length = 0;
   page.onOpenMember({ currentTarget: { dataset: { userId: 'u01' } } });
-  assert.deepStrictEqual(calls.navigations, ['/pages/member/member?userId=u01']);
+  assert.deepStrictEqual(calls.navigations, ['/packageMember/member/member?userId=u01']);
 });
 
 eventPanelTest('赛事页 —— 点空白行不会乱跳', async () => {
@@ -1829,7 +1829,7 @@ eventPanelTest('赛事页 —— 点一场赛事跳到详情', async (fx) => {
   calls.navigations.length = 0;
   page.onOpenEvent({ currentTarget: { dataset: { eventId } } });
   assert.deepStrictEqual(calls.navigations, [
-    `/pages/event-detail/event-detail?eventId=${encodeURIComponent(eventId)}`,
+    `/packageEvent/event-detail/event-detail?eventId=${encodeURIComponent(eventId)}`,
   ]);
 });
 
@@ -1943,7 +1943,7 @@ test('赛事详情 —— 未解码的 query（开发者工具透传）也能报
     calls.navigations.length = 0;
     page.onOpenPlacement();
     assert.deepStrictEqual(calls.navigations, [
-      `/pages/event-placement/event-placement?eventId=${encodeURIComponent(eventId)}`,
+      `/packageEvent/event-placement/event-placement?eventId=${encodeURIComponent(eventId)}`,
     ]);
   } finally {
     fx.restore();
@@ -2630,7 +2630,7 @@ test('个人赛事 S2 闭环：列表进详情、实时计分、确认、名次�
     // 录分入口必须进「可手填比分」的录入页：实时计分只是这一页顶部的一个选项，
     // 很多场次由管理员照边裁报分补录，没有逐球过程
     const entryUrl = calls.navigations.at(-1);
-    assert.ok(entryUrl.startsWith('/pages/match-entry/match-entry?'), `录分入口跳错页：${entryUrl}`);
+    assert.ok(entryUrl.startsWith('/packageEvent/match-entry/match-entry?'), `录分入口跳错页：${entryUrl}`);
     assert.equal(queryFrom(entryUrl).matchId, matchId);
     // 录入页要真的能填：逐局比分输入仍在（不能只剩实时计分一条路）
     const entry = instantiate(matchEntryConfig);
@@ -3236,7 +3236,7 @@ schoolMatchTest('比赛页 —— 正常账号点录入跳到录入页', async (
 
   calls.navigations.length = 0;
   page.onGoEntry();
-  assert.deepStrictEqual(calls.navigations, ['/pages/match-entry/match-entry']);
+  assert.deepStrictEqual(calls.navigations, ['/packageEvent/match-entry/match-entry']);
 });
 
 schoolMatchTest('比赛页 —— 点队名跳到该会员主页', async (facade) => {
@@ -3248,7 +3248,7 @@ schoolMatchTest('比赛页 —— 点队名跳到该会员主页', async (facade
 
   calls.navigations.length = 0;
   page.onOpenMember({ currentTarget: { dataset: { userId: 'u01' } } });
-  assert.deepStrictEqual(calls.navigations, ['/pages/member/member?userId=u01']);
+  assert.deepStrictEqual(calls.navigations, ['/packageMember/member/member?userId=u01']);
 });
 
 schoolMatchTest('比赛页 —— 确认后成绩计入等级分，待确认标签随即空掉', async (facade) => {
@@ -4139,7 +4139,7 @@ test('首页 —— 点公告卡片跳到公告列表页', async () => {
 
   calls.navigations.length = 0;
   page.onGoAnnouncements();
-  assert.deepStrictEqual(calls.navigations, ['/pages/announcements/announcements']);
+  assert.deepStrictEqual(calls.navigations, ['/packageMember/announcements/announcements']);
 });
 
 /**
@@ -4407,7 +4407,7 @@ test('公告管理页 —— 点发布跳到发布页', async () => {
 
     calls.navigations.length = 0;
     page.onGoPublish();
-    assert.deepStrictEqual(calls.navigations, ['/pages/announcement-edit/announcement-edit']);
+    assert.deepStrictEqual(calls.navigations, ['/packageMember/announcement-edit/announcement-edit']);
   } finally {
     fx.restore();
   }
@@ -4927,7 +4927,7 @@ collegeTest('石榴籽杯 —— 三个项目、默认项目列表与发起入�
     calls.navigations.length = 0;
     page.onCreate();
     assert.deepStrictEqual(calls.navigations, [
-      '/pages/college-event-edit/college-event-edit?projectId=pkb',
+      '/packageCollege/college-event-edit/college-event-edit?projectId=pkb',
     ]);
   } finally {
     associationScope.setAssociation(before);
@@ -4980,7 +4980,7 @@ collegeTest('石榴籽杯 —— 点一场进详情', async () => {
     calls.navigations.length = 0;
     page.onOpenEvent({ currentTarget: { dataset: { eventId: event._id, canSubmit: false } } });
     assert.deepStrictEqual(calls.navigations, [
-      `/pages/college-event-detail/college-event-detail?eventId=${encodeURIComponent(event._id)}`,
+      `/packageCollege/college-event-detail/college-event-detail?eventId=${encodeURIComponent(event._id)}`,
     ]);
   } finally {
     associationScope.setAssociation(before);
@@ -5151,7 +5151,7 @@ collegeTest('石榴籽杯 —— 一场赛事按身份去不同的页', async ()
     calls.navigations.length = 0;
     admin.onOpenEvent({ currentTarget: { dataset: { eventId: event._id, canSubmit: false } } });
     assert.deepStrictEqual(calls.navigations, [
-      `/pages/college-event-detail/college-event-detail?eventId=${encodeURIComponent(event._id)}`,
+      `/packageCollege/college-event-detail/college-event-detail?eventId=${encodeURIComponent(event._id)}`,
     ]);
 
     // 学院负责人：报名中直接进本学院的名单页
@@ -5164,7 +5164,7 @@ collegeTest('石榴籽杯 —— 一场赛事按身份去不同的页', async ()
     calls.navigations.length = 0;
     staff.onOpenEvent({ currentTarget: { dataset: { eventId: event._id, canSubmit: true } } });
     assert.deepStrictEqual(calls.navigations, [
-      `/pages/college-entry/college-entry?eventId=${encodeURIComponent(event._id)}`,
+      `/packageCollege/college-entry/college-entry?eventId=${encodeURIComponent(event._id)}`,
     ]);
 
     // 普通会员：进详情页看签表与对阵
@@ -5177,7 +5177,7 @@ collegeTest('石榴籽杯 —— 一场赛事按身份去不同的页', async ()
     calls.navigations.length = 0;
     member.onOpenEvent({ currentTarget: { dataset: { eventId: event._id, canSubmit: false } } });
     assert.deepStrictEqual(calls.navigations, [
-      `/pages/college-event-detail/college-event-detail?eventId=${encodeURIComponent(event._id)}`,
+      `/packageCollege/college-event-detail/college-event-detail?eventId=${encodeURIComponent(event._id)}`,
     ]);
   } finally {
     associationScope.setAssociation(before);
@@ -5358,7 +5358,7 @@ collegeTest('学院赛详情 —— 学院负责人报名中能从详情页进�
 
   calls.navigations.length = 0;
   page.onOpenEntry();
-  assert.deepStrictEqual(calls.navigations, [`/pages/college-entry/college-entry?eventId=${encodeURIComponent(event._id)}`]);
+  assert.deepStrictEqual(calls.navigations, [`/packageCollege/college-entry/college-entry?eventId=${encodeURIComponent(event._id)}`]);
 });
 
 collegeTest('学院赛详情 —— 开始赛事生成首轮大场，双方排阵齐后可开始大场', async () => {
@@ -5636,7 +5636,7 @@ collegeTest('学院赛详情 —— 管理员能替两侧排阵，学院负责�
   calls.navigations.length = 0;
   admin.onOpenLineup({ currentTarget: { dataset: { tieId: tie._id, college: tie.collegeB } } });
   assert.deepStrictEqual(calls.navigations, [
-    `/pages/college-lineup/college-lineup?tieId=${encodeURIComponent(tie._id)}&eventId=${encodeURIComponent(event._id)}&college=${encodeURIComponent(tie.collegeB)}`,
+    `/packageCollege/college-lineup/college-lineup?tieId=${encodeURIComponent(tie._id)}&eventId=${encodeURIComponent(event._id)}&college=${encodeURIComponent(tie.collegeB)}`,
   ]);
 
   // 学院负责人：只解得出自己那一侧，入口只有一个
@@ -5752,7 +5752,7 @@ collegeTest('学院赛 S2 闭环 —— 页面发布、列表、名单审核、�
   calls.navigations.length = 0;
   list.onOpenEvent({ currentTarget: { dataset: { eventId, canSubmit: false } } });
   const route = new URL(calls.navigations[0], 'https://miniprogram.local');
-  assert.equal(route.pathname, '/pages/college-event-detail/college-event-detail');
+  assert.equal(route.pathname, '/packageCollege/college-event-detail/college-event-detail');
   const detail = instantiate(collegeEventDetailConfig);
   await detail.onLoad({ eventId: route.searchParams.get('eventId') });
   assert.equal(detail.data.view.title, '学院赛闭环验收');
@@ -5900,7 +5900,7 @@ collegeTest('学院赛详情 —— 未解码 query 下采纳真实编号，抽�
   calls.navigations.length = 0;
   page.onOpenReview();
   assert.deepStrictEqual(calls.navigations, [
-    `/pages/college-entry-review/college-entry-review?eventId=${encodeURIComponent(event._id)}`,
+    `/packageCollege/college-entry-review/college-entry-review?eventId=${encodeURIComponent(event._id)}`,
   ]);
 });
 
@@ -5967,7 +5967,7 @@ collegeTest('学院赛小场录分 —— 未解码 query 下采纳真实小场�
   calls.navigations.length = 0;
   page.onGoLiveScore();
   assert.deepStrictEqual(calls.navigations, [
-    `/pages/live-score/live-score?matchId=${encodeURIComponent(matchId)}`,
+    `/packageTeam/live-score/live-score?matchId=${encodeURIComponent(matchId)}`,
   ]);
 });
 
@@ -6146,7 +6146,7 @@ eventPanelTest('赛事页 —— 列表只摆近 3 条，「查看全部」入�
 
   calls.navigations.length = 0;
   page.onMoreEvents();
-  assert.deepStrictEqual(calls.navigations, ['/pages/event-list/event-list?type=event']);
+  assert.deepStrictEqual(calls.navigations, ['/packageEvent/event-list/event-list?type=event']);
 });
 
 eventPanelTest('赛事页 —— 管理员点「置顶」把赛事提到最前，普通会员看不到按钮', async (fx) => {
@@ -6670,7 +6670,7 @@ test('协会空间 —— 无权限身份：给说明与去学校身份页的入
 
     calls.navigations.length = 0;
     page.onGoSchoolIdentity();
-    assert.deepStrictEqual(calls.navigations, ['/pages/school-identity/school-identity']);
+    assert.deepStrictEqual(calls.navigations, ['/packageMember/school-identity/school-identity']);
   } finally {
     fx.restore();
   }
@@ -6713,7 +6713,7 @@ test('协会空间 —— 点成员行进入个人主页', async () => {
 
     calls.navigations.length = 0;
     page.onOpenMember({ currentTarget: { dataset: { userid: first } } });
-    assert.deepStrictEqual(calls.navigations, [`/pages/member/member?userId=${first}`]);
+    assert.deepStrictEqual(calls.navigations, [`/packageMember/member/member?userId=${first}`]);
   } finally {
     fx.restore();
   }

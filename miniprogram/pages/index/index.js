@@ -263,7 +263,7 @@ Page({
 
   /** 看全部公告 */
   onGoAnnouncements() {
-    return wx.navigateTo({ url: '/pages/announcements/announcements' });
+    return wx.navigateTo({ url: '/packageMember/announcements/announcements' });
   },
 
   /** 点近期赛事的一条：跨协会的先切过去，再进详情 */
@@ -271,11 +271,11 @@ Page({
     const { eventId, association } = event.currentTarget.dataset;
     if (!eventId) return undefined;
     this.switchTo(association);
-    return wx.navigateTo({ url: `/pages/event-detail/event-detail?eventId=${encodeURIComponent(eventId)}` });
+    return wx.navigateTo({ url: `/packageEvent/event-detail/event-detail?eventId=${encodeURIComponent(eventId)}` });
   },
 
   /** 点公告的一条：公告是学校级的一条通道，不必先切协会 */
   onOpenAnnouncement() {
-    return wx.navigateTo({ url: '/pages/announcements/announcements' });
+    return wx.navigateTo({ url: '/packageMember/announcements/announcements' });
   },
 });

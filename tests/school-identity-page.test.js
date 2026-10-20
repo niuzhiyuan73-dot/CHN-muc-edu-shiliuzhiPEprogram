@@ -9,7 +9,7 @@ function page() {
   let definition;
   const prior = global.Page;
   global.Page = value => { definition = value; };
-  const path = require.resolve('../miniprogram/pages/school-identity/school-identity');
+  const path = require.resolve('../miniprogram/packageMember/school-identity/school-identity');
   delete require.cache[path];
   try { require(path); } finally { global.Page = prior; }
   return { ...definition, data: JSON.parse(JSON.stringify(definition.data)), setData(values) { Object.assign(this.data, values); } };

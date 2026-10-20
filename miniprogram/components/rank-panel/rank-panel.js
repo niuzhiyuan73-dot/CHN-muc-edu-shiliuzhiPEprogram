@@ -216,7 +216,7 @@ Component({
       const userId = event.currentTarget.dataset.userId;
       if (!userId) return;
 
-      wx.navigateTo({ url: `/pages/member/member?userId=${encodeURIComponent(userId)}` });
+      wx.navigateTo({ url: `/packageMember/member/member?userId=${encodeURIComponent(userId)}` });
     },
   },
 });

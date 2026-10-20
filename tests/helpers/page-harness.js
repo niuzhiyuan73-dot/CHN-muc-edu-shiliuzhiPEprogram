@@ -7,12 +7,18 @@
  *
  * 【为什么按路径加载而不是 registered[N]】
  * page.test.js 用注册下标取页面，新增一页就要同步维护下标，加一页错一次。
- * 这里按**文件路径**加载，与 app.json 的注册顺序无关。
+ * 这里按**页面名**加载，与 app.json 的注册顺序无关。
+ *
+ * 【页面拆进分包后为什么还能按名字加载】
+ * 路径解析交给 page-registry.js：它从 app.json 读回「页面名 → 真实路径」，
+ * 主包与分包一视同仁。所以调用方写的 `'team-list/team-list.js'` 里的包前缀
+ * 不影响结果——页面再换包也不用改这里。
  * ============================================================
  */
 
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const { MINI, pagePathOf } = require('./page-registry.js');
 
 /** 深拷贝，避免用例之间串 data */
 function cloneData(value) {
@@ -22,14 +28,14 @@ function cloneData(value) {
 /**
  * 按路径加载页面配置。`Page()` 调用被这次加载截获。
  *
- * @param {string} relative 例：'team-list/team-list.js'
+ * @param {string} relative 例：'team-list/team-list.js'（包前缀可写可不写）
  */
 function loadPage(relative) {
   let config = null;
   const previousPage = global.Page;
   global.Page = (def) => { config = def; };
   try {
-    const target = require.resolve(path.join(__dirname, '..', '..', 'miniprogram', 'pages', relative));
+    const target = require.resolve(path.join(MINI, pagePathOf(relative)));
     delete require.cache[target];
     require(target);
   } finally {

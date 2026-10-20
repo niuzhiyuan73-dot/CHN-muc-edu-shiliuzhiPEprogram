@@ -231,7 +231,7 @@ Component({
     onMoreEvents() {
       // 外校演示赛事没有对应的列表页（那是本校的），别把人引到本校去
       if (this.data.demoSchool) return undefined;
-      wx.navigateTo({ url: '/pages/event-list/event-list?type=event' });
+      wx.navigateTo({ url: '/packageEvent/event-list/event-list?type=event' });
     },
 
     /** 点榜上的任何一行，去看这个人的完整战绩 */
@@ -241,7 +241,7 @@ Component({
       const userId = event.currentTarget.dataset.userId;
       if (!userId) return;
 
-      wx.navigateTo({ url: `/pages/member/member?userId=${userId}` });
+      wx.navigateTo({ url: `/packageMember/member/member?userId=${userId}` });
     },
 
     /** 点一场赛事，进详情看报名名单或录入名次 */
@@ -251,12 +251,12 @@ Component({
       const eventId = event.currentTarget.dataset.eventId;
       if (!eventId) return;
 
-      wx.navigateTo({ url: `/pages/event-detail/event-detail?eventId=${encodeURIComponent(eventId)}` });
+      wx.navigateTo({ url: `/packageEvent/event-detail/event-detail?eventId=${encodeURIComponent(eventId)}` });
     },
 
     /** 管理员发布赛事。无发布权时按钮根本不会渲染出来 */
     onOpenPublish() {
-      wx.navigateTo({ url: '/pages/event-edit/event-edit' });
+      wx.navigateTo({ url: '/packageEvent/event-edit/event-edit' });
     },
   },
 });

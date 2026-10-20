@@ -6,7 +6,7 @@ function page() {
   let config;
   const old = global.Page;
   global.Page = value => { config = value; };
-  const modulePath = require.resolve('../miniprogram/pages/school-exchange/school-exchange');
+  const modulePath = require.resolve('../miniprogram/packageMember/school-exchange/school-exchange');
   delete require.cache[modulePath];
   try { require(modulePath); } finally { global.Page = old; }
   return { ...config, data: JSON.parse(JSON.stringify(config.data)), setData(data) { Object.assign(this.data, data); } };

@@ -18,12 +18,14 @@ const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
 const MINI = path.join(ROOT, 'miniprogram');
+// 页面已按域拆进分包，路径一律从 app.json 查，见 helpers/page-registry.js
+const { pagePathOf, pageFileOf, isRegistered } = require('./helpers/page-registry.js');
 
 const PAGES = ['meet-list', 'meet-detail', 'meet-setup', 'meet-college', 'meet-schedule', 'meet-score', 'meet-standing'];
 
 /** 抓住 Page(配置)：页面文件在 require 时调用 Page()。 */
 function loadPage(name) {
-  const file = path.join(MINI, 'pages', name, `${name}.js`);
+  const file = path.join(MINI, pagePathOf(name));
   const saved = { Page: global.Page, wx: global.wx };
   let captured = null;
   global.Page = (config) => { captured = config; };
@@ -41,7 +43,7 @@ function loadPage(name) {
 
 /** wxml 里声明的所有事件处理器名（bindtap / catchtap / bindinput …） */
 function handlersOf(name) {
-  const file = path.join(MINI, 'pages', name, `${name}.wxml`);
+  const file = pageFileOf(name, '.wxml');
   const source = fs.readFileSync(file, 'utf8');
   const names = new Set();
   for (const match of source.matchAll(/(?:bind|catch)[a-z]*="([A-Za-z0-9_]+)"/g)) names.add(match[1]);
@@ -49,11 +51,10 @@ function handlersOf(name) {
 }
 
 test('运动会七个页面都已注册，且 js/json/wxml/wxss 齐备', () => {
-  const app = JSON.parse(fs.readFileSync(path.join(MINI, 'app.json'), 'utf8'));
   for (const name of PAGES) {
-    assert.ok(app.pages.includes(`pages/${name}/${name}`), `${name} 未在 app.json 注册`);
+    assert.ok(isRegistered(name), `${name} 未在 app.json 注册（主包或分包）`);
     for (const ext of ['js', 'json', 'wxml', 'wxss']) {
-      assert.ok(fs.existsSync(path.join(MINI, 'pages', name, `${name}.${ext}`)), `${name}.${ext} 缺失`);
+      assert.ok(fs.existsSync(pageFileOf(name, `.${ext}`)), `${name}.${ext} 缺失`);
     }
   }
 });
@@ -67,16 +68,16 @@ test('wxml 里的每个事件处理器都在 Page 配置中', () => {
 });
 
 test('列表页标题为「历史运动会记录」，且只有一个一级标签', () => {
-  const json = JSON.parse(fs.readFileSync(path.join(MINI, 'pages', 'meet-list', 'meet-list.json'), 'utf8'));
+  const json = JSON.parse(fs.readFileSync(pageFileOf('meet-list', '.json'), 'utf8'));
   assert.equal(json.navigationBarTitleText, '历史运动会记录');
 
   // R02：列表页没有 tab 切换控件（不新增一级标签）
-  const wxml = fs.readFileSync(path.join(MINI, 'pages', 'meet-list', 'meet-list.wxml'), 'utf8');
+  const wxml = fs.readFileSync(pageFileOf('meet-list', '.wxml'), 'utf8');
   assert.equal(/tab-item|tabs|segmented/.test(wxml), false, '列表页不应出现一级标签切换');
 });
 
 test('协会页里有运动会入口，与协会并列并跳运动会列表（R01）', () => {
-  const wxml = fs.readFileSync(path.join(MINI, 'pages', 'association', 'association.wxml'), 'utf8');
+  const wxml = fs.readFileSync(pageFileOf('association', '.wxml'), 'utf8');
   assert.ok(/assoc-item-meet/.test(wxml), '协会网格里没有运动会入口');
   assert.ok(/bindtap="onChooseMeet"/.test(wxml), '运动会入口没有绑定跳转');
 
@@ -173,7 +174,7 @@ test('录分提交携带代录裁判，并保留其他未提交输入', async ()
 
 test('WXML 选择状态不使用数组方法，标签正确闭合', () => {
   for(const name of PAGES){
-    const source=fs.readFileSync(path.join(MINI,'pages',name,name+'.wxml'),'utf8').replace(/<!--[\s\S]*?-->/g,'');
+    const source=fs.readFileSync(pageFileOf(name, '.wxml'),'utf8').replace(/<!--[\s\S]*?-->/g,'');
     assert.equal(/\.indexOf\(/.test(source),false,name);
     const stack=[];
     for(const tag of source.matchAll(/<\/?[a-zA-Z][\w-]*(?:[^>"']|"[^"]*"|'[^']*')*>/g)){

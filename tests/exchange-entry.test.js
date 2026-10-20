@@ -71,14 +71,14 @@ test('云数据源下「我的」页仍能进跨校邀请赛页', () => {
   // isMock 只剩「页脚标注数据来源」一个用途，不该同时兼作入口开关
   assert.equal(page.data.isMock, false);
   page.onGoSchoolExchange();
-  assert.deepEqual(navigations, ['/pages/school-exchange/school-exchange']);
+  assert.deepEqual(navigations, ['/packageMember/school-exchange/school-exchange']);
 });
 
 test('模拟数据源下同一入口照旧可点（不能为了云端正反而关掉本地演示）', () => {
   const page = loadPage('../miniprogram/pages/profile/profile.js');
   assert.equal(page.data.isMock, true);
   page.onGoSchoolExchange();
-  assert.deepEqual(navigations, ['/pages/school-exchange/school-exchange']);
+  assert.deepEqual(navigations, ['/packageMember/school-exchange/school-exchange']);
 });
 
 test('模板：跨校邀请赛入口卡没有任何条件门控，副标题才按数据源分流', () => {
@@ -97,7 +97,7 @@ test('模板：跨校邀请赛入口卡没有任何条件门控，副标题才�
  * ============================================================ */
 
 test('邀请赛页：只有「切换体验身份」按数据源显隐，学校切换与功能入口不受影响', () => {
-  const wxml = readWxml('miniprogram/pages/school-exchange/school-exchange.wxml');
+  const wxml = readWxml('miniprogram/packageMember/school-exchange/school-exchange.wxml');
 
   // 体验身份下拉：云端没有演示身份（getDemoActors() 返回空数组），必须整条不渲染
   assert.match(tagOf(wxml, 'onActorChange'), /wx:if="\{\{isMock\}\}"/,
@@ -114,13 +114,13 @@ test('邀请赛页：只有「切换体验身份」按数据源显隐，学校�
 });
 
 test('邀请赛页：data.isMock 跟着数据源走，用于两处展示口径', () => {
-  const mockPage = loadPage('../miniprogram/pages/school-exchange/school-exchange.js');
+  const mockPage = loadPage('../miniprogram/packageMember/school-exchange/school-exchange.js');
   assert.equal(mockPage.data.isMock, true, '默认（mock）时是模拟环境');
   runtime.setDataSource('cloud');
-  const cloudPage = loadPage('../miniprogram/pages/school-exchange/school-exchange.js');
+  const cloudPage = loadPage('../miniprogram/packageMember/school-exchange/school-exchange.js');
   assert.equal(cloudPage.data.isMock, false, '云端不是模拟环境');
   runtime.setDataSource('mock');
-  const backToMock = loadPage('../miniprogram/pages/school-exchange/school-exchange.js');
+  const backToMock = loadPage('../miniprogram/packageMember/school-exchange/school-exchange.js');
   assert.equal(backToMock.data.isMock, true, '切回模拟数据源要跟着变');
 });
 

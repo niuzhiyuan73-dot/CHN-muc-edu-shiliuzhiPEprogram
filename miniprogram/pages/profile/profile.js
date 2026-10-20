@@ -223,7 +223,7 @@ Page({
 
   /** 未登录时的引导按钮 */
   onGoSchoolIdentity() {
-    wx.navigateTo({ url: '/pages/school-identity/school-identity' });
+    wx.navigateTo({ url: '/packageMember/school-identity/school-identity' });
   },
   /**
    * 跨校邀请赛。**不再只对模拟数据开放**（2026-10-16）：协议 2 已注册邀请赛的
@@ -231,7 +231,7 @@ Page({
    * 卡片」——比没有入口更糟。进不进得去由页面自己的权限与状态回答。
    */
   onGoSchoolExchange() {
-    wx.navigateTo({ url: '/pages/school-exchange/school-exchange' });
+    wx.navigateTo({ url: '/packageMember/school-exchange/school-exchange' });
   },
 
   onGoLogin() {
@@ -300,12 +300,12 @@ Page({
 
   /** 进审核页 */
   onGoReview() {
-    wx.navigateTo({ url: '/pages/member-review/member-review' });
+    wx.navigateTo({ url: '/packageMember/member-review/member-review' });
   },
 
   /** 进公告管理页 */
   onGoAnnouncementsAdmin() {
-    wx.navigateTo({ url: '/pages/announcement-manage/announcement-manage' });
+    wx.navigateTo({ url: '/packageMember/announcement-manage/announcement-manage' });
   },
 
   /** 点头卡头像进个人详情页。等级分、赛季积分、走势、战绩这些细账都在那边 */
@@ -315,6 +315,6 @@ Page({
   },
 
   onGoProfileDetail() {
-    wx.navigateTo({ url: '/pages/profile-detail/profile-detail' });
+    wx.navigateTo({ url: '/packageMember/profile-detail/profile-detail' });
   },
 });

@@ -230,7 +230,7 @@ function createMemberPage(options = {}) {
       // 别为自己再开一层页面——那只会让人反复点进同一份数据
       if (!userId || userId === shown) return;
 
-      wx.navigateTo({ url: `/pages/member/member?userId=${userId}` });
+      wx.navigateTo({ url: `/packageMember/member/member?userId=${userId}` });
     },
   };
 }

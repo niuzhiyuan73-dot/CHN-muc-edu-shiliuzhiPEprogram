@@ -3,45 +3,8 @@
     "pages/index/index",
     "pages/association/association",
     "pages/association-home/association-home",
-    "pages/event-list/event-list",
     "pages/profile/profile",
-    "pages/member/member",
-    "pages/login/login",
-    "pages/match-entry/match-entry",
-    "pages/member-review/member-review",
-    "pages/announcements/announcements",
-    "pages/announcement-manage/announcement-manage",
-    "pages/announcement-edit/announcement-edit",
-    "pages/profile-edit/profile-edit",
-    "pages/profile-detail/profile-detail",
-    "pages/event-detail/event-detail",
-    "pages/event-edit/event-edit",
-    "pages/event-placement/event-placement",
-    "pages/college-event-edit/college-event-edit",
-    "pages/college-entry/college-entry",
-    "pages/college-entry-review/college-entry-review",
-    "pages/college-event-detail/college-event-detail",
-    "pages/college-lineup/college-lineup",
-    "pages/college-match/college-match",
-    "pages/college-placement/college-placement",
-    "pages/live-score/live-score",
-    "pages/school-identity/school-identity",
-    "pages/school-exchange/school-exchange",
-    "pages/meet-list/meet-list",
-    "pages/meet-detail/meet-detail",
-    "pages/meet-setup/meet-setup",
-    "pages/meet-college/meet-college",
-    "pages/meet-schedule/meet-schedule",
-    "pages/meet-score/meet-score",
-    "pages/meet-standing/meet-standing",
-    "pages/cup-home/cup-home",
-    "pages/team-list/team-list",
-    "pages/team-detail/team-detail",
-    "pages/team-event-list/team-event-list",
-    "pages/team-event-detail/team-event-detail",
-    "pages/my-team-profile/my-team-profile",
-    "pages/team-live-score/team-live-score",
-    "pages/football-match/football-match"
+    "pages/login/login"
   ],
   "window": {
     "backgroundTextStyle": "dark",
@@ -78,5 +41,82 @@
   },
   "style": "v2",
   "sitemapLocation": "sitemap.json",
-  "lazyCodeLoading": "requiredComponents"
+  "lazyCodeLoading": "requiredComponents",
+  "subPackages": [
+    {
+      "root": "packageEvent",
+      "name": "packageEvent",
+      "pages": [
+        "event-list/event-list",
+        "event-detail/event-detail",
+        "event-edit/event-edit",
+        "event-placement/event-placement",
+        "match-entry/match-entry"
+      ]
+    },
+    {
+      "root": "packageMeet",
+      "name": "packageMeet",
+      "pages": [
+        "meet-list/meet-list",
+        "meet-detail/meet-detail",
+        "meet-setup/meet-setup",
+        "meet-college/meet-college",
+        "meet-schedule/meet-schedule",
+        "meet-score/meet-score",
+        "meet-standing/meet-standing"
+      ]
+    },
+    {
+      "root": "packageTeam",
+      "name": "packageTeam",
+      "pages": [
+        "team-list/team-list",
+        "team-detail/team-detail",
+        "team-event-list/team-event-list",
+        "team-event-detail/team-event-detail",
+        "my-team-profile/my-team-profile",
+        "team-live-score/team-live-score",
+        "football-match/football-match",
+        "live-score/live-score"
+      ]
+    },
+    {
+      "root": "packageCollege",
+      "name": "packageCollege",
+      "pages": [
+        "cup-home/cup-home",
+        "college-event-edit/college-event-edit",
+        "college-entry/college-entry",
+        "college-entry-review/college-entry-review",
+        "college-event-detail/college-event-detail",
+        "college-lineup/college-lineup",
+        "college-match/college-match",
+        "college-placement/college-placement"
+      ]
+    },
+    {
+      "root": "packageMember",
+      "name": "packageMember",
+      "pages": [
+        "member/member",
+        "member-review/member-review",
+        "announcements/announcements",
+        "announcement-manage/announcement-manage",
+        "announcement-edit/announcement-edit",
+        "profile-edit/profile-edit",
+        "profile-detail/profile-detail",
+        "school-identity/school-identity",
+        "school-exchange/school-exchange"
+      ]
+    }
+  ],
+  "preloadRule": {
+    "pages/profile/profile": {
+      "network": "wifi",
+      "packages": [
+        "packageMember"
+      ]
+    }
+  }
 }

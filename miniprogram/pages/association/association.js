@@ -42,12 +42,12 @@ Page({
 
   /** 运动会入口（校级活动档）：它不属于任何协会，跳独立栏目 */
   onChooseMeet() {
-    return wx.navigateTo({ url: '/pages/meet-list/meet-list' });
+    return wx.navigateTo({ url: '/packageMeet/meet-list/meet-list' });
   },
 
   /** 石榴籽杯入口（校级活动档）：学院赛按三个球类项目归档，也不再属于协会 */
   onChooseCup() {
-    return wx.navigateTo({ url: '/pages/cup-home/cup-home' });
+    return wx.navigateTo({ url: '/packageCollege/cup-home/cup-home' });
   },
 
   /**

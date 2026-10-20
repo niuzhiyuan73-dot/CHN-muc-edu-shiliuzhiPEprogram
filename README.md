@@ -85,7 +85,7 @@
 ## 五、技术架构
 
 ```
-pages / components        界面（42 个页面 + 面板组件）
+pages + 5 个分包 / components   界面（42 个页面 + 面板组件）
         │
 services                 视图模型 + 数据源门面（MOCK / CLOUD 同一套接口）
         │
@@ -101,12 +101,36 @@ cloudfunctions/data      唯一云函数：协议 2 请求信封 + 仓储 + 事�
 
 **为什么有 `lib/` 镜像**：微信云函数按目录打包，`require` 不出目录。算法必须两端同一份实现，所以把纯模块复制进 `cloudfunctions/data/lib/`，并由 `tests/cloud-lib-sync.test.js` 逐字节守着。改了 `miniprogram/` 下的纯逻辑而忘了同步，测试立刻变红。
 
+### 5.1 分包
+
+主包只留 **tabBar 三页 + 登录 + 协会工作台外壳**，其余按域拆成 5 个分包，按需下载：
+
+| 分包 | 页面 | 体积（gzip） |
+|---|---|---|
+| `packageEvent` | 赛事列表 / 详情 / 编辑 / 名次、比赛录分 | 49 KB |
+| `packageMeet` | 运动会：列表、详情、编排、学院报名、赛程、录分、榜单 | 58 KB |
+| `packageTeam` | 球队、团队赛事、我的球队、实时计分、足球比赛 | 65 KB |
+| `packageCollege` | 石榴籽杯、学院赛报名 / 名单 / 对抗 / 名次 | 61 KB |
+| `packageMember` | 会员主页、审核、公告、资料、学校身份、跨校邀请赛 | 46 KB |
+
+主包 **939 KB（gzip）**，全量 1217 KB。约定：
+
+- **分包可以用主包的 `services` / `utils` / `components`，反过来不行。** 所以算法、门面、面板组件一律留在主包，分包里只放页面。
+- 页面目录深度保持两级（`<包>/<页面>/`），页面里的 `require('../../services/...')` 因此不用改。
+- 只有「我的」页对 `packageMember` 做 wifi 预下载；其余按需拉取——四个包全预载等于把分包的意义抵消掉。
+- 测试别写死 `pages/<名>/<名>`：用 `tests/helpers/page-registry.js` 的 `pageFileOf(name)` / `pagePathOf(name)` 从 `app.json` 查。分包页面**不在** `app.pages` 里，判断注册要用 `isRegistered(name)`。
+
 ## 六、目录
 
 ```
-miniprogram/            小程序源码（app.json 42 页）
+miniprogram/            小程序源码（app.json 42 页：主包 5 + 分包 37）
+  pages/                主包页面：index / association / association-home / profile / login
+  packageEvent/         分包：赛事与比赛录分（5 页）
+  packageMeet/          分包：运动会（7 页）
+  packageTeam/          分包：球队与实时计分（8 页）
+  packageCollege/       分包：石榴籽杯学院赛（8 页）
+  packageMember/        分包：会员、公告、资料、学校身份（9 页）
   components/           面板组件：赛事、榜单、比赛、协会空间
-  pages/                页面
   services/             视图模型与数据源
   utils/                纯函数
   assets/               协会图标、tabbar 图标

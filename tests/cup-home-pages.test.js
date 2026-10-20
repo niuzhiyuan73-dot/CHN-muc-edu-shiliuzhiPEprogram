@@ -18,10 +18,12 @@ const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
 const MINI = path.join(ROOT, 'miniprogram');
+// 页面已按域拆进分包，路径一律从 app.json 查，见 helpers/page-registry.js
+const { pagePathOf, pageFileOf, isRegistered } = require('./helpers/page-registry.js');
 
 /** 抓住 Page(配置)：页面文件在 require 时调用 Page()。 */
 function loadPage(name) {
-  const file = path.join(MINI, 'pages', name, `${name}.js`);
+  const file = path.join(MINI, pagePathOf(name));
   const saved = { Page: global.Page, wx: global.wx };
   let captured = null;
   global.Page = (config) => { captured = config; };
@@ -39,7 +41,7 @@ function loadPage(name) {
 
 /** wxml 里声明的所有事件处理器名（bindtap / catchtap / bindinput …） */
 function handlersOf(name) {
-  const file = path.join(MINI, 'pages', name, `${name}.wxml`);
+  const file = pageFileOf(name, '.wxml');
   const source = fs.readFileSync(file, 'utf8');
   const names = new Set();
   for (const match of source.matchAll(/(?:bind|catch)[a-z]*="([A-Za-z0-9_]+)"/g)) names.add(match[1]);
@@ -47,14 +49,13 @@ function handlersOf(name) {
 }
 
 function read(name, ext) {
-  return fs.readFileSync(path.join(MINI, 'pages', name, `${name}.${ext}`), 'utf8');
+  return fs.readFileSync(pageFileOf(name, `.${ext}`), 'utf8');
 }
 
 test('cup-home 已注册，四件套齐备，wxml 处理器都存在', () => {
-  const app = JSON.parse(fs.readFileSync(path.join(MINI, 'app.json'), 'utf8'));
-  assert.ok(app.pages.includes('pages/cup-home/cup-home'), 'cup-home 未在 app.json 注册');
+  assert.ok(isRegistered('cup-home'), 'cup-home 未在 app.json 注册（主包或分包）');
   for (const ext of ['js', 'json', 'wxml', 'wxss']) {
-    assert.ok(fs.existsSync(path.join(MINI, 'pages', 'cup-home', `cup-home.${ext}`)), `cup-home.${ext} 缺失`);
+    assert.ok(fs.existsSync(pageFileOf('cup-home', `.${ext}`)), `cup-home.${ext} 缺失`);
   }
 
   const page = loadPage('cup-home');
@@ -75,7 +76,7 @@ test('cup-home 已注册，四件套齐备，wxml 处理器都存在', () => {
 });
 
 test('协会页有石榴籽杯入口，与运动会并列在「校级活动」档', () => {
-  const wxml = fs.readFileSync(path.join(MINI, 'pages', 'association', 'association.wxml'), 'utf8');
+  const wxml = fs.readFileSync(pageFileOf('association', '.wxml'), 'utf8');
   assert.ok(/assoc-item-cup/.test(wxml), '校级活动档里没有石榴籽杯入口');
   assert.ok(/bindtap="onChooseCup"/.test(wxml), '石榴籽杯入口没有绑定跳转');
 
@@ -99,14 +100,14 @@ test('旧学院赛入口已下线：工作台无学院赛区，event-list 无学
   global.Page = (config) => { saved.config = config; };
   global.wx = { redirectTo: (opts) => redirects.push(opts.url) };
   try {
-    delete require.cache[require.resolve(path.join(MINI, 'pages', 'event-list', 'event-list.js'))];
-    require(path.join(MINI, 'pages', 'event-list', 'event-list.js'));
+    delete require.cache[require.resolve(pageFileOf('event-list', '.js'))];
+    require(pageFileOf('event-list', '.js'));
     saved.config.onLoad({ type: 'college' });
   } finally {
     global.Page = saved.Page;
     global.wx = saved.wx;
   }
-  assert.deepEqual(redirects, ['/pages/cup-home/cup-home']);
+  assert.deepEqual(redirects, ['/packageCollege/cup-home/cup-home']);
 });
 
 test('发布页显示所属项目，且不可在表单内修改', () => {
@@ -143,7 +144,7 @@ test('发布页直接带 projectId 进入时锁定到该项目（不经杯赛首
 
 test('项目栏：一屏三个、其余左滑，选中项自动滚进可视区', () => {
   const wxml = read('cup-home', 'wxml');
-  const wxss = fs.readFileSync(path.join(MINI, 'pages', 'cup-home', 'cup-home.wxss'), 'utf8');
+  const wxss = fs.readFileSync(pageFileOf('cup-home', '.wxss'), 'utf8');
 
   // 只露三个：宽度按「一屏减留白再三等分」算；多了靠横向滑动，不撑高页头
   assert.ok(/\.cup-project\s*\{[^}]*width:\s*calc\(\(100vw - 96rpx\) \/ 3\)/.test(wxss),

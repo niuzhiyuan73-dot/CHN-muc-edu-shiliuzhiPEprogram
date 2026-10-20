@@ -86,7 +86,7 @@ test('组队面板 —— 点一行进详情，右上角进列表页', () => wit
   assert.match(navigations[0], /team-detail\?teamId=tm_heat/);
 
   page.onOpenAll();
-  assert.equal(navigations[1], '/pages/team-list/team-list', '建队 / 全部球队在列表页');
+  assert.equal(navigations[1], '/packageTeam/team-list/team-list', '建队 / 全部球队在列表页');
 })));
 
 test('组队面板 —— 取数失败给一句提示，不留白屏', () => withApi({
@@ -139,5 +139,5 @@ test('团队赛事面板 —— 点一行进赛事详情，右上角进建赛页
   assert.match(navigations[0], /team-event-detail\?eventId=tev_1/);
 
   page.onOpenAll();
-  assert.equal(navigations[1], '/pages/team-event-list/team-event-list');
+  assert.equal(navigations[1], '/packageTeam/team-event-list/team-event-list');
 })));
