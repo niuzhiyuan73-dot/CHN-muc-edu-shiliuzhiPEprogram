@@ -331,6 +331,211 @@ function registrationEvent() {
 }
 
 /**
+ * 扩容（2026-10-20）：在原有「已打完 + 报名中」两届之外，再补四届，
+ * 让赛事数到 6（3 倍）、场次到 12（3 倍），并且四种状态各有一届：
+ *
+ *   · 循环赛已结束 —— 四队单循环 3 轮 6 场，名次 1–4
+ *   · 单败进行中   —— 半决赛已发布，决赛还没生成
+ *   · 报名中       —— 一支通过、一支待审核
+ *   · 已抽签待开赛 —— 名单锁定、签表已有、还没打
+ *
+ * 【为什么场次分布是 6 + 2】
+ * 原有 4 场（半决赛 ×2 + 季军赛 + 决赛），加到 12 场正好 3 倍。
+ * 循环赛按 4 队单循环自然是 6 场，剩下的 2 场放在「进行中」的半决赛上——
+ * 不是硬凑数字：多出来的两届状态本来就该看到赛程的样子。
+ */
+function scaledTeamEvents() {
+  const [heat, flash, rock, wind] = TEAM_SPECS;
+  const rules = normalizeBasketballRules({ presetKey: 'campus-2x20' });
+  const periods = rules.periods;
+  const rosterOf = spec => [spec.captain, ...spec.members].map(userId => ({ userId, name: nameOf(userId) }));
+  const teamId = spec => teamIdOf(spec.slug);
+  const baseEvent = (slug, extra) => ({
+    _id: schoolKey('tev', SCHOOL_ID, ASSOCIATION, slug),
+    schoolId: SCHOOL_ID,
+    association: ASSOCIATION,
+    rules,
+    bronzeMode: EVENT_BRONZE_MODE.PLAYOFF,
+    statPolicy: 'basic',
+    entryMin: rules.rosterMin,
+    entryMax: rules.rosterMax,
+    lockedCount: 0,
+    revision: 1,
+    createdAt: ISO,
+    updatedAt: ISO,
+    ...extra,
+  });
+
+  // 1. 循环赛：四队单循环 3 轮 × 2 场
+  const roundRobin = baseEvent('round-robin', {
+    name: '院际篮球循环赛',
+    format: EVENT_FORMAT.ROUND_ROBIN,
+    status: TEAM_EVENT_STATUS.FINISHED,
+    startTime: '2025-11-08T09:00:00.000Z',
+    location: '体育馆副馆',
+    lockedCount: 4,
+    finishedAt: ISO,
+    revision: 4,
+  });
+  const roundRobinPairs = [
+    [heat, flash, 81, 74],
+    [rock, wind, 69, 77],
+    [heat, rock, 88, 70],
+    [flash, wind, 76, 80],
+    [heat, wind, 83, 79],
+    [flash, rock, 72, 68],
+  ];
+  const roundRobinMatches = roundRobinPairs.map(([a, b, scoreA, scoreB], index) => ({
+    _id: eventMatchKey(roundRobin._id, Math.floor(index / 2) + 1, 'group', index % 2),
+    schoolId: SCHOOL_ID,
+    association: ASSOCIATION,
+    eventId: roundRobin._id,
+    round: Math.floor(index / 2) + 1,
+    stage: 'group',
+    slot: index % 2,
+    teamA: teamId(a),
+    teamB: teamId(b),
+    scoreA,
+    scoreB,
+    overtime: false,
+    forfeit: null,
+    winner: scoreA > scoreB ? 'A' : 'B',
+    status: TEAM_MATCH_STATUS.PUBLISHED,
+    matchTime: `2025-11-${String(8 + Math.floor(index / 2)).padStart(2, '0')}T09:00:00.000Z`,
+    location: '体育馆副馆',
+    recordedBy: 'demo_muc_admin',
+    recordedAt: ISO,
+    publishedBy: 'demo_muc_admin',
+    publishedAt: ISO,
+    lineups: { A: rosterOf(a).map(p => p.userId), B: rosterOf(b).map(p => p.userId) },
+    revision: 2,
+    createdAt: ISO,
+    updatedAt: ISO,
+  }));
+  // 循环赛名次：按胜负场排（热浪 3 胜、疾风 2 胜、闪电 1 胜、磐石 0 胜）
+  const roundRobinPlacements = [
+    { teamId: teamId(heat), teamName: heat.name, rank: 1, note: '冠军' },
+    { teamId: teamId(wind), teamName: wind.name, rank: 2, note: '亚军' },
+    { teamId: teamId(flash), teamName: flash.name, rank: 3, note: '季军' },
+    { teamId: teamId(rock), teamName: rock.name, rank: 4, note: '' },
+  ];
+  roundRobin.placements = roundRobinPlacements;
+
+  // 2. 单败进行中：半决赛已发布，决赛等晋级结果
+  const running = baseEvent('winter-invitational', {
+    name: '冬季篮球邀请赛',
+    format: EVENT_FORMAT.SINGLE_ELIM,
+    status: TEAM_EVENT_STATUS.RUNNING,
+    startTime: '2026-02-14T09:00:00.000Z',
+    location: '体育馆主馆',
+    lockedCount: 4,
+    draw: { size: 4, roundCount: 2, slots: [teamId(heat), teamId(flash), teamId(rock), teamId(wind)] },
+    revision: 3,
+  });
+  const runningMatches = [
+    { a: heat, b: flash, scoreA: 79, scoreB: 73 },
+    { a: rock, b: wind, scoreA: 71, scoreB: 68 },
+  ].map((item, index) => ({
+    _id: eventMatchKey(running._id, 1, BRACKET_STAGE.MAIN, index),
+    schoolId: SCHOOL_ID,
+    association: ASSOCIATION,
+    eventId: running._id,
+    round: 1,
+    stage: BRACKET_STAGE.MAIN,
+    slot: index,
+    teamA: teamId(item.a),
+    teamB: teamId(item.b),
+    scoreA: item.scoreA,
+    scoreB: item.scoreB,
+    overtime: false,
+    forfeit: null,
+    winner: 'A',
+    status: TEAM_MATCH_STATUS.PUBLISHED,
+    matchTime: `2026-02-14T${index === 0 ? '09' : '10'}:30:00.000Z`,
+    location: '体育馆主馆',
+    recordedBy: 'demo_muc_admin',
+    recordedAt: ISO,
+    publishedBy: 'demo_muc_admin',
+    publishedAt: ISO,
+    lineups: { A: rosterOf(item.a).map(p => p.userId), B: rosterOf(item.b).map(p => p.userId) },
+    revision: 2,
+    createdAt: ISO,
+    updatedAt: ISO,
+  }));
+
+  // 3. 报名中：一支通过、一支待审核（与既有「新生杯」错开，避免同名同状态）
+  const autumn = baseEvent('autumn-league', {
+    name: '秋季篮球联赛（报名中）',
+    format: EVENT_FORMAT.SINGLE_ELIM,
+    status: TEAM_EVENT_STATUS.REGISTRATION,
+    startTime: '2026-09-12T09:00:00.000Z',
+    location: '东体育馆',
+  });
+  const autumnEntries = [
+    entryDocOf(autumn._id, rock, TEAM_ENTRY_STATUS.APPROVED),
+    entryDocOf(autumn._id, wind, TEAM_ENTRY_STATUS.SUBMITTED),
+  ];
+
+  // 4. 已抽签待开赛：名单锁定、签表已有、一场未打
+  const spring = baseEvent('spring-cup', {
+    name: '春季篮球杯（待开赛）',
+    format: EVENT_FORMAT.SINGLE_ELIM,
+    status: TEAM_EVENT_STATUS.SCHEDULED,
+    startTime: '2026-04-18T09:00:00.000Z',
+    location: '体育馆主馆',
+    lockedCount: 4,
+    draw: { size: 4, roundCount: 2, slots: [teamId(flash), teamId(heat), teamId(wind), teamId(rock)] },
+    revision: 2,
+  });
+  const springEntries = [heat, flash, rock, wind]
+    .map(spec => entryDocOf(spring._id, spec, TEAM_ENTRY_STATUS.LOCKED));
+
+  // 循环赛的统计与既有那一届同源：已发布的比赛必须带统计，
+  // 否则球员榜与「我的球队」的累计会缺一半数据。
+  const roundRobinStats = [];
+  roundRobinMatches.forEach((match, index) => {
+    const [a, b] = roundRobinPairs[index];
+    [
+      { spec: a, sideTeamId: match.teamA, score: match.scoreA },
+      { spec: b, sideTeamId: match.teamB, score: match.scoreB },
+    ].forEach((side) => {
+      const rows = statRowsOf(rosterOf(side.spec), side.score, periods);
+      roundRobinStats.push({
+        _id: schoolKey('tms', match._id, side.sideTeamId),
+        schoolId: SCHOOL_ID,
+        association: ASSOCIATION,
+        eventId: roundRobin._id,
+        matchId: match._id,
+        teamId: side.sideTeamId,
+        mode: 'basic',
+        rows,
+        players: [],
+        integrity: 'full',
+        status: 'published',
+        published: { mode: 'basic', rows, players: [], integrity: 'full', revision: 1, publishedAt: ISO, publishedBy: 'demo_muc_admin' },
+        publishedRevision: 1,
+        publishedBy: 'demo_muc_admin',
+        publishedAt: ISO,
+        revision: 1,
+        updatedBy: 'demo_muc_admin',
+        updatedAt: ISO,
+      });
+    });
+  });
+
+  return {
+    teamEvents: [roundRobin, running, autumn, spring],
+    teamEventEntries: [
+      ...[heat, flash, rock, wind].map(spec => entryDocOf(roundRobin._id, spec, TEAM_ENTRY_STATUS.LOCKED)),
+      ...autumnEntries,
+      ...springEntries,
+    ],
+    teamMatches: [...roundRobinMatches, ...runningMatches],
+    teamMatchStats: roundRobinStats,
+  };
+}
+
+/**
  * 团队演示内容。
  *
  * @returns {{teams:Array, teamMembers:Array, teamEvents:Array,
@@ -339,6 +544,7 @@ function registrationEvent() {
 function createTeamDemoContent() {
   const finished = finishedEvent();
   const registration = registrationEvent();
+  const scaled = scaledTeamEvents();
 
   // 协会会籍：让「默认演示身份 u06」与四支球队的队长都能真的去申请入队。
   // 只加 bk，不动其它协会的会籍名单。
@@ -357,10 +563,10 @@ function createTeamDemoContent() {
   return {
     teams: docs.filter(doc => !doc.teamId),
     teamMembers: docs.filter(doc => doc.teamId),
-    teamEvents: [finished.event, registration.event],
-    teamEventEntries: [...finished.entries, ...registration.entries],
-    teamMatches: finished.matches,
-    teamMatchStats: finished.stats,
+    teamEvents: [finished.event, registration.event, ...scaled.teamEvents],
+    teamEventEntries: [...finished.entries, ...registration.entries, ...scaled.teamEventEntries],
+    teamMatches: [...finished.matches, ...scaled.teamMatches],
+    teamMatchStats: [...finished.stats, ...scaled.teamMatchStats],
     memberships,
   };
 }

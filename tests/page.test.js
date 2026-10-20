@@ -436,19 +436,22 @@ test('首页 —— 登录后近期赛事标出自己报没报', async () => {
   schoolSession.reset();
   schoolMock.reset();
   schoolMock.setDemoActor('u06');
-  // u06 报名演示内容里「民大男单公开赛」（报名中）
-  const api = space.forScope({ schoolId: 'muc', association: 'pkb' });
-  const listed = await api.listSchoolEvents({});
-  const upcoming = listed.events.find((item) => item.isSignup);
-  assert.ok(upcoming, '演示内容里有报名中的赛事');
-  const signed = await api.signUpSchoolEvent({ eventId: upcoming.eventId });
-  assert.strictEqual(signed.ok, true, `报名失败：${signed.message}`);
-
   app.globalData.userInfo = fakeMember({ _id: 'u06' });
+
+  // 演示内容扩容后报名中的赛事有 6 场，首页只展示最近的 3 场：
+  // 先看首页取了哪一场，再给它报名，否则报了名的那场可能根本不在列表里。
   const page = instantiate(indexConfig);
   await page.onLoad();
+  const target = page.data.view.upcomingEvents[0];
+  assert.ok(target, '首页应有近期赛事');
 
-  const mine = page.data.view.upcomingEvents.find((row) => row.id === upcoming.eventId);
+  // 首页聚合了多个协会的赛事：报名要走这场赛事所属协会的空间
+  const api = space.forScope({ schoolId: 'muc', association: target.association });
+  const signed = await api.signUpSchoolEvent({ eventId: target.id });
+  assert.strictEqual(signed.ok, true, `报名失败：${signed.message}`);
+
+  await page.onLoad();
+  const mine = page.data.view.upcomingEvents.find((row) => row.id === target.id);
   assert.ok(mine, '报名中的赛事在近期列表里');
   assert.strictEqual(mine.signedUp, true);
 });

@@ -213,7 +213,10 @@ test('mock 装载：演示记录齐备，且全部归属民大', async () => {
       assert.equal(doc.schoolId, 'muc', `${key} 混进了外校数据`);
     }
   }
-  assert.equal(records.sportsMeets.length, 2, '一届正的 + 一届被删的草稿');
+  // 2026-10-20 扩容：三届（2025 / 2026 / 2027）各带一届被删的草稿
+  const activeMeets = records.sportsMeets.filter(row => row.status !== 'deleted');
+  assert.equal(activeMeets.length, 3, '三届正赛');
+  assert.equal(records.sportsMeets.length, 6, '每届各有一届被删的草稿');
 });
 
 test('隔离：演示种子不碰协会赛事与 Elo', async () => {

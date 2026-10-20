@@ -10,7 +10,7 @@
  * 看上去像「某个用例死锁」，实际只是没人告诉你在等什么。
  *
  * 这个运行器补三件事：
- *   1. **硬超时**：单个文件超过 `--timeout`（默认 5 分钟）就杀掉，记为超时，
+ *   1. **硬超时**：单个文件超过 `--timeout`（默认 8 分钟）就杀掉，记为超时，
  *      并把它已经输出的最后几十行原样打出来——不用重跑也能看出卡在哪。
  *   2. **过程可见**：每 15 秒打一行「正在跑哪几个文件、各跑了多久」，
  *      再慢也不会出现长时间无输出。
@@ -36,7 +36,8 @@ const ROOT_DIR = path.resolve(__dirname, '..');
 const DEFAULTS = {
   root: path.join(ROOT_DIR, 'tests'),
   concurrency: Math.max(1, Math.min(os.cpus().length || 2, 8)),
-  timeout: 5 * 60 * 1000,
+  // 8 分钟：演示种子扩容后 page.test.js 需要 5 分半左右（328s），5 分钟会误判成超时
+  timeout: 8 * 60 * 1000,
   slow: 60 * 1000,
   filter: '',
   heartbeat: 15 * 1000,

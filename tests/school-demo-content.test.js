@@ -67,10 +67,11 @@ test('演示内容 —— 每个范围的记录都绑定自己的「学校 + 协
 
   // 公告 2026-10-18 起是学校级一条通道：民大 5 条 + 北航 4 条（不再按协会各造一份）
   assert.equal(content.announcements.length, 9);
-  assert.equal(content.events.length, 9);
-  assert.equal(content.matches.length, 39);
+  // 2026-10-20 扩容：每个球拍项目的赛事与流水补到 3 倍（民大），网球从 0 补齐
+  assert.equal(content.events.length, 24);
+  assert.equal(content.matches.length, 113);
   // 报名记录条数也是契约：改了要同步 docs/mock演示账号.md §7.1 与本节断言
-  assert.equal(content.eventSignups.length, 38);
+  assert.equal(content.eventSignups.length, 96);
 
   assert.ok(content.announcements.every(doc => isAnnouncementDoc(doc)), '公告形状不完整');
   assert.ok(content.events.every(doc => isEventDoc(doc)), '赛事形状不完整');
@@ -157,7 +158,9 @@ test('差异性 —— 公告按学校一份，赛事与比赛按协会不同，
   // 「换协会读到的仍是同一份」由服务端学校级读取保证，见 school-announcement-view 测试。
   assert.equal(pkb.announcements.length, 5, '民大 5 条');
   assert.deepEqual([tt.announcements.length, bd.announcements.length], [0, 0], '公告不再按协会分桶');
-  assert.deepEqual([pkb.events.length, tt.events.length, bd.events.length], [3, 2, 1]);
+  // 3 倍口径：匹克球 3→9、乒乓 2→6、羽球 1→3；网球原先 0，按同量级补到 3
+  assert.deepEqual([pkb.events.length, tt.events.length, bd.events.length,
+    contentOf('muc', 'tn').events.length], [9, 6, 3, 3]);
 
   // 公告标题不重复：一条公告只有一条，不会因为多个协会而重复出现
   const titles = pkb.announcements.map(doc => doc.title);
@@ -174,7 +177,8 @@ test('差异性 —— 公告按学校一份，赛事与比赛按协会不同，
   assert.deepEqual([
     pkb.eventSignups.length, tt.eventSignups.length, bd.eventSignups.length,
     buaa.eventSignups.length, contentOf('buaa', 'tt').eventSignups.length,
-  ], [13, 9, 4, 8, 4]);
+    contentOf('muc', 'tn').eventSignups.length,
+  ], [35, 24, 12, 8, 4, 13]);
 });
 
 /* ============================================================
@@ -192,7 +196,8 @@ describe('schoolMock.reset() —— 默认挂上演示内容', () => {
     assert.equal(ann.announcements.length, 5);
 
     const events = await api.listSchoolEvents({});
-    assert.equal(events.events.length, 3);
+    // 匹克球赛事 3→9（2026-10-20 扩容）
+    assert.equal(events.events.length, 9);
 
     for (const project of [RANK_PROJECT.MEN_SINGLES, RANK_PROJECT.WOMEN_SINGLES, RANK_PROJECT.DOUBLES]) {
       const view = await api.getSchoolRanking({ project });

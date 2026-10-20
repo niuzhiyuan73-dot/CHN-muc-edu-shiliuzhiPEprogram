@@ -182,7 +182,19 @@ async function call(fn, payload, ctx, what) {
  * @returns {Promise<{repo:Object, world:Object}>} repo 为内含全部演示记录的内存
  * 仓储（测试与 mock 装载都用它）；world 是给断言用的结构化摘要。
  */
-async function runMeetDemo() {
+async function runMeetDemo(options = {}) {
+  const meetName = options.meetName || MEET_NAME;
+  const draftName = options.draftName || DRAFT_NAME;
+  const year = options.year || 2026;
+  const date = options.date || '2026-10-24';
+  const endDate = options.endDate || '2026-10-25';
+  const draftDate = `${year - 1}-10-24`;
+  const draftEnd = `${year - 1}-10-25`;
+  const t0 = options.t0 || T0;
+  const t1 = options.t1 || T1;
+  const window = options.window || WINDOW;
+  // 注意：不能叫 schedule——上面已 require 了 meet-schedule-service
+  const sessionSchedule = options.schedule || SCHEDULE;
   const repo = createSchoolMemoryRepo({
     schools: [{ _id: SCHOOL, schoolId: SCHOOL, name: '中央民族大学', status: 'active' }],
     users: demoUsers(),
@@ -198,19 +210,19 @@ async function runMeetDemo() {
       role: 'admin', status: 'active',
     }],
   });
-  const ctxOf = (actorId, meetId = '', now = T1) => buildMeetContext({
+  const ctxOf = (actorId, meetId = '', now = t1) => buildMeetContext({
     repo, actorId, scope: { schoolId: SCHOOL, meetId }, now,
   });
 
   // ── 1. 删除一次的素材：先建一届草稿，流程走完再删 ────────────────────
   const draft = await call(meetService.createSportsMeet,
-    { name: DRAFT_NAME, year: 2025, startDate: '2025-10-24', endDate: '2025-10-25' },
-    await ctxOf('m_admin', '', T0), '创建草稿届');
+    { name: draftName, year: year - 1, startDate: draftDate, endDate: draftEnd },
+    await ctxOf('m_admin', '', t0), '创建草稿届');
   const draftMeetId = draft.meet.meetId;
 
   // ── 2. 主届：建届 + 任命五院部长 ────────────────────────────────────
   const created = await call(meetService.createSportsMeet,
-    { name: MEET_NAME, year: 2026, startDate: '2026-10-24', endDate: '2026-10-25', location: '田径场' },
+    { name: meetName, year, startDate: date, endDate, location: '田径场' },
     await ctxOf('m_admin'), '创建主届');
   const meetId = created.meet.meetId;
   const admin = await ctxOf('m_admin', meetId);
@@ -231,7 +243,7 @@ async function runMeetDemo() {
   }
 
   // ── 4. 发布报名 ─────────────────────────────────────────────────────
-  await call(meetService.publishMeetRegistration, WINDOW, admin, '发布报名');
+  await call(meetService.publishMeetRegistration, window, admin, '发布报名');
 
   // ── 5. 报名主链：意向 → 部长提交 → 管理员审核 ───────────────────────
   // D25：本院一旦提交正式名单，该项目的意向入口就关了——所以先把**所有**
@@ -301,7 +313,7 @@ async function runMeetDemo() {
   // 场次下标按「轮次内序号」算，不能拿计划数组的下标顶替：400 米第三个槽位
   // 是决赛，但它是该轮次的第 1 场——写成 index:3 会另建一个「决赛第 3 场」，
   // 抽签建好的决赛场次永远配不齐时间，发布赛程必然缺项。
-  for (const [templateId, slots] of Object.entries(SCHEDULE)) {
+  for (const [templateId, slots] of Object.entries(sessionSchedule)) {
     const eventKey = eventKeyOf[templateId];
     const rounds = templateId === 'sprint-400m' ? R400_ROUNDS : ['final'];
     const nthOf = new Map();
@@ -316,7 +328,7 @@ async function runMeetDemo() {
   }
 
   // ── 8. 批量派裁判：一次选 3 人，按「整个项目」指派 ───────────────────
-  for (const templateId of Object.keys(SCHEDULE)) {
+  for (const templateId of Object.keys(sessionSchedule)) {
     await call(schedule.assignMeetJudges,
       { judgeIds: JUDGES, eventKey: eventKeyOf[templateId] }, admin, `${templateId} 派裁判`);
   }
@@ -493,13 +505,80 @@ async function runMeetDemo() {
  * 业务文档。学院目录（colleges）不随演示装载：mock 的民大种子已有 c01–c19，
  * 名称用真实的，与 sportsMeetColleges 里的快照一致。
  */
+
+/** 把固定排期平移到某一届的日期上（时:分不变，只换年月日） */
+function scheduleFor(date) {
+  return Object.fromEntries(Object.entries(SCHEDULE).map(([templateId, slots]) => [
+    templateId,
+    slots.map(([time, place]) => [`${date}${time.slice(10)}`, place]),
+  ]));
+}
+
+/**
+ * 三届运动会（2026-10-20 扩容）。
+ *
+ * 原来只有一届，现在 2025 / 2026 / 2027 各一届：届数 ×3，
+ * 秩序册、报名、成绩、名次也跟着 ×3。三届都由同一段真实服务链路跑出来，
+ * 只是届名、年份与排期日期不同——手写第二份数据迟早与算法分叉。
+ *
+ * 【为什么年份要错开而不是复制同一届】
+ * meetId 由「学校 + 创建秒」生成，复制同一届只会拿到同一个编号；
+ * 而成绩时间要与届的报名窗口对得上，所以年份、窗口、排期三者一起平移。
+ */
+const MEET_EDITIONS = [
+  { year: 2025, meetName: '第 58 届田径运动会（演示）', draftName: '第 57 届田径运动会（演示草稿）' },
+  { year: 2026, meetName: MEET_NAME, draftName: DRAFT_NAME },
+  { year: 2027, meetName: '第 60 届田径运动会（演示）', draftName: '第 59 届田径运动会（演示草稿）' },
+];
+
+function editionOptions(edition) {
+  const year = edition.year;
+  return {
+    meetName: edition.meetName,
+    draftName: edition.draftName,
+    year,
+    date: `${year}-10-24`,
+    endDate: `${year}-10-25`,
+    t0: new Date(`${year}-10-24T08:00:00Z`),
+    t1: new Date(`${year}-10-24T08:10:00Z`),
+    window: { openAt: `${year}-10-01T00:00`, closeAt: `${year}-12-31T23:59` },
+    schedule: scheduleFor(`${year}-10-24`),
+  };
+}
+
+/**
+ * 取出演示记录，供 mock 仓储一次性装载（与 createSchoolDemoContent 同角色）。
+ *
+ * 记录全部由上面的服务链路产出，这里只做「读出来」——不在种子层手写任何
+ * 业务文档。三届的记录按 `_id` 合并：用户 / 学院成员 / 角色在三届里是同一批，
+ * 只留一份；赛事、报名、成绩按 meetId 天然分开。
+ */
+/**
+ * 三届跑一遍要近一秒，而 mock 每次 reset 都会取一次（page 测试里 reset 几十次）。
+ * 所以跑一遍后留一份快照，之后每次给**深拷贝**：既不多花时间，也不会让某个
+ * 用例改坏的数据串到下一个用例。
+ */
+let meetRecordsSnapshot = null;
+
 async function createMeetDemoRecords() {
-  const { repo } = await runMeetDemo();
+  if (meetRecordsSnapshot) return structuredClone(meetRecordsSnapshot);
   const records = {};
-  for (const key of DUMP_KEYS) {
-    records[key] = await repo[key].list();
+  const seen = new Map();
+  for (const edition of MEET_EDITIONS) {
+    const { repo } = await runMeetDemo(editionOptions(edition));
+    for (const key of DUMP_KEYS) {
+      records[key] = records[key] || [];
+      const ids = seen.get(key) || new Set();
+      for (const row of await repo[key].list()) {
+        if (ids.has(row._id)) continue;
+        ids.add(row._id);
+        records[key].push(row);
+      }
+      seen.set(key, ids);
+    }
   }
-  return records;
+  meetRecordsSnapshot = structuredClone(records);
+  return structuredClone(meetRecordsSnapshot);
 }
 
 module.exports = { runMeetDemo, createMeetDemoRecords, SCHOOL, MEET_NAME };

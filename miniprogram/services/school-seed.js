@@ -7,6 +7,7 @@ const {
 const { allAssociations } = require('../utils/associations.js');
 const { createTeamDemoContent } = require('./team-demo.js');
 const { createFootballDemoContent } = require('./football-demo.js');
+const { createCollegeCupContent } = require('./college-cup-seed.js');
 const {
   schoolAssociationKey, collegeKey, schoolMemberKey, schoolRoleKey,
   schoolMembershipKey, schoolEventKey, schoolEventSignupKey, schoolMatchKey,
@@ -159,8 +160,211 @@ function builtRecordOf(built, what) {
   return built.record;
 }
 
-/** 各范围的演示内容规格：公告 / 赛事 / 比赛 / 报名四张表，条数与标题刻意拉开。 */
-const DEMO_CONTENT_SPECS = Object.freeze([
+/* ============================================================
+ * 3 倍扩容（2026-10-20）
+ * ============================================================
+ * 演示数据要撑得起「多个项目、多个年份、不同赛制」的浏览：每个球拍项目的
+ * 赛事数与比赛流水都补到基线的 3 倍，网球原先一场都没有，这里一并补齐。
+ *
+ * 【为什么用生成器补齐、而不是把 100 多条写死】
+ * 手写表只保留「有性格」的基线（标题、名次、报名人数都是特定的），
+ * 追加部分按确定的轮转规则生成：同一份种子每次 reset 结果一致（不用
+ * Date.now），但选手、比分、时段各不相同——差异来自规则而不是随机。
+ *
+ * 【跨协会不混选手】
+ * 榜单按「学校 + 协会」隔离，测试还守着「u03 只在匹克球榜、u04 只在乒乓榜」。
+ * 所以每个项目各有参赛池，互不交叉；网球是新项目，池子独立。
+ * ============================================================ */
+
+/** 各项目的参赛池（民大种子会员 u01～u24，按项目分开） */
+const RACKET_SCALE_POOLS = Object.freeze({
+  pkb: Object.freeze({
+    venue: '民大体育馆',
+    men: Object.freeze(['u03', 'u05', 'u06', 'u07', 'u09', 'u10', 'u11', 'u01']),
+    women: Object.freeze(['u14', 'u15', 'u16', 'u24']),
+  }),
+  tt: Object.freeze({
+    venue: '民大乒乓球馆',
+    men: Object.freeze(['u04', 'u08', 'u10', 'u11', 'u12', 'u13']),
+    women: Object.freeze(['u22', 'u23']),
+  }),
+  bd: Object.freeze({
+    venue: '民大羽毛球馆',
+    men: Object.freeze(['u07', 'u11', 'u12', 'u13']),
+    women: Object.freeze(['u19', 'u21', 'u22', 'u23']),
+  }),
+  tn: Object.freeze({
+    venue: '民大网球场',
+    men: Object.freeze(['u02', 'u05', 'u09', 'u13', 'u17', 'u18']),
+    women: Object.freeze(['u14', 'u20', 'u24']),
+  }),
+});
+
+/**
+ * 追加赛事：标题、开赛偏移、名额、是否已结束。
+ *
+ * 「已结束」的赛事必须有 results，且报名人数等于名次人数（见下方自检）；
+ * 「报名中」的一律 2～6 人，且不写 u01 / u02（它们是管理员与学院负责人，
+ * 报了名会改掉别的演示身份看到的「我报没报」）。
+ */
+const RACKET_SCALE_EVENTS = Object.freeze({
+  pkb: Object.freeze([
+    { title: '民大匹克球秋季联赛', startOffsetDays: -63, quota: 24, finished: true },
+    { title: '民大匹克球院系对抗赛', startOffsetDays: -42, quota: 32, finished: true },
+    { title: '民大匹克球混双公开赛', startOffsetDays: -21, quota: 24 },
+    { title: '民大匹克球新生挑战赛', startOffsetDays: 5, quota: 16 },
+    { title: '民大匹克球夜场积分赛', startOffsetDays: 12, quota: 16 },
+    { title: '民大匹克球年终总决赛', startOffsetDays: 26, quota: 32 },
+  ]),
+  tt: Object.freeze([
+    { title: '民大乒乓球院系团体赛', startOffsetDays: -49, quota: 16, finished: true },
+    { title: '民大乒乓球双打邀请赛', startOffsetDays: -28, quota: 24 },
+    { title: '民大乒乓球新生杯', startOffsetDays: 8, quota: 16 },
+    { title: '民大乒乓球年终总决赛', startOffsetDays: 21, quota: 32 },
+  ]),
+  bd: Object.freeze([
+    { title: '民大羽毛球院系联赛', startOffsetDays: -35, quota: 16, finished: true },
+    { title: '民大羽毛球混双公开赛', startOffsetDays: 17, quota: 24 },
+  ]),
+  tn: Object.freeze([
+    { title: '民大网球院系联赛', startOffsetDays: -56, quota: 16, finished: true },
+    { title: '民大网球公开赛', startOffsetDays: 9, quota: 24 },
+    { title: '民大网球双打挑战赛', startOffsetDays: 23, quota: 16 },
+  ]),
+});
+
+/** 轮转取人：越界回绕，保证同一份种子每次得到同一组对阵 */
+const pickOf = (list, index) => list[index % list.length];
+
+/** 已结束赛事的四人名次：从参赛池里按顺序取，保证「报名 = 名次」 */
+function scaledResultsOf(project, roundIndex, finished) {
+  const pool = RACKET_SCALE_POOLS[project];
+  if (!finished) return null;
+  const ids = [pool.men[roundIndex % pool.men.length], pool.men[(roundIndex + 1) % pool.men.length],
+    pool.women[roundIndex % pool.women.length], pool.men[(roundIndex + 2) % pool.men.length]];
+  return [...new Set(ids)].slice(0, 4).map((userId, index) => ({ userId, placement: index + 1 }));
+}
+
+/** 追加赛事的报名名单：已结束的取名次本人，报名中的取 2～6 人 */
+function scaledSignupsOf(project, event, results, seed) {
+  if (results) return results.map(row => row.userId);
+  const pool = RACKET_SCALE_POOLS[project];
+  // u01 / u02 是管理员与学院负责人：给它们写报名会改掉别的演示身份的「我报没报」
+  const men = pool.men.filter(userId => userId !== 'u01' && userId !== 'u02');
+  const count = 2 + (seed % 4);
+  return Array.from({ length: count }, (_, index) => men[(seed + index) % men.length]);
+}
+
+/** 生成追加比赛：单打为主、每七场一场双打、每五场一场女单 */
+function buildScaledMatches(project, count) {
+  const pool = RACKET_SCALE_POOLS[project];
+  // u12 在基线里是「乒乓 3 场、羽球 3 场」的并列样本，用来演示「并列取注册表
+  // 靠前的协会」。追加部分不能再给他加场次，否则并列被打破，那条规则就演示不出来了。
+  const frozen = project === 'tt' || project === 'bd' ? new Set(['u12']) : new Set();
+  const men = pool.men.filter(userId => !frozen.has(userId));
+  const women = pool.women.filter(userId => !frozen.has(userId));
+  const tennis = project === 'tn';
+  const pointShapes = [
+    { a: [11, 11], b: [6, 8] },
+    { a: [11, 9, 11], b: [9, 11, 7] },
+    { a: [9, 11, 11], b: [11, 6, 9] },
+    { a: [12, 11], b: [10, 9] },
+    { a: [13, 11], b: [11, 9] },
+  ];
+  const tennisShapes = [
+    { a: [6, 6], b: [3, 4] },
+    { a: [6, 4, 6], b: [4, 6, 3] },
+  ];
+  const shapes = tennis ? tennisShapes : pointShapes;
+  const rows = [];
+  for (let index = 0; index < count; index += 1) {
+    const shape = shapes[index % shapes.length];
+    const rawId = `scale-${project}-m${index + 1}`;
+    const ago = 1 + ((index * 3) % 20);
+    if (index % 7 === 6) {
+      // 双打要凑够四个人：男队不足四人时改用女队（羽球的男队池只有三人）
+      const pairPool = men.length >= 4 ? men : women;
+      const sides = pairPool.length >= 4
+        ? {
+          teamA: [pickOf(pairPool, index), pickOf(pairPool, index + 2)],
+          teamB: [pickOf(pairPool, index + 1), pickOf(pairPool, index + 3)],
+        }
+        : { teamA: [pickOf(men, index)], teamB: [pickOf(men, index + 1)] };
+      rows.push({
+        rawId,
+        ...sides,
+        scoreA: shape.a, scoreB: shape.b, ago,
+        ...(tennis ? { scoring: 'tennis' } : {}),
+      });
+    } else if (index % 5 === 4) {
+      rows.push({
+        rawId,
+        teamA: [pickOf(women, index)],
+        teamB: [pickOf(women, index + 1)],
+        scoreA: shape.a, scoreB: shape.b, ago,
+        ...(tennis ? { scoring: 'tennis' } : {}),
+      });
+    } else {
+      rows.push({
+        rawId,
+        teamA: [pickOf(men, index)],
+        // 对手错开一位：男队池只有三人时 index+3 会绕回自己
+        teamB: [pickOf(men, index + 1)],
+        scoreA: shape.a, scoreB: shape.b, ago,
+        ...(tennis ? { scoring: 'tennis' } : {}),
+      });
+    }
+  }
+  return rows;
+}
+
+/** 把一个项目的规格补到 3 倍；北航保持原样（跨校样本不扩容，避免噪声） */
+function scaledRacketSpec(spec) {
+  const extraEvents = RACKET_SCALE_EVENTS[spec.association];
+  if (spec.schoolId !== 'muc' || !extraEvents) return spec;
+  const project = spec.association;
+  const addedEvents = extraEvents.map((item, index) => {
+    const results = scaledResultsOf(project, index, item.finished === true);
+    return {
+      rawId: `scale-${project}-e${index + 1}`,
+      title: item.title,
+      startOffsetDays: item.startOffsetDays,
+      quota: item.quota,
+      signups: scaledSignupsOf(project, item, results, index + 1),
+      ...(results ? { results } : {}),
+    };
+  });
+  const targetMatches = spec.matches.length * 3;
+  const addedMatches = buildScaledMatches(project, targetMatches - spec.matches.length);
+  return {
+    ...spec,
+    events: [...spec.events, ...addedEvents],
+    matches: [...spec.matches, ...addedMatches],
+  };
+}
+
+/** 网球原先没有演示内容：三场赛事 + 十八场流水，与其他球拍项目同量级 */
+function tennisSpec() {
+  const project = 'tn';
+  const events = RACKET_SCALE_EVENTS.tn.map((item, index) => {
+    const results = scaledResultsOf(project, index, item.finished === true);
+    return {
+      rawId: `scale-tn-e${index + 1}`,
+      title: item.title,
+      startOffsetDays: item.startOffsetDays,
+      quota: item.quota,
+      signups: scaledSignupsOf(project, item, results, index + 1),
+      ...(results ? { results } : {}),
+    };
+  });
+  return {
+    schoolId: 'muc', association: 'tn', venue: RACKET_SCALE_POOLS.tn.venue,
+    events, matches: buildScaledMatches(project, 18),
+  };
+}
+
+/** 手写基线：标题、名次、报名人数都是特定的；追加部分由上面的生成器补到 3 倍。 */
+const BASE_DEMO_SPECS = Object.freeze([
   {
     schoolId: 'muc', association: 'pkb', venue: '民大体育馆',
     events: [
@@ -271,6 +475,12 @@ const DEMO_CONTENT_SPECS = Object.freeze([
       { rawId: 'buaa-tt-3', teamA: ['demo_buaa_member', 'demo_buaa_admin'], teamB: ['demo_buaa_leader', 'demo_buaa_member_2'], scoreA: [11, 7, 11], scoreB: [7, 11, 9], ago: 2 },
     ],
   },
+]);
+
+/** 实际使用的规格：基线 ×3（民大四个球拍项目）+ 网球整套 */
+const DEMO_CONTENT_SPECS = Object.freeze([
+  ...BASE_DEMO_SPECS.map(scaledRacketSpec),
+  tennisSpec(),
 ]);
 
 /**
@@ -464,10 +674,15 @@ function demoMatchDocs(spec, now, settleState, ratingAccumulator) {
   const at = iso(now);
   const docs = spec.matches.map((item) => {
     const matchTime = new Date(now.getTime() - item.ago * DAY_MS);
+    // 网球是三层赛制（盘 / 局 / 抢七），其余项目是「每局几分」；种子按项目给对形状，
+    // 否则网球历史记录会被读成 11:9 的乒乓球比分。
+    const format = item.scoring === 'tennis'
+      ? { scoring: 'tennis', setGames: 6, bestOf: 3, tiebreakAt: 6, tiebreakPoints: 7, noAd: true }
+      : { gamePoints: 11, bestOf: 3 };
     const record = builtRecordOf(buildMatchRecord({
       matchType: item.teamA.length === 2 ? MATCH_TYPE.DOUBLES : MATCH_TYPE.SINGLES,
       teamA: item.teamA, teamB: item.teamB, scoreA: item.scoreA, scoreB: item.scoreB,
-      gamePoints: 11, bestOf: 3, matchTime, location: spec.venue, recorder: item.teamA[0],
+      ...format, matchTime, location: spec.venue, recorder: item.teamA[0],
     }), '比赛');
     return {
       ...record,
@@ -668,6 +883,10 @@ function createSchoolDemoContent() {
   Object.assign(content, createTeamDemoContent());
   // 足球各集合追加，不能覆盖既有篮球球队/报名/角色。
   for (const [key, rows] of Object.entries(createFootballDemoContent())) {
+    content[key] = [...(content[key] || []), ...rows];
+  }
+  // 石榴籽杯：每项目两届历史 + 匹克球 / 篮球各一届进行中（球拍走学院赛，团队走学院赛制的团队赛事）
+  for (const [key, rows] of Object.entries(createCollegeCupContent())) {
     content[key] = [...(content[key] || []), ...rows];
   }
   return content;
