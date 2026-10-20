@@ -7,9 +7,13 @@
     <view class="team-head">
       <view class="team-avatar">{{team.initial}}</view>
       <view class="team-head-main">
-        <view class="team-name">{{team.name}}</view>
+        <view class="team-name">
+          {{team.name}}
+          <text wx:if="{{team.isCollegeTeam}}" class="tag tag-rank">学院队</text>
+        </view>
         <view class="team-meta">
-          队长 {{team.captainName}} · {{team.memberCount}} 人
+          <text wx:if="{{team.isCollegeTeam}}">学院负责人管理 · {{team.memberCount}} 人（不设上限）</text>
+          <text wx:else>队长 {{team.captainName}} · {{team.memberCount}} 人</text>
           <text wx:if="{{team.college}}"> · {{team.college}}</text>
         </view>
         <view class="team-status">{{team.statusLabel}}</view>
@@ -18,11 +22,48 @@
 
     <view wx:if="{{notice}}" class="notice {{noticeError ? 'notice-error' : ''}}">{{notice}}</view>
 
-    <!-- 路人：申请加入；已在队/待审时给状态说明 -->
+    <!-- 路人：申请加入；已在队/待审时给状态说明。院队没有申请入口，只能被选入队。 -->
     <view wx:if="{{team.status === 'active'}}" class="actions">
+      <view wx:if="{{team.isCollegeTeam}}" class="hint-inline">学院代表队由本学院负责人挑选队员，报名时选中即入队；在队队员可自行退出。</view>
       <view wx:if="{{team.canApply}}" class="btn btn-primary" bindtap="onApply">申请加入</view>
       <view wx:elif="{{team.pending}}" class="hint-inline">入队申请已提交，等队长审批</view>
-      <view wx:elif="{{team.isMine && !team.isCaptain}}" class="btn btn-ghost" bindtap="onLeave">退队</view>
+      <view wx:if="{{team.isMine && !team.isCaptain}}" class="btn btn-ghost" bindtap="onLeave">退队</view>
+      <view wx:if="{{canPickMembers}}" class="btn btn-primary" bindtap="onOpenPick">添加队员</view>
+    </view>
+
+    <!-- 院队挑人：候选池 = 本学院在该项目的在册会员 -->
+    <view wx:if="{{pickOpen}}" class="card">
+      <view class="card-head">
+        <view class="card-title">添加队员</view>
+        <view class="badge">已选 {{pickedCount}}</view>
+      </view>
+      <input class="create-input" placeholder="搜索本院会员" value="{{pickKeyword}}" bindinput="onPickKeyword" />
+      <view wx:if="{{visibleCandidates.length === 0}}" class="hint">没有可添加的会员</view>
+      <view wx:else class="member-list">
+        <view wx:for="{{visibleCandidates}}" wx:key="userId" class="member-row">
+          <view class="member-main">
+            <view class="member-name">
+              {{item.name}}
+              <text wx:if="{{item.inTeam}}" class="tag tag-captain">已在队</text>
+              <text wx:elif="{{item.picked}}" class="tag tag-rank">已选</text>
+            </view>
+          </view>
+          <view class="member-actions">
+            <view
+              wx:if="{{!item.inTeam}}"
+              class="mini {{item.picked ? '' : 'mini-primary'}}"
+              data-userid="{{item.userId}}"
+              bindtap="onTogglePick"
+            >{{item.picked ? '取消' : '选择'}}</view>
+          </view>
+        </view>
+      </view>
+      <view class="create-actions">
+        <view class="btn btn-ghost" bindtap="onClosePick">关闭</view>
+        <view class="btn btn-primary {{picking ? 'is-disabled' : ''}}" bindtap="onSavePick">
+          {{picking ? '提交中…' : '加入学院队'}}
+        </view>
+      </view>
     </view>
 
     <view class="card">
@@ -56,6 +97,12 @@
               data-name="{{item.name}}"
               bindtap="onTransfer"
             >转队长</view>
+            <view
+              wx:elif="{{team.isCollegeTeam && canPickMembers && item.status === 'active'}}"
+              class="mini"
+              data-userid="{{item.userId}}"
+              bindtap="onRemoveMember"
+            >移出</view>
           </view>
         </view>
       </view>
@@ -120,7 +167,8 @@
       </block>
     </view>
 
-    <view wx:if="{{team.canManage && team.status !== 'archived'}}" class="danger-zone">
+    <!-- 院队是系统预置的常设队，没有「归档/解散」这一说 -->
+    <view wx:if="{{team.canManage && team.status !== 'archived' && !team.isCollegeTeam}}" class="danger-zone">
       <view class="danger-text">归档后不再接受入队与报名，历史成绩仍可查询。</view>
       <view class="btn btn-danger" bindtap="onArchive">归档球队</view>
     </view>

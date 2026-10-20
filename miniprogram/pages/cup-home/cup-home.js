@@ -25,16 +25,34 @@
  * ============================================================
  */
 
-const { activeAssociations } = require('../../utils/associations.js');
+const { activeAssociations, sportTypeOf, SPORT_TYPE } = require('../../utils/associations.js');
 const space = require('../../services/association-space.js');
 const associationScope = require('../../services/association-scope.js');
 const schoolSession = require('../../services/school-session.js');
 const { currentThemeClass } = require('../../services/branding.js');
 const { LEGACY_SCHOOL_ID } = require('../../utils/school.js');
+const { CUP_MODE, EVENT_FORMAT_LABEL } = require('../../utils/constants.js');
 
 const PAGE_SIZE = 50;
 /** 输入停顿多久才发请求：按住键盘连打时不至于每敲一个字都问一次服务端 */
 const SEARCH_DEBOUNCE_MS = 300;
+
+/**
+ * 团队赛事状态 → 杯赛页的四组。
+ *
+ * 球拍学院赛的状态本来就是 0–3；团队赛有七个字符串状态。页面只认四组，
+ * 转换放在这一个表里，页面以下的代码（分组、筛选、标签）都不必知道具体状态名。
+ * 新增状态忘了登记会落进「进行中」，并且有测试钉住枚举全集。
+ */
+const TEAM_STATUS_GROUP = {
+  registration: 0,
+  locked: 1,
+  scheduled: 1,
+  running: 2,
+  finished: 3,
+  canceled: 3,
+  draft: 0,
+};
 
 /** 状态筛选项。value 用空串表示不限，其余是 COLLEGE_EVENT_STATUS 的数字值 */
 const STATUS_OPTIONS = [
@@ -80,6 +98,12 @@ Page({
     keyword: '',
     /** 关键词命中的项目（本地匹配；点一下即切换项目） */
     projectMatches: [],
+    /**
+     * 当前项目是不是团队项目（篮球/足球）。
+     * 团队项目的学院赛长在团队赛事上（按学院组队、一场一场打），
+     * 球拍项目长在学院赛上（学院报名 → 小项 → 大场）。页面只按这个布尔量分派取数。
+     */
+    isTeamFeed: false,
     rows: [],
     groups: [],
     total: 0,
@@ -119,6 +143,7 @@ Page({
       projectId: current,
       projectName: this.sportNameOf(current, projects),
       projectAnchor: this.anchorOf(current),
+      isTeamFeed: this.isTeamProject(current),
       themeClass: currentThemeClass(),
     });
     return this.reload();
@@ -149,6 +174,14 @@ Page({
   sportNameOf(id, projects) {
     const found = (projects || []).find((item) => item.id === id);
     return found ? found.sportName : '';
+  },
+
+  /**
+   * 这个项目是不是团队项目（篮球/足球）。
+   * 团队项目的学院赛按学院组队、一场一场打，取数与路由都落在团队赛事那一套上。
+   */
+  isTeamProject(id) {
+    return Boolean(id) && sportTypeOf(id) === SPORT_TYPE.TEAM;
   },
 
   /** 项目栏的滚动锚点：scroll-into-view 认的是节点 id */
@@ -250,10 +283,14 @@ Page({
     if (!silent) this.update({ loading: true, error: '' });
     this.rows = [];
     try {
-      const result = await this.client().listCollegeEvents(this.query({ offset: 0 }));
+      const payload = this.data.isTeamFeed ? this.teamQuery() : this.query({ offset: 0 });
+      const action = this.data.isTeamFeed ? 'listTeamEvents' : 'listCollegeEvents';
+      const result = await this.client()[action](payload);
       if (this.unloaded || token !== this.requestToken) return undefined;
       if (result && result.ok === false) throw new Error(result.message || '没有读取石榴籽杯的权限');
-      const rows = result.events || [];
+      const rows = this.data.isTeamFeed
+        ? this.teamRowsOf(result.events || [])
+        : this.collegeRowsOf(result.events || []);
       this.rows = rows;
       this.loaded = true;
       this.update({
@@ -261,9 +298,9 @@ Page({
         error: '',
         rows,
         groups: this.groupOf(rows),
-        total: Number(result.total) || rows.length,
+        total: this.data.isTeamFeed ? rows.length : (Number(result.total) || rows.length),
         offset: rows.length,
-        hasMore: Boolean(result.hasMore),
+        hasMore: this.data.isTeamFeed ? false : Boolean(result.hasMore),
         canManage: Boolean(result.canManage),
         themeClass: currentThemeClass(),
       });
@@ -273,6 +310,65 @@ Page({
       this.update({ loading: false, error: (err && err.message) || '加载失败' });
     }
     return undefined;
+  },
+
+  /** 团队赛事的查询条件：状态在页面内按归组筛，其余交给服务端 */
+  teamQuery() {
+    const year = this.data.years[this.data.yearIndex] || { value: '' };
+    const keyword = String(this.data.keyword || '').trim();
+    const payload = { cupMode: CUP_MODE.COLLEGE };
+    if (year.value) payload.year = year.value;
+    if (keyword) payload.keyword = keyword;
+    return payload;
+  },
+
+  /** 球拍学院赛的列表行 → 统一行结构 */
+  collegeRowsOf(rows) {
+    return rows.map(row => ({
+      ...row,
+      kind: 'college',
+      metaText: `${row.legPlanText} · 名单 ${row.rosterText}`,
+      actionText: '交名单',
+    }));
+  },
+
+  /**
+   * 团队赛事 → 统一行结构。
+   *
+   * 状态归组与筛选都在这里做：一个项目一年也就几场学院赛，一次全取即可，
+   * 不必为它再给列表接口加一套分页与状态参数。
+   */
+  teamRowsOf(events) {
+    const statusFilter = (this.data.statusOptions[this.data.statusIndex] || { value: '' }).value;
+    return events
+      .map((event) => {
+        const group = TEAM_STATUS_GROUP[event.status] === undefined ? 2 : TEAM_STATUS_GROUP[event.status];
+        return {
+          eventId: event.eventId,
+          kind: 'team',
+          title: event.name,
+          pinned: false,
+          status: group,
+          statusLabel: event.statusLabel,
+          isSignup: group === 0,
+          isOngoing: group === 2,
+          startTimeText: this.dateTextOf(event),
+          location: event.location || '',
+          // 团队学院赛的报名单位是学院：副信息说清赛制与已报名学院数
+          metaText: `${EVENT_FORMAT_LABEL[event.format] || '赛制未定'} · 已报名 ${Number(event.entryCount) || 0} 院`,
+          canSubmit: Boolean(event.canSubmit),
+          actionText: '报名',
+        };
+      })
+      .filter(row => statusFilter === '' || row.status === Number(statusFilter));
+  },
+
+  /** 团队赛事只下发 ISO 时间：展示文本在页面按 +08 拼（与学院赛行的「年-月-日」同粒度） */
+  dateTextOf(event) {
+    const at = Date.parse(event.createdAt || '');
+    if (!Number.isFinite(at)) return '时间待定';
+    const local = new Date(at + 8 * 3600000);
+    return `${local.getUTCFullYear()}-${String(local.getUTCMonth() + 1).padStart(2, '0')}-${String(local.getUTCDate()).padStart(2, '0')}`;
   },
 
   async loadMore() {
@@ -355,6 +451,7 @@ Page({
       projectId: id,
       projectName: this.sportNameOf(id, this.data.projects),
       projectAnchor: this.anchorOf(id),
+      isTeamFeed: this.isTeamProject(id),
       themeClass: currentThemeClass(),
       rows: [],
       groups: [],
@@ -373,6 +470,7 @@ Page({
       projectId: id,
       projectName: this.sportNameOf(id, this.data.projects),
       projectAnchor: this.anchorOf(id),
+      isTeamFeed: this.isTeamProject(id),
       themeClass: currentThemeClass(),
       // 项目变了，命中的项目行要重算「当前」标记；关键词保留，接着在新项目里搜赛事
       projectMatches: this.projectMatchesOf(this.data.keyword, id),
@@ -386,8 +484,18 @@ Page({
   },
 
   /** 发起学院赛：属于当前项目，发布页不再选项目（避免一次发起落到两个项目） */
+  /**
+   * 发起学院赛：属于当前项目，发布页不再选项目（避免一次发起落到两个项目）。
+   * 团队项目走团队建赛（篮球页内表单 / 足球表单组件），并带上杯赛标记，
+   * 建出来的赛事只有院队能报名。
+   */
   onCreate() {
     if (!this.data.projectId) return undefined;
+    if (this.data.isTeamFeed) {
+      return wx.navigateTo({
+        url: `/pages/team-event-list/team-event-list?create=1&cupMode=${CUP_MODE.COLLEGE}&projectId=${this.data.projectId}`,
+      });
+    }
     return wx.navigateTo({
       url: `/pages/college-event-edit/college-event-edit?projectId=${this.data.projectId}`,
     });
@@ -395,11 +503,17 @@ Page({
 
   /**
    * 点一场学院赛。
-   * 与旧入口一致：学院负责人在报名中直接进本学院名单页，其余进详情。
+   * 球拍：学院负责人在报名中直接进本学院名单页，其余进详情。
+   * 团队：一律进团队赛事详情——报名面板（挑人即入队）在那里。
    */
   onOpenEvent(event) {
-    const { eventId, canSubmit } = event.currentTarget.dataset;
+    const { eventId, canSubmit, kind } = event.currentTarget.dataset;
     if (!eventId) return undefined;
+    if (kind === 'team') {
+      return wx.navigateTo({
+        url: `/pages/team-event-detail/team-event-detail?eventId=${encodeURIComponent(eventId)}`,
+      });
+    }
     if (canSubmit) {
       return wx.navigateTo({ url: `/pages/college-entry/college-entry?eventId=${encodeURIComponent(eventId)}` });
     }

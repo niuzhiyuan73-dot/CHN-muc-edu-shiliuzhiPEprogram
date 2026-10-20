@@ -128,6 +128,7 @@
           class="cup-row"
           data-event-id="{{row.eventId}}"
           data-can-submit="{{row.canSubmit}}"
+          data-kind="{{row.kind}}"
           bindtap="onOpenEvent"
         >
           <view class="cup-row-main">
@@ -139,10 +140,10 @@
             <view class="cup-row-meta">
               {{row.startTimeText}}<text wx:if="{{row.location}}"> · {{row.location}}</text>
             </view>
-            <view class="cup-row-meta">{{row.legPlanText}} · 名单 {{row.rosterText}}</view>
+            <view class="cup-row-meta">{{row.metaText}}</view>
           </view>
           <view class="cup-row-side">
-            <view wx:if="{{row.canSubmit}}" class="cup-row-action">交名单</view>
+            <view wx:if="{{row.canSubmit}}" class="cup-row-action">{{row.actionText}}</view>
             <view wx:else class="cup-row-arrow">›</view>
           </view>
         </view>

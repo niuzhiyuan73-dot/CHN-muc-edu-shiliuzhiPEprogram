@@ -39,6 +39,15 @@ Page({
     busy: false,
     notice: '',
     noticeError: false,
+    /** 院队：候选池与「添加队员」面板（普通球队恒为空、不渲染） */
+    collegeTeam: null,
+    canPickMembers: false,
+    pickOpen: false,
+    pickKeyword: '',
+    picking: false,
+    candidates: [],
+    visibleCandidates: [],
+    pickedCount: 0,
   },
 
   onLoad(query = {}) {
@@ -67,6 +76,8 @@ Page({
       });
       // 战绩与名单互不依赖：单独取，失败也不该把整页打成加载失败
       this.loadRecord();
+      // 院队要额外拿候选池（本院会员），普通球队不需要
+      this.loadCandidates(result.team);
       return undefined;
     } catch (err) {
       console.error('[team-detail] 加载失败', err);
@@ -99,6 +110,101 @@ Page({
       this.setData({ record: null, recordError: '战绩加载失败，请稍后重试' });
       return undefined;
     }
+  },
+
+  /**
+   * 院队候选池。
+   *
+   * 【为什么单独一次请求】
+   * 普通球队打开详情不需要「全院会员」这份名单；只有院队的负责人挑人时才用得上。
+   * 放在 getTeam 里一起下发，等于每次看任何一支队都要多查一遍会员与在册状态。
+   */
+  async loadCandidates(team) {
+    if (!team || !team.isCollegeTeam) {
+      this.setData({ collegeTeam: null, canPickMembers: false, candidates: [], visibleCandidates: [] });
+      return undefined;
+    }
+    try {
+      const result = await space.forScope(this.scope).getCollegeTeam({ teamId: this.data.teamId });
+      if (!result || result.ok !== true) return undefined;
+      const candidates = result.candidates || [];
+      this.setData({
+        collegeTeam: result.team,
+        canPickMembers: Boolean(result.canPickMembers),
+        candidates,
+        visibleCandidates: this.filterCandidates(candidates, this.data.pickKeyword),
+      });
+      return undefined;
+    } catch (err) {
+      console.error('[team-detail] 候选池加载失败', err);
+      return undefined;
+    }
+  },
+
+  filterCandidates(candidates, keyword) {
+    const kw = String(keyword || '').trim().toLowerCase();
+    if (!kw) return candidates;
+    return candidates.filter(row => String(row.name || '').toLowerCase().includes(kw));
+  },
+
+  onOpenPick() {
+    this.setData({ pickOpen: true, pickKeyword: '', picking: false, pickedCount: 0,
+      visibleCandidates: this.filterCandidates(this.data.candidates, '') });
+  },
+
+  onClosePick() {
+    if (this.data.picking) return undefined;
+    this.setData({ pickOpen: false, pickKeyword: '' });
+    return undefined;
+  },
+
+  onPickKeyword(event) {
+    const pickKeyword = String((event.detail && event.detail.value) || '');
+    this.setData({ pickKeyword, visibleCandidates: this.filterCandidates(this.data.candidates, pickKeyword) });
+  },
+
+  /** 勾选/取消：只改本地候选（inTeam 表示已在队，不可再勾，要移除走名单里的「移出」） */
+  onTogglePick(event) {
+    const { userid } = event.currentTarget.dataset;
+    const candidates = (this.data.candidates || []).map(row => (
+      row.userId === userid ? { ...row, picked: !row.picked } : row
+    ));
+    this.setData({
+      candidates,
+      pickedCount: candidates.filter(row => row.picked).length,
+      visibleCandidates: this.filterCandidates(candidates, this.data.pickKeyword),
+    });
+  },
+
+  async onSavePick() {
+    const picked = (this.data.candidates || []).filter(row => row.picked).map(row => row.userId);
+    if (picked.length === 0) {
+      this.setData({ notice: '还没有勾选队员', noticeError: true });
+      return undefined;
+    }
+    this.setData({ picking: true });
+    try {
+      const result = await space.forScope(this.scope)
+        .addCollegeTeamMembers({ teamId: this.data.teamId, userIds: picked });
+      if (!result.ok) {
+        this.setData({ picking: false, notice: result.message || '添加失败', noticeError: true });
+        return undefined;
+      }
+      this.setData({ picking: false, pickOpen: false, pickKeyword: '', pickedCount: 0,
+        notice: `已加入 ${result.added} 名队员`, noticeError: false });
+      await this.refresh();
+      return undefined;
+    } catch (err) {
+      console.error('[team-detail] 添加队员失败', err);
+      this.setData({ picking: false, notice: '添加失败，请稍后重试', noticeError: true });
+      return undefined;
+    }
+  },
+
+  /** 负责人把队员移出学院队（成员自己退队走 onLeave） */
+  onRemoveMember(event) {
+    const { userid } = event.currentTarget.dataset;
+    return this.run('removeCollegeTeamMember', { teamId: this.data.teamId, userId: userid }, '已移出学院队');
   },
 
   /** 统一的写动作包装：防连点 + 失败提示 + 成功后刷新 */

@@ -9,7 +9,8 @@
       <view class="head-name">{{event.name}}</view>
       <view class="head-meta">
         <text class="status status-{{event.status}}">{{event.statusLabel}}</text>
-        <text class="head-count">{{event.entryCount}} 支球队</text>
+        <text wx:if="{{event.isCollegeCup}}" class="tag tag-rank">学院赛</text>
+        <text class="head-count">{{event.entryCount}} {{event.isCollegeCup ? '个学院' : '支球队'}}</text>
       </view>
       <view class="head-rules">{{event.rulesText}}</view>
     </view>
@@ -43,6 +44,7 @@
     <!-- 报名 -->
     <view class="card">
       <view class="card-title">报名（{{entries.length}}）</view>
+      <view wx:if="{{event.isCollegeCup}}" class="hint-inline">学院赛一院一队：由本学院负责人以「本院代表队」报名，其他人看不到报名入口。</view>
 
       <!-- 我能报的队：队长看到自己队，管理者看到所有还没报的队 -->
       <view wx:if="{{submitCandidates.length > 0}}" class="submit-block">
@@ -54,7 +56,7 @@
           <view class="row-main">
             <view class="row-name">{{item.name}}</view>
             <view class="row-meta {{item.enough ? '' : 'text-warn'}}">
-              {{item.memberCount}} / {{item.need}} 人{{item.enough ? '' : ' · 人数不足，先凑齐队员'}}
+              {{item.metaText}}{{item.enough ? '' : ' · 人数不足，先凑齐队员'}}
             </view>
           </view>
           <view
@@ -66,12 +68,12 @@
         </view>
       </view>
 
-      <view wx:if="{{entries.length === 0 && submitCandidates.length === 0}}" class="hint-inline">还没有球队报名</view>
+      <view wx:if="{{entries.length === 0 && submitCandidates.length === 0}}" class="hint-inline">{{event.isCollegeCup ? '还没有学院报名' : '还没有球队报名'}}</view>
       <view wx:else class="row-list">
         <view wx:for="{{entries}}" wx:key="teamId" class="row">
           <view class="row-main">
             <view class="row-name">
-              {{item.teamName}}
+              {{item.isCollegeTeam && item.collegeName ? item.collegeName : item.teamName}}
               <text wx:if="{{item.placement}}" class="tag tag-rank">第 {{item.placement}} 名</text>
             </view>
             <view class="row-meta">{{item.rosterCount}} 人 · {{item.statusLabel}}</view>

@@ -94,6 +94,16 @@ const teamKey = (seed, scope) => {
 };
 // 队员关系：一队一人一条。teamId 已含学校与协会，这里不再重复。
 const teamMemberKey = (teamId, userId) => schoolKey('tmm', teamId, userId);
+// 学院代表队编号：由「学校 + 协会 + 学院」派生，一个学院在一个项目里恒定一条。
+//
+// 【为什么必须确定性】
+// 院队是系统预置的常设队，不经过「创建」动作，也没有创建人可以当种子。用学院编号
+// 当种子，任何请求随时能算出同一个 teamId：报名记录 `entryKey(赛事, 院队)` 因此
+// 结构上就是「一院一届一条报名」，不需要额外去重，也不存在并发窗口。
+const collegeTeamKey = (collegeId, scope) => {
+  if (typeof collegeId !== 'string' || !collegeId) throw new Error('学院队键缺少学院编号');
+  return teamKey(`college:${collegeId}`, scope);
+};
 const scopeKey = (scope) => {
   const s = schoolScope(scope);
   return schoolKey('scope', s.schoolId, s.association);
@@ -207,5 +217,5 @@ module.exports = {
   schoolEventKey, schoolEventSignupKey, schoolMatchKey, schoolLiveKey,
   collegeEventKey, collegeEntryKey, collegeLineupKey, schoolAnnouncementKey,
   schoolAccountKey, pairCountKey, memberRatingKey, ratingSeqKey,
-  teamKey, teamMemberKey,
+  teamKey, teamMemberKey, collegeTeamKey,
 };

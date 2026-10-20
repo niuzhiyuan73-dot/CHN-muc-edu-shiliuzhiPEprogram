@@ -11,7 +11,8 @@
   <football-event-form wx:if="{{creating && isFootball}}" submitting="{{submitting}}"
     server-error="{{noticeError ? notice : ''}}" bindsubmit="onFootballSubmit" bindcancel="onCloseCreate" />
   <view wx:if="{{creating && !isFootball}}" class="card">
-    <view class="card-title">新建赛事</view>
+    <view class="card-title">{{isCollegeCup ? '发起学院赛' : '新建赛事'}}</view>
+    <view wx:if="{{isCollegeCup}}" class="field-note">本赛事为石榴籽杯学院赛：一院一队，由学院负责人以本院代表队报名，比赛规则与普通赛事相同。</view>
     <input
       class="create-input"
       placeholder="赛事名称（2–30 字）"

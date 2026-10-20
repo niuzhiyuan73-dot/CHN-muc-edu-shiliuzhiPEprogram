@@ -1145,6 +1145,25 @@ const TEAM_STATUS_LABEL = {
   [TEAM_STATUS.ARCHIVED]: '已归档',
 };
 
+/**
+ * 球队类型。
+ *
+ * 【为什么只有两种，且学院队不是「建」出来的】
+ * 自由球队由学生申请组建（有队长、可申请入队、可归档）；学院代表队是**系统按
+ * 学院目录预置**的常设队，一个学院在一个项目里恒有一条，用户看不到「创建」动作。
+ * 两者共用 teams / team_members 两张表，靠这个字段区分权限与展示，
+ * 不为学院队另建集合——否则录分、报名、战绩都要再写一遍。
+ */
+const TEAM_TYPE = {
+  FREE: 'free', // 自由球队（缺省）
+  COLLEGE: 'college', // 学院代表队：系统预置，队员由学院负责人挑选
+};
+
+const TEAM_TYPE_LABEL = {
+  [TEAM_TYPE.FREE]: '球队',
+  [TEAM_TYPE.COLLEGE]: '学院队',
+};
+
 /** 队员状态。入队申请与被移出都留痕，不物理删除。 */
 const TEAM_MEMBER_STATUS = {
   PENDING: 'pending', // 已申请，等队长批
@@ -1194,6 +1213,21 @@ const TEAM_ENTRY_STATUS_LABEL = {
   [TEAM_ENTRY_STATUS.APPROVED]: '已通过',
   [TEAM_ENTRY_STATUS.REJECTED]: '已退回',
   [TEAM_ENTRY_STATUS.LOCKED]: '已锁定',
+};
+
+/**
+ * 团队赛事的杯赛归属。
+ *
+ * 空 = 普通团队赛事（自由球队可报名）；`college` = 石榴籽杯学院赛，只接受
+ * **学院代表队**报名。它只参与「资格判定与文案」，**不进 rules 快照**：
+ * 一场学院赛的节数、犯规、加时与同项目的普通赛事完全一样。
+ */
+const CUP_MODE = {
+  COLLEGE: 'college',
+};
+
+const CUP_MODE_LABEL = {
+  [CUP_MODE.COLLEGE]: '学院赛',
 };
 
 /**
@@ -1414,10 +1448,14 @@ module.exports = {
   COLLEGE_ENTRY_STATUS_LABEL,
   TEAM_STATUS,
   TEAM_STATUS_LABEL,
+  TEAM_TYPE,
+  TEAM_TYPE_LABEL,
   TEAM_MEMBER_STATUS,
   TEAM_MEMBER_STATUS_LABEL,
   TEAM_EVENT_STATUS,
   TEAM_EVENT_STATUS_LABEL,
+  CUP_MODE,
+  CUP_MODE_LABEL,
   TEAM_ENTRY_STATUS,
   TEAM_ENTRY_STATUS_LABEL,
   TEAM_MATCH_STATUS,

@@ -16,14 +16,17 @@
  */
 
 const { canManageAssociationSpace, canReadAssociationSpace } = require('./association-space-permission.js');
+const { collegeMemberCandidates } = require('./team-service.js');
 const { createBasketballLive, applyBasketballOperation, basketballLiveView, BASKETBALL_STAT_LIMITS } = require('../utils/basketball-live.js');
 const { buildDirectory } = require('./school-actor.js');
 const { buildSchoolContext } = require('./school-context.js');
-const { schoolKey, schoolMemberKey, schoolMembershipKey, teamMemberKey, PLATFORM_STATUS } = require('../utils/school.js');
+const { canSchoolAction } = require('./school-permission.js');
+const { schoolKey, schoolMemberKey, schoolMembershipKey, teamMemberKey, collegeTeamKey, PLATFORM_STATUS } = require('../utils/school.js');
 const {
   TEAM_STATUS, TEAM_MEMBER_STATUS, TEAM_EVENT_STATUS, TEAM_ENTRY_STATUS, TEAM_MATCH_STATUS,
   TEAM_EVENT_STATUS_LABEL, TEAM_ENTRY_STATUS_LABEL, TEAM_MATCH_STATUS_LABEL,
   TEAM_STATUS_LABEL, TEAM_MEMBER_STATUS_LABEL,
+  TEAM_TYPE, CUP_MODE, CUP_MODE_LABEL,
   BRACKET_STAGE, EVENT_BRONZE_MODE, TEAM_STAT_INTEGRITY, TEAM_STAT_STATUS,
 } = require('../utils/constants.js');
 const { EVENT_FORMAT } = require('../utils/constants.js');
@@ -140,6 +143,7 @@ function lineupOf(match, side) {
 /** 赛事视图：布尔量与文案在服务端算好 */
 function eventView(event, ctx, { manage, entryCount }) {
   const strategy = teamSportStrategyFor(ctx.association, event);
+  const cupMode = event.cupMode === CUP_MODE.COLLEGE ? CUP_MODE.COLLEGE : '';
   return {
     eventId: event._id,
     name: event.name,
@@ -147,6 +151,13 @@ function eventView(event, ctx, { manage, entryCount }) {
     status: event.status,
     statusLabel: TEAM_EVENT_STATUS_LABEL[event.status] || event.status,
     sportFormat: strategy ? strategy.sportFormat : null,
+    /**
+     * 石榴籽杯学院赛：只接受学院代表队报名，其余规则与同项目的普通赛事一致。
+     * 它只影响「谁能报名」与页面文案，不进 rules 快照。
+     */
+    cupMode,
+    cupModeLabel: cupMode ? CUP_MODE_LABEL[cupMode] : '',
+    isCollegeCup: cupMode === CUP_MODE.COLLEGE,
     supportsLiveScore: Boolean(strategy && strategy.supportsLiveScore),
     supportsMatchData: Boolean(strategy && strategy.supportsMatchData),
     rulesText: strategy ? strategy.formatRules(event.rules, event.format) : '',
@@ -244,23 +255,67 @@ function hashSeed(text) {
   return (hash >>> 0) % 2147483647;
 }
 
-/* ---------------- 读 ---------------- */async function listTeamEvents(_payload = {}, ctx) {
+/* ---------------- 读 ---------------- */
+async function listTeamEvents(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
   if (!canReadAssociationSpace(ctx)) return ok(refused('账号或本校在册会员身份已失效，无权访问本协会'));
   if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
 
   const manage = canManageAssociationSpace(ctx);
   const repo = ctx.repo.forScope(ctx);
-  const [events, entries] = await Promise.all([repo.teamEvents.list(), repo.teamEventEntries.list()]);
+  const [events, entries, dir] = await Promise.all([
+    repo.teamEvents.list(), repo.teamEventEntries.list(), buildDirectory(ctx),
+  ]);
   const countByEvent = new Map();
   for (const entry of entries) {
     countByEvent.set(entry.eventId, (countByEvent.get(entry.eventId) || 0) + 1);
   }
 
+  // 石榴籽杯页面的筛选口径：杯赛归属、关键词（名称/场地）、发起年份。
+  // 与学院赛列表同口径——年份按**发起时间**归档，不按开赛时间（一场可以提前很久发布）。
+  const cupMode = payload.cupMode === CUP_MODE.COLLEGE
+    ? CUP_MODE.COLLEGE
+    : (payload.cupMode === 'free' ? 'free' : '');
+  const keyword = typeof payload.keyword === 'string' ? payload.keyword.trim().slice(0, 40).toLowerCase() : '';
+  const year = Number(payload.year);
+  const yearFilter = Number.isInteger(year) && year > 0 ? year : 0;
+
+  // 「我能不能报名」：本院院队的报名处在什么状态。
+  // 院队编号是确定性派生的，所以不必先把队读出来就能与报名记录比对。
+  const myCollegeId = dir.collegeIdOf(ctx.actorId);
+  const myTeamId = myCollegeId ? collegeTeamKey(myCollegeId, ctx) : '';
+  const canManageMyCollege = Boolean(myCollegeId) && canSchoolAction(ctx, 'manageCollege', {
+    schoolId: ctx.schoolId, association: ctx.association, collegeId: myCollegeId,
+  });
+
   const rows = events
     .filter(event => event.status !== TEAM_EVENT_STATUS.DRAFT || manage)
+    .filter((event) => {
+      if (!cupMode) return true;
+      return cupMode === CUP_MODE.COLLEGE
+        ? event.cupMode === CUP_MODE.COLLEGE
+        : event.cupMode !== CUP_MODE.COLLEGE;
+    })
+    .filter(event => !keyword || [event.name, event.location]
+      .some(value => String(value || '').toLowerCase().includes(keyword)))
+    .filter((event) => {
+      if (!yearFilter) return true;
+      const at = Date.parse(event.createdAt || '');
+      return Number.isFinite(at) && new Date(at).getFullYear() === yearFilter;
+    })
     .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
-    .map(event => eventView(event, ctx, { manage, entryCount: countByEvent.get(event._id) }));
+    .map((event) => {
+      const view = eventView(event, ctx, { manage, entryCount: countByEvent.get(event._id) });
+      if (!view.isCollegeCup) return { ...view, canSubmit: false, myEntryStatusLabel: '' };
+      const mine = myTeamId ? entries.find(row => row.eventId === event._id && row.teamId === myTeamId) : null;
+      const entered = Boolean(mine) && mine.status !== TEAM_ENTRY_STATUS.REJECTED;
+      return {
+        ...view,
+        /** 学院负责人（及以上）在报名阶段、本学院还没有有效报名时可以报名 */
+        canSubmit: canManageMyCollege && event.status === TEAM_EVENT_STATUS.REGISTRATION && !entered,
+        myEntryStatusLabel: mine ? (TEAM_ENTRY_STATUS_LABEL[mine.status] || '') : '',
+      };
+    });
   return ok({ ok: true, events: rows, canManage: manage, message: '' });
 }
 
@@ -278,11 +333,17 @@ async function getTeamEvent(payload = {}, ctx) {
   const entries = (await repo.teamEventEntries.list()).filter(entry => entry.eventId === event._id);
   const teams = await repo.teams.list();
   const teamName = new Map(teams.map(team => [team._id, team.name]));
+  const collegeNameOfTeam = new Map(teams
+    .filter(team => team.type === TEAM_TYPE.COLLEGE)
+    .map(team => [team._id, team.college || '']));
   const rows = entries
     .filter(entry => manage || entry.status !== TEAM_ENTRY_STATUS.REJECTED)
     .map(entry => ({
       teamId: entry.teamId,
       teamName: teamName.get(entry.teamId) || '已归档球队',
+      // 学院赛的报名单位是学院，列表按学院展示（院队名是「XX代表队」，学院名另给一个字段）
+      collegeName: collegeNameOfTeam.get(entry.teamId) || '',
+      isCollegeTeam: collegeNameOfTeam.has(entry.teamId),
       status: entry.status,
       statusLabel: TEAM_ENTRY_STATUS_LABEL[entry.status] || entry.status,
       rosterCount: (entry.roster || []).length,
@@ -344,20 +405,30 @@ async function getTeamEvent(payload = {}, ctx) {
       .map(entry => entry.teamId)
   );
   const entryMin = Number(event.entryMin) || 5;
+  const isCollegeCup = event.cupMode === CUP_MODE.COLLEGE;
   const submitCandidates = event.status === TEAM_EVENT_STATUS.REGISTRATION
     ? teams
       .filter(team => inScope(team, ctx)
         && team.status === TEAM_STATUS.ACTIVE
         && !entered.has(team._id)
-        && (manage || team.captainId === ctx.actorId))
-      .map(team => {
+        // 学院赛只列院队，普通赛事只列自由球队：两边互不串门
+        && (isCollegeCup ? team.type === TEAM_TYPE.COLLEGE : team.type !== TEAM_TYPE.COLLEGE)
+        && (manage || team.captainId === ctx.actorId
+          || (team.type === TEAM_TYPE.COLLEGE && canSchoolAction(ctx, 'manageCollege', {
+            schoolId: ctx.schoolId, association: ctx.association, collegeId: team.collegeId,
+          }))))
+      .map((team) => {
         const count = activeCount.get(team._id) || 0;
+        const collegeTeam = team.type === TEAM_TYPE.COLLEGE;
         return {
           teamId: team._id,
           name: team.name,
+          isCollegeTeam: collegeTeam,
           memberCount: count,
-          enough: count >= entryMin,
+          // 院队从「本学院会员」里选人，队里现在几个人不构成门槛——报名面板里挑得齐就行
+          enough: collegeTeam ? true : count >= entryMin,
           need: entryMin,
+          metaText: collegeTeam ? `学院队 · 已入队 ${count} 人` : `${count} / ${entryMin} 人`,
         };
       })
     : [];
@@ -462,11 +533,15 @@ async function createTeamEvent(payload = {}, ctx) {
     : EVENT_BRONZE_MODE.PLAYOFF;
   // 统计口径：默认只记总分与个人得分/犯规；有专职记录员的赛事才开按节统计
   const statPolicy = payload.statPolicy === STAT_MODE.DETAILED ? STAT_MODE.DETAILED : STAT_MODE.BASIC;
+  // 杯赛归属：只有石榴籽杯学院赛带这个标记。它不改变任何比赛规则，
+  // 只决定「只接受学院代表队报名」与页面文案。
+  const cupMode = payload.cupMode === CUP_MODE.COLLEGE ? CUP_MODE.COLLEGE : '';
 
   const now = ctx.now;
   await ctx.repo.forScope(ctx).teamEvents.set(eventId, {
     _id: eventId, schoolId: ctx.schoolId, association: ctx.association,
     name, format, rules, sportFormat: strategy.sportFormat, bronzeMode, statPolicy, status: TEAM_EVENT_STATUS.REGISTRATION,
+    cupMode,
     entryMin: rules.eventRosterMin === undefined ? rules.rosterMin : rules.eventRosterMin,
     entryMax: rules.eventRosterMax === undefined ? rules.rosterMax : rules.eventRosterMax,
     // 赛程的时间与地点在建赛时给一次，之后每场可单独改
@@ -475,6 +550,46 @@ async function createTeamEvent(payload = {}, ctx) {
     revision: 1, requestId: token, createdBy: ctx.actorId, createdAt: now, updatedAt: now,
   });
   return ok({ ok: true, eventId, message: '' });
+}
+
+/**
+ * 把报名名单里的人落进院队 —— 「负责人选了就算入队」。
+ *
+ * 已在队的跳过；不是本学院在册会员的拒绝（报名前已校验过一次，这里是并发兜底）。
+ * 单独一个事务：先写后读在云开发事务里不允许，主事务里那句「名单必须在队」要在
+ * 这一步完成之后才成立。
+ */
+async function ensureCollegeRosterMembers(ctx, team, roster) {
+  const allowed = new Set((await collegeMemberCandidates(ctx, team.collegeId)).map(row => row.userId));
+  if (roster.some(row => !allowed.has(row.userId))) {
+    return { ok: false, message: '名单里有人不是本学院的在册会员' };
+  }
+  return ctx.repo.transaction(async (root) => {
+    const fresh = await freshContext(root, ctx);
+    const tx = root.forScope(fresh);
+    const current = await tx.teams.getById(team._id);
+    if (!current || current.type !== TEAM_TYPE.COLLEGE) return { ok: false, message: '学院代表队不存在' };
+    let added = 0;
+    for (const row of roster) {
+      const key = teamMemberKey(team._id, row.userId);
+      const member = await tx.teamMembers.getById(key);
+      if (member && member.status === TEAM_MEMBER_STATUS.ACTIVE) continue;
+      await tx.teamMembers.set(key, {
+        ...(member || {}),
+        _id: key, schoolId: fresh.schoolId, association: fresh.association,
+        teamId: team._id, userId: row.userId, role: 'member',
+        status: TEAM_MEMBER_STATUS.ACTIVE, source: 'picked',
+        joinedAt: fresh.now, leftAt: null, updatedAt: fresh.now,
+      });
+      added += 1;
+    }
+    if (added > 0) {
+      await tx.teams.set(team._id, {
+        ...current, memberCount: (Number(current.memberCount) || 0) + added, updatedAt: fresh.now,
+      });
+    }
+    return { ok: true, added };
+  });
 }
 
 /** 队长为本队报名：名单取当前在队成员，报名后待审核 */
@@ -495,8 +610,20 @@ async function submitTeamEntry(payload = {}, ctx) {
 
   const team = await repo.teams.getById(payload.teamId);
   if (!inScope(team, ctx) || team.status !== TEAM_STATUS.ACTIVE) return ok(refused('球队不存在或未通过审核'));
-  if (team.captainId !== ctx.actorId && !canManageAssociationSpace(ctx)) {
-    return ok(refused('只有队长可以为本队报名'));
+
+  // 学院赛与院队是绑定的：学院赛只收院队，院队也只打学院赛。
+  // 前者防止「随便一支队代表学院」，后者防止院队被当成万能队报进普通赛事。
+  const isCollegeCup = event.cupMode === CUP_MODE.COLLEGE;
+  const isCollegeTeam = team.type === TEAM_TYPE.COLLEGE;
+  if (isCollegeCup && !isCollegeTeam) return ok(refused('石榴籽杯学院赛只接受学院代表队报名'));
+  if (!isCollegeCup && isCollegeTeam) return ok(refused('学院代表队只参加石榴籽杯学院赛'));
+
+  // 院队没有队长，报名权挂在「本学院负责人」上（与学院赛交名单同一把尺子）
+  const managesThisCollege = isCollegeTeam && canSchoolAction(ctx, 'manageCollege', {
+    schoolId: ctx.schoolId, association: ctx.association, collegeId: team.collegeId,
+  });
+  if (team.captainId !== ctx.actorId && !canManageAssociationSpace(ctx) && !managesThisCollege) {
+    return ok(refused(isCollegeCup ? '只有本学院负责人可以为本院报名' : '只有队长可以为本队报名'));
   }
 
   const members = (await repo.teamMembers.list())
@@ -520,7 +647,8 @@ async function submitTeamEntry(payload = {}, ctx) {
   if (incoming) {
     const seen = new Set();
     for (const row of incoming) {
-      if (!memberIds.has(row.userId)) return ok(refused('名单里有人不在本队，先处理入队再报名'));
+      // 院队例外：报名面板就是负责人挑人的地方，名单里的人由这一步自动进队
+      if (!isCollegeTeam && !memberIds.has(row.userId)) return ok(refused('名单里有人不在本队，先处理入队再报名'));
       if (seen.has(row.userId)) return ok(refused('名单里有重复的队员'));
       seen.add(row.userId);
     }
@@ -558,6 +686,14 @@ async function submitTeamEntry(payload = {}, ctx) {
     roster.push({ userId: row.userId, name: nameOf(row.userId), no: parsed.value });
   }
 
+  // 名额与球衣号都过了之后，院队还要把「被选中的人」落进队里：
+  // 规则是「负责人选了就算入队」，报名面板正是他挑人的地方。
+  // 这一步单独一个事务（先写后读云开发事务不允许），主事务里的「名单必须在队」校验才成立。
+  if (isCollegeTeam) {
+    const ensured = await ensureCollegeRosterMembers(ctx, team, roster);
+    if (!ensured.ok) return ok(ensured);
+  }
+
   // 已通过审核的报名被改动后要重新走一遍审核：内容变了，原来的签字就不算数了
   const resubmitted = Boolean(previous && previous.status === TEAM_ENTRY_STATUS.APPROVED);
   const nextEntry = {
@@ -588,7 +724,10 @@ async function submitTeamEntry(payload = {}, ctx) {
     if (!currentEvent || currentEvent.status !== TEAM_EVENT_STATUS.REGISTRATION) return refused('赛事当前不开放报名');
     if (football && !sameRecord(currentEvent, event)) return refused('赛事或报名刚被改过，请刷新后重试');
     if (!currentTeam || currentTeam.status !== TEAM_STATUS.ACTIVE
-      || (currentTeam.captainId !== fresh.actorId && !canManageAssociationSpace(fresh))) return refused('当前无报名权限');
+      || (currentTeam.captainId !== fresh.actorId && !canManageAssociationSpace(fresh)
+        && !(currentTeam.type === TEAM_TYPE.COLLEGE && canSchoolAction(fresh, 'manageCollege', {
+          schoolId: fresh.schoolId, association: fresh.association, collegeId: currentTeam.collegeId,
+        })))) return refused('当前无报名权限');
     if (currentEntry && currentEntry.status === TEAM_ENTRY_STATUS.LOCKED) return refused('名单已锁定，不能再改');
     // 不能把刚退队的人从事务外的名单重新写入。
     for (const row of roster) {
@@ -630,17 +769,31 @@ async function getTeamEntryRoster(payload = {}, ctx) {
   if (!inScope(team, ctx)) return ok(refused('球队不存在，或不在本协会'));
 
   const manage = canManageAssociationSpace(ctx);
-  if (team.captainId !== ctx.actorId && !manage) {
-    return ok(refused('只有队长或协会负责人可以编辑报名名单'));
+  const isCollegeTeamHere = team.type === TEAM_TYPE.COLLEGE;
+  const managesThisCollege = isCollegeTeamHere && canSchoolAction(ctx, 'manageCollege', {
+    schoolId: ctx.schoolId, association: ctx.association, collegeId: team.collegeId,
+  });
+  if (team.captainId !== ctx.actorId && !manage && !managesThisCollege) {
+    return ok(refused(isCollegeTeamHere
+      ? '只有本学院负责人可以编辑报名名单'
+      : '只有队长或协会负责人可以编辑报名名单'));
   }
 
-  const members = (await repo.teamMembers.list())
+  const activeRows = (await repo.teamMembers.list())
     .filter(row => row.teamId === team._id && row.status === TEAM_MEMBER_STATUS.ACTIVE);
   const dir = await buildDirectory(ctx);
   const nameOf = (userId) => {
     const user = (dir.members || []).find(item => item._id === userId);
     return (user && (user.realName || user.nickName)) || userId;
   };
+
+  // 院队的候选池是「本学院在该协会的在册会员」，不只是已经进队的人：
+  // 学院赛报名正是负责人挑人的地方，选了就算入队（见 submitTeamEntry）。
+  const inTeam = new Set(activeRows.map(row => row.userId));
+  const candidates = isCollegeTeamHere
+    ? (await collegeMemberCandidates(ctx, team.collegeId))
+      .map(row => ({ userId: row.userId, name: row.name, inTeam: inTeam.has(row.userId) }))
+    : activeRows.map(row => ({ userId: row.userId, name: nameOf(row.userId), inTeam: true }));
 
   const entry = await repo.teamEventEntries.getById(entryKey(event._id, team._id));
   const saved = new Map(((entry && entry.roster) || []).map(row => [row.userId, row.no]));
@@ -654,19 +807,28 @@ async function getTeamEntryRoster(payload = {}, ctx) {
       entryMin: Number(event.entryMin) || 5,
       entryMax: Number(event.entryMax) || 12,
       status: event.status,
+      isCollegeCup: event.cupMode === CUP_MODE.COLLEGE,
     },
-    team: { teamId: team._id, name: team.name, captainId: team.captainId },
-    members: members.map(row => ({
+    team: {
+      teamId: team._id, name: team.name, captainId: team.captainId,
+      isCollegeTeam: isCollegeTeamHere,
+      collegeId: team.collegeId || '',
+      collegeName: dir.collegeNameById(team.collegeId) || '',
+    },
+    members: candidates.map(row => ({
       userId: row.userId,
-      name: nameOf(row.userId),
-      // 已有名单就按名单回填勾选与号码；没有名单就默认全选、号码空着
+      name: row.name,
+      /** 已在院队：报名面板上标一下，让负责人知道谁本来就属于这支队伍 */
+      inTeam: row.inTeam,
+      // 已有名单就按名单回填勾选与号码；没有名单时院队只默认勾已在队的人，
+      // 不把全院会员一次全报上去
       no: hasSnapshot && saved.has(row.userId) && Number.isInteger(saved.get(row.userId))
         ? saved.get(row.userId)
         : null,
-      selected: hasSnapshot ? saved.has(row.userId) : true,
+      selected: hasSnapshot ? saved.has(row.userId) : row.inTeam,
     })),
     status: entry ? entry.status : null,
-    canEdit: (team.captainId === ctx.actorId || manage)
+    canEdit: (team.captainId === ctx.actorId || manage || managesThisCollege)
       && event.status === TEAM_EVENT_STATUS.REGISTRATION
       && (!entry || entry.status !== TEAM_ENTRY_STATUS.LOCKED),
     message: '',

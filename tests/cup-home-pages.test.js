@@ -205,7 +205,7 @@ test('搜索：赛事关键词防抖、结果聚成一组；清空后恢复状�
     },
   }, async (calls) => {
     const page = instantiate(loadPage('cup-home'));
-    await page.onLoad({});
+    await page.onLoad({ projectId: 'pkb' });
     assert.equal(page.data.total, 2);
     assert.equal(page.data.groups.length, 2, '未搜索时按状态分组');
 
@@ -262,7 +262,7 @@ test('搜索：过期响应不覆盖最新结果，后台重取不把列表切�
     },
   }, async () => {
     const page = instantiate(loadPage('cup-home'));
-    await page.onLoad({});
+    await page.onLoad({ projectId: 'pkb' });
     const slow = page.reload({ silent: true });
     assert.equal(page.data.loading, false, '搜索中的后台重取不应把整页切回「正在加载」');
     const latest = page.reload({ silent: true });
@@ -272,5 +272,71 @@ test('搜索：过期响应不覆盖最新结果，后台重取不把列表切�
     await Promise.all([slow, latest]);
     assert.equal(page.data.total, 2, '过期响应把列表覆盖了');
     assert.equal(page.data.groups[0].rows[0].title, '新结果');
+  });
+});
+
+test('团队项目：杯赛页改读学院赛子集，行是同一套结构、路由进团队赛事', async () => {
+  const { instantiate, withApi, withWx } = require('./helpers/page-harness');
+  const calls = [];
+  await withApi({
+    listTeamEvents: (payload) => {
+      calls.push(payload);
+      return {
+        ok: true, canManage: true,
+        events: [
+          { eventId: 'tev:1', name: '2026 石榴籽杯篮球学院赛', format: 'single_elim', status: 'registration',
+            statusLabel: '报名中', entryCount: 6, location: '体育馆主馆', canSubmit: true,
+            createdAt: '2026-10-01T02:00:00.000Z', isCollegeCup: true },
+          { eventId: 'tev:2', name: '2026 春季学院赛', format: 'round_robin', status: 'finished',
+            statusLabel: '已结束', entryCount: 8, location: '', canSubmit: false,
+            createdAt: '2026-03-01T02:00:00.000Z', isCollegeCup: true },
+        ],
+      };
+    },
+  }, async () => {
+    const page = instantiate(loadPage('cup-home'));
+    await page.onLoad({ projectId: 'bk' });
+    assert.equal(page.data.isTeamFeed, true, '篮球是团队项目');
+    assert.equal(calls[0].cupMode, 'college', '只取学院赛，不把普通赛事搬进来');
+
+    assert.equal(page.data.total, 2);
+    assert.equal(page.data.groups[0].label, '报名中');
+    const row = page.data.rows[0];
+    assert.equal(row.kind, 'team');
+    assert.equal(row.status, 0, '团队赛状态归到四组');
+    assert.match(row.metaText, /单败淘汰 · 已报名 6 院/);
+    assert.equal(row.actionText, '报名');
+    assert.equal(row.canSubmit, true);
+    assert.equal(page.data.groups[1].rows[0].status, 3, '已结束归第三组');
+
+    // 状态筛选在页面内按归组筛（下拉第 5 项 = 已结束）
+    page.data.statusIndex = 0;
+    await page.onPickStatus({ detail: { value: 4 } });
+    assert.deepEqual(page.data.rows.map(item => item.eventId), ['tev:2']);
+
+    await withWx(({ navigations }) => {
+      page.onOpenEvent({ currentTarget: { dataset: { eventId: 'tev:1', kind: 'team', canSubmit: true } } });
+      assert.match(navigations[0], /team-event-detail\?eventId=tev%3A1/);
+      page.onCreate();
+      assert.match(navigations[1], /team-event-list\?create=1&cupMode=college&projectId=bk/);
+    });
+  });
+});
+
+test('团队赛事的年份筛选与关键词交给服务端，关键词为空时不下发', async () => {
+  const { instantiate, withApi } = require('./helpers/page-harness');
+  const calls = [];
+  await withApi({
+    listTeamEvents: (payload) => { calls.push(payload); return { ok: true, canManage: false, events: [] }; },
+  }, async () => {
+    const page = instantiate(loadPage('cup-home'));
+    await page.onLoad({ projectId: 'fb' });
+    assert.equal(page.data.isTeamFeed, true);
+    assert.equal(calls[0].keyword, undefined, '空关键词不该出现在请求里');
+    assert.equal(calls[0].year, undefined);
+
+    page.onKeywordInput({ detail: { value: '学院赛' } });
+    await page.onKeywordConfirm();
+    assert.equal(calls[calls.length - 1].keyword, '学院赛');
   });
 });

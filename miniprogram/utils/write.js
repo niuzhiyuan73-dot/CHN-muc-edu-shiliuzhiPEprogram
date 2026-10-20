@@ -99,6 +99,10 @@ const SCHOOL_WRITE_ACTIONS = [
   'leaveTeam',
   'transferTeamCaptain',
   'archiveTeam',
+  // 学院代表队（石榴籽杯学院赛）：负责人挑人 / 移出（读动作 getCollegeTeam 也会补建院队，
+  // 但它幂等且只写一条，仍是读入口；真正改名单的这两条按写动作走重试与失败提示）
+  'addCollegeTeamMembers',
+  'removeCollegeTeamMember',
   // 团队赛事：建赛 / 报名 / 审核 / 锁定
   'createTeamEvent',
   'submitTeamEntry',

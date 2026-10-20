@@ -145,6 +145,10 @@ function forSchoolIdentity(input) {
     leaveTeam: payload => request('leaveTeam', payload),
     transferTeamCaptain: payload => request('transferTeamCaptain', payload),
     archiveTeam: payload => request('archiveTeam', payload),
+    // 学院代表队（石榴籽杯学院赛）：系统预置、负责人挑人
+    getCollegeTeam: payload => request('getCollegeTeam', payload),
+    addCollegeTeamMembers: payload => request('addCollegeTeamMembers', payload),
+    removeCollegeTeamMember: payload => request('removeCollegeTeamMember', payload),
     // 团队赛事（C 期首片）：建赛、报名、审核、锁定名单
     listTeamEvents: payload => request('listTeamEvents', payload),
     getTeamEvent: payload => request('getTeamEvent', payload),

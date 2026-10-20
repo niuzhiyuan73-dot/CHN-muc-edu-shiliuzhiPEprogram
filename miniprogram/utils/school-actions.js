@@ -69,6 +69,8 @@ const SCHOOL_SPACE_ACTIONS = Object.freeze([
   'listTeams',                    'getTeam',                      'createTeamApplication',
   'reviewTeamApplication',        'applyToJoinTeam',              'reviewTeamMember',
   'leaveTeam',                    'transferTeamCaptain',          'archiveTeam',
+  // 学院代表队（石榴籽杯学院赛）：系统按学院目录预置、负责人挑人、成员可自退
+  'getCollegeTeam',               'addCollegeTeamMembers',        'removeCollegeTeamMember',
   // 团队赛事：建赛 / 报名 / 审核 / 锁定名单（C 期首片）
   'listTeamEvents',               'getTeamEvent',                 'createTeamEvent',
   'submitTeamEntry',              'reviewTeamEntry',              'lockTeamEntries',

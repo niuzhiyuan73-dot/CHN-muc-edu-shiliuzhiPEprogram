@@ -28,9 +28,11 @@
 const { canManageAssociationSpace, canParticipateInAssociation, canReadAssociationSpace } = require('./association-space-permission.js');
 const { buildDirectory } = require('./school-actor.js');
 const { buildSchoolContext } = require('./school-context.js');
-const { teamKey, teamMemberKey } = require('../utils/school.js');
+const { canSchoolAction } = require('./school-permission.js');
+const { teamKey, teamMemberKey, collegeTeamKey } = require('../utils/school.js');
 const {
-  TEAM_STATUS, TEAM_STATUS_LABEL, TEAM_MEMBER_STATUS, TEAM_MEMBER_STATUS_LABEL,
+  TEAM_STATUS, TEAM_STATUS_LABEL, TEAM_TYPE, TEAM_TYPE_LABEL,
+  TEAM_MEMBER_STATUS, TEAM_MEMBER_STATUS_LABEL,
 } = require('../utils/constants.js');
 const { sportTypeOf, allAssociations, SPORT_TYPE } = require('../utils/associations.js');
 const { teamSportStrategyFor } = require('../utils/team-sport-rules.js');
@@ -72,9 +74,35 @@ function isActiveMember(row) {
   return Boolean(row) && row.status === TEAM_MEMBER_STATUS.ACTIVE;
 }
 
-/** 队长或协会管理者 */
+/** 是不是学院代表队（系统预置、一院一队、无队长） */
+function isCollegeTeam(team) {
+  return Boolean(team) && team.type === TEAM_TYPE.COLLEGE;
+}
+
+/**
+ * 能不能管这支院队：该校该院的学院负责人，以及协会负责人 / 校管。
+ *
+ * 与「队长」无关——院队没有队长，多个负责人各管各的会造成队长反复交接，
+ * 所以管理权直接挂在角色上（`canSchoolAction('manageCollege')` 已是既有口径，
+ * 与学院赛交名单同一把尺子）。
+ */
+function canManageCollegeTeam(ctx, team) {
+  if (!isCollegeTeam(team) || !team.collegeId) return false;
+  return canSchoolAction(ctx, 'manageCollege', {
+    schoolId: ctx.schoolId, association: ctx.association, collegeId: team.collegeId,
+  });
+}
+
+/** 院队显示名：读时按学院目录现拼，学院改名自动跟随（不把名字当真相存下来） */
+function collegeTeamNameOf(dir, collegeId) {
+  const name = dir.collegeNameById(collegeId);
+  return name ? `${name}代表队` : '';
+}
+
+/** 队长或协会管理者；院队没有队长，管理权看学院角色 */
 function canManageTeam(ctx, team, actorId) {
   if (!team) return false;
+  if (isCollegeTeam(team)) return canManageCollegeTeam(ctx, team) || canManageAssociationSpace(ctx);
   if (team.captainId === actorId) return true;
   return canManageAssociationSpace(ctx);
 }
@@ -82,6 +110,7 @@ function canManageTeam(ctx, team, actorId) {
 /** 列表行 / 详情用的球队视图。布尔量在这里算好，模板不写业务判断。 */
 function teamView(team, { dir, actorId, manage, membership, memberCount }) {
   const active = isActiveMember(membership);
+  const collegeTeam = isCollegeTeam(team);
   return {
     teamId: team._id,
     name: team.name,
@@ -89,6 +118,11 @@ function teamView(team, { dir, actorId, manage, membership, memberCount }) {
     initial: String(team.name || '?').slice(0, 1),
     sport: team.sport || (teamSportStrategyFor(team.association)?.sportFormat === 'football11' ? 'football' : 'basketball'),
     college: team.college || '',
+    collegeId: team.collegeId || '',
+    type: collegeTeam ? TEAM_TYPE.COLLEGE : TEAM_TYPE.FREE,
+    typeLabel: collegeTeam ? TEAM_TYPE_LABEL[TEAM_TYPE.COLLEGE] : TEAM_TYPE_LABEL[TEAM_TYPE.FREE],
+    /** 院队：系统预置，队员由学院负责人挑选，不能申请、不能转让、不能归档 */
+    isCollegeTeam: collegeTeam,
     status: team.status,
     statusLabel: TEAM_STATUS_LABEL[team.status] || team.status,
     captainId: team.captainId,
@@ -98,13 +132,13 @@ function teamView(team, { dir, actorId, manage, membership, memberCount }) {
     memberCount: Number(memberCount != null ? memberCount : team.memberCount) || 0,
     createdAt: team.createdAt || null,
     isMine: active,
-    isCaptain: team.captainId === actorId,
+    isCaptain: !collegeTeam && team.captainId === actorId,
     canManage: manage,
-    /** 能不能点「申请加入」：正常状态、非本队成员、也没有待审申请 */
-    canApply: team.status === TEAM_STATUS.ACTIVE && !active
+    /** 能不能点「申请加入」：正常状态、非本队成员、也没有待审申请；院队一律不能申请 */
+    canApply: !collegeTeam && team.status === TEAM_STATUS.ACTIVE && !active
       && !(membership && membership.status === TEAM_MEMBER_STATUS.PENDING),
     /** 待审申请标记：队长/管理员在详情里要能看到并审批 */
-    pending: Boolean(membership) && membership.status === TEAM_MEMBER_STATUS.PENDING,
+    pending: !collegeTeam && Boolean(membership) && membership.status === TEAM_MEMBER_STATUS.PENDING,
     membershipStatus: membership ? membership.status : '',
     membershipLabel: membership ? (TEAM_MEMBER_STATUS_LABEL[membership.status] || '') : '',
   };
@@ -169,6 +203,9 @@ async function listTeams(payload = {}, ctx) {
   }
 
   const rows = teams
+    // 院队不进展台：二十来个学院就是二十来行，会把「自由组队」整块淹掉。
+    // 院队从石榴籽杯页与我的球队进（见 getCollegeTeam）。
+    .filter(team => !isCollegeTeam(team))
     .filter(team => team.status !== TEAM_STATUS.ARCHIVED || manage)
     // 待审/未通过的队只给管理者看，学生看不到别人还没过审的申请
     .filter(team => team.status === TEAM_STATUS.ACTIVE || manage)
@@ -333,6 +370,7 @@ async function applyToJoinTeam(payload = {}, ctx) {
 
     const team = await loadTeam(tx, fresh, payload.teamId);
     if (!team) return refused('球队不存在，或不在本协会');
+    if (isCollegeTeam(team)) return refused('学院代表队由学院负责人挑选队员，不能自行申请');
     if (team.status !== TEAM_STATUS.ACTIVE) return refused('这支球队当前不接受入队申请');
 
     const key = teamMemberKey(team._id, fresh.actorId);
@@ -442,6 +480,7 @@ async function transferTeamCaptain(payload = {}, ctx) {
 
     const team = await loadTeam(tx, fresh, payload.teamId);
     if (!team) return refused('球队不存在，或不在本协会');
+    if (isCollegeTeam(team)) return refused('学院代表队没有队长，不需要转让');
     if (!canManageTeam(fresh, team, fresh.actorId)) return refused('只有队长或协会负责人可以转让队长');
     if (team.status === TEAM_STATUS.ARCHIVED) return refused('已归档的球队不能转让队长');
 
@@ -478,6 +517,7 @@ async function archiveTeam(payload = {}, ctx) {
 
     const team = await loadTeam(tx, fresh, payload.teamId);
     if (!team) return refused('球队不存在，或不在本协会');
+    if (isCollegeTeam(team)) return refused('学院代表队由系统预置，不能归档');
     if (!canManageTeam(fresh, team, fresh.actorId)) return refused('只有队长或协会负责人可以归档球队');
     if (team.status === TEAM_STATUS.ARCHIVED) return { ok: true, message: '' };
 
@@ -486,6 +526,226 @@ async function archiveTeam(payload = {}, ctx) {
       ...team, status: TEAM_STATUS.ARCHIVED,
       archivedBy: fresh.actorId, archivedAt: now,
       revision: Number(team.revision || 1) + 1, updatedAt: now,
+    });
+    return { ok: true, message: '' };
+  });
+  return ok(result);
+}
+
+/* ---------------- 学院代表队（系统预置） ---------------- */
+
+/**
+ * 学院代表队。
+ *
+ * 【为什么不让学生建、也不给申请入口】
+ * 石榴籽杯是「按学院分」的比赛，一个学院在一个项目里只可能有一支代表队。
+ * 让它由学生自由组建，就会冒出「法院一队 / 法院二队」「同名两队」这类分支，
+ * 一院一队也就无从保证。所以院队由系统按学院目录**预置**（编号确定性派生），
+ * 队员由**学院负责人挑选**（选了即入队），成员可以自己退出，但没有申请入口。
+ *
+ * 【为什么成员照旧落 team_members 表】
+ * 院队成员是「真的被选进这支队伍的人」，不是「全院会员的投影」：
+ * 负责人挑人 = 一次真实的授权，落表之后报名选人、出场名单、我的球队
+ * 全都沿用现有那一套，不需要为院队再写一遍。
+ */
+
+/** 本协会里属于该学院的在册会员（院队候选池：负责人从这里挑人） */
+async function collegeCandidates(ctx, collegeId, dir) {
+  const memberships = await ctx.repo.forScope(ctx).memberships.list();
+  const inCollege = new Set(memberships
+    .filter(row => row.status === 'active' && row.collegeId === collegeId)
+    .map(row => row.userId));
+  const platformActive = new Set(dir.activeMemberIds || []);
+  return (dir.members || [])
+    .filter(user => inCollege.has(user._id) && platformActive.has(user._id))
+    .map(user => ({ userId: user._id, name: user.nickName || user.realName || user._id }))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh-Hans-CN'));
+}
+
+/**
+ * 取（必要时就地补建）某学院的院队。
+ *
+ * 幂等：编号由学院编号派生，并发补建时后到的请求读到先到的那条，不会建出两支。
+ * 名字不写进判定依据——它每次按学院目录现算，学院改名自动跟随。
+ */
+async function ensureCollegeTeam(ctx, collegeId, dir) {
+  const teamId = collegeTeamKey(collegeId, ctx);
+  const current = await ctx.repo.forScope(ctx).teams.getById(teamId);
+  if (inScope(current, ctx)) return current;
+  const name = collegeTeamNameOf(dir, collegeId);
+  if (!name) return null;
+
+  const created = await ctx.repo.transaction(async (tx) => {
+    const fresh = await buildSchoolContext({ repo: tx, actorId: ctx.actorId,
+      scope: { schoolId: ctx.schoolId, association: ctx.association }, now: ctx.now });
+    const again = await tx.teams.getById(teamId);
+    if (inScope(again, ctx)) return again;
+    const now = fresh.now;
+    const doc = {
+      _id: teamId, schoolId: fresh.schoolId, association: fresh.association,
+      sport: teamSportStrategyFor(fresh.association)?.sportFormat === 'football11' ? 'football' : 'basketball',
+      name,
+      college: dir.collegeNameById(collegeId),
+      collegeId,
+      type: TEAM_TYPE.COLLEGE,
+      status: TEAM_STATUS.ACTIVE,
+      // 院队不设队长：多个负责人都能管，靠角色判权（见 canManageCollegeTeam）
+      captainId: '',
+      memberCount: 0,
+      revision: 1,
+      createdBy: fresh.actorId || '',
+      createdAt: now, updatedAt: now,
+    };
+    await tx.teams.set(teamId, doc);
+    return doc;
+  });
+  return created || null;
+}
+
+/**
+ * 本院院队：视图 + 名单 + 候选池。
+ *
+ * 【为什么它同时是「读」和「建」】
+ * 院队不需要任何人创建，用户第一次点进来时它就该在。所以这里在缺失时就地补建
+ * （幂等、只写一条）。为它单开一个「初始化」管理动作，反而会让新学院、新学校
+ * 出现「页面空着但没人知道要点一下初始化」的状态。
+ */
+async function getCollegeTeam(payload = {}, ctx) {
+  if (!ctx.actorId) return ok(refused('请先登录'));
+  if (!canReadAssociationSpace(ctx)) return ok(refused('账号或本校在册会员身份已失效，无权访问本协会'));
+  if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
+
+  const dir = await buildDirectory(ctx);
+  const mine = dir.collegeIdOf(ctx.actorId);
+  // 三种入口：按学院编号（杯赛页）、按球队编号（球队详情）、不传（本人学院）
+  let collegeId = String(payload.collegeId || '');
+  if (!collegeId && payload.teamId) {
+    const found = await ctx.repo.forScope(ctx).teams.getById(String(payload.teamId));
+    if (inScope(found, ctx) && isCollegeTeam(found)) collegeId = found.collegeId || '';
+  }
+  if (!collegeId) collegeId = mine;
+  if (!collegeId) return ok(refused('你还没有归属学院，暂时没有学院代表队'));
+  if (!dir.collegeNameById(collegeId)) return ok(refused('学院不存在'));
+
+  const team = await ensureCollegeTeam(ctx, collegeId, dir);
+  if (!team) return ok(refused('学院代表队初始化失败，请稍后重试'));
+
+  const rows = (await ctx.repo.forScope(ctx).teamMembers.list()).filter(row => row.teamId === team._id);
+  const manage = canManageTeam(ctx, team, ctx.actorId);
+  const membership = rows.find(row => row.userId === ctx.actorId);
+  const active = rows.filter(row => isActiveMember(row));
+  const members = active.map(row => memberRow(row, dir))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh-Hans-CN'));
+
+  return ok({
+    ok: true,
+    team: teamView(team, { dir, actorId: ctx.actorId, manage, membership, memberCount: active.length }),
+    members,
+    collegeId,
+    collegeName: dir.collegeNameById(collegeId),
+    isMyCollege: collegeId === mine,
+    /** 只有学院负责人（及以上）能挑人 */
+    canPickMembers: manage,
+    /** 候选池：本学院在该协会的在册会员，标记是否已在队 */
+    candidates: manage
+      ? (await collegeCandidates(ctx, collegeId, dir)).map(row => ({
+        ...row, inTeam: active.some(member => member.userId === row.userId),
+      }))
+      : [],
+    message: '',
+  });
+}
+
+/**
+ * 负责人挑人进队（选了即入队，无需对方同意）。
+ *
+ * 校验放在事务外（云开发事务内不允许整表查询会员）；写入在事务内逐人点读确认，
+ * 重复挑人幂等。极端情况下「刚退会就被挑进来」的窗口极小，且下次退会清理会带走。
+ */
+async function addCollegeTeamMembers(payload = {}, ctx) {
+  if (!ctx.actorId) return ok(refused('请先登录'));
+  if (!canReadAssociationSpace(ctx)) return ok(refused('账号或本校在册会员身份已失效，无权访问本协会'));
+  if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
+
+  const repo = ctx.repo.forScope(ctx);
+  const team = await repo.teams.getById(payload.teamId);
+  if (!inScope(team, ctx)) return ok(refused('球队不存在，或不在本协会'));
+  if (!isCollegeTeam(team)) return ok(refused('只有学院代表队可以这样添加队员'));
+  if (!canManageTeam(ctx, team, ctx.actorId)) return ok(refused('只有本学院负责人可以挑选队员'));
+
+  const wanted = Array.isArray(payload.userIds)
+    ? [...new Set(payload.userIds.map(id => String(id || '').trim()).filter(Boolean))]
+    : [];
+  if (wanted.length === 0) return ok(refused('请选择要加入的队员'));
+
+  const dir = await buildDirectory(ctx);
+  const allowed = new Set((await collegeCandidates(ctx, team.collegeId, dir)).map(row => row.userId));
+  const outside = wanted.filter(id => !allowed.has(id));
+  if (outside.length > 0) return ok(refused('只能挑选本学院的在册会员'));
+
+  const result = await ctx.repo.transaction(async (tx) => {
+    const fresh = await buildSchoolContext({ repo: tx, actorId: ctx.actorId,
+      scope: { schoolId: ctx.schoolId, association: ctx.association }, now: ctx.now });
+    const current = await loadTeam(tx, fresh, payload.teamId);
+    if (!current) return refused('球队不存在，或不在本协会');
+    if (!canManageTeam(fresh, current, fresh.actorId)) return refused('当前已无挑选队员的权限');
+
+    const now = fresh.now;
+    let added = 0;
+    for (const userId of wanted) {
+      const key = teamMemberKey(current._id, userId);
+      const row = await tx.teamMembers.getById(key);
+      if (isActiveMember(row)) continue;
+      await tx.teamMembers.set(key, {
+        ...(row || {}),
+        _id: key, schoolId: fresh.schoolId, association: fresh.association,
+        teamId: current._id, userId,
+        // 院队没有队长，负责人以「教练/管理」身份留在名单里也只是一个普通队员位
+        role: 'member',
+        status: TEAM_MEMBER_STATUS.ACTIVE,
+        source: 'picked',
+        joinedAt: now, leftAt: null, updatedAt: now,
+      });
+      added += 1;
+    }
+    if (added > 0) {
+      await tx.teams.set(current._id, {
+        ...current, memberCount: (Number(current.memberCount) || 0) + added, updatedAt: now,
+      });
+    }
+    return { ok: true, added, message: '' };
+  });
+  return ok(result);
+}
+
+/** 「本学院在该协会的在册会员」——院队挑人、学院赛报名的共用候选池 */
+async function collegeMemberCandidates(ctx, collegeId) {
+  if (!collegeId) return [];
+  const dir = await buildDirectory(ctx);
+  return collegeCandidates(ctx, collegeId, dir);
+}
+
+/** 负责人把队员移出学院队（与「本人退队」是两条路，权限不同） */
+async function removeCollegeTeamMember(payload = {}, ctx) {
+  if (!ctx.actorId) return ok(refused('请先登录'));
+  if (!canReadAssociationSpace(ctx)) return ok(refused('账号或本校在册会员身份已失效，无权访问本协会'));
+  if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
+
+  const result = await ctx.repo.transaction(async (tx) => {
+    const fresh = await buildSchoolContext({ repo: tx, actorId: ctx.actorId,
+      scope: { schoolId: ctx.schoolId, association: ctx.association }, now: ctx.now });
+    const team = await loadTeam(tx, fresh, payload.teamId);
+    if (!team) return refused('球队不存在，或不在本协会');
+    if (!isCollegeTeam(team)) return refused('只有学院代表队可以这样移除队员');
+    if (!canManageTeam(fresh, team, fresh.actorId)) return refused('只有本学院负责人可以移除队员');
+
+    const key = teamMemberKey(team._id, String(payload.userId || '').trim());
+    const row = await tx.teamMembers.getById(key);
+    if (!isActiveMember(row)) return refused('他不在学院队里');
+    const now = fresh.now;
+    await tx.teamMembers.set(key, { ...row, status: TEAM_MEMBER_STATUS.LEFT, leftAt: now, updatedAt: now });
+    await tx.teams.set(team._id, {
+      ...team, memberCount: Math.max(0, (Number(team.memberCount) || 1) - 1), updatedAt: now,
     });
     return { ok: true, message: '' };
   });
@@ -593,4 +853,9 @@ module.exports = {
   transferTeamCaptain,
   archiveTeam,
   detachUserFromTeams,
+  // 学院代表队（系统预置）：读、挑人、移除
+  getCollegeTeam,
+  addCollegeTeamMembers,
+  removeCollegeTeamMember,
+  collegeMemberCandidates,
 };
