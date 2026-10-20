@@ -164,6 +164,10 @@ function forSchoolIdentity(input) {
     saveTeamMatchStats: payload => request('saveTeamMatchStats', payload),
     reviewTeamMatchStats: payload => request('reviewTeamMatchStats', payload),
     getTeamEventPlayerStats: payload => request('getTeamEventPlayerStats', payload),
+    // 团队赛事：单场赛程与整轮顺延
+    getTeamMatchSchedule: payload => request('getTeamMatchSchedule', payload),
+    updateTeamMatchSchedule: payload => request('updateTeamMatchSchedule', payload),
+    updateTeamRoundSchedule: payload => request('updateTeamRoundSchedule', payload),
   });
 }
 

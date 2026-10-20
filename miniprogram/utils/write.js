@@ -113,6 +113,9 @@ const SCHOOL_WRITE_ACTIONS = [
   // 团队赛事：个人统计（含已发布比赛统计新版本的审核）
   'saveTeamMatchStats',
   'reviewTeamMatchStats',
+  // 团队赛事：单场赛程与整轮顺延
+  'updateTeamMatchSchedule',
+  'updateTeamRoundSchedule',
   // 跨校邀请赛：建赛 / 邀请应答 / 报名签到 / 抽签指派 / 录分与定名次
   'createExchangeEvent',
   'respondExchangeInvitation',

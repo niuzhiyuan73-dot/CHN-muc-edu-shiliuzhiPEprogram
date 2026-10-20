@@ -18,7 +18,7 @@
 const { canManageAssociationSpace } = require('./association-space-permission.js');
 const { buildDirectory } = require('./school-actor.js');
 const { buildSchoolContext } = require('./school-context.js');
-const { schoolKey } = require('../utils/school.js');
+const { schoolKey, schoolMemberKey, schoolMembershipKey, PLATFORM_STATUS } = require('../utils/school.js');
 const {
   TEAM_STATUS, TEAM_MEMBER_STATUS, TEAM_EVENT_STATUS, TEAM_ENTRY_STATUS, TEAM_MATCH_STATUS,
   BRACKET_STAGE, EVENT_BRONZE_MODE, TEAM_STAT_INTEGRITY, TEAM_STAT_STATUS,
@@ -53,6 +53,56 @@ function assertTeamSport(ctx) {
 
 function inScope(doc, ctx) {
   return Boolean(doc) && doc.schoolId === ctx.schoolId && doc.association === ctx.association;
+}
+
+/* ---------------- 赛程：时间与场地 ---------------- */
+
+/** 一场比赛的默认时长（分钟）：只有时间没有结束时间时，界面靠它推算 */
+const MATCH_MINUTES = 90;
+const LOCATION_MAX = 40;
+/** 整轮顺延的边界：一次挪十几个小时一定是填错了，挡住比算错好 */
+const SHIFT_MAX_MINUTES = 240;
+
+/**
+ * 时间归一。
+ *
+ * 接受 ISO 与「YYYY-MM-DD HH:mm」两种写法：前者是接口与数据库的形状，
+ * 后者是管理员在输入框里真正会敲的形状。`''` / null 表示「清空时间」，
+ * 返回的 `ok` 为真但 `value` 为 null——这与「格式不合法」必须分开。
+ */
+function toMatchTime(value) {
+  if (value === null || value === undefined) return { ok: true, value: null };
+  const raw = String(value).trim();
+  if (raw === '') return { ok: true, value: null };
+  // `YYYY-MM-DD HH:mm` 在部分运行时会被当成非法日期；补成显式带时区的 ISO
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(raw)
+    ? `${raw.replace(' ', 'T')}:00+08:00`
+    : raw;
+  const time = Date.parse(normalized);
+  if (!Number.isFinite(time)) return { ok: false, value: null };
+  return { ok: true, value: new Date(time).toISOString() };
+}
+
+/**
+ * 展示用的开赛时间：`MM-DD HH:mm`（北京时间）。
+ *
+ * 不用 `formatDateTime`：那个按运行环境本地时区格式化，而云函数跑在 UTC，
+ * 同一场比赛在本地看是 14:00、在线上会显示 06:00。
+ */
+function matchTimeText(value) {
+  if (!value) return '';
+  const time = Date.parse(value);
+  if (!Number.isFinite(time)) return '';
+  const beijing = new Date(time + 8 * 60 * 60 * 1000);
+  const pad = number => String(number).padStart(2, '0');
+  return `${pad(beijing.getUTCMonth() + 1)}-${pad(beijing.getUTCDate())}`
+    + ` ${pad(beijing.getUTCHours())}:${pad(beijing.getUTCMinutes())}`;
+}
+
+/** 人的显示名：真名优先，没有就用昵称，再没有用编号 */
+function personNameOf(user, fallbackId) {
+  if (!user) return fallbackId || '';
+  return user.realName || user.nickName || fallbackId || user._id || '';
 }
 
 const eventKey = (seed, ctx) => schoolKey('tev', ctx.schoolId, ctx.association, seed);
@@ -120,7 +170,13 @@ function matchView(match, teamName, rights = {}) {
     status: match.status,
     statusLabel: TEAM_MATCH_STATUS[match.status] || match.status,
     matchTime: match.matchTime || null,
+    // 展示文本在服务端算好：云函数跑在 UTC，页面拿 ISO 自己格式化会差 8 小时
+    matchTimeText: matchTimeText(match.matchTime),
     location: match.location || '',
+    refereeId: match.refereeId || '',
+    refereeName: match.refereeName || '',
+    recorderId: match.recorderId || '',
+    recorderName: match.recorderName || '',
     // 版本号：调用方拿它做乐观锁，对不上就要求刷新
     revision: Number(match.revision) || 0,
     // 按钮显不显示由服务端定：页面拿不到「我是不是这队的队长」，
@@ -593,6 +649,8 @@ function toScore(value) {
 
 async function canRecordTeamMatch(match, ctx, repo) {
   if (canManageAssociationSpace(ctx)) return true;
+  // 被指派为这一场的记录员，就负责录这一场——指派了却录不了，等于白指派
+  if (ctx.actorId && match.recorderId && match.recorderId === ctx.actorId) return true;
   const sides = await Promise.all([
     repo.teams.getById(match.teamA),
     repo.teams.getById(match.teamB),
@@ -1004,6 +1062,289 @@ async function reviewTeamMatchStats(payload = {}, ctx) {
  * 复用个人赛的 `planNextRound`：它只认「签位 + 已有比赛 + 哪一场算定局」，
  * 与参赛单位是人还是球队无关。团队赛只是把判定函数换成「已发布」。
  */
+/* ---------------- 赛程：逐场时间 / 场地 / 裁判 / 记录员 ---------------- */
+
+/**
+ * 这一场可以指派谁。
+ *
+ * 三条口径：
+ *   · 只列**本协会**正常在册、账号可用的会员——指派给名单外的人，页面上
+ *     连名字都显示不出来；
+ *   · 裁判不能是这两支队的队长（自己队自己判，成绩没人信）；记录员可以，
+ *     校园赛经常就是队长拿手机记；
+ *   · 候选里保留「为什么不给选」的原因，页面直接显示，不在前端重新推一遍
+ *     规则——推两遍迟早分叉。
+ */
+async function schedulePeople(ctx, match) {
+  const repo = ctx.repo.forScope(ctx);
+  const [dir, memberships, teams] = await Promise.all([
+    buildDirectory(ctx),
+    repo.memberships.list(),
+    repo.teams.list(),
+  ]);
+  const userById = new Map(dir.members.map(user => [user._id, user]));
+  const activeIds = new Set(
+    memberships
+      .filter(row => row.status === 'active'
+        && row.schoolId === ctx.schoolId
+        && row.association === ctx.association)
+      .map(row => row.userId)
+  );
+  const captainIds = new Set(
+    teams
+      .filter(team => team._id === match.teamA || team._id === match.teamB)
+      .map(team => team.captainId)
+  );
+  const people = [...activeIds]
+    .filter(userId => userById.has(userId))
+    .map((userId) => {
+      const user = userById.get(userId);
+      return {
+        userId,
+        name: personNameOf(user, userId),
+        college: dir.collegeOf(userId),
+        isCaptain: captainIds.has(userId),
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name, 'zh'));
+
+  return {
+    recorders: people.map(row => ({
+      ...row, disabled: false, disabledReason: '',
+    })),
+    referees: people.map(row => ({
+      ...row,
+      disabled: row.isCaptain,
+      disabledReason: row.isCaptain ? '参赛队队长不能执法自己队的比赛' : '',
+    })),
+  };
+}
+
+/** 单场赛程的编辑面板：当前值 + 候选名单 */
+async function getTeamMatchSchedule(payload = {}, ctx) {
+  if (!ctx.actorId) return ok(refused('请先登录'));
+  if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
+  if (!canManageAssociationSpace(ctx)) return ok(refused('只有协会负责人及以上可以排赛程'));
+
+  const repo = ctx.repo.forScope(ctx);
+  const match = await repo.teamMatches.getById(payload.matchId);
+  if (!inScope(match, ctx)) return ok(refused('比赛不存在，或不在本协会'));
+  const event = await repo.teamEvents.getById(match.eventId);
+  if (!inScope(event, ctx)) return ok(refused('赛事不存在，或不在本协会'));
+
+  const teams = await repo.teams.list();
+  const teamName = new Map(teams.map(team => [team._id, team.name]));
+  const people = await schedulePeople(ctx, match);
+
+  return ok({
+    ok: true,
+    match: matchView(match, teamName, { canRecord: true, canPublish: true, canSeePending: true }),
+    ...people,
+    // 已结束的赛事不再改赛程：改了也不会有比赛按新时间去打
+    canEdit: event.status !== TEAM_EVENT_STATUS.FINISHED
+      && event.status !== TEAM_EVENT_STATUS.CANCELED
+      && match.status !== TEAM_MATCH_STATUS.CANCELED,
+    message: '',
+  });
+}
+
+/**
+ * 改一场比赛的时间 / 场地 / 裁判 / 记录员。
+ *
+ * 【为什么全部收在一个动作里】
+ * 这四样是同一件事的四个字段：管理员在一个浮层里改完一起保存。拆成四个动作，
+ * 一次改动就会产生四个版本号，页面得跟着记四个——并发判断反而更容易错。
+ *
+ * 【为什么读在写前、先判后写】
+ * 与录分同一条纪律：事务内重读比赛、按最新会籍重判权限、先比 `expectRevision`
+ * 再落库。改期是「赛前高频、多人同时改」的操作，正是最容易互相覆盖的地方。
+ */
+async function updateTeamMatchSchedule(payload = {}, ctx) {
+  if (!ctx.actorId) return ok(refused('请先登录'));
+  if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
+  if (!canManageAssociationSpace(ctx)) return ok(refused('只有协会负责人及以上可以排赛程'));
+
+  // 队名要在事务外读（事务内不能整表列）；只用于返回体的展示
+  const teamName = new Map(
+    (await ctx.repo.forScope(ctx).teams.list()).map(team => [team._id, team.name])
+  );
+
+  const result = await ctx.repo.transaction(async (root) => {
+    const tx = root.forScope({ schoolId: ctx.schoolId, association: ctx.association });
+    const fresh = await freshContext(root, ctx);
+    if (!assertTeamSport(fresh)) return refused('该协会不是团队项目');
+    if (!canManageAssociationSpace(fresh)) return refused('只有协会负责人及以上可以排赛程');
+
+    const match = await tx.teamMatches.getById(payload.matchId);
+    if (!inScope(match, ctx)) return refused('比赛不存在，或不在本协会');
+    const event = await tx.teamEvents.getById(match.eventId);
+    if (!inScope(event, ctx)) return refused('赛事不存在，或不在本协会');
+    if (event.status === TEAM_EVENT_STATUS.FINISHED) return refused('赛事已结束，不能再改赛程');
+    if (event.status === TEAM_EVENT_STATUS.CANCELED) return refused('赛事已取消');
+    if (match.status === TEAM_MATCH_STATUS.CANCELED) return refused('这场已取消');
+
+    if (Number.isInteger(payload.expectRevision)
+      && payload.expectRevision !== (Number(match.revision) || 0)) {
+      return refused('这场比赛刚被改过，请刷新后重试');
+    }
+
+    const has = key => Object.prototype.hasOwnProperty.call(payload, key);
+    const patch = {};
+    const touches = [];
+
+    if (has('matchTime')) {
+      const parsed = toMatchTime(payload.matchTime);
+      if (!parsed.ok) return refused('开赛时间格式不对，请按 2026-10-21 14:00 填写');
+      patch.matchTime = parsed.value;
+      touches.push(parsed.value ? '开赛时间' : '清空开赛时间');
+    }
+    if (has('location')) {
+      const text = String(payload.location === null || payload.location === undefined ? '' : payload.location).trim();
+      if (text.length > LOCATION_MAX) return refused(`场地名称不超过 ${LOCATION_MAX} 个字`);
+      patch.location = text;
+      touches.push('场地');
+    }
+
+    // 裁判 / 记录员：先在事务内点读重判资格，再一起落库
+    for (const role of ['referee', 'recorder']) {
+      const key = `${role}Id`;
+      if (!has(key)) continue;
+      const targetId = String(payload[key] === null || payload[key] === undefined ? '' : payload[key]).trim();
+      if (!targetId) {
+        patch[key] = null;
+        patch[`${role}Name`] = '';
+        touches.push(role === 'referee' ? '清空裁判' : '清空记录员');
+        continue;
+      }
+      // users 是全局集合，不在「学校 + 协会」范围视图里，只能从事务根上点读
+      const user = await root.users.getById(targetId);
+      if (!user || user.platformStatus !== PLATFORM_STATUS.ACTIVE) {
+        return refused('这位会员的账号已停用，不能指派');
+      }
+      const member = await tx.schoolMembers.getById(schoolMemberKey(targetId, fresh.schoolId));
+      if (!member || member.status !== 'active') return refused('这位同学不在本校在册名单里');
+      const membership = await tx.memberships.getById(schoolMembershipKey(targetId, {
+        schoolId: fresh.schoolId, association: fresh.association,
+      }));
+      if (!membership || membership.status !== 'active') {
+        return refused('这位同学不是本协会会员，不能指派');
+      }
+      if (role === 'referee') {
+        const sides = await Promise.all([
+          tx.teams.getById(match.teamA),
+          tx.teams.getById(match.teamB),
+        ]);
+        if (sides.some(team => team && team.captainId === targetId)) {
+          return refused('参赛队队长不能执法自己队的比赛');
+        }
+      }
+      patch[key] = targetId;
+      patch[`${role}Name`] = personNameOf(user, targetId);
+      touches.push(role === 'referee' ? '裁判' : '记录员');
+    }
+
+    if (touches.length === 0) return refused('没有要修改的内容');
+
+    const nextRevision = (Number(match.revision) || 1) + 1;
+    const next = {
+      ...match,
+      ...patch,
+      revision: nextRevision,
+      updatedAt: fresh.now,
+      scheduleUpdatedBy: fresh.actorId,
+      scheduleUpdatedAt: fresh.now,
+    };
+    await tx.teamMatches.set(match._id, next);
+
+    return {
+      ok: true,
+      revision: nextRevision,
+      changed: touches,
+      match: matchView(next, teamName, { canRecord: true, canPublish: true, canSeePending: true }),
+      message: '',
+    };
+  });
+  return ok(result);
+}
+
+/**
+ * 整轮顺延：把同一轮（可限定 stage）还没打的比赛统一往后挪几分钟。
+ *
+ * 【为什么需要它】
+ * 一场雨、一次拖场，整轮都要挪。逐场改二十次既慢又容易漏，而漏掉的一场
+ * 会让两支队伍在不同时间到场。
+ *
+ * 【为什么跳过已发布与没有时间的场次】
+ * 已发布 = 已经打完；没有时间 = 本来就没排期，顺延无从谈起。跳过的数量
+ * 一并返回，页面能说清「改了 5 场、跳过 1 场」。
+ */
+async function updateTeamRoundSchedule(payload = {}, ctx) {
+  if (!ctx.actorId) return ok(refused('请先登录'));
+  if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
+  if (!canManageAssociationSpace(ctx)) return ok(refused('只有协会负责人及以上可以排赛程'));
+
+  const shift = Number(payload.shiftMinutes);
+  if (!Number.isInteger(shift) || shift === 0) return ok(refused('顺延分钟数需为非零整数'));
+  if (Math.abs(shift) > SHIFT_MAX_MINUTES) {
+    return ok(refused(`一次最多顺延 ${SHIFT_MAX_MINUTES} 分钟`));
+  }
+  const round = Number(payload.round);
+  if (!Number.isInteger(round) || round < 1) return ok(refused('缺少轮次'));
+
+  const repo = ctx.repo.forScope(ctx);
+  const event = await repo.teamEvents.getById(payload.eventId);
+  if (!inScope(event, ctx)) return ok(refused('赛事不存在，或不在本协会'));
+  if (event.status === TEAM_EVENT_STATUS.FINISHED) return ok(refused('赛事已结束，不能再改赛程'));
+  if (event.status === TEAM_EVENT_STATUS.CANCELED) return ok(refused('赛事已取消'));
+
+  const stage = payload.stage ? String(payload.stage) : '';
+  const targets = (await repo.teamMatches.list()).filter(match => match.eventId === event._id
+    && Number(match.round) === round
+    && (!stage || match.stage === stage));
+  if (targets.length === 0) return ok(refused('这一轮还没有比赛'));
+
+  const result = await ctx.repo.transaction(async (root) => {
+    const tx = root.forScope({ schoolId: ctx.schoolId, association: ctx.association });
+    const fresh = await freshContext(root, ctx);
+    if (!canManageAssociationSpace(fresh)) return refused('只有协会负责人及以上可以排赛程');
+
+    // 读在写前：先按编号点读齐，再统一写
+    const docs = [];
+    for (const target of targets) docs.push(await tx.teamMatches.getById(target._id));
+
+    const writes = [];
+    let skipped = 0;
+    for (const doc of docs) {
+      if (!doc) continue;
+      if (doc.status === TEAM_MATCH_STATUS.PUBLISHED || doc.status === TEAM_MATCH_STATUS.CANCELED) {
+        skipped += 1;
+        continue;
+      }
+      if (!doc.matchTime) {
+        skipped += 1;
+        continue;
+      }
+      const shifted = Date.parse(doc.matchTime) + shift * 60 * 1000;
+      if (!Number.isFinite(shifted)) {
+        skipped += 1;
+        continue;
+      }
+      writes.push({
+        ...doc,
+        matchTime: new Date(shifted).toISOString(),
+        revision: (Number(doc.revision) || 1) + 1,
+        updatedAt: fresh.now,
+        scheduleUpdatedBy: fresh.actorId,
+        scheduleUpdatedAt: fresh.now,
+      });
+    }
+    if (writes.length === 0) return refused('这一轮没有可顺延的比赛（已发布或没有开赛时间）');
+    for (const doc of writes) await tx.teamMatches.set(doc._id, doc);
+    return { ok: true, shifted: writes.length, skipped, minute: shift, message: '' };
+  });
+  return ok(result);
+}
+
 async function advanceTeamRound(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
   if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
@@ -1587,4 +1928,7 @@ module.exports = {
   saveTeamMatchStats,
   reviewTeamMatchStats,
   getTeamEventPlayerStats,
+  getTeamMatchSchedule,
+  updateTeamMatchSchedule,
+  updateTeamRoundSchedule,
 };

@@ -88,7 +88,17 @@
     <view wx:if="{{rounds.length > 0}}" class="card">
       <view class="card-title">赛程</view>
       <view wx:for="{{rounds}}" wx:key="key" class="round">
-        <view class="round-label">{{item.label}}</view>
+        <view class="round-head">
+          <view class="round-label">{{item.label}}</view>
+          <view
+            wx:if="{{canManage}}"
+            class="mini"
+            data-round="{{item.round}}"
+            data-stage="{{item.stage}}"
+            data-label="{{item.label}}"
+            bindtap="onOpenShift"
+          >整轮顺延</view>
+        </view>
         <view
           wx:for="{{item.matches}}"
           wx:for-item="match"
@@ -101,10 +111,16 @@
             <view class="side side-b {{match.winner === 'B' ? 'side-win' : ''}}">{{match.teamBName}}</view>
           </view>
           <view class="match-meta">
+            <text wx:if="{{match.matchTimeText}}">{{match.matchTimeText}}</text>
+            <text wx:if="{{match.location}}">{{match.location}}</text>
             <text>{{match.statusLabel}}</text>
             <text wx:if="{{match.overtime}}" class="tag tag-ot">加时</text>
             <text wx:if="{{match.forfeit}}" class="tag tag-ot">{{match.forfeit === 'A' ? match.teamAName : match.teamBName}} 弃权</text>
             <text wx:if="{{match.statPending}}" class="tag tag-ot">统计待审核</text>
+          </view>
+          <view wx:if="{{match.refereeName || match.recorderName}}" class="match-meta">
+            <text wx:if="{{match.refereeName}}">裁判 {{match.refereeName}}</text>
+            <text wx:if="{{match.recorderName}}">记录 {{match.recorderName}}</text>
           </view>
           <view class="match-actions">
             <view
@@ -131,6 +147,12 @@
               data-matchid="{{match.matchId}}"
               bindtap="onOpenStats"
             >{{match.statPending && match.canPublish ? '审核统计' : '统计'}}</view>
+            <view
+              wx:if="{{canManage && match.status !== 'canceled'}}"
+              class="mini"
+              data-matchid="{{match.matchId}}"
+              bindtap="onOpenSchedule"
+            >赛程</view>
           </view>
         </view>
       </view>
@@ -164,6 +186,86 @@
           <view class="row-name">{{item.teamName}}</view>
           <view class="row-meta">{{item.note}}</view>
         </view>
+      </view>
+    </view>
+
+    <!-- 赛程浮层：时间 / 场地 / 裁判 / 记录员一次改完 -->
+    <view wx:if="{{scheduleEditing}}" class="mask" bindtap="onCloseSchedule"></view>
+    <view wx:if="{{scheduleEditing}}" class="sheet">
+      <view class="sheet-title">{{scheduleEditing.title}}</view>
+      <view class="ot-row">
+        <text>开赛时间</text>
+        <input
+          class="sheet-input"
+          value="{{scheduleEditing.matchTime}}"
+          placeholder="2026-10-21 14:00"
+          data-field="matchTime"
+          bindinput="onInputSchedule"
+        />
+      </view>
+      <view class="ot-row">
+        <text>场地</text>
+        <input
+          class="sheet-input"
+          value="{{scheduleEditing.location}}"
+          placeholder="体育馆主馆"
+          data-field="location"
+          bindinput="onInputSchedule"
+        />
+      </view>
+      <view class="ot-row">
+        <text>裁判</text>
+        <picker
+          mode="selector"
+          range="{{scheduleEditing.refereeLabels}}"
+          value="{{scheduleEditing.refereeIndex}}"
+          data-role="referee"
+          bindchange="onPickSchedulePerson"
+        >
+          <view class="picker">{{scheduleEditing.refereeLabels[scheduleEditing.refereeIndex]}}</view>
+        </picker>
+      </view>
+      <view class="ot-row">
+        <text>记录员</text>
+        <picker
+          mode="selector"
+          range="{{scheduleEditing.recorderLabels}}"
+          value="{{scheduleEditing.recorderIndex}}"
+          data-role="recorder"
+          bindchange="onPickSchedulePerson"
+        >
+          <view class="picker">{{scheduleEditing.recorderLabels[scheduleEditing.recorderIndex]}}</view>
+        </picker>
+      </view>
+      <view class="sheet-note">
+        只有本协会在册会员能指派；参赛队队长不出现在裁判名单里。被指派的记录员可以直接录这一场。
+      </view>
+      <view class="sheet-actions">
+        <view class="btn btn-ghost" bindtap="onCloseSchedule">取消</view>
+        <view class="btn btn-primary {{scheduleBusy ? 'is-disabled' : ''}}" bindtap="onSubmitSchedule">保存</view>
+      </view>
+    </view>
+
+    <!-- 整轮顺延浮层 -->
+    <view wx:if="{{shiftEditing}}" class="mask" bindtap="onCloseShift"></view>
+    <view wx:if="{{shiftEditing}}" class="sheet">
+      <view class="sheet-title">{{shiftEditing.label}} · 整轮顺延</view>
+      <view class="ot-row">
+        <text>顺延分钟</text>
+        <input
+          class="sheet-input"
+          type="number"
+          value="{{shiftEditing.minutes}}"
+          placeholder="30"
+          bindinput="onInputShift"
+        />
+      </view>
+      <view class="sheet-note">
+        只挪这一轮里「还没发布、且已经排了时间」的场次；负数表示提前。
+      </view>
+      <view class="sheet-actions">
+        <view class="btn btn-ghost" bindtap="onCloseShift">取消</view>
+        <view class="btn btn-primary {{scheduleBusy ? 'is-disabled' : ''}}" bindtap="onSubmitShift">顺延</view>
       </view>
     </view>
 

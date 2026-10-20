@@ -203,11 +203,30 @@
   margin-bottom: var(--space-md);
 }
 
+.round-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
 .round-label {
   font-size: 25rpx;
   font-weight: 600;
   color: var(--color-text-secondary);
   margin-bottom: var(--space-xs);
+}
+
+/* 赛程浮层里的文本输入：与 picker 同一视觉重量，右对齐便于对照标签 */
+.sheet-input {
+  flex: 1;
+  min-width: 0;
+  margin-left: var(--space-md);
+  padding: 10rpx var(--space-md);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-subtle, #F5F6F8);
+  font-size: 27rpx;
+  color: var(--color-text-primary);
+  text-align: right;
 }
 
 .match {

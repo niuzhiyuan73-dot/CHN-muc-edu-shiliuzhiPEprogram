@@ -693,3 +693,112 @@ test('球员数据榜 —— 模板读服务端给的展示文本，不再把 nu
   assert.equal(page.data.playerStats[0].reboundsText, '—');
   assert.equal(page.data.playerStats[0].pointsText, '12');
 }));
+
+/* ============================================================
+ * P1：单场赛程（时间 / 场地 / 裁判 / 记录员）与整轮顺延
+ * ============================================================ */
+
+/** 一份赛程面板：裁判候选里剔除队长，记录员候选里保留 */
+function schedulePanel(overrides = {}) {
+  return {
+    ok: true,
+    match: {
+      matchId: 'x_tev_1_r1_main_0',
+      teamAName: '热浪队',
+      teamBName: '闪电队',
+      matchTime: '2026-10-21T06:00:00.000Z',
+      location: '主馆',
+      refereeId: '',
+      recorderId: 'u_cap',
+      revision: 4,
+    },
+    referees: [
+      { userId: 'u_r1', name: '裁判甲', disabled: false, disabledReason: '' },
+      { userId: 'u_cap', name: '队长乙', disabled: true, disabledReason: '参赛队队长不能执法自己队的比赛' },
+    ],
+    recorders: [
+      { userId: 'u_cap', name: '队长乙', disabled: false, disabledReason: '' },
+      { userId: 'u_r1', name: '裁判甲', disabled: false, disabledReason: '' },
+    ],
+    canEdit: true,
+    ...overrides,
+  };
+}
+
+test('赛程浮层 —— 时间转成输入框格式，裁判候选剔除队长，记录员保留', () => withApi({
+  getTeamEvent: () => detailFixture(),
+  getTeamMatchSchedule: () => schedulePanel(),
+}, async () => {
+  const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
+  await page.onLoad({ eventId: 'tev_1' });
+  await page.onOpenSchedule({ currentTarget: { dataset: { matchid: 'x_tev_1_r1_main_0' } } });
+
+  const editing = page.data.scheduleEditing;
+  assert.ok(editing, '应当打开赛程浮层');
+  assert.equal(editing.matchTime, '2026-10-21 14:00', 'ISO 按北京时间转成可编辑字符串');
+  assert.deepEqual(editing.refereeLabels, ['不指派', '裁判甲'], '队长不能执法，不该出现在裁判名单里');
+  assert.deepEqual(editing.recorderLabels, ['不指派', '队长乙', '裁判甲']);
+  assert.equal(editing.recorderIndex, 1, '已指派的记录员要预先选中');
+  assert.equal(editing.revision, 4, '版本号随面板带进来');
+}));
+
+test('赛程浮层 —— 保存带上四个字段与版本号，成功后收起并刷新', () => withApi({
+  getTeamEvent: () => detailFixture(),
+  getTeamMatchSchedule: () => schedulePanel(),
+  updateTeamMatchSchedule: () => ({ ok: true, revision: 5 }),
+}, async (calls) => {
+  const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
+  await page.onLoad({ eventId: 'tev_1' });
+  await page.onOpenSchedule({ currentTarget: { dataset: { matchid: 'x_tev_1_r1_main_0' } } });
+
+  page.onInputSchedule({ currentTarget: { dataset: { field: 'matchTime' } }, detail: { value: '2026-10-21 15:30' } });
+  page.onInputSchedule({ currentTarget: { dataset: { field: 'location' } }, detail: { value: '副馆' } });
+  page.onPickSchedulePerson({ currentTarget: { dataset: { role: 'referee' } }, detail: { value: 1 } });
+  page.onPickSchedulePerson({ currentTarget: { dataset: { role: 'recorder' } }, detail: { value: 0 } });
+  await page.onSubmitSchedule();
+
+  const saved = calls.find(call => call[0] === 'updateTeamMatchSchedule');
+  assert.equal(saved[1].matchId, 'x_tev_1_r1_main_0');
+  assert.equal(saved[1].matchTime, '2026-10-21 15:30');
+  assert.equal(saved[1].location, '副馆');
+  assert.equal(saved[1].refereeId, 'u_r1');
+  assert.equal(saved[1].recorderId, '', '选「不指派」就把记录员清掉');
+  assert.equal(saved[1].expectRevision, 4);
+  assert.equal(page.data.scheduleEditing, null);
+  assert.match(page.data.notice, /赛程已更新/);
+}));
+
+test('赛程浮层 —— 已结束的比赛不给改，直接提示', () => withApi({
+  getTeamEvent: () => detailFixture(),
+  getTeamMatchSchedule: () => schedulePanel({ canEdit: false }),
+}, async (calls) => {
+  const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
+  await page.onLoad({ eventId: 'tev_1' });
+  await page.onOpenSchedule({ currentTarget: { dataset: { matchid: 'x_tev_1_r1_main_0' } } });
+
+  assert.equal(page.data.scheduleEditing, null);
+  assert.match(page.data.notice, /不能再改赛程/);
+  assert.equal(calls.filter(call => call[0] === 'updateTeamMatchSchedule').length, 0);
+}));
+
+test('整轮顺延 —— 带上轮次与分钟数，跳过数要说清楚', () => withApi({
+  getTeamEvent: () => detailFixture(),
+  updateTeamRoundSchedule: () => ({ ok: true, shifted: 1, skipped: 1 }),
+}, async (calls) => {
+  const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
+  await page.onLoad({ eventId: 'tev_1' });
+
+  page.onOpenShift({ currentTarget: { dataset: { round: '1', stage: 'main', label: '半决赛' } } });
+  assert.equal(page.data.shiftEditing.minutes, '30', '默认顺延 30 分钟');
+  page.onInputShift({ detail: { value: '45' } });
+  await page.onSubmitShift();
+
+  const shifted = calls.find(call => call[0] === 'updateTeamRoundSchedule');
+  assert.equal(shifted[1].eventId, 'tev_1');
+  assert.equal(shifted[1].round, 1);
+  assert.equal(shifted[1].stage, 'main');
+  assert.equal(shifted[1].shiftMinutes, 45);
+  assert.match(page.data.notice, /已顺延 1 场/);
+  assert.match(page.data.notice, /跳过 1 场/);
+  assert.equal(page.data.shiftEditing, null);
+}));

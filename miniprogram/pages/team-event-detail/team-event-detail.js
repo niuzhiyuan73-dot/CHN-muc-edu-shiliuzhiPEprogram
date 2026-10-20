@@ -45,6 +45,22 @@ function groupStatRows(rows, mode) {
   }
   return [{ period: 0, rows }];
 }
+
+/**
+ * ISO 时间 → 输入框里的 `YYYY-MM-DD HH:mm`（北京时间）。
+ *
+ * 服务端下发的是 ISO；输入框要的是人能改的字符串。两边都用固定的 +08，
+ * 不读运行环境时区——否则本机与云函数会算出两个不同的时间。
+ */
+function toInputTime(value) {
+  if (!value) return '';
+  const time = Date.parse(value);
+  if (!Number.isFinite(time)) return '';
+  const beijing = new Date(time + 8 * 60 * 60 * 1000);
+  const pad = number => String(number).padStart(2, '0');
+  return `${beijing.getUTCFullYear()}-${pad(beijing.getUTCMonth() + 1)}-${pad(beijing.getUTCDate())}`
+    + ` ${pad(beijing.getUTCHours())}:${pad(beijing.getUTCMinutes())}`;
+}
 const associationScope = require('../../services/association-scope.js');
 const schoolSession = require('../../services/school-session.js');
 const { currentThemeClass } = require('../../services/branding.js');
@@ -97,6 +113,11 @@ Page({
     statsBusy: false,
     /** 统计审核条：{ matchId, canReview, needReview, pending } */
     statsReview: null,
+    /** 赛程浮层：{ matchId, title, revision, matchTime, location, referees, recorders, ... } */
+    scheduleEditing: null,
+    /** 整轮顺延浮层：{ round, stage, label, minutes } */
+    shiftEditing: null,
+    scheduleBusy: false,
     /** 统计指标列（顺序即页面列顺序） */
     statFields: STAT_FIELDS,
     /** 球员数据榜 */
@@ -438,6 +459,174 @@ Page({
     } catch (err) {
       console.error('[team-event-detail] 球员榜加载失败', err);
       this.setData({ playerStats: [], playerStatsError: '球员数据加载失败' });
+      return undefined;
+    }
+  },
+
+  /* ---------------- 赛程：时间 / 场地 / 裁判 / 记录员 ---------------- */
+
+  /**
+   * 打开单场赛程浮层。
+   *
+   * 候选名单必须问服务端要：裁判不能是这两支队的队长、记录员必须是本协会会员，
+   * 这些规则页面推不出来。这里只把「可选的人」铺成选择器，选完把编号传回去。
+   */
+  async onOpenSchedule(event) {
+    const { matchid } = event.currentTarget.dataset;
+    this.setData({ notice: '', noticeError: false });
+    try {
+      const result = await space.forScope(this.scope).getTeamMatchSchedule({ matchId: matchid });
+      if (!result || result.ok !== true) {
+        this.setData({ notice: (result && result.message) || '赛程加载失败', noticeError: true });
+        return undefined;
+      }
+      if (result.canEdit !== true) {
+        this.setData({ notice: '这场已结束或已取消，不能再改赛程', noticeError: true });
+        return undefined;
+      }
+      // 裁判候选里排除「不能执法」的人；记录员不受这条限制
+      const referees = (result.referees || []).filter(row => !row.disabled);
+      const recorders = (result.recorders || []).filter(row => !row.disabled);
+      const indexOf = (list, userId) => {
+        const at = list.findIndex(row => row.userId === userId);
+        return at < 0 ? 0 : at + 1;
+      };
+      this.setData({
+        scheduleEditing: {
+          matchId: matchid,
+          title: `${result.match.teamAName} vs ${result.match.teamBName}`,
+          revision: result.match.revision,
+          matchTime: toInputTime(result.match.matchTime),
+          location: result.match.location || '',
+          referees,
+          recorders,
+          refereeIndex: indexOf(referees, result.match.refereeId),
+          recorderIndex: indexOf(recorders, result.match.recorderId),
+          refereeLabels: ['不指派', ...referees.map(row => row.name)],
+          recorderLabels: ['不指派', ...recorders.map(row => row.name)],
+        },
+      });
+      return undefined;
+    } catch (err) {
+      console.error('[team-event-detail] 赛程加载失败', err);
+      this.setData({ notice: '赛程加载失败，请稍后重试', noticeError: true });
+      return undefined;
+    }
+  },
+
+  onCloseSchedule() {
+    this.setData({ scheduleEditing: null, scheduleBusy: false });
+  },
+
+  onInputSchedule(event) {
+    const field = event.currentTarget.dataset.field;
+    if (!field) return;
+    this.setData({ [`scheduleEditing.${field}`]: event.detail.value });
+  },
+
+  onPickSchedulePerson(event) {
+    const role = event.currentTarget.dataset.role;
+    const index = Number(event.detail.value) || 0;
+    this.setData(role === 'referee'
+      ? { 'scheduleEditing.refereeIndex': index }
+      : { 'scheduleEditing.recorderIndex': index });
+  },
+
+  async onSubmitSchedule() {
+    const editing = this.data.scheduleEditing;
+    if (!editing || this.data.scheduleBusy) return undefined;
+    const refereeId = editing.refereeIndex > 0
+      ? (editing.referees[editing.refereeIndex - 1] || {}).userId || ''
+      : '';
+    const recorderId = editing.recorderIndex > 0
+      ? (editing.recorders[editing.recorderIndex - 1] || {}).userId || ''
+      : '';
+
+    this.setData({ scheduleBusy: true, notice: '', noticeError: false });
+    try {
+      const result = await space.forScope(this.scope).updateTeamMatchSchedule({
+        matchId: editing.matchId,
+        matchTime: editing.matchTime,
+        location: editing.location,
+        refereeId,
+        recorderId,
+        // 版本号来自打开浮层那一刻：期间有人改过就拒绝，不覆盖
+        expectRevision: editing.revision,
+      });
+      if (!result || result.ok !== true) {
+        this.setData({
+          scheduleBusy: false,
+          notice: (result && result.message) || '保存失败',
+          noticeError: true,
+        });
+        return undefined;
+      }
+      this.setData({
+        scheduleBusy: false, scheduleEditing: null, notice: '赛程已更新', noticeError: false,
+      });
+      await this.refresh();
+      return undefined;
+    } catch (err) {
+      console.error('[team-event-detail] 赛程保存失败', err);
+      this.setData({ scheduleBusy: false, notice: '保存失败，请稍后重试', noticeError: true });
+      return undefined;
+    }
+  },
+
+  /** 整轮顺延：一场雨把整轮往后挪，不必逐场改 */
+  onOpenShift(event) {
+    const { round, stage, label } = event.currentTarget.dataset;
+    this.setData({
+      shiftEditing: {
+        round: Number(round) || 1,
+        stage: stage || '',
+        label: label || `第 ${round} 轮`,
+        minutes: '30',
+      },
+      notice: '',
+      noticeError: false,
+    });
+  },
+
+  onCloseShift() {
+    this.setData({ shiftEditing: null, scheduleBusy: false });
+  },
+
+  onInputShift(event) {
+    this.setData({ 'shiftEditing.minutes': event.detail.value });
+  },
+
+  async onSubmitShift() {
+    const editing = this.data.shiftEditing;
+    if (!editing || this.data.scheduleBusy) return undefined;
+    this.setData({ scheduleBusy: true, notice: '', noticeError: false });
+    try {
+      const result = await space.forScope(this.scope).updateTeamRoundSchedule({
+        eventId: this.data.eventId,
+        round: editing.round,
+        stage: editing.stage,
+        shiftMinutes: Number(editing.minutes),
+      });
+      if (!result || result.ok !== true) {
+        this.setData({
+          scheduleBusy: false,
+          notice: (result && result.message) || '顺延失败',
+          noticeError: true,
+        });
+        return undefined;
+      }
+      const skipped = Number(result.skipped) || 0;
+      this.setData({
+        scheduleBusy: false,
+        shiftEditing: null,
+        notice: `已顺延 ${result.shifted} 场${skipped > 0 ? `，跳过 ${skipped} 场（已发布或没有开赛时间）` : ''}`,
+        noticeError: false,
+      });
+      await this.refresh();
+      return undefined;
+    } catch (err) {
+      console.error('[team-event-detail] 整轮顺延失败', err);
+      this.setData({ scheduleBusy: false, notice: '顺延失败，请稍后重试', noticeError: true });
       return undefined;
     }
   },
