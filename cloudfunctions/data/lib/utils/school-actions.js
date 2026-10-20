@@ -77,6 +77,8 @@ const SCHOOL_SPACE_ACTIONS = Object.freeze([
   'publishTeamMatch',             'advanceTeamRound',             'settleTeamEvent',
   // 团队赛事：个人统计（基础 / 按节）与球员数据榜
   'getTeamMatchStats',            'saveTeamMatchStats',         'getTeamEventPlayerStats',
+  // 团队赛事：已发布比赛的统计新版本单独审核（统计不能绕过发布审核直接生效）
+  'reviewTeamMatchStats',
 ]);
 
 /** 跨校邀请赛（`forExchange` 声明，16 个）。 */

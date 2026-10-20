@@ -17,10 +17,11 @@
 
 const { canManageAssociationSpace } = require('./association-space-permission.js');
 const { buildDirectory } = require('./school-actor.js');
+const { buildSchoolContext } = require('./school-context.js');
 const { schoolKey } = require('../utils/school.js');
 const {
   TEAM_STATUS, TEAM_MEMBER_STATUS, TEAM_EVENT_STATUS, TEAM_ENTRY_STATUS, TEAM_MATCH_STATUS,
-  BRACKET_STAGE, EVENT_BRONZE_MODE, TEAM_STAT_INTEGRITY,
+  BRACKET_STAGE, EVENT_BRONZE_MODE, TEAM_STAT_INTEGRITY, TEAM_STAT_STATUS,
 } = require('../utils/constants.js');
 const { EVENT_FORMAT } = require('../utils/constants.js');
 const { normalizeBasketballRules, formatBasketballRules, DEFAULT_PRESET_KEY } = require('../utils/basketball-rules.js');
@@ -80,11 +81,25 @@ function eventView(event, ctx, { manage, entryCount }) {
  *
  * 比分是**一个数字**（96:88），不是个人赛那种「逐局比分数组」。缺比分时
  * 显示 `—` 而不是 0:0——0:0 是「还没开打」，不能和「打完了 0 分」混为一谈。
+ *
+ * 【待审核的比分对谁可见】
+ * 录完但没发布的比分随时可能被驳回重录。普通成员看到它，会把它当成正式成绩；
+ * 第二天成绩变了，他会认为自己被骗了一次。所以只有管理者与参赛队队长能看到
+ * 待审核的数字，其他人只看到「待审核」三个字——这一点在服务端做，不能靠
+ * 页面「不渲染」来挡。
+ *
+ * 【revision 必须下发】
+ * 录分、发布、改统计都要带版本号做乐观锁。页面拿不到版本号，就只能不带，
+ * 于是并发保护形同虚设——这是 D 期的一个真实缺口，不是可选项。
  */
 function matchView(match, teamName, rights = {}) {
   const nameOf = teamId => (teamName && teamName.get(teamId)) || teamId;
   const hasScore = match.scoreA !== null && match.scoreA !== undefined
     && match.scoreB !== null && match.scoreB !== undefined;
+  const isPublished = match.status === TEAM_MATCH_STATUS.PUBLISHED;
+  // 未发布且无权查看待审核：数字、胜方、加时、弃权一律不下发
+  const masked = !isPublished && rights.canSeePending !== true;
+  const showScore = hasScore && !masked;
   return {
     matchId: match._id,
     round: Number(match.round) || 1,
@@ -94,20 +109,27 @@ function matchView(match, teamName, rights = {}) {
     teamB: match.teamB,
     teamAName: nameOf(match.teamA),
     teamBName: nameOf(match.teamB),
-    scoreA: hasScore ? Number(match.scoreA) : null,
-    scoreB: hasScore ? Number(match.scoreB) : null,
-    scoreText: hasScore ? `${match.scoreA} : ${match.scoreB}` : '—',
-    overtime: match.overtime === true,
-    forfeit: match.forfeit || null,
-    winner: match.winner || null,
+    scoreA: showScore ? Number(match.scoreA) : null,
+    scoreB: showScore ? Number(match.scoreB) : null,
+    scoreText: showScore
+      ? `${match.scoreA} : ${match.scoreB}`
+      : (masked ? '待审核' : '—'),
+    overtime: masked ? false : match.overtime === true,
+    forfeit: masked ? null : (match.forfeit || null),
+    winner: masked ? null : (match.winner || null),
     status: match.status,
     statusLabel: TEAM_MATCH_STATUS[match.status] || match.status,
     matchTime: match.matchTime || null,
     location: match.location || '',
+    // 版本号：调用方拿它做乐观锁，对不上就要求刷新
+    revision: Number(match.revision) || 0,
     // 按钮显不显示由服务端定：页面拿不到「我是不是这队的队长」，
     // 自己猜一遍迟早与接口的口径分叉
     canRecord: rights.canRecord === true,
     canPublish: rights.canPublish === true,
+    canSeePending: rights.canSeePending === true,
+    // 这一场的统计有未审核的新版本（只有能看到待审核内容的人才需要知道）
+    statPending: rights.canSeePending === true && rights.statPending === true,
   };
 }
 
@@ -177,11 +199,24 @@ async function getTeamEvent(payload = {}, ctx) {
     matches,
   });
 
+  // 哪些比赛的统计还有未审核的新版本：赛程列表上要能看见「统计待审核」，
+  // 否则管理员得逐场点开才发现有人改过统计
+  const statDocs = (await repo.teamMatchStats.list()).filter(row => row.eventId === event._id);
+  const pendingStatMatches = new Set(
+    statDocs.filter(row => row.status === TEAM_STAT_STATUS.PENDING).map(row => row.matchId)
+  );
+
   const rightsOf = match => {
     const captain = [match.teamA, match.teamB].some(
       teamId => (teams.find(team => team._id === teamId) || {}).captainId === ctx.actorId
     );
-    return { canRecord: manage || captain, canPublish: manage };
+    // 管理者与参赛队队长既录分也看得到自己录的待审核数字；其余人只看「待审核」
+    return {
+      canRecord: manage || captain,
+      canPublish: manage,
+      canSeePending: manage || captain,
+      statPending: pendingStatMatches.has(match._id),
+    };
   };
 
   // 「我能替哪支队报名」由服务端算：队长只有自己队，管理者可以替任何队补报。
@@ -533,6 +568,9 @@ async function listTeamMatches(payload = {}, ctx) {
         teamId => (teams.find(team => team._id === teamId) || {}).captainId === ctx.actorId
       ),
       canPublish: manage,
+      canSeePending: manage || [match.teamA, match.teamB].some(
+        teamId => (teams.find(team => team._id === teamId) || {}).captainId === ctx.actorId
+      ),
     }));
 
   return ok({
@@ -563,6 +601,73 @@ async function canRecordTeamMatch(match, ctx, repo) {
 }
 
 /**
+ * 事务内重建上下文：会籍、角色、成员身份都按最新状态重判。
+ * 与 association-group-service 等既有服务保持同一写法——权限不能在事务外定死。
+ */
+const freshContext = (tx, ctx) => buildSchoolContext({
+  repo: tx,
+  actorId: ctx.actorId,
+  scope: { schoolId: ctx.schoolId, association: ctx.association },
+  now: ctx.now,
+});
+
+/** 一场比赛某一方的统计文档主键：确定性键，事务内可直接点读 */
+const statDocKey = (matchId, teamId) => schoolKey('tms', matchId, teamId);
+
+/**
+ * 统计的可发布快照。
+ *
+ * 只留「对外可见」需要的字段，不带 updatedBy 这类操作痕迹——快照是给读者看的
+ * 一版成绩，不是一份操作日志。
+ */
+function snapshotOf(doc) {
+  if (!doc) return null;
+  return {
+    mode: doc.mode === STAT_MODE.DETAILED ? STAT_MODE.DETAILED : STAT_MODE.BASIC,
+    rows: Array.isArray(doc.rows) ? doc.rows : [],
+    players: Array.isArray(doc.players) ? doc.players : [],
+    integrity: doc.integrity || TEAM_STAT_INTEGRITY.NONE,
+    revision: Number(doc.revision) || 0,
+    publishedAt: doc.publishedAt || null,
+    publishedBy: doc.publishedBy || null,
+  };
+}
+
+/**
+ * 一份统计文档「此刻对谁来说算数」。
+ *
+ * 编辑者看工作副本（他正在改的就是这个）；其他人只看已发布快照——
+ * 这就是「已发布比赛的统计不能绕过审核直接生效」的唯一落点。
+ */
+function effectiveStatOf(doc, { editor }) {
+  if (!doc) return null;
+  if (editor) {
+    return {
+      mode: doc.mode === STAT_MODE.DETAILED ? STAT_MODE.DETAILED : STAT_MODE.BASIC,
+      rows: Array.isArray(doc.rows) ? doc.rows : [],
+      players: Array.isArray(doc.players) ? doc.players : [],
+      integrity: doc.integrity || TEAM_STAT_INTEGRITY.NONE,
+      revision: Number(doc.revision) || 0,
+    };
+  }
+  return doc.published || null;
+}
+
+/** 把工作副本提升为已发布快照（发布比赛 / 审核统计通过时调用） */
+function publishStatDoc(doc, { actorId, now }) {
+  const snapshot = snapshotOf({ ...doc, publishedAt: now, publishedBy: actorId });
+  return {
+    ...doc,
+    status: TEAM_STAT_STATUS.PUBLISHED,
+    published: snapshot,
+    publishedRevision: snapshot.revision,
+    publishedBy: actorId,
+    publishedAt: now,
+    updatedAt: now,
+  };
+}
+
+/**
  * 录一场比赛的比分（→ 待审核）。
  *
  * 【为什么录完不是直接发布】
@@ -572,57 +677,88 @@ async function canRecordTeamMatch(match, ctx, repo) {
  * 【平局】
  * 篮球没有平局，只有允许平局的循环赛例外（`rules.allowDraw`）。淘汰赛
  * 平局直接拒绝，并提示打加时——静默接受会让签表卡在「这一轮永远打不完」。
+ *
+ * 【并发：读-判-写必须在同一事务里】
+ * 从前这里先读比赛、再写统计、最后才比版本号，两个请求各自基于同一份旧快照，
+ * 后写者把先写者的比分整个盖掉（本地复现：80:70 被 81:70 覆盖）。现在整段
+ * 放进事务：事务内重读比赛，先比 `expectRevision`、再落库，第二个请求读到的
+ * 已是 +1 后的版本，判不过就拒绝——不是「提示可能冲突」，而是根本写不进去。
  */
 async function recordTeamMatch(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
   if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
 
-  const repo = ctx.repo.forScope(ctx);
-  const match = await repo.teamMatches.getById(payload.matchId);
-  if (!inScope(match, ctx)) return ok(refused('比赛不存在，或不在本协会'));
-
-  const event = await repo.teamEvents.getById(match.eventId);
-  if (!inScope(event, ctx)) return ok(refused('赛事不存在，或不在本协会'));
-  if (event.status === TEAM_EVENT_STATUS.FINISHED) return ok(refused('赛事已结束，不能再录分'));
-  if (event.status !== TEAM_EVENT_STATUS.SCHEDULED && event.status !== TEAM_EVENT_STATUS.RUNNING) {
-    return ok(refused('赛事当前不可录分'));
-  }
-  if (match.status === TEAM_MATCH_STATUS.PUBLISHED) return ok(refused('这场已发布，要改请先驳回'));
-  if (match.status === TEAM_MATCH_STATUS.CANCELED) return ok(refused('这场已取消'));
-
-  if (!(await canRecordTeamMatch(match, ctx, repo))) {
-    return ok(refused('只有协会管理者或参赛队队长可以录分'));
-  }
-
-  const scoreA = toScore(payload.scoreA);
-  const scoreB = toScore(payload.scoreB);
-  if (scoreA === null || scoreB === null) return ok(refused(`比分需为 0–${SCORE_MAX} 的整数`));
-  if (scoreA === 0 && scoreB === 0) return ok(refused('0:0 不是有效的比赛比分'));
-
-  const forfeit = payload.forfeit === 'A' || payload.forfeit === 'B' ? payload.forfeit : null;
-  let winner = null;
-  if (forfeit) {
-    winner = forfeit === 'A' ? 'B' : 'A';
-  } else if (scoreA === scoreB) {
-    const drawAllowed = event.rules && event.rules.allowDraw === true
-      && event.format === EVENT_FORMAT.ROUND_ROBIN;
-    if (!drawAllowed) return ok(refused('篮球不允许平局，请打加时后再录'));
-  } else {
-    winner = scoreA > scoreB ? 'A' : 'B';
-  }
-
-  const warnings = [];
   const stats = Array.isArray(payload.stats) ? payload.stats : [];
-  if (stats.length > 0) {
-    const entries = await repo.teamEventEntries.list();
-    const now = ctx.now;
+  const result = await ctx.repo.transaction(async (root) => {
+    // 事务根带全部集合（会籍、学校、角色都要重读）；受范围集合从 scope 视图取
+    const tx = root.forScope({ schoolId: ctx.schoolId, association: ctx.association });
+    // 事务内按最新会籍重判：请求期间被撤权的不予放行
+    const fresh = await freshContext(root, ctx);
+    if (!assertTeamSport(fresh)) return refused('该协会不是团队项目');
+    if (!fresh.actorId) return refused('请先登录');
+
+    const match = await tx.teamMatches.getById(payload.matchId);
+    if (!inScope(match, ctx)) return refused('比赛不存在，或不在本协会');
+
+    const event = await tx.teamEvents.getById(match.eventId);
+    if (!inScope(event, ctx)) return refused('赛事不存在，或不在本协会');
+    if (event.status === TEAM_EVENT_STATUS.FINISHED) return refused('赛事已结束，不能再录分');
+    if (event.status !== TEAM_EVENT_STATUS.SCHEDULED && event.status !== TEAM_EVENT_STATUS.RUNNING) {
+      return refused('赛事当前不可录分');
+    }
+    if (match.status === TEAM_MATCH_STATUS.PUBLISHED) return refused('这场已发布，要改请先驳回');
+    if (match.status === TEAM_MATCH_STATUS.CANCELED) return refused('这场已取消');
+
+    if (!(await canRecordTeamMatch(match, fresh, tx))) {
+      return refused('只有协会管理者或参赛队队长可以录分');
+    }
+
+    // 乐观锁：先判后写。判不过直接返回，不留任何副作用
+    if (Number.isInteger(payload.expectRevision)
+      && payload.expectRevision !== (Number(match.revision) || 0)) {
+      return refused('这场比赛刚被改过，请刷新后重试');
+    }
+
+    const scoreA = toScore(payload.scoreA);
+    const scoreB = toScore(payload.scoreB);
+    if (scoreA === null || scoreB === null) return refused(`比分需为 0–${SCORE_MAX} 的整数`);
+    if (scoreA === 0 && scoreB === 0) return refused('0:0 不是有效的比赛比分');
+
+    const forfeit = payload.forfeit === 'A' || payload.forfeit === 'B' ? payload.forfeit : null;
+    let winner = null;
+    if (forfeit) {
+      winner = forfeit === 'A' ? 'B' : 'A';
+    } else if (scoreA === scoreB) {
+      const drawAllowed = event.rules && event.rules.allowDraw === true
+        && event.format === EVENT_FORMAT.ROUND_ROBIN;
+      if (!drawAllowed) return refused('篮球不允许平局，请打加时后再录');
+    } else {
+      winner = scoreA > scoreB ? 'A' : 'B';
+    }
+
+    const warnings = [];
+    const now = fresh.now;
+    // 【先把要读的都读完，再开始写】
+    // 云开发事务要求「读在写前」：一旦写过某集合，再回头读就可能被拒。
+    // 所以名单快照与既有统计文档都先在写之前取齐，后面只剩下 set。
+    const rosters = new Map();
+    const previousStats = new Map();
+    if (stats.length > 0) {
+      for (const teamId of [match.teamA, match.teamB]) {
+        // 名单是「锁定那一刻的快照」，按确定性主键点读即可，事务内不必整表列
+        const entry = await tx.teamEventEntries.getById(entryKey(event._id, teamId));
+        rosters.set(teamId, new Set(((entry && entry.roster) || []).map(row => row.userId)));
+        previousStats.set(teamId, await tx.teamMatchStats.getById(statDocKey(match._id, teamId)));
+      }
+    }
+
+    const statDocs = [];
     for (const item of stats) {
       const teamId = item && item.teamId;
       if (teamId !== match.teamA && teamId !== match.teamB) {
-        return ok(refused('统计里的球队与这场比赛的对阵不符'));
+        return refused('统计里的球队与这场比赛的对阵不符');
       }
-      const entry = entries.find(row => row.eventId === event._id && row.teamId === teamId);
-      const roster = new Set(((entry && entry.roster) || []).map(row => row.userId));
+      const roster = rosters.get(teamId) || new Set();
       const players = (Array.isArray(item.players) ? item.players : [])
         .filter(row => row && roster.has(row.userId))
         .map(row => ({
@@ -635,52 +771,62 @@ async function recordTeamMatch(payload = {}, ctx) {
       if (players.some(row => row.points !== null) && total !== teamScore) {
         warnings.push(`个人得分合计 ${total}，球队 ${teamScore}，差 ${teamScore - total} 分待归属`);
       }
-      const key = schoolKey('tms', match._id, teamId);
-      await repo.teamMatchStats.set(key, {
-        _id: key,
+      const previous = previousStats.get(teamId);
+      statDocs.push({
+        _id: statDocKey(match._id, teamId),
         schoolId: ctx.schoolId,
         association: ctx.association,
         eventId: event._id,
         matchId: match._id,
         teamId,
+        mode: STAT_MODE.BASIC,
         players,
+        rows: [],
         // 首版只做「总分 + 个人得分/犯规」，其余指标是 D 期的详细模式
-        integrity: players.some(row => row.points !== null || row.fouls !== null) ? 'basic' : 'none',
+        integrity: players.some(row => row.points !== null || row.fouls !== null)
+          ? TEAM_STAT_INTEGRITY.BASIC
+          : TEAM_STAT_INTEGRITY.NONE,
+        // 比赛尚未发布，统计只是工作副本；发布比赛时一并转成已发布快照
+        status: TEAM_STAT_STATUS.DRAFT,
+        published: null,
+        publishedRevision: 0,
+        revision: (Number(previous && previous.revision) || 0) + 1,
         updatedBy: ctx.actorId,
         updatedAt: now,
       });
     }
-  }
 
-  // 并发保护：录入途中若这场刚被别人改过（版本号变了），拒绝而不是覆盖
-  if (Number.isInteger(payload.expectRevision) && payload.expectRevision !== (Number(match.revision) || 0)) {
-    return ok(refused('这场比赛刚被改过，请刷新后重试'));
-  }
+    for (const doc of statDocs) await tx.teamMatchStats.set(doc._id, doc);
 
-  const now = ctx.now;
-  await repo.teamMatches.set(match._id, {
-    ...match,
-    scoreA, scoreB,
-    overtime: payload.overtime === true,
-    forfeit,
-    winner,
-    status: TEAM_MATCH_STATUS.REVIEWING,
-    recordedBy: ctx.actorId,
-    recordedAt: now,
-    revision: Number(match.revision || 1) + 1,
-    updatedAt: now,
-  });
-
-  if (event.status === TEAM_EVENT_STATUS.SCHEDULED) {
-    await repo.teamEvents.set(event._id, {
-      ...event,
-      status: TEAM_EVENT_STATUS.RUNNING,
-      revision: Number(event.revision || 1) + 1,
+    const nextRevision = (Number(match.revision) || 1) + 1;
+    await tx.teamMatches.set(match._id, {
+      ...match,
+      scoreA,
+      scoreB,
+      overtime: payload.overtime === true,
+      forfeit,
+      winner,
+      status: TEAM_MATCH_STATUS.REVIEWING,
+      recordedBy: ctx.actorId,
+      recordedAt: now,
+      revision: nextRevision,
       updatedAt: now,
     });
-  }
 
-  return ok({ ok: true, status: TEAM_MATCH_STATUS.REVIEWING, winner, warnings, message: '' });
+    if (event.status === TEAM_EVENT_STATUS.SCHEDULED) {
+      await tx.teamEvents.set(event._id, {
+        ...event,
+        status: TEAM_EVENT_STATUS.RUNNING,
+        revision: Number(event.revision || 1) + 1,
+        updatedAt: now,
+      });
+    }
+
+    return {
+      ok: true, status: TEAM_MATCH_STATUS.REVIEWING, winner, warnings, revision: nextRevision, message: '',
+    };
+  });
+  return ok(result);
 }
 
 /**
@@ -688,61 +834,168 @@ async function recordTeamMatch(payload = {}, ctx) {
  *
  * 驳回会把比分清空并要求重录，而不是「留着让人改一改」——留着的话，
  * 一次驳回之后谁都分不清屏幕上那串数字是核对过的还是被退回的。
+ *
+ * 【发布比分 = 同时发布这一场的统计】
+ * 校园赛的实际顺序是「先录比分，再补统计」。若发布只管比分，统计会一直停在
+ * 工作副本里，球员榜永远是空的。所以发布时把两队的统计副本一并转成已发布
+ * 快照；驳回时两者一起退回，不留「比分没了、统计还在」的半截状态。
  */
 async function publishTeamMatch(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
   if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
   if (!canManageAssociationSpace(ctx)) return ok(refused('只有协会负责人及以上可以发布成绩'));
 
-  const repo = ctx.repo.forScope(ctx);
-  const match = await repo.teamMatches.getById(payload.matchId);
-  if (!inScope(match, ctx)) return ok(refused('比赛不存在，或不在本协会'));
-  if (match.status !== TEAM_MATCH_STATUS.REVIEWING) {
-    return ok(refused('只有待审核的比赛可以发布或驳回'));
-  }
+  const result = await ctx.repo.transaction(async (root) => {
+    const tx = root.forScope({ schoolId: ctx.schoolId, association: ctx.association });
+    const fresh = await freshContext(root, ctx);
+    if (!assertTeamSport(fresh)) return refused('该协会不是团队项目');
+    if (!canManageAssociationSpace(fresh)) return refused('只有协会负责人及以上可以发布成绩');
 
-  if (Number.isInteger(payload.expectRevision) && payload.expectRevision !== (Number(match.revision) || 0)) {
-    return ok(refused('这场比赛刚被改过，请刷新后重试'));
-  }
+    const match = await tx.teamMatches.getById(payload.matchId);
+    if (!inScope(match, ctx)) return refused('比赛不存在，或不在本协会');
+    if (match.status !== TEAM_MATCH_STATUS.REVIEWING) {
+      return refused('只有待审核的比赛可以发布或驳回');
+    }
+    if (Number.isInteger(payload.expectRevision)
+      && payload.expectRevision !== (Number(match.revision) || 0)) {
+      return refused('这场比赛刚被改过，请刷新后重试');
+    }
 
-  const now = ctx.now;
-  if (payload.approve !== true) {
-    await repo.teamMatches.set(match._id, {
+    const now = fresh.now;
+    const nextRevision = (Number(match.revision) || 1) + 1;
+    // 读在写前：比赛、两队统计、赛事一次取齐（云开发事务不允许写后再读）
+    const statDocs = new Map();
+    for (const teamId of [match.teamA, match.teamB]) {
+      statDocs.set(teamId, await tx.teamMatchStats.getById(statDocKey(match._id, teamId)));
+    }
+    const event = await tx.teamEvents.getById(match.eventId);
+
+    if (payload.approve !== true) {
+      await tx.teamMatches.set(match._id, {
+        ...match,
+        scoreA: null,
+        scoreB: null,
+        overtime: false,
+        forfeit: null,
+        winner: null,
+        status: TEAM_MATCH_STATUS.SCHEDULED,
+        recordedBy: null,
+        recordedAt: null,
+        revision: nextRevision,
+        updatedAt: now,
+      });
+      // 统计随之退回：对外不再有这一场的已发布统计
+      for (const [teamId, doc] of statDocs) {
+        if (!doc) continue;
+        await tx.teamMatchStats.set(statDocKey(match._id, teamId), {
+          ...doc,
+          status: TEAM_STAT_STATUS.DRAFT,
+          published: null,
+          publishedRevision: 0,
+          updatedAt: now,
+        });
+      }
+      return { ok: true, status: TEAM_MATCH_STATUS.SCHEDULED, message: '' };
+    }
+
+    await tx.teamMatches.set(match._id, {
       ...match,
-      scoreA: null,
-      scoreB: null,
-      overtime: false,
-      forfeit: null,
-      winner: null,
-      status: TEAM_MATCH_STATUS.SCHEDULED,
-      recordedBy: null,
-      recordedAt: null,
-      revision: Number(match.revision || 1) + 1,
+      status: TEAM_MATCH_STATUS.PUBLISHED,
+      publishedBy: fresh.actorId,
+      publishedAt: now,
+      revision: nextRevision,
       updatedAt: now,
     });
-    return ok({ ok: true, status: TEAM_MATCH_STATUS.SCHEDULED, message: '' });
-  }
 
-  await repo.teamMatches.set(match._id, {
-    ...match,
-    status: TEAM_MATCH_STATUS.PUBLISHED,
-    publishedBy: ctx.actorId,
-    publishedAt: now,
-    revision: Number(match.revision || 1) + 1,
-    updatedAt: now,
+    let publishedStats = 0;
+    for (const [teamId, doc] of statDocs) {
+      if (!doc) continue;
+      await tx.teamMatchStats.set(
+        statDocKey(match._id, teamId),
+        publishStatDoc(doc, { actorId: fresh.actorId, now })
+      );
+      publishedStats += 1;
+    }
+
+    if (inScope(event, ctx) && event.status === TEAM_EVENT_STATUS.SCHEDULED) {
+      await tx.teamEvents.set(event._id, {
+        ...event,
+        status: TEAM_EVENT_STATUS.RUNNING,
+        revision: Number(event.revision || 1) + 1,
+        updatedAt: now,
+      });
+    }
+
+    return {
+      ok: true, status: TEAM_MATCH_STATUS.PUBLISHED, publishedStats, revision: nextRevision, message: '',
+    };
   });
+  return ok(result);
+}
 
-  const event = await repo.teamEvents.getById(match.eventId);
-  if (inScope(event, ctx) && event.status === TEAM_EVENT_STATUS.SCHEDULED) {
-    await repo.teamEvents.set(event._id, {
-      ...event,
-      status: TEAM_EVENT_STATUS.RUNNING,
-      revision: Number(event.revision || 1) + 1,
-      updatedAt: now,
-    });
-  }
+/**
+ * 审核已发布比赛的统计新版本。
+ *
+ * 【为什么统计要单独审核】
+ * 比分发布之后，统计仍可能被补录或更正。若这类修改直接生效，球员榜就绕过了
+ * 发布审核——录错一个人的 20 分，榜单当场变形，而页面上看不出这一版有没有
+ * 人核对过。所以已发布比赛的统计修改只写 `pending` 工作副本，对外继续读
+ * `published` 快照；管理员在这里通过（指针前移）或退回（丢弃工作副本）。
+ */
+async function reviewTeamMatchStats(payload = {}, ctx) {
+  if (!ctx.actorId) return ok(refused('请先登录'));
+  if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
+  if (!canManageAssociationSpace(ctx)) return ok(refused('只有协会负责人及以上可以审核统计'));
 
-  return ok({ ok: true, status: TEAM_MATCH_STATUS.PUBLISHED, message: '' });
+  const result = await ctx.repo.transaction(async (root) => {
+    const tx = root.forScope({ schoolId: ctx.schoolId, association: ctx.association });
+    const fresh = await freshContext(root, ctx);
+    if (!canManageAssociationSpace(fresh)) return refused('只有协会负责人及以上可以审核统计');
+
+    const match = await tx.teamMatches.getById(payload.matchId);
+    if (!inScope(match, ctx)) return refused('比赛不存在，或不在本协会');
+    if (match.status !== TEAM_MATCH_STATUS.PUBLISHED) {
+      return refused('这场还没发布，统计跟随比赛一起发布');
+    }
+
+    const now = fresh.now;
+    // 读在写前：两份统计文档先取齐，再决定写哪些
+    const docs = new Map();
+    for (const teamId of [match.teamA, match.teamB]) {
+      docs.set(teamId, await tx.teamMatchStats.getById(statDocKey(match._id, teamId)));
+    }
+
+    let reviewed = 0;
+    let keptDraft = 0;
+    for (const [teamId, doc] of docs) {
+      if (!doc || doc.status !== TEAM_STAT_STATUS.PENDING) continue;
+      const key = statDocKey(match._id, teamId);
+
+      if (payload.approve === true) {
+        await tx.teamMatchStats.set(key, publishStatDoc(doc, { actorId: fresh.actorId, now }));
+      } else if (doc.published) {
+        // 退回：工作副本回到已发布的那一版，不留半改的数据
+        await tx.teamMatchStats.set(key, {
+          ...doc,
+          ...doc.published,
+          status: TEAM_STAT_STATUS.PUBLISHED,
+          revision: Number(doc.published.revision) || 0,
+          updatedAt: now,
+        });
+      } else {
+        // 还没有任何已发布版本：退回只是取消「待审核」，草稿仍是草稿
+        await tx.teamMatchStats.set(key, { ...doc, status: TEAM_STAT_STATUS.DRAFT, updatedAt: now });
+        keptDraft += 1;
+      }
+      reviewed += 1;
+    }
+
+    if (reviewed === 0) return refused('这场的统计没有待审核的版本');
+    return {
+      ok: true, approved: payload.approve === true, reviewed, keptDraft, message: '',
+    };
+  });
+  return ok(result);
 }
 
 /**
@@ -925,12 +1178,40 @@ function totalsOf(rows) {
 }
 
 /**
+ * 按人分组求和。
+ *
+ * 【为什么要按 userId 分组】
+ * 从前这里对**整队**的行求和，再把同一个合计填给队里每个人：两人分别得
+ * 10 分与 3 分，读回来每人都是 13 分。合计是「队」的量，不是「人」的量，
+ * 必须按人分开累。
+ */
+function totalsByPlayer(rows) {
+  const map = new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!row || !row.userId) continue;
+    if (!map.has(row.userId)) map.set(row.userId, {});
+    const acc = map.get(row.userId);
+    for (const field of Object.keys(STAT_FIELDS)) {
+      const value = row[field];
+      if (!Number.isInteger(value)) continue;
+      acc[field] = (Number.isInteger(acc[field]) ? acc[field] : 0) + value;
+    }
+  }
+  return map;
+}
+
+/**
  * 取一场比赛的个人统计面板。
  *
  * 【为什么要单独一个接口】
  * 名单是「锁定那一刻的快照」（`team_event_entries.roster`），不在球队表里。
  * 页面要按当时上场的人列格子，只能由服务端把快照与已有统计一起给出——
  * 前端自己拼会把「现在队里有谁」误当成「这场谁打了」。
+ *
+ * 【谁能看到哪一版】
+ * 可编辑者（管理者 / 参赛队队长）看工作副本，那正是他要改的东西；其他人只看
+ * 已发布快照。比赛还没发布时，非编辑者连面板都拿不到——待审核的统计和待审核
+ * 的比分一样，不能先看到再被改掉。
  */
 async function getTeamMatchStats(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
@@ -950,43 +1231,64 @@ async function getTeamMatchStats(payload = {}, ctx) {
   const captain = [match.teamA, match.teamB].some(
     teamId => (teams.find(team => team._id === teamId) || {}).captainId === ctx.actorId
   );
+  const editor = manage || captain;
+  const published = match.status === TEAM_MATCH_STATUS.PUBLISHED;
+  if (!editor && !published) return ok(refused('这场还没发布，统计暂不可查看'));
 
   const sides = [match.teamA, match.teamB].map((teamId) => {
     const entry = entries.find(row => row.eventId === event._id && row.teamId === teamId);
     const roster = ((entry && entry.roster) || []).map(row => ({ userId: row.userId, name: row.name }));
-    const saved = stats.find(row => row.teamId === teamId);
-    const rows = (saved && saved.rows) || [];
-    const players = (saved && saved.players) || [];
-    // 详细模式的合计由各行算出；基础模式直接取存好的合计
-    const totals = saved && saved.mode === STAT_MODE.DETAILED ? totalsOf(rows) : {};
+    const doc = stats.find(row => row.teamId === teamId) || null;
+    const effective = effectiveStatOf(doc, { editor });
+    const rows = (effective && effective.rows) || [];
+    const savedPlayers = (effective && effective.players) || [];
+    const mode = effective ? effective.mode : STAT_MODE.BASIC;
+    // 详细模式的合计由各行算出（按人）；基础模式直接取存好的合计
+    const perPlayer = mode === STAT_MODE.DETAILED ? totalsByPlayer(rows) : new Map();
     return {
       teamId,
       teamName: teamName.get(teamId) || '已归档球队',
-      players: roster.map(row => {
-        const hit = players.find(item => item.userId === row.userId) || {};
+      players: roster.map((row) => {
         const out = { userId: row.userId, name: row.name || row.userId };
-        for (const field of Object.keys(STAT_FIELDS)) {
-          const value = saved && saved.mode === STAT_MODE.DETAILED
-            ? totals[field]
-            : hit[field];
-          out[field] = Number.isInteger(value) ? value : null;
+        if (mode === STAT_MODE.DETAILED) {
+          const totals = perPlayer.get(row.userId) || {};
+          for (const field of Object.keys(STAT_FIELDS)) {
+            out[field] = Number.isInteger(totals[field]) ? totals[field] : null;
+          }
+        } else {
+          const hit = savedPlayers.find(item => item.userId === row.userId) || {};
+          for (const field of Object.keys(STAT_FIELDS)) {
+            out[field] = Number.isInteger(hit[field]) ? hit[field] : null;
+          }
         }
         return out;
       }),
       // 详细模式把每节各行一起交给页面；基础模式没有行
-      rows: saved && saved.mode === STAT_MODE.DETAILED ? rows : null,
-      revision: Number(saved && saved.revision) || 0,
+      rows: mode === STAT_MODE.DETAILED ? rows.map(row => ({ ...row })) : null,
+      // 编辑者拿到的版本号用于乐观锁；非编辑者拿到的是已发布版本号（只读）
+      revision: editor
+        ? (Number(doc && doc.revision) || 0)
+        : (Number(doc && doc.publishedRevision) || 0),
+      status: doc ? doc.status || TEAM_STAT_STATUS.DRAFT : null,
+      pendingReview: Boolean(doc && doc.status === TEAM_STAT_STATUS.PENDING),
+      publishedRevision: Number(doc && doc.publishedRevision) || 0,
+      hasPublished: Boolean(doc && doc.published),
     };
   });
 
   return ok({
     ok: true,
-    match: matchView(match, teamName, { canRecord: manage || captain, canPublish: manage }),
+    match: matchView(match, teamName, {
+      canRecord: editor, canPublish: manage, canSeePending: editor,
+    }),
     statPolicy: event.statPolicy === STAT_MODE.DETAILED ? STAT_MODE.DETAILED : STAT_MODE.BASIC,
     periods: Number(event.rules && event.rules.periods) || 4,
     sides,
-    canEdit: (manage || captain) && match.status !== TEAM_MATCH_STATUS.CANCELED
+    canEdit: editor && match.status !== TEAM_MATCH_STATUS.CANCELED
       && event.status !== TEAM_EVENT_STATUS.FINISHED,
+    // 已发布的比赛改统计要重新审核；页面据此提示「保存后需审核」
+    needReview: published,
+    canReview: manage && sides.some(side => side.pendingReview),
     message: '',
   });
 }
@@ -1002,133 +1304,165 @@ async function getTeamMatchStats(payload = {}, ctx) {
  * 没填的格子存 `null` 而不是 0。0 分是一个事实（上场了没得分），
  * 没填是另一个事实（这场没统计）。混成一个数，场均得分就永远偏低。
  *
+ * 【已发布比赛的统计不直接生效】
+ * 发布之后补录或更正统计，写入的是 `pending` 工作副本，对外仍读已发布快照，
+ * 由管理员在 `reviewTeamMatchStats` 里通过或退回。否则「改一个数字就改榜单」
+ * 等于把发布审核整个绕过去。
+ *
  * 【并发】
- * 队长与协会负责人可能同时录。调用方可带 `expectRevision`（面板打开时拿到的
- * 版本号），对不上就拒绝并要求刷新——后来者覆盖先到者的数据，是最难发现
- * 的一类数据丢失。
+ * 两个队文档在同一事务里写，读-判-写不分离；调用方带 `expectRevision`
+ * （面板打开时拿到的版本号），对不上就拒绝并要求刷新。
  */
 async function saveTeamMatchStats(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
   if (!assertTeamSport(ctx)) return ok(refused('该协会不是团队项目'));
 
-  const repo = ctx.repo.forScope(ctx);
-  const match = await repo.teamMatches.getById(payload.matchId);
-  if (!inScope(match, ctx)) return ok(refused('比赛不存在，或不在本协会'));
-  const event = await repo.teamEvents.getById(match.eventId);
-  if (!inScope(event, ctx)) return ok(refused('赛事不存在，或不在本协会'));
-  if (event.status === TEAM_EVENT_STATUS.FINISHED) return ok(refused('赛事已结束，统计不能再改'));
-  if (match.status === TEAM_MATCH_STATUS.CANCELED) return ok(refused('这场已取消'));
-  if (!(await canRecordTeamMatch(match, ctx, repo))) {
-    return ok(refused('只有协会管理者或参赛队队长可以录统计'));
-  }
+  const result = await ctx.repo.transaction(async (root) => {
+    const tx = root.forScope({ schoolId: ctx.schoolId, association: ctx.association });
+    const fresh = await freshContext(root, ctx);
+    if (!assertTeamSport(fresh)) return refused('该协会不是团队项目');
+    if (!fresh.actorId) return refused('请先登录');
 
-  const mode = payload.mode === STAT_MODE.DETAILED ? STAT_MODE.DETAILED : STAT_MODE.BASIC;
-  if (mode === STAT_MODE.DETAILED && event.statPolicy !== STAT_MODE.DETAILED) {
-    return ok(refused('这场赛事未开启按节统计'));
-  }
-
-  const entries = await repo.teamEventEntries.list();
-  const periods = Number(event.rules && event.rules.periods) || 4;
-  const sides = [match.teamA, match.teamB].map((teamId) => {
-    const entry = entries.find(row => row.eventId === event._id && row.teamId === teamId);
-    return {
-      teamId,
-      roster: new Map(((entry && entry.roster) || []).map(row => [row.userId, row.name || row.userId])),
-      rows: [],
-      players: [],
-    };
-  });
-
-  if (mode === STAT_MODE.DETAILED) {
-    const incoming = Array.isArray(payload.rows) ? payload.rows : [];
-    if (incoming.length === 0) return ok(refused('没有可保存的统计'));
-    for (const row of incoming) {
-      const side = sides.find(item => item.roster.has(row && row.userId));
-      if (!side) return ok(refused('统计里有人不在本场名单中'));
-      const period = Number(row.period);
-      if (!Number.isInteger(period) || period < 1 || period > periods) {
-        return ok(refused(`节次需在 1–${periods} 之间`));
-      }
-      const cleaned = { period, userId: row.userId };
-      let any = false;
-      for (const [field, max] of Object.entries(STAT_FIELDS)) {
-        const parsed = parseStat(row[field], max);
-        if (!parsed.ok) return ok(refused(`第 ${period} 节的「${STAT_LABEL[field] || field}」需为 0–${max} 的整数`));
-        cleaned[field] = parsed.value;
-        if (parsed.value !== null) any = true;
-      }
-      // 整行都是空的等于没录这个人这一节，直接丢掉，不要存一排 null
-      if (any) side.rows.push(cleaned);
+    const match = await tx.teamMatches.getById(payload.matchId);
+    if (!inScope(match, ctx)) return refused('比赛不存在，或不在本协会');
+    const event = await tx.teamEvents.getById(match.eventId);
+    if (!inScope(event, ctx)) return refused('赛事不存在，或不在本协会');
+    if (event.status === TEAM_EVENT_STATUS.FINISHED) return refused('赛事已结束，统计不能再改');
+    if (match.status === TEAM_MATCH_STATUS.CANCELED) return refused('这场已取消');
+    if (!(await canRecordTeamMatch(match, fresh, tx))) {
+      return refused('只有协会管理者或参赛队队长可以录统计');
     }
-    if (sides.every(side => side.rows.length === 0)) return ok(refused('没有可保存的统计'));
-  } else {
-    const incoming = Array.isArray(payload.players) ? payload.players : [];
-    if (incoming.length === 0) return ok(refused('没有可保存的统计'));
-    for (const row of incoming) {
-      const side = sides.find(item => item.roster.has(row && row.userId));
-      if (!side) return ok(refused('统计里有人不在本场名单中'));
-      const cleaned = { userId: row.userId };
-      let any = false;
-      for (const [field, max] of Object.entries(STAT_FIELDS)) {
-        const parsed = parseStat(row[field], max);
-        if (!parsed.ok) return ok(refused(`${STAT_LABEL[field] || field}需为 0–${max} 的整数`));
-        cleaned[field] = parsed.value;
-        if (parsed.value !== null) any = true;
-      }
-      if (any) side.players.push(cleaned);
-    }
-    if (sides.every(side => side.players.length === 0)) return ok(refused('没有可保存的统计'));
-  }
 
-  const warnings = [];
-  const now = ctx.now;
-  for (const side of sides) {
-    const key = schoolKey('tms', match._id, side.teamId);
-    const saved = await repo.teamMatchStats.getById(key);
-    const current = Number(saved && saved.revision) || 0;
-    if (Number.isInteger(payload.expectRevision) && payload.expectRevision !== current) {
-      return ok(refused('这场的统计刚被改过，请刷新后重试'));
+    const mode = payload.mode === STAT_MODE.DETAILED ? STAT_MODE.DETAILED : STAT_MODE.BASIC;
+    if (mode === STAT_MODE.DETAILED && event.statPolicy !== STAT_MODE.DETAILED) {
+      return refused('这场赛事未开启按节统计');
     }
-    const rows = mode === STAT_MODE.DETAILED ? side.rows : [];
-    const players = mode === STAT_MODE.DETAILED ? [] : side.players;
-    const totals = mode === STAT_MODE.DETAILED ? totalsOf(rows) : null;
+
+    const periods = Number(event.rules && event.rules.periods) || 4;
+    const sides = [];
+    for (const teamId of [match.teamA, match.teamB]) {
+      const entry = await tx.teamEventEntries.getById(entryKey(event._id, teamId));
+      const doc = await tx.teamMatchStats.getById(statDocKey(match._id, teamId));
+      sides.push({
+        teamId,
+        roster: new Map(((entry && entry.roster) || []).map(row => [row.userId, row.name || row.userId])),
+        doc,
+        rows: [],
+        players: [],
+      });
+    }
 
     if (mode === STAT_MODE.DETAILED) {
-      const rosterIds = [...side.roster.keys()];
-      const covered = new Set(rows.map(row => row.userId));
-      const integrity = rows.length === 0
-        ? TEAM_STAT_INTEGRITY.NONE
-        : (rosterIds.every(id => covered.has(id)) ? TEAM_STAT_INTEGRITY.FULL : TEAM_STAT_INTEGRITY.PARTIAL);
-      const pointsTotal = totals.points;
-      const teamScore = side.teamId === match.teamA ? match.scoreA : match.scoreB;
-      if (pointsTotal !== null && Number.isInteger(Number(teamScore)) && pointsTotal !== Number(teamScore)) {
-        warnings.push(`第 ${side.teamId === match.teamA ? 'A' : 'B'} 队个人得分合计 ${pointsTotal}，球队 ${teamScore}，差 ${Number(teamScore) - pointsTotal} 分待归属`);
+      const incoming = Array.isArray(payload.rows) ? payload.rows : [];
+      if (incoming.length === 0) return refused('没有可保存的统计');
+      for (const row of incoming) {
+        const side = sides.find(item => item.roster.has(row && row.userId));
+        if (!side) return refused('统计里有人不在本场名单中');
+        const period = Number(row.period);
+        if (!Number.isInteger(period) || period < 1 || period > periods) {
+          return refused(`节次需在 1–${periods} 之间`);
+        }
+        const cleaned = { period, userId: row.userId };
+        let any = false;
+        for (const [field, max] of Object.entries(STAT_FIELDS)) {
+          const parsed = parseStat(row[field], max);
+          if (!parsed.ok) return refused(`第 ${period} 节的「${STAT_LABEL[field] || field}」需为 0–${max} 的整数`);
+          cleaned[field] = parsed.value;
+          if (parsed.value !== null) any = true;
+        }
+        // 整行都是空的等于没录这个人这一节，直接丢掉，不要存一排 null
+        if (any) side.rows.push(cleaned);
       }
-      await repo.teamMatchStats.set(key, {
-        _id: key, schoolId: ctx.schoolId, association: ctx.association,
-        eventId: event._id, matchId: match._id, teamId: side.teamId,
-        mode: STAT_MODE.DETAILED, rows, players: [], integrity,
-        revision: current + 1, updatedBy: ctx.actorId, updatedAt: now,
-      });
+      if (sides.every(side => side.rows.length === 0)) return refused('没有可保存的统计');
     } else {
-      const hasAny = side.players.some(row => Object.keys(STAT_FIELDS).some(f => row[f] !== null));
-      const pointsTotal = side.players.reduce((sum, row) => sum + (row.points || 0), 0);
-      const teamScore = side.teamId === match.teamA ? match.scoreA : match.scoreB;
-      if (hasAny && side.players.some(row => row.points !== null)
-        && Number.isInteger(Number(teamScore)) && pointsTotal !== Number(teamScore)) {
-        warnings.push(`第 ${side.teamId === match.teamA ? 'A' : 'B'} 队个人得分合计 ${pointsTotal}，球队 ${teamScore}，差 ${Number(teamScore) - pointsTotal} 分待归属`);
+      const incoming = Array.isArray(payload.players) ? payload.players : [];
+      if (incoming.length === 0) return refused('没有可保存的统计');
+      for (const row of incoming) {
+        const side = sides.find(item => item.roster.has(row && row.userId));
+        if (!side) return refused('统计里有人不在本场名单中');
+        const cleaned = { userId: row.userId };
+        let any = false;
+        for (const [field, max] of Object.entries(STAT_FIELDS)) {
+          const parsed = parseStat(row[field], max);
+          if (!parsed.ok) return refused(`${STAT_LABEL[field] || field}需为 0–${max} 的整数`);
+          cleaned[field] = parsed.value;
+          if (parsed.value !== null) any = true;
+        }
+        if (any) side.players.push(cleaned);
       }
-      await repo.teamMatchStats.set(key, {
-        _id: key, schoolId: ctx.schoolId, association: ctx.association,
-        eventId: event._id, matchId: match._id, teamId: side.teamId,
-        mode: STAT_MODE.BASIC, rows: [], players: side.players,
-        integrity: hasAny ? TEAM_STAT_INTEGRITY.BASIC : TEAM_STAT_INTEGRITY.NONE,
-        revision: current + 1, updatedBy: ctx.actorId, updatedAt: now,
+      if (sides.every(side => side.players.length === 0)) return refused('没有可保存的统计');
+    }
+
+    // 乐观锁：两个队文档一起判，任一版本对不上就整笔不做
+    for (const side of sides) {
+      const current = Number(side.doc && side.doc.revision) || 0;
+      if (Number.isInteger(payload.expectRevision) && payload.expectRevision !== current) {
+        return refused('这场的统计刚被改过，请刷新后重试');
+      }
+    }
+
+    const warnings = [];
+    const now = fresh.now;
+    const published = match.status === TEAM_MATCH_STATUS.PUBLISHED;
+    // 已发布比赛的新版本是「待审核」；未发布比赛的统计只是草稿
+    const status = published ? TEAM_STAT_STATUS.PENDING : TEAM_STAT_STATUS.DRAFT;
+
+    for (const side of sides) {
+      const key = statDocKey(match._id, side.teamId);
+      const current = Number(side.doc && side.doc.revision) || 0;
+      const rows = mode === STAT_MODE.DETAILED ? side.rows : [];
+      const players = mode === STAT_MODE.DETAILED ? [] : side.players;
+      const teamScore = side.teamId === match.teamA ? match.scoreA : match.scoreB;
+      let integrity;
+
+      if (mode === STAT_MODE.DETAILED) {
+        const rosterIds = [...side.roster.keys()];
+        const covered = new Set(rows.map(row => row.userId));
+        integrity = rows.length === 0
+          ? TEAM_STAT_INTEGRITY.NONE
+          : (rosterIds.every(id => covered.has(id)) ? TEAM_STAT_INTEGRITY.FULL : TEAM_STAT_INTEGRITY.PARTIAL);
+        const pointsTotal = totalsOf(rows).points;
+        if (pointsTotal !== null && Number.isInteger(Number(teamScore)) && pointsTotal !== Number(teamScore)) {
+          warnings.push(`第 ${side.teamId === match.teamA ? 'A' : 'B'} 队个人得分合计 ${pointsTotal}，球队 ${teamScore}，差 ${Number(teamScore) - pointsTotal} 分待归属`);
+        }
+      } else {
+        const hasAny = side.players.some(row => Object.keys(STAT_FIELDS).some(f => row[f] !== null));
+        integrity = hasAny ? TEAM_STAT_INTEGRITY.BASIC : TEAM_STAT_INTEGRITY.NONE;
+        const pointsTotal = side.players.reduce((sum, row) => sum + (row.points || 0), 0);
+        if (hasAny && side.players.some(row => row.points !== null)
+          && Number.isInteger(Number(teamScore)) && pointsTotal !== Number(teamScore)) {
+          warnings.push(`第 ${side.teamId === match.teamA ? 'A' : 'B'} 队个人得分合计 ${pointsTotal}，球队 ${teamScore}，差 ${Number(teamScore) - pointsTotal} 分待归属`);
+        }
+      }
+
+      await tx.teamMatchStats.set(key, {
+        _id: key,
+        schoolId: ctx.schoolId,
+        association: ctx.association,
+        eventId: event._id,
+        matchId: match._id,
+        teamId: side.teamId,
+        mode,
+        rows,
+        players,
+        integrity,
+        status,
+        // 已发布快照原样保留：审核通过前，对外仍是上一版
+        published: (side.doc && side.doc.published) || null,
+        publishedRevision: Number(side.doc && side.doc.publishedRevision) || 0,
+        publishedBy: side.doc ? side.doc.publishedBy || null : null,
+        publishedAt: side.doc ? side.doc.publishedAt || null : null,
+        revision: current + 1,
+        updatedBy: fresh.actorId,
+        updatedAt: now,
       });
     }
-  }
 
-  return ok({ ok: true, mode, warnings, message: '' });
+    return {
+      ok: true, mode, status, warnings, needReview: published, message: '',
+    };
+  });
+  return ok(result);
 }
 
 /**
@@ -1138,6 +1472,15 @@ async function saveTeamMatchStats(payload = {}, ctx) {
  * 只统计「已发布」的比赛，从 `team_matches` + `team_match_stats` 现算。
  * 多一张赛季汇总表就多一次不一致的机会，而它没有任何写入方需要它——
  * 赛事一年才打几十场，现算的开销可以忽略。
+ *
+ * 【只读已发布快照】
+ * 已发布比赛的统计改动进入待审核，榜单必须继续读 `published` 快照，
+ * 这样「榜上的数字」与「公开页面看到的成绩」永远是同一版。
+ *
+ * 【未记录 ≠ 0】
+ * 每个指标单独记「有值的场次」，一场都没记过就输出 null、页面显示 `—`。
+ * 从前累加器从 0 起、无条件回填，只录得分的球员在篮板上显示 0 次——
+ * 那既不是事实，也会把场均直接拉低。
  */
 async function getTeamEventPlayerStats(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
@@ -1149,29 +1492,31 @@ async function getTeamEventPlayerStats(payload = {}, ctx) {
 
   const matches = (await repo.teamMatches.list())
     .filter(match => match.eventId === event._id && match.status === TEAM_MATCH_STATUS.PUBLISHED);
+  const publishedIds = new Set(matches.map(match => match._id));
   const stats = (await repo.teamMatchStats.list())
-    .filter(row => matches.some(match => match._id === row.matchId) && row.integrity !== TEAM_STAT_INTEGRITY.NONE);
+    .filter(row => publishedIds.has(row.matchId) && row.published);
   const entries = await repo.teamEventEntries.list();
 
   const byPlayer = new Map();
   for (const doc of stats) {
-    const rows = doc.mode === STAT_MODE.DETAILED
-      ? doc.rows
-      : (doc.players || []).map(player => ({ userId: player.userId, ...player }));
+    const snapshot = doc.published;
+    if (!snapshot || snapshot.integrity === TEAM_STAT_INTEGRITY.NONE) continue;
+    const rows = snapshot.mode === STAT_MODE.DETAILED
+      ? snapshot.rows
+      : (snapshot.players || []).map(player => ({ userId: player.userId, ...player }));
     for (const row of rows) {
+      if (!row || !row.userId) continue;
       if (!byPlayer.has(row.userId)) {
-        byPlayer.set(row.userId, {
-          userId: row.userId,
-          games: new Set(),
-          points: 0, rebounds: 0, assists: 0, steals: 0, blocks: 0, turnovers: 0, fouls: 0,
-          hasPoints: false,
-        });
+        const acc = { userId: row.userId, games: new Set(), fields: {} };
+        for (const field of Object.keys(STAT_FIELDS)) acc.fields[field] = { sum: 0, games: new Set() };
+        byPlayer.set(row.userId, acc);
       }
       const acc = byPlayer.get(row.userId);
       acc.games.add(doc.matchId);
       for (const field of Object.keys(STAT_FIELDS)) {
-        if (Number.isInteger(row[field])) acc[field] += row[field];
-        if (field === 'points' && Number.isInteger(row[field])) acc.hasPoints = true;
+        if (!Number.isInteger(row[field])) continue;
+        acc.fields[field].sum += row[field];
+        acc.fields[field].games.add(doc.matchId);
       }
     }
   }
@@ -1188,21 +1533,39 @@ async function getTeamEventPlayerStats(payload = {}, ctx) {
     return entry ? entry.teamId : '';
   };
 
+  /** 数字与展示文本一起下发：页面不写下标取值，也不会把 null 渲染成 0 */
+  const textOf = value => (Number.isInteger(value) ? String(value) : '—');
+  const round1 = value => Math.round(value * 10) / 10;
+
   const players = [...byPlayer.values()]
-    .map(acc => {
-      const games = acc.games.size || 1;
+    .map((acc) => {
       const out = {
-        userId: acc.userId, name: nameOf(acc.userId), teamId: teamOf(acc.userId), games: acc.games.size,
+        userId: acc.userId,
+        name: nameOf(acc.userId),
+        teamId: teamOf(acc.userId),
+        games: acc.games.size,
       };
       for (const field of Object.keys(STAT_FIELDS)) {
-        out[field] = acc.hasPoints || field === 'points' ? acc[field] : acc[field];
+        const cell = acc.fields[field];
+        // 该指标一场都没记过 → null（未记录），不是 0
+        const total = cell.games.size > 0 ? cell.sum : null;
+        out[field] = total;
+        out[`${field}Text`] = textOf(total);
+        // 场均按「该指标有记录的场次」算，不按总场次摊薄
+        out[`${field}PerGame`] = total === null ? null : round1(cell.sum / cell.games.size);
+        out[`${field}PerGameText`] = total === null ? '—' : String(out[`${field}PerGame`]);
       }
-      out.pointsPerGame = Math.round((acc.points / games) * 10) / 10;
-      out.reboundsPerGame = Math.round((acc.rebounds / games) * 10) / 10;
-      out.assistsPerGame = Math.round((acc.assists / games) * 10) / 10;
       return out;
     })
-    .sort((a, b) => (b.points - a.points) || (b.rebounds - a.rebounds) || String(a.userId).localeCompare(String(b.userId)));
+    .sort((a, b) => {
+      // 未记录的排在最后，不参与比较——把 null 当 0 会让「没统计」冒充「没得分」
+      const pointsA = a.points === null ? -1 : a.points;
+      const pointsB = b.points === null ? -1 : b.points;
+      const reboundA = a.rebounds === null ? -1 : a.rebounds;
+      const reboundB = b.rebounds === null ? -1 : b.rebounds;
+      return (pointsB - pointsA) || (reboundB - reboundA)
+        || String(a.userId).localeCompare(String(b.userId));
+    });
 
   return ok({ ok: true, players, matchCount: matches.length, message: '' });
 }
@@ -1222,5 +1585,6 @@ module.exports = {
   settleTeamEvent,
   getTeamMatchStats,
   saveTeamMatchStats,
+  reviewTeamMatchStats,
   getTeamEventPlayerStats,
 };

@@ -1227,6 +1227,27 @@ const TEAM_STAT_INTEGRITY = {
 };
 
 /**
+ * 统计的审核状态。
+ *
+ * 【为什么统计要独立于比赛再走一次审核】
+ * 比赛发布的是「比分」，统计发布的是「谁得了多少分」。已发布比赛的统计如果
+ * 还能直接改，球员榜就绕过了审核——录错一个人的 20 分，榜单立刻变形，而
+ * 页面上看不出这一版有没有人核对过。所以已发布比赛的统计修改只写工作副本
+ * （`pending`），对外仍读 `published` 快照，由管理员单独通过或退回。
+ */
+const TEAM_STAT_STATUS = {
+  DRAFT: 'draft', // 未发布的比赛在录入中：本来就不对外可见
+  PENDING: 'pending', // 已发布比赛的新版本，等管理员审核
+  PUBLISHED: 'published', // 已发布：对外唯一可见的版本
+};
+
+const TEAM_STAT_STATUS_LABEL = {
+  [TEAM_STAT_STATUS.DRAFT]: '录入中',
+  [TEAM_STAT_STATUS.PENDING]: '统计待审核',
+  [TEAM_STAT_STATUS.PUBLISHED]: '统计已发布',
+};
+
+/**
  * 名单人数的边界与默认区间（D22 / D28）。
  *
  * 管理员可在发布时自定义每院最少 / 最多报名人数，默认 4–20；替补计入其中
@@ -1402,6 +1423,8 @@ module.exports = {
   TEAM_MATCH_STATUS,
   TEAM_MATCH_STATUS_LABEL,
   TEAM_STAT_INTEGRITY,
+  TEAM_STAT_STATUS,
+  TEAM_STAT_STATUS_LABEL,
   TIE_STATUS,
   TIE_STATUS_LABEL,
   DEFAULT_TIE_STATUS,

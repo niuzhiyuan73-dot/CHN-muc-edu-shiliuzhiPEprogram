@@ -764,17 +764,23 @@ test('球员数据榜 —— 只算已发布的比赛，按总得分排序', asy
 
   const rows = (await call(rr, 'listTeamMatches', { eventId: rrEvent.eventId })).matches;
   const star = rows[0].teamA;
-  const others = rows[1].teamA;
-  // 第一场发布并录统计，第二场只录比分不发布
+  // 第一场发布，第二场只录比分不发布
   await call(rr, 'recordTeamMatch', { matchId: rows[0].matchId, scoreA: 40, scoreB: 38 });
   await call(rr, 'publishTeamMatch', { matchId: rows[0].matchId, approve: true });
   await call(rr, 'recordTeamMatch', { matchId: rows[1].matchId, scoreA: 50, scoreB: 44 });
   const p1 = (await call(rr, 'getTeamMatchStats', { matchId: rows[0].matchId })).sides
     .find(item => item.teamId === star).players[0];
+  // 比赛已发布后才补统计：这一版是「待审核」，不能直接改榜单
   await call(rr, 'saveTeamMatchStats', {
     matchId: rows[0].matchId, mode: 'detailed',
     rows: [{ period: 1, userId: p1.userId, points: 12, rebounds: 5, assists: 4 }],
   });
+
+  const pendingBoard = await call(rr, 'getTeamEventPlayerStats', { eventId: rrEvent.eventId });
+  assert.equal(pendingBoard.players.length, 0, '统计待审核期间榜单不跟着变');
+
+  const approved = await call(rr, 'reviewTeamMatchStats', { matchId: rows[0].matchId, approve: true });
+  assert.equal(approved.ok, true, approved.message);
 
   const board = await call(rr, 'getTeamEventPlayerStats', { eventId: rrEvent.eventId });
   assert.equal(board.matchCount, 1, '只算已发布的那一场');
@@ -784,6 +790,11 @@ test('球员数据榜 —— 只算已发布的比赛，按总得分排序', asy
   assert.equal(board.players[0].rebounds, 5);
   assert.equal(board.players[0].games, 1);
   assert.equal(board.players[0].pointsPerGame, 12);
+  // 没录过的指标是 null（页面显示 —），不能冒充 0
+  assert.equal(board.players[0].steals, null);
+  assert.equal(board.players[0].stealsText, '—');
+  assert.equal(board.players[0].turnovers, null);
+  assert.equal(board.players[0].blocks, null);
 });
 
 test('并发 —— 版本号对不上的录分、发布与统计都被拒', async () => {

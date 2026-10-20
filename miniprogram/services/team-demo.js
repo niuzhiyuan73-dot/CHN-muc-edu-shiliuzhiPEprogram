@@ -243,6 +243,21 @@ function finishedEvent() {
         rows,
         players: [],
         integrity: 'full',
+        // 演示的这一届已打完并发布：统计带着已发布快照，球员榜直接读得到。
+        // 工作副本与快照此时是同一版——「已发布但不带快照」会让榜单空着。
+        status: 'published',
+        published: {
+          mode: 'detailed',
+          rows,
+          players: [],
+          integrity: 'full',
+          revision: 1,
+          publishedAt: ISO,
+          publishedBy: 'demo_muc_admin',
+        },
+        publishedRevision: 1,
+        publishedBy: 'demo_muc_admin',
+        publishedAt: ISO,
         revision: 1,
         updatedBy: 'demo_muc_admin',
         updatedAt: ISO,

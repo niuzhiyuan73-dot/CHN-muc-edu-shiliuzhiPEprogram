@@ -104,6 +104,7 @@
             <text>{{match.statusLabel}}</text>
             <text wx:if="{{match.overtime}}" class="tag tag-ot">加时</text>
             <text wx:if="{{match.forfeit}}" class="tag tag-ot">{{match.forfeit === 'A' ? match.teamAName : match.teamBName}} 弃权</text>
+            <text wx:if="{{match.statPending}}" class="tag tag-ot">统计待审核</text>
           </view>
           <view class="match-actions">
             <view
@@ -129,7 +130,7 @@
               class="mini"
               data-matchid="{{match.matchId}}"
               bindtap="onOpenStats"
-            >统计</view>
+            >{{match.statPending && match.canPublish ? '审核统计' : '统计'}}</view>
           </view>
         </view>
       </view>
@@ -243,6 +244,13 @@
       <view class="sheet-note">
         空着的格子表示「这场没统计」，不等于 0 分；合计与球队得分不一致时会提示差额。
       </view>
+      <view wx:if="{{statsReview.needReview}}" class="sheet-note">
+        这场已发布：改动会存为待审核版本，协会负责人通过后才影响到球员榜。
+      </view>
+      <view wx:if="{{statsReview.canReview}}" class="sheet-actions">
+        <view class="btn btn-ghost {{statsBusy ? 'is-disabled' : ''}}" data-approve="false" bindtap="onReviewStats">退回新版</view>
+        <view class="btn btn-primary {{statsBusy ? 'is-disabled' : ''}}" data-approve="true" bindtap="onReviewStats">通过并发布</view>
+      </view>
       <view class="sheet-actions">
         <view class="btn btn-ghost" bindtap="onCloseStats">取消</view>
         <view class="btn btn-primary {{statsBusy ? 'is-disabled' : ''}}" bindtap="onSaveStats">保存</view>
@@ -263,12 +271,12 @@
       <view wx:for="{{playerStats}}" wx:key="userId" class="table-row">
         <view class="col-name">{{item.name}}</view>
         <view class="col">{{item.games}}</view>
-        <view class="col">{{item.points}}</view>
-        <view class="col">{{item.pointsPerGame}}</view>
-        <view class="col">{{item.rebounds}}</view>
-        <view class="col">{{item.assists}}</view>
+        <view class="col">{{item.pointsText}}</view>
+        <view class="col">{{item.pointsPerGameText}}</view>
+        <view class="col">{{item.reboundsText}}</view>
+        <view class="col">{{item.assistsText}}</view>
       </view>
-      <view class="hint-inline">只统计已发布的比赛；没录的指标不计入。</view>
+      <view class="hint-inline">只统计已发布的比赛；没录的指标显示「—」，不计入场均。</view>
     </view>
   </block>
 </view>

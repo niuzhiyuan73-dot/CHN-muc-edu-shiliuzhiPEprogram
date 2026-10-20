@@ -587,3 +587,109 @@ test('球员数据榜 —— 拉失败只留一句提示，不影响页面其他
   assert.match(page.data.playerStatsError, /赛事不存在/);
   assert.equal(page.data.error, '', '球员榜失败不该让整页报错');
 }));
+
+/* ============================================================
+ * P0：页面把版本号带上，统计改动能走审核
+ * ============================================================ */
+
+test('录分与发布 —— 都把赛程里拿到的版本号带回服务端', () => withApi({
+  getTeamEvent: () => detailFixture({
+    matches: [matchOf(1, 0, { status: 'reviewing', statusLabel: '待审核', revision: 3, scoreA: 86, scoreB: 80, scoreText: '86 : 80' })],
+  }),
+  recordTeamMatch: () => ({ ok: true, warnings: [] }),
+  publishTeamMatch: () => ({ ok: true }),
+}, async (calls) => {
+  const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
+  await page.onLoad({ eventId: 'tev_1' });
+
+  page.onOpenRecord({ currentTarget: { dataset: { matchid: 'x_tev_1_r1_main_0' } } });
+  page.onInputScore({ currentTarget: { dataset: { side: 'A' } }, detail: { value: '88' } });
+  page.onInputScore({ currentTarget: { dataset: { side: 'B' } }, detail: { value: '80' } });
+  await page.onSubmitScore();
+
+  const recorded = calls.find(call => call[0] === 'recordTeamMatch');
+  assert.equal(recorded[1].expectRevision, 3, '没有版本号，并发保护就是空转');
+
+  await page.onPublish({ currentTarget: { dataset: { matchid: 'x_tev_1_r1_main_0' } } });
+  const published = calls.find(call => call[0] === 'publishTeamMatch');
+  assert.equal(published[1].expectRevision, 3, '发布同样要带版本号');
+}));
+
+test('统计面板 —— 已发布比赛的保存提示「等审核」，并给出审核按钮', () => withApi({
+  getTeamEvent: () => detailFixture(),
+  getTeamMatchStats: () => statsPanel({
+    needReview: true,
+    canReview: true,
+    sides: [
+      {
+        teamId: 'tm_a', teamName: '热浪队', rows: null, revision: 2, pendingReview: true,
+        players: [1, 2].map(index => ({
+          userId: `ap${index}`, name: `a 球员${index}`,
+          points: null, rebounds: null, assists: null, steals: null, blocks: null, turnovers: null, fouls: null,
+        })),
+      },
+      {
+        teamId: 'tm_b', teamName: '闪电队', rows: null, revision: 2, pendingReview: true,
+        players: [],
+      },
+    ],
+  }),
+  saveTeamMatchStats: () => ({ ok: true, warnings: [], needReview: true }),
+  reviewTeamMatchStats: () => ({ ok: true, approved: true, reviewed: 2 }),
+}, async (calls) => {
+  const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
+  await page.onLoad({ eventId: 'tev_1' });
+  await page.onOpenStats({ currentTarget: { dataset: { matchid: 'x_tev_1_r1_main_0' } } });
+
+  assert.equal(page.data.statsReview.canReview, true, '管理员要能在面板里审核');
+  assert.equal(page.data.statsReview.pending, true);
+  assert.equal(page.data.statsEditing.needReview, true);
+
+  const target = page.data.statRows.find(row => row.userId === 'ap1');
+  page.onInputStat({ currentTarget: { dataset: { key: target.key, field: 'points' } }, detail: { value: '9' } });
+  await page.onSaveStats();
+
+  const saved = calls.find(call => call[0] === 'saveTeamMatchStats');
+  assert.equal(saved[1].expectRevision, 2);
+  assert.match(page.data.notice, /等协会负责人审核/);
+}));
+
+test('统计面板 —— 审核通过/退回接的是独立接口，不是改比分', () => withApi({
+  getTeamEvent: () => detailFixture(),
+  getTeamMatchStats: () => statsPanel({ needReview: true, canReview: true }),
+  reviewTeamMatchStats: () => ({ ok: true, approved: true, reviewed: 2 }),
+}, async (calls) => {
+  const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
+  await page.onLoad({ eventId: 'tev_1' });
+  await page.onOpenStats({ currentTarget: { dataset: { matchid: 'x_tev_1_r1_main_0' } } });
+
+  await page.onReviewStats({ currentTarget: { dataset: { approve: 'true' } } });
+  const approved = calls.find(call => call[0] === 'reviewTeamMatchStats');
+  assert.equal(approved[1].matchId, 'x_tev_1_r1_main_0');
+  assert.equal(approved[1].approve, true);
+  assert.match(page.data.notice, /榜单已更新/);
+
+  await page.onOpenStats({ currentTarget: { dataset: { matchid: 'x_tev_1_r1_main_0' } } });
+  await page.onReviewStats({ currentTarget: { dataset: { approve: 'false' } } });
+  const rejected = calls.filter(call => call[0] === 'reviewTeamMatchStats')[1];
+  assert.equal(rejected[1].approve, false);
+  assert.match(page.data.notice, /退回/);
+}));
+
+test('球员数据榜 —— 模板读服务端给的展示文本，不再把 null 渲染成 0', () => withApi({
+  getTeamEvent: () => detailFixture(),
+  getTeamEventPlayerStats: () => ({
+    ok: true,
+    players: [{
+      userId: 'ap1', name: 'a 球员1', games: 1,
+      points: 12, pointsText: '12', pointsPerGame: 12, pointsPerGameText: '12',
+      rebounds: null, reboundsText: '—', reboundsPerGame: null, assists: null, assistsText: '—',
+    }],
+  }),
+}, async () => {
+  const page = instantiate(loadPage('team-event-detail/team-event-detail.js'));
+  await page.onLoad({ eventId: 'tev_1' });
+
+  assert.equal(page.data.playerStats[0].reboundsText, '—');
+  assert.equal(page.data.playerStats[0].pointsText, '12');
+}));

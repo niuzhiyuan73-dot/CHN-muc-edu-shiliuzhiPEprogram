@@ -95,6 +95,8 @@ Page({
     /** 按节分组的渲染结构：[{ period, rows: [] }]；period 为 0 表示基础模式 */
     statGroups: [],
     statsBusy: false,
+    /** 统计审核条：{ matchId, canReview, needReview, pending } */
+    statsReview: null,
     /** 统计指标列（顺序即页面列顺序） */
     statFields: STAT_FIELDS,
     /** 球员数据榜 */
@@ -254,7 +256,10 @@ Page({
         title: `${result.match.teamAName} vs ${result.match.teamBName}`,
         mode: result.statPolicy,
         periods: Number(result.periods) || 4,
+        // 版本号取两侧工作副本的较大值：两侧总是一起写，正常情况下相等。
+        // 保存时带上它，服务端据此判断「打开面板之后有没有人改过」。
         revision: (result.sides || []).reduce((max, side) => Math.max(max, side.revision || 0), 0),
+        needReview: result.needReview === true,
       };
       const rows = [];
       (result.sides || []).forEach((side, sideIndex) => {
@@ -290,7 +295,17 @@ Page({
           });
         }
       });
-      this.setData({ statsEditing: editing, statRows: rows, statGroups: groupStatRows(rows, editing.mode) });
+      this.setData({
+        statsEditing: editing,
+        statRows: rows,
+        statGroups: groupStatRows(rows, editing.mode),
+        statsReview: {
+          matchId: matchid,
+          canReview: result.canReview === true,
+          needReview: result.needReview === true,
+          pending: (result.sides || []).some(side => side.pendingReview === true),
+        },
+      });
       return undefined;
     } catch (err) {
       console.error('[team-event-detail] 统计加载失败', err);
@@ -300,7 +315,9 @@ Page({
   },
 
   onCloseStats() {
-    this.setData({ statsEditing: null, statRows: [], statGroups: [], statsBusy: false });
+    this.setData({
+      statsEditing: null, statRows: [], statGroups: [], statsBusy: false, statsReview: null,
+    });
   },
 
   /** 改一个格子。整张平表重建，不依赖 setData 的数组下标路径 */
@@ -346,14 +363,21 @@ Page({
         return undefined;
       }
       const warnings = result.warnings || [];
+      // 已发布比赛的统计改动只是「待审核」版本：说清楚它还没对外生效，
+      // 否则保存成功会让人以为榜单已经变了
+      const doneText = result.needReview === true
+        ? '统计已保存，等协会负责人审核后对外生效'
+        : '统计已保存';
       this.setData({
         statsBusy: false,
         statsEditing: null,
         statRows: [],
         statGroups: [],
-        notice: warnings.length > 0 ? warnings.join('；') : '统计已保存',
+        statsReview: null,
+        notice: warnings.length > 0 ? warnings.join('；') : doneText,
         noticeError: false,
       });
+      await this.refresh();
       return undefined;
     } catch (err) {
       console.error('[team-event-detail] 统计保存失败', err);
@@ -362,9 +386,46 @@ Page({
     }
   },
 
-  /** 球员数据榜：赛事页底部一块，只算已发布的比赛 */
-  async onLoadPlayerStats() {
+  /** 通过 / 退回统计的新版本（只有协会管理员能看到这两个按钮） */
+  async onReviewStats(event) {
+    const review = this.data.statsReview;
+    if (!review || this.data.statsBusy) return undefined;
+    const approve = event.currentTarget.dataset.approve === true
+      || event.currentTarget.dataset.approve === 'true';
+    this.setData({ statsBusy: true, notice: '', noticeError: false });
     try {
+      const result = await space.forScope(this.scope).reviewTeamMatchStats({
+        matchId: review.matchId,
+        approve,
+      });
+      if (!result || result.ok !== true) {
+        this.setData({
+          statsBusy: false,
+          notice: (result && result.message) || '审核失败',
+          noticeError: true,
+        });
+        return undefined;
+      }
+      this.setData({
+        statsBusy: false,
+        statsEditing: null,
+        statRows: [],
+        statGroups: [],
+        statsReview: null,
+        notice: approve ? '统计已通过，榜单已更新' : '统计已退回，对外仍是上一版',
+        noticeError: false,
+      });
+      await this.refresh();
+      return undefined;
+    } catch (err) {
+      console.error('[team-event-detail] 统计审核失败', err);
+      this.setData({ statsBusy: false, notice: '审核失败，请稍后重试', noticeError: true });
+      return undefined;
+    }
+  },
+
+  /** 球员数据榜：赛事页底部一块，只算已发布的比赛 */
+  async onLoadPlayerStats() {    try {
       const result = await space.forScope(this.scope).getTeamEventPlayerStats({
         eventId: this.data.eventId,
       });
@@ -443,6 +504,8 @@ Page({
       scoreB: this.data.scoreB,
       overtime: this.data.overtime,
       forfeit,
+      // 版本号来自打开浮层时的赛程快照：期间若有人先提交，服务端会拒绝而不是覆盖
+      expectRevision: this.data.recording.revision,
     }, '已提交，等协会负责人发布');
     if (!result || result.ok !== true) return result;
     this.setData({ recording: null, scoreA: '', scoreB: '', overtime: false });
@@ -454,13 +517,29 @@ Page({
     return result;
   },
 
+  /** 在已加载的赛程里按编号找一场：发布要带它的版本号，不能只带编号 */
+  matchOf(matchId) {
+    let target = null;
+    this.data.rounds.forEach((bucket) => {
+      const found = bucket.matches.find(item => item.matchId === matchId);
+      if (found) target = found;
+    });
+    return target;
+  },
+
   onPublish(event) {
     const { matchid } = event.currentTarget.dataset;
-    return this.run('publishTeamMatch', { matchId: matchid, approve: true }, '成绩已发布');
+    const target = this.matchOf(matchid);
+    return this.run('publishTeamMatch', {
+      matchId: matchid, approve: true, expectRevision: target && target.revision,
+    }, '成绩已发布');
   },
 
   onRejectScore(event) {
     const { matchid } = event.currentTarget.dataset;
-    return this.run('publishTeamMatch', { matchId: matchid, approve: false }, '已驳回，请让队长重新录');
+    const target = this.matchOf(matchid);
+    return this.run('publishTeamMatch', {
+      matchId: matchid, approve: false, expectRevision: target && target.revision,
+    }, '已驳回，请让队长重新录');
   },
 });
