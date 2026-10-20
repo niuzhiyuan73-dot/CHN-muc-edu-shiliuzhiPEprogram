@@ -57,14 +57,65 @@ function toNumber(value) {
 }
 
 /**
+ * 展示时区固定为东八区（学校所在地）。
+ *
+ * 【为什么不能直接用本地时区（2026-10-20 只读审计）】
+ * 这个模块**同时在两端跑**：页面里用它渲染，云函数里也用它生成 `*Text`
+ * 字段（公告发布时间、赛事开赛时间、报名提交时间、入会时间……共 5 处，
+ * 见 cloudfunctions/data/lib/services 下的 announcement / event /
+ * college-entry / college-event / member-review）。
+ *
+ * 而云函数的运行环境时区是 **UTC+0**，不是 UTC+8（微信官方「注意事项 & FAQ」
+ * 明写：如需 UTC+8 要自行配 TZ 环境变量）。于是同一条数据：
+ *
+ *   本地（东八区）：2026-10-24T01:00:00Z → 「10月24日 09:00」
+ *   云端（UTC）  ：同一时间          → 「10月24日 01:00」
+ *
+ * 整整差 8 小时，而且本地测试永远发现不了——测试也跑在东八区的机器上。
+ *
+ * 【修法：把「墙上时钟」算出来，再用 UTC 取字段】
+ * 先把时间点平移到东八区，之后一律用 getUTC* 读。这样结果只取决于时间点
+ * 本身，与运行环境时区无关：本地、云函数、UTC 的 CI 机器算出来都一样。
+ *
+ * 【语义说明】
+ * 赛事、报名、公告的时间都以学校所在地（东八区）为准。海外用户看到的是
+ * 北京时间而不是当地时间，这是刻意的选择——比分与赛程要和学校对得上。
+ */
+const DISPLAY_OFFSET_MS = 8 * 60 * 60 * 1000;
+
+/**
+ * 把时间值换算成「东八区的墙上时钟」。
+ * 返回的 Date 请一律用 getUTC* 读取，不要用 get*（那又会回到运行环境时区）。
+ *
+ * @param {Date|string|number} value
+ * @returns {Date|null}
+ */
+function toDisplayClock(value) {
+  const date = toDate(value);
+  return date ? new Date(date.getTime() + DISPLAY_OFFSET_MS) : null;
+}
+
+/**
+ * 展示用的年份（东八区）。云端按「哪一年发起」筛选时用，避免用
+ * getFullYear() 落在服务器时区上——那样跨年前后 8 小时内的记录会归错年。
+ *
+ * @param {Date|string|number} value
+ * @returns {number|null}
+ */
+function displayYearOf(value) {
+  const clock = toDisplayClock(value);
+  return clock ? clock.getUTCFullYear() : null;
+}
+
+/**
  * 日期：9月10日
  * @param {Date|string|number} value
  * @returns {string}
  */
 function formatDate(value) {
-  const date = toDate(value);
-  if (!date) return PLACEHOLDER;
-  return `${date.getMonth() + 1}月${date.getDate()}日`;
+  const clock = toDisplayClock(value);
+  if (!clock) return PLACEHOLDER;
+  return `${clock.getUTCMonth() + 1}月${clock.getUTCDate()}日`;
 }
 
 /**
@@ -73,9 +124,10 @@ function formatDate(value) {
  * @returns {string}
  */
 function formatDateTime(value) {
-  const date = toDate(value);
-  if (!date) return PLACEHOLDER;
-  return `${formatDate(date)} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+  const clock = toDisplayClock(value);
+  if (!clock) return PLACEHOLDER;
+  return `${clock.getUTCMonth() + 1}月${clock.getUTCDate()}日 `
+    + `${pad2(clock.getUTCHours())}:${pad2(clock.getUTCMinutes())}`;
 }
 
 /**
@@ -84,9 +136,9 @@ function formatDateTime(value) {
  * @returns {string}
  */
 function formatTime(value) {
-  const date = toDate(value);
-  if (!date) return PLACEHOLDER;
-  return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+  const clock = toDisplayClock(value);
+  if (!clock) return PLACEHOLDER;
+  return `${pad2(clock.getUTCHours())}:${pad2(clock.getUTCMinutes())}`;
 }
 
 /**
@@ -212,6 +264,8 @@ module.exports = {
   PLACEHOLDER,
   toDate,
   toNumber,
+  toDisplayClock,
+  displayYearOf,
   formatDate,
   formatDateTime,
   formatTime,

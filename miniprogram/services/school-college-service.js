@@ -34,6 +34,8 @@
  */
 
 const { buildSchoolContext } = require('./school-context.js');
+// 展示与年份判定统一按东八区（云函数跑在 UTC）
+const { displayYearOf } = require('../utils/format.js');
 const { canReadAssociationSpace } = require('./association-space-permission.js');
 // 学院目录（编号 ↔ 全名）与旧栈「账号」的推导收在 school-actor，两套栈只有一份口径。
 const { buildCollegeDirectory, legacyActorOf } = require('./school-actor.js');
@@ -252,8 +254,9 @@ async function listCollegeEvents(payload = {}, ctx) {
     const year = Number(payload.year);
     if (Number.isInteger(year)) {
       rows = rows.filter(row => {
-        const at = Date.parse(row.publishTime || row.updatedAt || '');
-        return Number.isFinite(at) && new Date(at).getFullYear() === year;
+        // 年份按东八区判（displayYearOf），不能用 getFullYear()：云函数跑在
+        // UTC，跨年前后 8 小时内发起的赛事会被归到上一年，与本地结果不一致。
+        return displayYearOf(row.publishTime || row.updatedAt) === year;
       });
     }
   }

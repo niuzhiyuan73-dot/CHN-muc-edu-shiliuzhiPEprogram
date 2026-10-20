@@ -30,6 +30,8 @@ const {
   BRACKET_STAGE, EVENT_BRONZE_MODE, TEAM_STAT_INTEGRITY, TEAM_STAT_STATUS,
 } = require('../utils/constants.js');
 const { EVENT_FORMAT } = require('../utils/constants.js');
+// 展示与年份判定统一按东八区（云函数跑在 UTC）
+const { displayYearOf } = require('../utils/format.js');
 const { teamSportStrategyFor } = require('../utils/team-sport-rules.js');
 const { sportTypeOf } = require('../utils/associations.js');
 const { drawBracket } = require('../utils/bracket.js');
@@ -300,8 +302,9 @@ async function listTeamEvents(payload = {}, ctx) {
       .some(value => String(value || '').toLowerCase().includes(keyword)))
     .filter((event) => {
       if (!yearFilter) return true;
-      const at = Date.parse(event.createdAt || '');
-      return Number.isFinite(at) && new Date(at).getFullYear() === yearFilter;
+      // 年份按东八区判（displayYearOf），不用 getFullYear()：云函数是 UTC，
+      // 跨年前后 8 小时内建的赛事会归错年，本地与云端结果不一致。
+      return displayYearOf(event.createdAt) === yearFilter;
     })
     .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
     .map((event) => {
