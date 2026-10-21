@@ -1,4 +1,6 @@
 {
-  "usingComponents": {},
+  "usingComponents": {
+    "privacy-gate": "/components/privacy-gate/privacy-gate"
+  },
   "navigationBarTitleText": "编辑资料"
 }

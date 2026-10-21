@@ -1,0 +1,30 @@
+<!--
+  隐私授权弹窗
+  ============================================================
+  只有一处需要留神：「同意」按钮的 open-type 不能改。
+  写成 bindtap 一样能触发点击，但微信不认那次授权，接口照样失败。
+  ============================================================
+-->
+<view wx:if="{{show}}" class="privacy-mask" catchtouchmove="noop" catchtap="noop">
+  <view class="privacy-sheet">
+    <view class="privacy-title">隐私保护指引</view>
+
+    <view class="privacy-body">
+      <text>在你使用头像与昵称功能前，请阅读并同意《隐私保护指引》。\n\n</text>
+      <text>我们会收集你的昵称、头像，用于会员注册、个人主页与排行榜展示，便于同协会成员相互识别。除此之外不会用于其他用途，也不会提供给第三方。\n\n</text>
+      <text>你可以随时在小程序右上角「···」→「设置」中撤回授权。</text>
+    </view>
+
+    <view class="privacy-actions">
+      <button class="privacy-btn privacy-btn-ghost" bindtap="onDisagree">不同意</button>
+      <button
+        id="privacy-agree-btn"
+        class="privacy-btn privacy-btn-primary"
+        open-type="agreePrivacyAuthorization"
+        bindagreeprivacyauthorization="onAgree"
+      >同意</button>
+    </view>
+
+    <view class="privacy-more" bindtap="onOpenContract">查看完整《隐私保护指引》</view>
+  </view>
+</view>

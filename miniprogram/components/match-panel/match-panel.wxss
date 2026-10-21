@@ -64,6 +64,18 @@
   padding-bottom: var(--space-sm);
 }
 
+/* 加载更多：做成可点的浅色块，与上面的说明文字区分开，
+   免得用户以为它只是又一句灰字 */
+.more-btn {
+  margin: var(--space-sm) 0 var(--space-md);
+  padding: var(--space-sm) 0;
+  text-align: center;
+  font-size: var(--font-sm);
+  color: var(--color-primary);
+  background: var(--color-card);
+  border-radius: var(--radius-md);
+}
+
 /* 访客空态里的登录入口 */
 .guest-btn {
   margin-top: var(--space-md);

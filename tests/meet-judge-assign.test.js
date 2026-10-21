@@ -178,10 +178,9 @@ test('按日期范围批量指派', async () => {
   assert.equal(byDate.data.created, 3);
 });
 
-test('多人多场拆多事务也能全部完成（写预算 150）', async () => {
+test('多人多场按读写总预算拆事务也能全部完成', async () => {
   const world = await makeWorld();
-  // 5 人 × 3 场：每批场次上限 = floor(150 / 6) = 25，不会触发分批；
-  // 这里改为构造 40 个场次来触发分批（直接写库，模拟大项目）
+  // 构造 40 个场次触发分批（直接写库，模拟大项目）。
   const many = [];
   for (let i = 1; i <= 40; i += 1) {
     const key = meetSessionKey(world.meetId, world.eventKey, 'final', i);
@@ -213,7 +212,7 @@ test('多人多场拆多事务也能全部完成（写预算 150）', async () =
   });
 
   // 循环里 index=1 与 makeWorld 已建的决赛是同一个主键，所以实际新增 39 个，
-  // 总计 2 预赛 + 40 个 final 位 = 42 场。每批 floor(150/6)=25 场 → 2 批。
+  // 总计 2 预赛 + 40 个 final 位 = 42 场。
   const expected = 42;
   const result = await schedule.assignMeetJudges(
     { judgeIds: judges, eventKey: world.eventKey }, world.admin);

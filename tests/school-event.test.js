@@ -237,7 +237,7 @@ test('报名：名额满了就拒，取消报名释放名额', async () => {
   assert.equal(resub.event.signupCount, 1);
 });
 
-test('展示人数以报名台账为准：主记录计数与台账分叉时，列表与详情都报真值', async () => {
+test('历史计数分叉：详情按台账展示，列表按汇总并保留本人报名状态', async () => {
   const repo = fixture();
   const event = await publish(repo, 'r_count', { quota: 8 });
   await call(repo, 'signUpSchoolEvent', { eventId: event.eventId }, { actor: 'demo_muc_member' });
@@ -256,8 +256,8 @@ test('展示人数以报名台账为准：主记录计数与台账分叉时，�
 
   const list = await call(repo, 'listSchoolEvents', {});
   const row = list.events.find(item => item.eventId === event.eventId);
-  assert.equal(row.signupCount, 2);
-  assert.equal(row.quotaText, '2/8 人', '列表行上的「几人」同样以台账为准');
+  assert.equal(row.signupCount, 0, '列表不再读取台账，历史计数偏差需要校正汇总');
+  assert.equal(row.quotaText, '0/8 人');
   assert.equal(row.isSignup, true);
 
   // 取消后展示回落：台账里只剩一个有效报名
@@ -553,4 +553,85 @@ test('B6 G05：报名后退组保留该报名；取消后重报失败', async ()
     { actor: 'demo_muc_member' });
   assert.equal(retry.ok, false);
   assert.match(retry.message, /指定小组成员/);
+});
+
+/* ============================================================
+ * 读放大：列表页不许查询报名集合，只点读当前页本人的记录（2026-10-21）
+ * ============================================================
+ * 列表要统计「每场报了几个人」，原来是把整个 eventSignups 翻页读一遍再内存聚合。
+ * 云端每翻一页一次 RPC，赛事与报名一多，打开一次列表就是十几页，叠上每日读
+ * 配额会撑不住。现在只读赛事主记录上的 signupCount（写端在报名 / 取消时维护）。
+ *
+ * 这条用例把「列表页不得读报名表」钉死：把 forScope 出来的 eventSignups.list
+ * 换成会抛错的桩，列表仍然要跑通、人数仍然要对。
+ * ============================================================ */
+test('赛事列表不查询报名集合，仍显示汇总人数及本人报名状态', async () => {
+  const repo = fixture();
+  const created = await call(repo, 'publishSchoolEvent', valid({ requestId: 'list_no_signups' }));
+  assert.equal(created.ok, true, created.message);
+  const eventId = created.event.eventId;
+  for (const actor of ['demo_muc_member', 'demo_muc_admin']) {
+    const r = await call(repo, 'signUpSchoolEvent', { eventId }, { actor });
+    assert.equal(r.ok, true, r.message);
+  }
+
+  // 禁止集合查询，并记录点读，确保不会换成逐场拉全体名单。
+  const originalForScope = repo.forScope;
+  const reads = [];
+  repo.forScope = input => {
+    const scoped = originalForScope(input);
+    scoped.eventSignups = {
+      ...scoped.eventSignups,
+      list: () => { throw new Error('列表页不应读取 eventSignups 全表'); },
+      listByEvent: () => { throw new Error('列表页不应查询单场报名名单'); },
+      getById: id => { reads.push(id); return originalForScope(input).eventSignups.getById(id); },
+    };
+    return scoped;
+  };
+
+  let listed;
+  try {
+    listed = await call(repo, 'listSchoolEvents', { limit: 50 });
+  } finally {
+    repo.forScope = originalForScope;
+  }
+
+  assert.equal(listed.ok, true);
+  const row = listed.events.find(item => item.eventId === eventId);
+  assert.ok(row, '刚发布的赛事应当在列表里');
+  assert.equal(row.signupCount, 2, '人数应来自赛事主记录的计数器');
+  assert.equal(row.mySignup.status, SIGNUP_STATUS.SIGNED);
+  assert.equal(reads.length, listed.events.length, '只点读当前页本人的报名记录');
+});
+
+test('赛事列表仅点读翻页后的本人报名，取消和未报名状态不丢失', async () => {
+  const repo = fixture();
+  const eventIds = [];
+  for (let i = 0; i < 4; i += 1) {
+    const event = await publish(repo, `mine_page_${i}`);
+    eventIds.push(event.eventId);
+    if (i < 3) await call(repo, 'signUpSchoolEvent', { eventId: event.eventId });
+  }
+  await call(repo, 'cancelSchoolEventSignup', { eventId: eventIds[1] });
+  const originalForScope = repo.forScope;
+  const reads = [];
+  repo.forScope = input => {
+    const scoped = originalForScope(input);
+    const getById = scoped.eventSignups.getById;
+    scoped.eventSignups.getById = id => { reads.push(id); return getById(id); };
+    scoped.eventSignups.list = scoped.eventSignups.listByEvent = () => {
+      throw new Error('列表不能查询报名集合');
+    };
+    return scoped;
+  };
+  const page = await call(repo, 'listSchoolEvents', { offset: 1, limit: 2 });
+  assert.equal(page.events.length, 2);
+  assert.deepEqual(reads, page.events.map(row => schoolEventSignupKey(row.eventId, 'demo_muc_admin',
+    { schoolId: 'muc', association: 'pkb' })));
+  const all = await call(repo, 'listSchoolEvents', { limit: 50 });
+  const byId = new Map(all.events.map(row => [row.eventId, row]));
+  assert.equal(byId.get(eventIds[0]).mySignup.status, SIGNUP_STATUS.SIGNED);
+  assert.equal(byId.get(eventIds[1]).mySignup.status, SIGNUP_STATUS.CANCELED);
+  assert.equal(byId.get(eventIds[1]).signupCount, 0);
+  assert.equal(byId.get(eventIds[3]).mySignup, null);
 });

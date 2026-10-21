@@ -397,12 +397,17 @@ Page({
       roster: chosen.map(row => ({ userId: row.userId, no: row.noText })),
     }, '已提交报名，等协会负责人审核');
     if (!result || result.ok !== true) return result;
-    this.setData({ entryEditing: null });
+    // 关面板 + 提示合并成一次 setData。分支里只覆盖「有话说」的情形，
+    // 没有命中时不碰 notice，保持原来「不主动清空旧提示」的行为
+    const patch = { entryEditing: null };
     if (result.resubmitted === true) {
-      this.setData({ notice: '名单已更新，需要协会负责人重新审核', noticeError: false });
+      patch.notice = '名单已更新，需要协会负责人重新审核';
+      patch.noticeError = false;
     } else if (Number(result.rosterCount) > 0) {
-      this.setData({ notice: `已报名 ${result.rosterCount} 人，等协会负责人审核`, noticeError: false });
+      patch.notice = `已报名 ${result.rosterCount} 人，等协会负责人审核`;
+      patch.noticeError = false;
     }
+    this.setData(patch);
     return result;
   },
 
@@ -863,18 +868,22 @@ Page({
     if (this.data.scheduleBusy) return;
     const field = event.currentTarget.dataset.field;
     if (!field) return;
-    this.setData({ [`scheduleEditing.${field}`]: event.detail.value });
-    if (this.data.isFootball) this.setData({ 'scheduleEditing.requestId': `fb_schedule_${Date.now()}_${Math.random().toString(36).slice(2, 9)}` });
+    // 字段值与足球的幂等键合并成一次 setData：两次写的是同一个对象的两条路径，
+    // 分两次发就是白多一趟跨线程通信
+    const patch = { [`scheduleEditing.${field}`]: event.detail.value };
+    if (this.data.isFootball) patch['scheduleEditing.requestId'] = `fb_schedule_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    this.setData(patch);
   },
 
   onPickSchedulePerson(event) {
     if (this.data.scheduleBusy) return;
     const role = event.currentTarget.dataset.role;
     const index = Number(event.detail.value) || 0;
-    this.setData(role === 'referee'
+    const patch = role === 'referee'
       ? { 'scheduleEditing.refereeIndex': index }
-      : { 'scheduleEditing.recorderIndex': index });
-    if (this.data.isFootball) this.setData({ 'scheduleEditing.requestId': `fb_schedule_${Date.now()}_${Math.random().toString(36).slice(2, 9)}` });
+      : { 'scheduleEditing.recorderIndex': index };
+    if (this.data.isFootball) patch['scheduleEditing.requestId'] = `fb_schedule_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    this.setData(patch);
   },
 
   async onSubmitSchedule() {
@@ -942,8 +951,9 @@ Page({
 
   onInputShift(event) {
     if (this.data.scheduleBusy) return;
-    this.setData({ 'shiftEditing.minutes': event.detail.value });
-    if (this.data.isFootball) this.setData({ 'shiftEditing.requestId': `fb_shift_${Date.now()}_${Math.random().toString(36).slice(2, 9)}` });
+    const patch = { 'shiftEditing.minutes': event.detail.value };
+    if (this.data.isFootball) patch['shiftEditing.requestId'] = `fb_shift_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    this.setData(patch);
   },
 
   async onSubmitShift() {

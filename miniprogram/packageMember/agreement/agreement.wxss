@@ -1,0 +1,69 @@
+/**
+ * 用户协议页样式
+ * ============================================================
+ * 阅读型页面，只求字读得清、段落分得开。不用卡片阴影，靠间距分节。
+ * 颜色一律走全局变量，与其余页面一致。
+ * ============================================================
+ */
+
+.doc {
+  min-height: 100vh;
+  box-sizing: border-box;
+  padding: var(--space-lg, 32rpx) var(--space-md, 24rpx);
+  background: var(--color-bg, #f5f6f8);
+}
+
+.doc-head {
+  padding: 0 var(--space-sm, 16rpx) var(--space-lg, 32rpx);
+}
+
+.doc-title {
+  font-size: var(--font-lg, 36rpx);
+  font-weight: 600;
+  color: var(--color-text, #1f2329);
+  line-height: 1.4;
+}
+
+.doc-meta {
+  margin-top: var(--space-xs, 8rpx);
+  font-size: var(--font-xs, 22rpx);
+  color: var(--color-text-tertiary, #9ca3af);
+}
+
+.doc-card {
+  background: var(--color-card, #ffffff);
+  border-radius: var(--radius-md, 16rpx);
+  padding: var(--space-lg, 32rpx);
+  margin-bottom: var(--space-md, 24rpx);
+}
+
+.doc-h {
+  font-size: var(--font-md, 30rpx);
+  font-weight: 600;
+  color: var(--color-text, #1f2329);
+  margin-bottom: var(--space-sm, 16rpx);
+}
+
+.doc-p {
+  font-size: var(--font-sm, 26rpx);
+  line-height: 1.8;
+  color: var(--color-text-secondary, #6b7280);
+  margin-bottom: var(--space-sm, 16rpx);
+}
+
+/* 最后一段不留尾巴，卡片底部的 padding 已经够了 */
+.doc-p:last-child {
+  margin-bottom: 0;
+}
+
+.doc-link {
+  color: var(--color-primary, #b23a2e);
+}
+
+.doc-foot {
+  padding: var(--space-lg, 32rpx) var(--space-sm, 16rpx) var(--space-xl, 48rpx);
+  font-size: var(--font-xs, 22rpx);
+  line-height: 1.7;
+  color: var(--color-text-tertiary, #9ca3af);
+  text-align: center;
+}

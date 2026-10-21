@@ -1,7 +1,7 @@
 {
   "description": "中央民族大学石榴籽体育管理小程序",
   "projectname": "minzu-pickleball",
-  "appid": "wxf7def9ae26dda811",
+  "appid": "wxedc0e3a4f08445df",
   "compileType": "miniprogram",
   "miniprogramRoot": "miniprogram/",
   "cloudfunctionRoot": "cloudfunctions/",
@@ -11,7 +11,7 @@
     "es6": true,
     "enhance": true,
     "postcss": true,
-    "minified": false,
+    "minified": true,
     "newFeature": true,
     "coverView": true,
     "nodeModules": false,
@@ -20,7 +20,7 @@
     "scopeDataCheck": false,
     "checkInvalidKey": true,
     "checkSiteMap": true,
-    "uploadWithSourceMap": true,
+    "uploadWithSourceMap": false,
     "babelSetting": {
       "ignore": [],
       "disablePlugins": [],
@@ -39,7 +39,7 @@
     "swc": false,
     "disableSWC": true,
     "ignoreDevUnusedFiles": false,
-    "ignoreUploadUnusedFiles": false
+    "ignoreUploadUnusedFiles": true
   },
   "condition": {
     "miniprogram": {
@@ -49,7 +49,12 @@
   "simulatorPluginLibVersion": {},
   "packOptions": {
     "ignore": [],
-    "include": []
+    "include": [
+      {
+        "value": "assets",
+        "type": "folder"
+      }
+    ]
   },
   "editorSetting": {}
 }

@@ -1,0 +1,67 @@
+<view class="doc">
+  <view class="doc-head">
+    <view class="doc-title">石榴籽体育管理小程序用户协议</view>
+    <view class="doc-meta">更新日期：{{updatedAt}}</view>
+  </view>
+
+  <view class="doc-card">
+    <view class="doc-h">一、协议的范围</view>
+    <view class="doc-p">本协议是你与本小程序运营方之间就使用「石榴籽体育管理」小程序（以下简称「本小程序」）所订立的约定。你开始使用本小程序，即视为已阅读并同意本协议全部内容。</view>
+    <view class="doc-p">本小程序面向校内师生，用于体育协会的会员管理、赛事组织、成绩与等级分记录。</view>
+  </view>
+
+  <view class="doc-card">
+    <view class="doc-h">二、账号与身份</view>
+    <view class="doc-p">1. 本小程序通过微信授权登录识别你的身份，不另行设置密码。请妥善保管你的微信账号，因账号被他人使用产生的后果由你自行承担。</view>
+    <view class="doc-p">2. 为完成会员身份核验，你需要提交姓名、性别、学号、学院等信息，并可能需要经过管理员审核。信息不实的，管理员有权拒绝或撤销你的会员资格。</view>
+    <view class="doc-p">3. 你仅可为本人注册，不得代他人注册或冒用他人身份。</view>
+  </view>
+
+  <view class="doc-card">
+    <view class="doc-h">三、服务内容</view>
+    <view class="doc-p">本小程序提供的功能包括但不限于：协会与会员管理、赛事与训练发布报名、比赛成绩录入与确认、等级分与排行榜展示、公告发布、校级活动（学院赛、运动会、跨校邀请赛）组织。</view>
+    <view class="doc-p">部分功能仅对具备相应管理权限的用户开放。权限由管理员按协会与学校范围授予，可随时调整。</view>
+  </view>
+
+  <view class="doc-card">
+    <view class="doc-h">四、成绩与等级分</view>
+    <view class="doc-p">1. 比赛成绩以系统记录为准。成绩的录入、确认、驳回与改判由具备权限的管理员按赛事规则执行。</view>
+    <view class="doc-p">2. 等级分按公开的算法逐场结算，不接受私人约定调整。对成绩或分数有异议的，请向所在协会管理员提出，由管理员按流程处理。</view>
+    <view class="doc-p">3. 因误录、争议或规则调整产生的更正，可能改变历史排名，这属于正常情况。</view>
+  </view>
+
+  <view class="doc-card">
+    <view class="doc-h">五、你的行为规范</view>
+    <view class="doc-p">你在使用本小程序时，不得：</view>
+    <view class="doc-p">1. 发布违反法律法规、公序良俗或含侮辱、诽谤、歧视内容的信息；</view>
+    <view class="doc-p">2. 冒用他人身份、伪造比赛成绩或干扰正常的赛事秩序；</view>
+    <view class="doc-p">3. 使用技术手段干扰本小程序的正常运行，或批量抓取他人信息；</view>
+    <view class="doc-p">4. 未经同意收集、传播其他成员的个人信息。</view>
+    <view class="doc-p">违反上述规范的，管理员有权警告、限制功能或终止你的使用资格。</view>
+  </view>
+
+  <view class="doc-card">
+    <view class="doc-h">六、个人信息保护</view>
+    <view class="doc-p">我们收集的昵称、头像仅用于会员注册、个人主页与排行榜展示，便于同协会成员相互识别。</view>
+    <view class="doc-p">我们对个人信息的处理规则，详见《隐私保护指引》。该指引由微信平台统一展示并随授权项更新。</view>
+    <view class="doc-p doc-link" bindtap="onOpenPrivacyContract">查看《隐私保护指引》›</view>
+  </view>
+
+  <view class="doc-card">
+    <view class="doc-h">七、服务的中断与终止</view>
+    <view class="doc-p">因系统维护、升级、故障或不可抗力导致服务中断的，我们将尽力及时恢复，但不承担由此产生的间接损失。</view>
+    <view class="doc-p">你可以随时停止使用本小程序，或联系管理员注销会员身份。注销后，相关个人信息将按《隐私保护指引》所述期限删除。</view>
+  </view>
+
+  <view class="doc-card">
+    <view class="doc-h">八、协议的变更</view>
+    <view class="doc-p">本协议可能因功能调整或规则变化而更新。更新后将在本页公布，并标注更新日期。若你不同意变更内容，应停止使用本小程序；继续使用即视为接受更新后的协议。</view>
+  </view>
+
+  <view class="doc-card">
+    <view class="doc-h">九、联系我们</view>
+    <view class="doc-p">对本协议或个人信息处理有疑问、需要查阅或更正信息的，可通过小程序内的「会员审核」入口联系所在协会管理员，或发送邮件至运营方公布的联络邮箱。</view>
+  </view>
+
+  <view class="doc-foot">本协议为示范文本，正式发布前应由学校相关部门审定。</view>
+</view>

@@ -45,6 +45,20 @@ const ACTION_TEXT = {
   },
 };
 
+/**
+ * 首屏渲染多少场比赛，点一次「加载更多」再放这么多。
+ *
+ * 【为什么要分批】比赛流水一次取最近 100 场（match-view 的 DEFAULT_LIMIT），
+ * 每场还要渲染双方队员名单，100 场就是上千个文本节点。首屏一次铺完，中低端
+ * 安卓上会明显卡一下。分批只影响**界面渲染多少行**，`view.records` 仍是全量
+ * ——实时比分更新（按 matchId 回填）和按 id 查记录都依赖它。
+ *
+ * 【为什么不用页面 onReachBottom】本组件挂在 association-home 里，滚动的是
+ * 页面不是组件，组件收不到触底事件。为一个列表去改宿主页面的事件转发，改
+ * 动面比收益大；面板内一个按钮就够，还能让用户自己决定要不要看更早的。
+ */
+const RENDER_STEP = 20;
+
 Component({
   options: {
     // app.wxss 的 .card / .pool-tabs / .btn / .sheet 等全局类要渗进来
@@ -62,6 +76,16 @@ Component({
     switching: false,
     /** 视图模型，形状见 services/match-view.js。初值给空对象，WXML 展开才不会出错 */
     view: {},
+    /**
+     * 界面当前渲染的记录窗口（view.records 的前若干条）。
+     * 单独存一份是为了让 WXML 只遍历这一份：WXML 里调不了 slice()，
+     * 只能由 JS 算好再交给视图层。
+     */
+    visibleRecords: [],
+    /** 窗口之外是否还有记录（控制「加载更多」按钮） */
+    visibleHasMore: false,
+    /** 当前窗口大小，点「加载更多」时按 RENDER_STEP 递增 */
+    renderLimit: RENDER_STEP,
     /** 当前登录态（能否录入取决于 auth.canRecord） */
     auth: { loggedIn: false },
     /** 录入按钮上方的说明。不能录入时，把原因写在这里 */
@@ -190,15 +214,25 @@ Component({
         this.viewer = view.context.viewer;
         this.members = view.context.members.map(m => ({ id: m.userId, name: m.nickName || m.userId, realName: m.realName }));
         this.loaded = true;
-        this.setData({ loading: false, error: '', switching: false, view, auth: view.auth,
-          entryHint: this.describeEntry(view.auth), demoSchool: false, demoSchoolName: '', themeClass: currentThemeClass() });
+        const records = view.records || [];
+        this.setData({
+          loading: false, error: '', switching: false, view, auth: view.auth,
+          entryHint: this.describeEntry(view.auth), demoSchool: false, demoSchoolName: '', themeClass: currentThemeClass(),
+          // 换标签 / 下拉刷新后回到第一屏：用户这一段要看的是「最近发生了什么」，
+          // 不该记住上次翻到第几屏
+          renderLimit: RENDER_STEP,
+          visibleRecords: records.slice(0, RENDER_STEP),
+          visibleHasMore: records.length > RENDER_STEP,
+        });
         this.syncLiveWatch();
       } catch (error) {
         if (request !== this.request) return;
         this.viewer = null;
         this.loaded = true;
         this.setData({ loading: false, switching: false, view: {}, auth: { loggedIn: false, canRecord: false },
-          error: error.message || '比赛数据加载失败，请下拉重试', themeClass: currentThemeClass() });
+          error: error.message || '比赛数据加载失败，请下拉重试', themeClass: currentThemeClass(),
+          // 清空榜单时窗口也要跟着清：否则上一所学校的记录会留在屏幕上
+          renderLimit: RENDER_STEP, visibleRecords: [], visibleHasMore: false });
       }
     },
 
@@ -224,7 +258,9 @@ Component({
       if (this.liveHandle) this.liveHandle();
       const api = this.api;
       this.liveHandle = watchLiveScores(this.liveIds(), (views) => {
-        this.setData({ 'view.records': applyLiveRows(this.data.view.records || [], views) });
+        const next = applyLiveRows(this.data.view.records || [], views);
+        // 窗口里的那几条也要跟着更新：比分变了，屏上得立刻看到
+        this.setData({ 'view.records': next, visibleRecords: next.slice(0, this.data.renderLimit) });
       }, { fetch: async ids => { const result = await api.getSchoolLiveScores({ matchIds: ids }); if (!result.ok) throw new Error(result.message); return result.scores; } });
     },
 
@@ -237,6 +273,21 @@ Component({
       if (auth.canRecord) return '打完了？把比分记下来，对手确认后计入等级分';
       if (auth.loggedIn) return auth.notice || '当前账号暂时不能录入成绩';
       return '登录后才能录入比赛成绩';
+    },
+
+    /**
+     * 放出下一屏记录。
+     * 只扩大渲染窗口，不动 view.records——数据早在内存里了，这里省的是
+     * 「一次铺多少 DOM」，不是「一次取多少数据」。
+     */
+    onShowMore() {
+      const all = (this.data.view && this.data.view.records) || [];
+      const limit = this.data.renderLimit + RENDER_STEP;
+      this.setData({
+        renderLimit: limit,
+        visibleRecords: all.slice(0, limit),
+        visibleHasMore: all.length > limit,
+      });
     },
 
     /* ---------- 标签与入口 ---------- */

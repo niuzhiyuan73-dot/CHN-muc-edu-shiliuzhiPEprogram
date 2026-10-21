@@ -239,6 +239,32 @@ Page({
   },
 
   /**
+   * 隐私保护指引。
+   *
+   * 【为什么打开官方页而不是自建一页】
+   * 指引内容由小程序后台维护，会随隐私接口的增减而变化（比如以后加了
+   * 位置权限，后台勾选项就变了）。本地抄一份必然对不上，而且审核比对的是
+   * 后台那一份。`wx.openPrivacyContract` 打开的永远是最新版本。
+   */
+  onOpenPrivacyContract() {
+    if (typeof wx === 'undefined' || typeof wx.openPrivacyContract !== 'function') {
+      wx.showToast({ title: '当前微信版本不支持查看', icon: 'none' });
+      return;
+    }
+    wx.openPrivacyContract({
+      fail: (err) => {
+        console.error('[profile] 打开隐私指引失败', err);
+        wx.showToast({ title: '打开失败，请稍后重试', icon: 'none' });
+      },
+    });
+  },
+
+  /** 用户协议。自有条款，放在 packageMember 分包里，不占主包体积 */
+  onGoAgreement() {
+    wx.navigateTo({ url: '/packageMember/agreement/agreement' });
+  },
+
+  /**
    * 重算所有管理入口。能力来自 S2 会话（getSchoolIdentitySession）：
    * 会员审核入口看 canReview，公告管理入口看 canManageSchool（平台管理员与
    * 本校校级管理员，与服务端 canPublishAnnouncement 同源）。会话尚未取到时

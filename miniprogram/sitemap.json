@@ -3,6 +3,14 @@
   "rules": [
     {
       "action": "allow",
+      "page": "pages/index/index"
+    },
+    {
+      "action": "allow",
+      "page": "pages/association/association"
+    },
+    {
+      "action": "disallow",
       "page": "*"
     }
   ]

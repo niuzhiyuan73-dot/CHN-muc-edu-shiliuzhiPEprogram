@@ -15,6 +15,7 @@ const { LEGACY_SCHOOL_ID } = require('./utils/school.js');
 const runtime = require('./services/runtime-mode.js');
 const associationScope = require('./services/association-scope.js');
 const appSession = require('./services/app-session.js');
+const privacy = require('./services/privacy.js');
 
 App({
   /**
@@ -40,6 +41,9 @@ App({
   },
 
   onLaunch() {
+    // 隐私授权桥要在任何页面渲染之前接好：用户第一次点「换头像」时，
+    // 拦截回调必须已经有主，否则那次调用会静默失败（界面上就是点了没反应）
+    this.initPrivacyBridge();
     this.initSystemInfo();
     this.initDataSource();
     // 协会要在任何数据读取之前定下来：refreshSession 要按它读会员台账
@@ -70,6 +74,31 @@ App({
     } catch (err) {
       console.error('[app] 获取系统信息失败', err);
     }
+  },
+
+  /**
+   * 接上隐私授权桥（2026-10-21）。
+   *
+   * 【为什么必须有这一处】
+   * 全项目调用的隐私接口只有一个：`<button open-type="chooseAvatar">`
+   * （登录页与编辑资料页各一处）。用户**首次**点它时，微信不会直接给头像，
+   * 而是先拦下这次调用，把「挂起凭证」交给 `onNeedPrivacyAuthorization`。
+   * 没人接手这个回调，调用就悬着——用户看到的是按钮点下去毫无反应，
+   * 既不报错也不弹框。这是最容易误判成「样式问题」的故障。
+   *
+   * 【为什么只登记、不弹窗】
+   * 弹窗是界面，得画在用户看得见的页面上（`components/privacy-gate`）。
+   * app 放不了 WXML，所以这里只把凭证转交出去，由组件在页面上接住。
+   *
+   * 【为什么用特性检测而不是基础库版本号】
+   * `onNeedPrivacyAuthorization` 自 2.32.3 起提供。更早的基础库由平台
+   * 自己兜底弹窗，页面不必插一手；直接判断函数是否存在，比比对版本号更准。
+   */
+  initPrivacyBridge() {
+    if (!privacy.isSupported()) return;
+    wx.onNeedPrivacyAuthorization((resolve) => {
+      privacy.request(resolve);
+    });
   },
 
   /**

@@ -1,0 +1,82 @@
+/**
+ * 隐私授权弹窗样式
+ * ============================================================
+ * 组件默认样式隔离，用不到 app.wxss 里的类，因此这里自成一套。
+ * 颜色仍走全局变量（自定义属性会穿过组件边界继承下来），
+ * 每个 var() 都带兜底值：万一变量没拿到，也不至于变成透明。
+ * ============================================================
+ */
+
+.privacy-mask {
+  position: fixed;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: flex-end;
+}
+
+.privacy-sheet {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--color-card, #ffffff);
+  border-radius: var(--radius-lg, 24rpx) var(--radius-lg, 24rpx) 0 0;
+  padding: var(--space-xl, 48rpx) var(--space-lg, 32rpx);
+  padding-bottom: calc(var(--space-xl, 48rpx) + env(safe-area-inset-bottom));
+}
+
+.privacy-title {
+  font-size: var(--font-lg, 36rpx);
+  font-weight: 600;
+  color: var(--color-text, #1f2329);
+  text-align: center;
+  margin-bottom: var(--space-lg, 32rpx);
+}
+
+.privacy-body {
+  font-size: var(--font-sm, 26rpx);
+  line-height: 1.7;
+  color: var(--color-text-secondary, #6b7280);
+  margin-bottom: var(--space-xl, 48rpx);
+  white-space: pre-line;
+}
+
+.privacy-actions {
+  display: flex;
+  gap: var(--space-md, 24rpx);
+}
+
+.privacy-btn {
+  flex: 1;
+  margin: 0;
+  height: 88rpx;
+  line-height: 88rpx;
+  font-size: var(--font-md, 30rpx);
+  border-radius: var(--radius-md, 16rpx);
+  text-align: center;
+}
+
+/* 小程序 button 自带 1px 边框（::after 画出来的），不清掉会与圆角打架 */
+.privacy-btn::after {
+  border: none;
+}
+
+.privacy-btn-ghost {
+  background: var(--color-bg, #f5f6f8);
+  color: var(--color-text-secondary, #6b7280);
+}
+
+.privacy-btn-primary {
+  background: var(--color-primary, #b23a2e);
+  color: #ffffff;
+}
+
+.privacy-more {
+  margin-top: var(--space-lg, 32rpx);
+  text-align: center;
+  font-size: var(--font-xs, 22rpx);
+  color: var(--color-text-tertiary, #9ca3af);
+}

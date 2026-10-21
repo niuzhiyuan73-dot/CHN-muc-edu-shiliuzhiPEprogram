@@ -40,10 +40,13 @@ const SESSION_STATUS = Object.freeze({ SCHEDULED: 'scheduled', RUNNING: 'running
 /** 成绩状态：与 meet-score-service 的 SCORE_STATE.SUBMITTED 同值（这里不反向依赖那个模块）。 */
 const SCORE_SUBMITTED = 'submitted';
 /**
- * 批量指派的单事务写预算。单事务上限 200，留 50 给同一事务内的其他写入。
- * 每批场次数 = floor(预算 / (人数 + 1))：人数越多，单批能带的场次越少。
+ * 单事务最多使用 90 次读写，给仓储 100 次护栏留余量。
+ * 上下文最多 5 读，m 名裁判资格 2m 读；每场 assignment 2m 次读写，
+ * 加场次点读/写回及 touchEvent 点读/写回共 4 次。按 5 + 2m + n(2m+4) 分批。
+ * 50 人连一个场次都无法放进同一事务，因此裁判也要切批（每批最多 20 人）。
  */
-const JUDGE_WRITE_BUDGET = 150;
+const JUDGE_OPERATION_BUDGET = 90;
+const JUDGE_BATCH_SIZE = 20;
 
 const isAliveMeet = (doc) => Boolean(doc && doc.status && doc.status !== MEET_STATUS.DELETED);
 const toIso = (now) => (now instanceof Date ? now.toISOString() : String(now));
@@ -313,11 +316,9 @@ async function assignMeetJudge(payload = {}, ctx) {
  * 学生运动会的常态是「连续几个项目同一批计时裁判」。逐个场次、逐个裁判地派，
  * 一个上午的赛程要几十次点击，漏派一场那场就开不了赛。
  *
- * 【写预算与分批】
- * 每次指派产生两类写入：一条 assignment + 一次场次 judgeIds 更新。
- * m 人 × n 场 = m*n + n 写，而单事务上限 200。这里按 150 留余量，
- * 超出就拆成多个事务顺序执行——用户点一次全部完成，不存在「派了一半」的剩余量。
- * 多个事务之间不原子：中途失败会留下已完成的部分，返回值会说明派了多少场。
+ * 按裁判人数与场次数拆成多个事务，预算包含身份复核及全部读写。
+ * 多事务之间不原子：失败时返回已完整完成的场次；当前批可能已指派部分裁判，
+ * 重试通过 assignment 自然键跳过已完成指派。
  *
  * @param {Object} payload { judgeIds: string[], sessionKeys? | eventKey? | date? }
  *        scope 三选一：显式勾选的场次 / 某个项目的全部场次 / 某一天的全部场次
@@ -369,71 +370,86 @@ async function assignMeetJudges(payload = {}, ctx) {
   for (const judgeId of judgeIds) {
     if (!activeMember.has(judgeId)) return refused(`「${judgeId}」不是本校在册成员`);
     const user = await ctx.repo.users.getById(judgeId);
-    if (!user || user.platformStatus !== 'active') return refused(`「${judgeId}」账号无效`);
+    if (!user || user.platformStatus !== 'active' || user.primarySchoolId !== ctx.schoolId) return refused(`「${judgeId}」账号无效或不属于本校`);
     valid.push(judgeId);
   }
 
-  // 每批事务的场次上限：场次 * (人数 + 1) <= 写预算
-  const perBatch = Math.max(1, Math.floor(JUDGE_WRITE_BUDGET / (valid.length + 2)));
+  const judgeBatches = [];
+  for (let offset = 0; offset < valid.length; offset += JUDGE_BATCH_SIZE) {
+    judgeBatches.push(valid.slice(offset, offset + JUDGE_BATCH_SIZE));
+  }
+  const maxJudges = judgeBatches[0].length;
+  const perBatch = Math.max(1, Math.floor(
+    (JUDGE_OPERATION_BUDGET - 5 - 2 * maxJudges) / (2 * maxJudges + 4)
+  ));
   let created = 0;
   let existed = 0;
   const done = [];
+  const partial = message => refused(
+    `已完成 ${done.length} 个场次；${message}。当前批次可能已指派部分裁判，刷新后可重试，已完成指派不会重复。`,
+    { completedSessions: [...done], created, existed }
+  );
   for (let offset = 0; offset < targets.length; offset += perBatch) {
     const batch = targets.slice(offset, offset + perBatch);
-    const result = await ctx.repo.transaction(async (tx) => {
-      const fresh = await freshMeetContext(tx, ctx);
-    if (!liveMeet(fresh)) return refused('运动会不存在或已删除');
-      if (!canManageMeet(fresh)) return refused('只有校级管理员及以上可以指派裁判');
-      const now = toIso(fresh.now);
-      // 必须在任何写入前完成整批校验；返回 refused 不会回滚之前已经写入的数据。
-      for (const judgeId of valid) {
-        const member = await tx.schoolMembers.getById(schoolMemberKey(judgeId, fresh.schoolId));
-        const user = await tx.users.getById(judgeId);
-        if (!member || member.status !== 'active' || !user || user.platformStatus !== 'active' || user.primarySchoolId !== fresh.schoolId) return refused('裁判资格已变化，请刷新后重试');
-      }
-      for (const target of batch) {
-        const current = await tx.sportsMeetSessions.getById(target._id);
-        if (!current || current.meetId !== fresh.meetId || current.schoolId !== fresh.schoolId) return refused('场次已变化，请刷新后重试');
-      }
-      let batchCreated = 0;
-      let batchExisted = 0;
-      for (const session of batch) {
-        const current = await tx.sportsMeetSessions.getById(session._id);
-        if (!current || current.meetId !== fresh.meetId) {
-          return refused('场次不存在或不属于本届运动会');
-        }
-        const ids = Array.isArray(current.judgeIds) ? [...current.judgeIds] : [];
-        for (const judgeId of valid) {
-          const key = meetJudgeKey(fresh.meetId, session._id, judgeId);
-          const assignment = await tx.sportsMeetJudgeAssignments.getById(key);
-          if (assignment && assignment.status === 'active') {
-            batchExisted += 1;
-            continue;
+    for (const judges of judgeBatches) {
+      let result;
+      try {
+        result = await ctx.repo.transaction(async (tx) => {
+          const fresh = await freshMeetContext(tx, ctx);
+          if (!liveMeet(fresh)) return refused('运动会不存在或已删除');
+          if (!canManageMeet(fresh)) return refused('只有校级管理员及以上可以指派裁判');
+          const now = toIso(fresh.now);
+          // 必须在任何写入前完成整批校验；返回 refused 不会回滚之前已经写入的数据。
+          for (const judgeId of judges) {
+            const member = await tx.schoolMembers.getById(schoolMemberKey(judgeId, fresh.schoolId));
+            const user = await tx.users.getById(judgeId);
+            if (!member || member.status !== 'active' || !user || user.platformStatus !== 'active' || user.primarySchoolId !== fresh.schoolId) return refused('裁判资格已变化，请刷新后重试');
           }
-          await tx.sportsMeetJudgeAssignments.set(key, {
-            schoolId: fresh.schoolId,
-            meetId: fresh.meetId,
-            sessionKey: session._id,
-            eventKey: current.eventKey,
-            judgeId,
-            status: 'active',
-            assignedBy: fresh.actorId,
-            assignedAt: assignment ? (assignment.assignedAt || now) : now,
-            updatedAt: now,
-          });
-          if (!ids.includes(judgeId)) ids.push(judgeId);
-          batchCreated += 1;
-        }
-        await touchEvent(tx, current.eventKey);
-        await tx.sportsMeetSessions.set(session._id, {
-          ...current, judgeIds: ids, judgeCount: ids.length, updatedAt: now,
+          const currentSessions = [];
+          for (const target of batch) {
+            const current = await tx.sportsMeetSessions.getById(target._id);
+            if (!current || current.voidedAt || current.meetId !== fresh.meetId || current.schoolId !== fresh.schoolId) return refused('场次已变化，请刷新后重试');
+            currentSessions.push(current);
+          }
+          let batchCreated = 0;
+          let batchExisted = 0;
+          for (const current of currentSessions) {
+            const ids = Array.isArray(current.judgeIds) ? [...current.judgeIds] : [];
+            for (const judgeId of judges) {
+              const key = meetJudgeKey(fresh.meetId, current._id, judgeId);
+              const assignment = await tx.sportsMeetJudgeAssignments.getById(key);
+              if (assignment && assignment.status === 'active') {
+                batchExisted += 1;
+                continue;
+              }
+              await tx.sportsMeetJudgeAssignments.set(key, {
+                schoolId: fresh.schoolId,
+                meetId: fresh.meetId,
+                sessionKey: current._id,
+                eventKey: current.eventKey,
+                judgeId,
+                status: 'active',
+                assignedBy: fresh.actorId,
+                assignedAt: assignment ? (assignment.assignedAt || now) : now,
+                updatedAt: now,
+              });
+              if (!ids.includes(judgeId)) ids.push(judgeId);
+              batchCreated += 1;
+            }
+            await touchEvent(tx, current.eventKey);
+            await tx.sportsMeetSessions.set(current._id, {
+              ...current, judgeIds: ids, judgeCount: ids.length, updatedAt: now,
+            });
+          }
+          return ok({ created: batchCreated, existed: batchExisted });
         });
+      } catch (error) {
+        return partial(error.message || '指派失败');
       }
-      return ok({ created: batchCreated, existed: batchExisted });
-    });
-    if (!result.ok) return refused(`已完成 ${done.length} 个场次；${result.message}。刷新后可重试，已完成指派不会重复。`, { completedSessions: done });
-    created += result.data.created;
-    existed += result.data.existed;
+      if (!result.ok) return partial(result.message);
+      created += result.data.created;
+      existed += result.data.existed;
+    }
     for (const session of batch) done.push(session._id);
   }
 

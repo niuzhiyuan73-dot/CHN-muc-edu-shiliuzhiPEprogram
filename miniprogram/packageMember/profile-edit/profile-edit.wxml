@@ -78,4 +78,7 @@
       当前为本地模拟数据，保存后只写入内存，重启小程序即清空
     </view>
   </block>
+
+  <!-- 点「换头像」被微信拦下时由它弹授权框；状态在 services/privacy.js，不在组件内 -->
+  <privacy-gate />
 </view>

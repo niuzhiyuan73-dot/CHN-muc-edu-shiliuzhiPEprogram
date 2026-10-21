@@ -31,6 +31,12 @@
  * 而且登录后才会出现赛事与概况两块（游客只看得到公告，§11.8）。
  * 所以 onShow 里再刷一次——但首屏 onLoad 之后紧跟着的 onShow 要跳过，
  * 否则同一份数据会白算两遍。
+ *
+ * 【为什么 onShow 还要加一个 10 秒窗口（2026-10-21）】
+ * 来回点两个 tab 会各触发一次 onShow，而每次 refresh 都是「按学校逐协会聚合」
+ * （见 school-home-view.js），一轮就是 30+ 次云端读取。手快的人点两下就是两轮。
+ * 10 秒内重复进入直接跳过，代价是登录 / 报名状态最多晚 10 秒体现。
+ * 下拉刷新不受这个窗口约束——那是用户明确说「现在就要最新」。
  * ============================================================
  */
 
@@ -38,6 +44,13 @@ const { loadSchoolHomeView } = require('../../services/school-home-view.js');
 const { resolveAuthState } = require('../../services/auth.js');
 const { resetBranding } = require('../../services/branding.js');
 const associationScope = require('../../services/association-scope.js');
+
+/** 首屏缓存。只用来「先把内容画出来」，随后那次 refresh 一定会覆盖它 */
+const HOME_CACHE_KEY = 'home_view_cache';
+/** 缓存可用时长。超过就当没有：宁可白屏等一次，也不拿半天前的数据充数 */
+const HOME_CACHE_TTL = 5 * 60 * 1000;
+/** onShow 的去抖窗口（毫秒） */
+const ON_SHOW_TTL = 10 * 1000;
 const runtime = require('../../services/runtime-mode.js');
 
 Page({
@@ -73,6 +86,9 @@ Page({
     this.showDataSource();
     // 首页套中性品牌。冷启动可能从别的协会页回来，先刷一次保险
     resetBranding();
+    // 有缓存就先把首屏画出来：用户立刻看见公告与赛事，不必对着空白等一轮聚合。
+    // 缓存只负责「先有东西」，紧接着的 refresh 一定会覆盖它，不存在旧数据留在屏上。
+    this.paintFromCache();
     return this.refresh();
   },
 
@@ -84,12 +100,48 @@ Page({
     resetBranding();
     // 首次进入时 onLoad 已经加载过，这个紧随其后的 onShow 直接跳过
     if (!this.loaded) return undefined;
+    // 10 秒内切回来不重复取数：一轮就是 30+ 次读取，手快点两下 tab 就是两轮
+    if (Date.now() - (this.lastLoadedAt || 0) < ON_SHOW_TTL) return undefined;
     return this.refresh();
   },
 
-  /** 下拉刷新 */
+  /** 下拉刷新。用户明确要最新数据，不受 onShow 的时间窗口约束 */
   onPullDownRefresh() {
     return this.refresh().then(() => wx.stopPullDownRefresh());
+  },
+
+  /**
+   * 用上次的首页快照先渲染一屏。
+   *
+   * 【为什么只画不取】缓存里的数据一定是旧的，「先显示旧的、再刷新」比
+   * 「等一轮聚合再显示」体感好得多；但绝不能因为命中缓存就不刷新，
+   * 否则用户会看到一份永远不动的内容。
+   */
+  paintFromCache() {
+    try {
+      const cached = wx.getStorageSync(HOME_CACHE_KEY);
+      if (!cached || !cached.view || !cached.ts) return;
+      if (Date.now() - cached.ts > HOME_CACHE_TTL) return;
+      this.setData({
+        loading: false,
+        error: '',
+        view: cached.view,
+        auth: resolveAuthState(this.currentUser()),
+        associationId: this.currentAssociation(),
+      });
+    } catch (err) {
+      // 缓存读不出来只是少了「快一步」，不该影响后续正常加载
+      console.error('[index] 读取首页缓存失败', err);
+    }
+  },
+
+  /** 把这一份视图模型存起来，供下次冷启动先画一屏 */
+  saveCache(view) {
+    try {
+      wx.setStorageSync(HOME_CACHE_KEY, { view, ts: Date.now() });
+    } catch (err) {
+      console.error('[index] 写入首页缓存失败', err);
+    }
   },
 
   /** 读取全局登录态。app 可能还没初始化好，逐层兜底 */
@@ -132,6 +184,10 @@ Page({
       });
       if (seq !== this.loadSeq) return;
       this.loaded = true;
+      // onShow 的去抖窗口以「上一次成功装载」为起点：失败不该顺延窗口，
+      // 否则一次网络抖动会让接下来 10 秒都不再重试
+      this.lastLoadedAt = Date.now();
+      this.saveCache(view);
       this.setData({
         loading: false,
         error: '',
@@ -143,6 +199,10 @@ Page({
       console.error('[index] 首页加载失败', err);
       if (seq !== this.loadSeq) return;
       this.loaded = true;
+      // 屏上已经有内容（刚才的缓存，或上一次成功的结果）就不换成整屏报错：
+      // 让人看着旧内容、知道「可能不是最新」，比把页面变成一句错误有用
+      const hasContent = Boolean(this.data.view && this.data.view.announcements);
+      if (hasContent) return;
       this.setData({
         loading: false,
         error: '首页数据加载失败，请下拉重试',

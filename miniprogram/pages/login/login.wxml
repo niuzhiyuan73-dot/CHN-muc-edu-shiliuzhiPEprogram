@@ -180,4 +180,7 @@
 
   <view wx:if="{{isMock}}" class="mock-note">当前为本地模拟数据，注册与审核为演示流程</view>
 
+  <!-- 点「换头像」被微信拦下时由它弹授权框；状态在 services/privacy.js，不在组件内 -->
+  <privacy-gate />
+
 </view>

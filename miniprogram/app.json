@@ -42,6 +42,7 @@
   "style": "v2",
   "sitemapLocation": "sitemap.json",
   "lazyCodeLoading": "requiredComponents",
+  "__usePrivacyCheck__": true,
   "subPackages": [
     {
       "root": "packageEvent",
@@ -107,13 +108,28 @@
         "profile-edit/profile-edit",
         "profile-detail/profile-detail",
         "school-identity/school-identity",
-        "school-exchange/school-exchange"
+        "school-exchange/school-exchange",
+        "agreement/agreement"
       ]
     }
   ],
   "preloadRule": {
+    "pages/index/index": {
+      "network": "all",
+      "packages": [
+        "packageEvent",
+        "packageMeet"
+      ]
+    },
+    "pages/association/association": {
+      "network": "all",
+      "packages": [
+        "packageTeam",
+        "packageCollege"
+      ]
+    },
     "pages/profile/profile": {
-      "network": "wifi",
+      "network": "all",
       "packages": [
         "packageMember"
       ]

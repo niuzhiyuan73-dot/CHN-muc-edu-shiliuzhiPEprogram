@@ -61,3 +61,26 @@
 .guest-btn {
   margin-top: var(--space-md);
 }
+
+/* ==================== 协议入口 ==================== */
+
+/* 两条灰字居中排在页脚。字号比正文小一档：
+   它是备查入口，不该抢「退出登录」的注意力 */
+.legal-links {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: var(--space-lg);
+  padding: var(--space-sm) 0;
+}
+
+.legal-link {
+  font-size: var(--font-xs);
+  color: var(--color-text-tertiary);
+}
+
+.legal-sep {
+  margin: 0 var(--space-sm);
+  font-size: var(--font-xs);
+  color: var(--color-border);
+}

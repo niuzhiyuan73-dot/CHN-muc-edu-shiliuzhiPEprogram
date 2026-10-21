@@ -78,6 +78,18 @@
     退出登录
   </button>
 
+  <!--
+    协议入口：审核员会找这两条，用户行使查阅/更正/删除权也走这里。
+    未登录时也显示——条款不是登录之后才生效的。
+    隐私指引用微信官方页（wx.openPrivacyContract），用户协议是自有条款，
+    放在 packageMember 分包，不占主包。
+  -->
+  <view class="legal-links">
+    <text class="legal-link" bindtap="onOpenPrivacyContract">隐私保护指引</text>
+    <text class="legal-sep">·</text>
+    <text class="legal-link" bindtap="onGoAgreement">用户协议</text>
+  </view>
+
   <view wx:if="{{isMock}}" class="mock-note">
     当前为本地模拟数据，用于开发预览，并非真实成绩
   </view>
