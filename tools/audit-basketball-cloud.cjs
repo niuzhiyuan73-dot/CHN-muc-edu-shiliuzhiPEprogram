@@ -1,4 +1,8 @@
 /* 篮球云端专项审计：仅在进程内模拟 SDK，不连接或修改真实云环境。 */
+// 审计脚本用同一身份连续打十几个写请求（抽签 → 开台 → 判球 → 重抽 → 锁名单…），
+// 会被入口限流按「每秒 3 次写」拦下，后续断言全变成「没有抛错」。这里关掉限流：
+// 它模拟的是压测/故障注入，不是真实用户交互（生产默认开启）。
+process.env.RATE_LIMIT = 'off';
 const assert = require('node:assert/strict');
 const { createRepo } = require('../cloudfunctions/data/src/adapters/cloud-repo');
 const { COLLECTIONS } = require('../cloudfunctions/data/src/repository');
@@ -7,6 +11,33 @@ const { createSchoolDemoSeed } = require('../miniprogram/services/school-seed');
 const { schoolKey, schoolMemberKey, schoolMembershipKey } = require('../miniprogram/utils/school');
 const scope = { schoolId: 'muc', association: 'bk' };
 const clone = value => value == null ? value : JSON.parse(JSON.stringify(value));
+
+/**
+ * `db.command` 的最小子集：游标分页（`_id > 上一页末条`）与批读（`_.in`）要用。
+ * 只有操作符对象带 CMD 标记，普通值仍按严格相等比较。
+ */
+const CMD = Symbol('db.command');
+const command = {
+  gt: value => ({ [CMD]: 'gt', value }),
+  gte: value => ({ [CMD]: 'gte', value }),
+  in: value => ({ [CMD]: 'in', value }),
+  and: value => ({ [CMD]: 'and', value }),
+};
+const isCmd = value => Boolean(value && value[CMD]);
+function matchRow(row, where) {
+  if (!where) return true;
+  if (isCmd(where)) {
+    return where[CMD] === 'and' ? where.value.every(part => matchRow(row, part)) : false;
+  }
+  return Object.entries(where).every(([field, cond]) => {
+    if (!isCmd(cond)) return row[field] === cond;
+    if (cond[CMD] === 'and') return cond.value.every(part => matchRow(row, part));
+    if (cond[CMD] === 'in') return Array.isArray(cond.value) && cond.value.includes(row[field]);
+    if (cond[CMD] === 'gt') return String(row[field] ?? '') > String(cond.value ?? '');
+    if (cond[CMD] === 'gte') return String(row[field] ?? '') >= String(cond.value ?? '');
+    return false;
+  });
+}
 
 function database(seed) {
   let state = Object.fromEntries(Object.values(COLLECTIONS).map(name => [name, new Map()]));
@@ -35,7 +66,7 @@ function database(seed) {
       skip: next => query(where, next, count), limit: next => query(where, offset, next),
       get: async () => {
         assert.ok(!trace, 'query forbidden inside transaction');
-        return { data: [...table.values()].filter(row => Object.entries(where).every(([k,v]) => row[k] === v))
+        return { data: [...table.values()].filter(row => matchRow(row, where))
           .sort((a,b) => a._id.localeCompare(b._id)).slice(offset, offset + count).map(clone) };
       },
     });
@@ -49,6 +80,10 @@ function database(seed) {
   } });
   const db = {
     collection: name => surface(state).collection(name), traces,
+    // 与云开发 db.command 同形的最小子集：仓储的游标分页（_id > 上一页末条）
+    // 与批读（_.in）都依赖它。缺了它 createRepo 一用 listByIds 就炸
+    // 「Cannot read properties of undefined (reading 'in')」。
+    command,
     failSet: (key, nth) => { failure = { name: COLLECTIONS[key], nth, seen: 0 }; },
     runTransaction: async fn => {
       if (db.beforeTransaction) { const hook = db.beforeTransaction; db.beforeTransaction = null; await hook(); }

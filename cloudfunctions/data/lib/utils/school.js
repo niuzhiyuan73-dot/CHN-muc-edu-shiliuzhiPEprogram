@@ -12,6 +12,9 @@ const PLATFORM_ROLE = Object.freeze({ MEMBER: 'member', ADMIN: 'admin' });
 const SCHOOL_ROLE = Object.freeze({ ADMIN: 'admin' });
 const LEGACY_SCHOOL_ID = 'muc';
 
+/** 单个键字段的长度上限（见 schoolKey 里的说明）。 */
+const MAX_KEY_PART_LENGTH = 200;
+
 function requireSchoolId(id) {
   if (typeof id !== 'string' || !/^[a-z][a-z0-9_-]{0,39}$/.test(id)) {
     throw new Error('必须提供有效的 schoolId');
@@ -28,6 +31,12 @@ function schoolScope(input = {}) {
 function schoolKey(kind, ...parts) {
   if (!kind || parts.some((part) => typeof part !== 'string' || !part)) {
     throw new Error('学校记录键缺少组成字段');
+  }
+  // 兜底上限：这些 component 最终会拼成数据库 _id。encodeURIComponent 对
+  // 非 ASCII 会膨胀 3 倍，一条超长入参能把 _id 撑到 MB 级（2026-10-21 审查
+  // P2-10）。正常入参远小于此（openId 约 28、组编号 31 位摘要、组名 ≤30 字）。
+  if (parts.some((part) => part.length > MAX_KEY_PART_LENGTH)) {
+    throw new Error('记录键字段过长');
   }
   return [kind, ...parts].map(encodeURIComponent).join(':');
 }

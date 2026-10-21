@@ -381,18 +381,19 @@ function createSchoolHandlers({ claimKey }) {
    */
   async function getSchoolApplications(_payload, ctx) {
     if (!canSchoolAction(ctx, 'reviewMembers', ctx)) return ok({ ok: false, applications: [], message: '没有本校审核权限' });
-    // 账号取一次建 Map：待审申请逐个 users.getById 是 N+1，云端 QPS 30 下
-    // 几十个待审就够触发限流（2026-10-17 只读审计 C5）。
+    // 账号按「待审申请人」的编号批量取。原先是 users.list()（全平台账号整表读），
+    // 审核页一次就把别校账号也读回来了（2026-10-21 审查 P0-1）。
     // 转出校名称只对「转校申请」存在，按去重后的 id 逐个取——不走 schools.list()，
     // 免得给本读路径新增对 where({}) 空条件的依赖（该兼容性未实测，见审计 §二）。
-    const [colleges, users] = await Promise.all([
-      ctx.repo.forScope(ctx).colleges.list(),
-      ctx.repo.users.list(),
-    ]);
-    const collegeName = id => (colleges.find(row => row.collegeId === id) || {}).name || '';
-    const userById = new Map(users.map(user => [user._id, user]));
+    const colleges = await ctx.repo.forScope(ctx).colleges.list();
+    // 学院名走 Map（原先 find 在循环里，2026-10-21 审查 P2-7）。
+    const collegeNameById = new Map(colleges.map(row => [row.collegeId, row.name]));
+    const collegeName = id => collegeNameById.get(id) || '';
     const rows = await ctx.repo.forScope(ctx).schoolMembers.list();
     const pending = rows.filter(row => row.status === 'pending');
+    const userById = new Map(
+      (await ctx.repo.users.listByIds(pending.map(row => row.userId))).map(user => [user._id, user]),
+    );
     const transferIds = [...new Set(pending.filter(row => row.transferFrom).map(row => row.transferFrom))];
     const schoolById = new Map(await Promise.all(transferIds.map(async id => [id, await ctx.repo.schools.getById(id)])));
     const applications = pending.map(row => {
@@ -499,19 +500,23 @@ function createSchoolHandlers({ claimKey }) {
   async function getSchoolMembers(_payload, ctx) {
     if (!canReadSchool(ctx)) return ok({ ok: false, members: [], grants: [], readOnly: false, message: '没有读取该校成员的权限' });
     const readOnly = Boolean(ctx.actor.primarySchoolId && ctx.actor.primarySchoolId !== ctx.schoolId);
-    // 四个集合各取一次建 Map：逐成员 3 次 getById 是 N+1，云端 QPS 30 下
-    // 上百人的名录就够触发限流（2026-10-17 只读审计 C5）。
-    const [colleges, users, roles, memberships] = await Promise.all([
+    // 学院 / 校级角色 / membership 各取一次建 Map：逐成员 3 次 getById 是 N+1，
+    // 云端 QPS 30 下上百人的名录就够触发限流（2026-10-17 只读审计 C5）。
+    const [colleges, roles, memberships] = await Promise.all([
       ctx.repo.forScope(ctx).colleges.list(),
-      ctx.repo.users.list(),
       ctx.repo.forScope(ctx).schoolRoles.list(),
       ctx.repo.forScope(ctx).memberships.list(),
     ]);
-    const collegeName = id => (colleges.find(row => row.collegeId === id) || {}).name || '';
-    const userById = new Map(users.map(user => [user._id, user]));
+    // 学院名走 Map（原先 find 在循环里，2026-10-21 审查 P2-7）。
+    const collegeNameById = new Map(colleges.map(row => [row.collegeId, row.name]));
+    const collegeName = id => collegeNameById.get(id) || '';
+    const rows = (await ctx.repo.forScope(ctx).schoolMembers.list()).filter(row => row.status === SCHOOL_MEMBER_STATUS.ACTIVE);
+    // 账号按在册成员编号批量取，不读全平台 users（2026-10-21 审查 P0-1）。
+    const userById = new Map(
+      (await ctx.repo.users.listByIds(rows.map(row => row.userId))).map(user => [user._id, user]),
+    );
     const roleById = new Map(roles.map(row => [row._id, row]));
     const membershipById = new Map(memberships.map(row => [row._id, row]));
-    const rows = (await ctx.repo.forScope(ctx).schoolMembers.list()).filter(row => row.status === SCHOOL_MEMBER_STATUS.ACTIVE);
     const members = rows.map(row => ({
       userId: row.userId,
       nickName: (userById.get(row.userId) || {}).nickName || '会员',

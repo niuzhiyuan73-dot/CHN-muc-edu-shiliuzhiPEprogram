@@ -58,11 +58,14 @@ function legacyRoleOf(ctx) {
  * @returns {Promise<{memberIds:string[], activeMemberIds:string[], members:Array<Object>, actorCollege:string, collegeIdOf:function(string):string, collegeNameById:function(string):string, collegeOf:function(string):string}>}
  */
 async function buildDirectory(ctx) {
-  const [members, colleges, users] = await Promise.all([
+  const [members, colleges] = await Promise.all([
     ctx.repo.forScope(ctx).schoolMembers.list(),
     ctx.repo.forScope(ctx).colleges.list(),
-    ctx.repo.users.list(),
   ]);
+  // 账号按在册成员的编号批量取。原先是 ctx.repo.users.list()——users 是平台级
+  // 集合（不带 schoolId），一次要把**全平台所有学校**的账号读回来建 Map，
+  // 而本函数是每个协会页面的必经之路（2026-10-21 审查 P0-1）。
+  const users = await ctx.repo.users.listByIds(members.map(item => item.userId));
   const nameByCollegeId = new Map(colleges.map(item => [item.collegeId, item.name]));
   const collegeIdOf = new Map(members.map(item => [item.userId, item.collegeId]));
   const userById = new Map(users.map(item => [item._id, item]));
@@ -109,11 +112,13 @@ async function buildDirectory(ctx) {
  * }>}
  */
 async function buildCollegeDirectory(ctx) {
-  const [members, colleges, users] = await Promise.all([
+  const [members, colleges] = await Promise.all([
     ctx.repo.forScope(ctx).schoolMembers.list(),
     ctx.repo.forScope(ctx).colleges.list(),
-    ctx.repo.users.list(),
   ]);
+  // 账号按在册成员编号批量取（原先是 users.list()，会把全平台账号读进来，
+  // 2026-10-21 审查 P0-1）。
+  const users = await ctx.repo.users.listByIds(members.map(item => item.userId));
   const nameById = new Map(colleges.map(item => [item.collegeId, item.name]));
   const idByName = new Map(colleges.map(item => [item.name, item.collegeId]));
   const collegeIdOfMember = new Map(members.map(item => [item.userId, item.collegeId]));

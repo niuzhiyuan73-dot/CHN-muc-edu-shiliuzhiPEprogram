@@ -90,6 +90,11 @@ npm run check:cloud-sync  # 只校验不写入；漂移时退出码 1
 | `sports_meet_*` | `schoolId` + `meetId` | — |
 | `event_signups` | `eventId` + `userId` | — |
 | `college_entries` / `ties` / `lineups` | `eventId`（大场再加 `round`，排阵再加 `tieId`） | — |
+| `team_event_entries` / `team_matches` / `team_match_stats` | `eventId` | — |
+
+> 团队运动这三个集合的 `eventId` 索引是 2026-10-21 新加的：此前它们没有
+> `listByEvent`，服务只能把历年全部报名 / 比赛 / 统计读回来再在内存里筛本届
+> 那几十条（一次详情页几十页 RPC）。索引建好后 `getTeamEvent` 只读本届数据。
 
 > 学校维度的记录一律用确定性复合 `_id`（`utils/school.js` 的 `schoolKey`），
 > 按主键点读最省事；上面这些联合索引服务于「取一批」。

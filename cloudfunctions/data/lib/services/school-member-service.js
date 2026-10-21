@@ -61,10 +61,13 @@ async function listSchoolMembers(payload = {}, ctx) {
   const collegeName = id => nameByCollegeId.get(id) || '';
   const filterCollegeId = typeof payload.collegeId === 'string' && payload.collegeId ? payload.collegeId : '';
 
-  // 名录要按 userId 补昵称 / 头像。**一次取齐本校账号建索引**，而不是在循环里
-  // 逐条 getById——一本校 200 人就是 200 次 RPC（见 2026-10-16 只读审计 H3）。
-  // buildDirectory（school-actor.js）早就是这个写法，这里照抄。
-  const userById = new Map((await ctx.repo.users.list()).map(user => [user._id, user]));
+  // 名录要按 userId 补昵称 / 头像。**按这批会员的编号批量取**，而不是
+  // 「读全平台 users 再建索引」：users 是平台级集合（不带 schoolId），list()
+  // 会把别校账号也读进来，读量随平台总用户数增长。本校 200 人只需 2 次 RPC。
+  // （2026-10-21 审查 P0-1；此前这里写的是「一次取齐本校账号」，与实际不符。）
+  const userById = new Map(
+    (await ctx.repo.users.listByIds(rows.map(row => row.userId))).map(user => [user._id, user]),
+  );
 
   const members = [];
   for (const row of rows) {

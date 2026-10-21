@@ -3,6 +3,7 @@ const { fail } = require('../envelope.js');
 const { buildSchoolContext } = require('./school-context.js');
 const { buildMeetContext } = require('../../lib/services/meet-context.js');
 const { SCHOOL_MEET_ACTIONS } = require('../../lib/utils/school-actions.js');
+const { guardRate } = require('./rate-limit.js');
 const handlers = {
   ...require('./school-member-handlers.js'),
   ...require('./school-space-handlers.js'),
@@ -24,6 +25,12 @@ const MEET_ACTIONS = new Set(SCHOOL_MEET_ACTIONS);
 async function handleSchoolRequest(event, { repo, openId, now = new Date() }) {
   if (event.protocolVersion !== 2) return fail('学校接口需要协议版本 2，请升级客户端');
   if (!Object.prototype.hasOwnProperty.call(handlers, event.action)) return fail('该操作尚未支持学校范围');
+
+  // 限流放在「动作确认存在」之后：未知动作不消耗配额，也免得把探测请求
+  // 与真实业务混在一个桶里。每个读接口要读 6~8 个集合，不限流时一个
+  // 在册账号的循环就能打空全校每日读配额（见 rate-limit.js 的说明）。
+  const limited = guardRate(openId, event.action);
+  if (limited) return fail(limited.message);
 
   // 运动会分支：只要求 schoolId，meetId 按动作可选（列表/建赛/搜项目都没有届）。
   if (MEET_ACTIONS.has(event.action)) {

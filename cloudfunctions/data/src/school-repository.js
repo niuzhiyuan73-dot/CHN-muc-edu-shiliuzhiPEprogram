@@ -23,7 +23,13 @@ const SCHOOL_COLLECTIONS = ['schools', 'schoolAssociations', 'colleges', 'school
 const SCHOOL_ONLY = ['colleges', 'schoolMembers', 'schoolRoles', 'sportsMeetCollegeLeads', 'announcements'];
 // 带 eventId 的从属集合：按赛事取子集走 listByEvent（条件查询），不再整表读完
 // 再内存过滤。与内存仓储 school-memory-repo.js 的 EVENT_SCOPED 一一对应。
-const EVENT_SCOPED = ['matches', 'eventSignups', 'collegeEntries', 'ties', 'lineups'];
+//
+// 团队运动的报名 / 比赛 / 统计三个集合同样有 eventId、同样是「按赛事取子集」
+// 的读法（team-event-service 里 6 处 `list().filter(eventId)`），2026-10-21
+// 审查 P1-5 把它们并进来：此前一次详情页要把历年全部比赛与统计读回来才滤出
+// 本届那几十条。
+const EVENT_SCOPED = ['matches', 'eventSignups', 'collegeEntries', 'ties', 'lineups',
+  'teamEventEntries', 'teamMatches', 'teamMatchStats'];
 const SCOPED_COLLECTIONS = [
   'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
   ...SCHOOL_ONLY, 'schoolAssociations', 'memberships',
@@ -113,6 +119,21 @@ function buildScoped(repo, io, inTx, options) {
         : { schoolId: scope.schoolId, association: scope.association };
       result[key].listByEvent = (eventId) => io.query(key, { ...scopeFields, eventId });
     }
+  }
+  // 本赛季已生效的比赛：把 `status` 与 `matchTime >= resetTime` 一起下推到查询。
+  //
+  // 【为什么需要】（2026-10-21 审查 P0-2）
+  // 榜单 / 成绩 / 个人主页都要「本赛季计分比赛」，原做法是读全部历史流水再在
+  // 应用层按 resetTime 过滤。比赛只增不减，第 5 年的榜单一打开就要读 5 年的
+  // 流水。matchTime 落库是 ISO 串，同格式字符串的字典序即时间序，范围比较成立。
+  //
+  // 只在 forScope（学校 + 协会）上提供：没有范围字段的同类查询会跨校泄露。
+  if (result.matches) {
+    result.matches.listRatedSince = (sinceIso) => {
+      const where = { schoolId: scope.schoolId, association: scope.association, status: 1 };
+      if (typeof sinceIso === 'string' && sinceIso) where.matchTime = io.cmd.gte(sinceIso);
+      return io.query('matches', where);
+    };
   }
   if (!inTx) result.transaction = (fn) => repo.transaction((tx) => fn(surfaceOf(tx, scope)));
   return result;

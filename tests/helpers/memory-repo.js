@@ -29,6 +29,52 @@ function clone(doc) {
   return doc === null || typeof doc !== 'object' ? doc : { ...doc };
 }
 
+/**
+ * 极简 `db.command` 替身：只实现学校仓储实际用到的操作符（gte / gt / in / and）。
+ *
+ * 【为什么必须有】（2026-10-21）
+ * 云端 `matches.listRatedSince` 把 `matchTime >= resetTime` 下推成 `cmd.gte(...)`。
+ * 内存仓储若把那个对象当成「等于某个对象」来比，条件恒假、榜单会**静默变空**——
+ * 这类「本地绿、云端对」的分叉正是这组契约测试要防的。
+ */
+const CMD = Symbol('db.command');
+const command = {
+  gte: (value) => ({ [CMD]: 'gte', value }),
+  gt: (value) => ({ [CMD]: 'gt', value }),
+  in: (value) => ({ [CMD]: 'in', value }),
+  and: (value) => ({ [CMD]: 'and', value }),
+};
+const isCommand = (value) => Boolean(value && value[CMD]);
+/** 值转时间戳：Date 与 ISO 串都认，认不出返回 null（退化为字符串比较）。 */
+const toTime = (value) => {
+  if (value === null || value === undefined || value === '') return null;
+  const ms = new Date(value).getTime();
+  return Number.isNaN(ms) ? null : ms;
+};
+const compare = (left, right) => {
+  const a = toTime(left);
+  const b = toTime(right);
+  if (a !== null && b !== null) return a - b;
+  return String(left === null || left === undefined ? '' : left)
+    .localeCompare(String(right === null || right === undefined ? '' : right));
+};
+function matchWhere(doc, where) {
+  if (!where) return true;
+  if (isCommand(where)) {
+    if (where[CMD] === 'and') return where.value.every((part) => matchWhere(doc, part));
+    return false;
+  }
+  return Object.keys(where).every((field) => {
+    const cond = where[field];
+    if (!isCommand(cond)) return doc[field] === cond;
+    if (cond[CMD] === 'and') return cond.value.every((part) => matchWhere(doc, part));
+    if (cond[CMD] === 'in') return Array.isArray(cond.value) && cond.value.includes(doc[field]);
+    if (cond[CMD] === 'gte') return compare(doc[field], cond.value) >= 0;
+    if (cond[CMD] === 'gt') return compare(doc[field], cond.value) > 0;
+    return false;
+  });
+}
+
 /** 会改动数据的集合方法名（用于给基础集合自动挂上「写」钩子） */
 const WRITE_METHODS = new Set(['set', 'insert', 'update', 'remove']);
 
@@ -117,6 +163,13 @@ function createMemoryRepo(seed = {}) {
       users: {
         list: () => list('users'),
         getById: (id) => read('users', id),
+        // 按一批编号取账号（与云端 users.listByIds 同口径）。业务用它替掉
+        // 「读全平台 users 再建 Map」，避免测试里也跑出全表读的假象。
+        listByIds: async (ids) => {
+          const uniq = [...new Set((Array.isArray(ids) ? ids : [])
+            .filter((id) => typeof id === 'string' && id))];
+          return uniq.map((id) => target.users.get(id)).filter(Boolean).map(clone);
+        },
         getByOpenId: async (openId) => {
           if (!openId) return null;
           for (const doc of target.users.values()) {
@@ -307,14 +360,14 @@ function createMemoryRepo(seed = {}) {
       },
     };
     const built = attachSchoolRepository(repo, {
+      // 与云端 io.cmd 对应：listRatedSince 等范围查询靠它构造操作符。
+      cmd: command,
       read,
       set: async (key, id, doc) => {
         if (onWrite) onWrite(key);
         target[key].set(id, { ...doc, _id: id });
       },
-      query: (key, where) => list(key).filter((doc) =>
-        Object.keys(where).every((field) => doc[field] === where[field])
-      ),
+      query: (key, where) => list(key).filter((doc) => matchWhere(doc, where)),
     }, inTx);
 
     // 基础集合的写方法直接落在 target 上，不走 io.set，故按方法名套钩子。

@@ -119,7 +119,7 @@ describe('实时比分轮询适配器', () => {
     assert.equal(seen[1][0].pointsA, 2);
   });
 
-  test('单拍失败静默跳过，下一拍照常', async (t) => {
+  test('单拍失败静默跳过，退避一拍后再照常', async (t) => {
     t.mock.timers.enable({ apis: ['setInterval'] });
     let failing = true;
     install(async () => {
@@ -132,10 +132,16 @@ describe('实时比分轮询适配器', () => {
     await flush();
     assert.equal(seen.length, 0, '首发失败既不回调也不冒泡');
 
+    // 失败一次 ⇒ 退避到 2 × POLL_INTERVAL（指数退避第一档）。
+    // 故障期所有客户端若都按原节奏猛打，恢复期会被打得更久（审查 P2-12）。
     failing = false;
     t.mock.timers.tick(POLL_INTERVAL);
     await flush();
-    assert.equal(seen.length, 1, '下一拍照常取到数据');
+    assert.equal(seen.length, 0, '退避期内不发下一拍');
+
+    t.mock.timers.tick(POLL_INTERVAL);
+    await flush();
+    assert.equal(seen.length, 1, '退避结束后照常取到数据');
   });
 
   test('pause 停表、resume 立即补一次', async (t) => {
@@ -247,5 +253,71 @@ test('篮球轮询：总分相同但节次版本变化仍回调，慢请求不�
     await flush();
     assert.equal(seen.length, 2, '换节也必须更新观众页面');
     assert.equal(seen[1][0].live.period, 2);
+  } finally { off(); }
+});
+
+test('连续失败按指数退避，成功后回到原节奏', async t => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  let calls = 0;
+  let failing = true;
+  const off = watchLiveScores(['m1'], () => {}, { fetch: async () => {
+    calls += 1;
+    if (failing) throw new Error('boom');
+    return [{ matchId: 'm1', status: 'live' }];
+  } });
+  try {
+    await flush();
+    assert.equal(calls, 1, '订阅即拍一次');
+    // 第 1 次失败 ⇒ 2×；第 2 次失败 ⇒ 4×
+    t.mock.timers.tick(POLL_INTERVAL * 2);
+    await flush();
+    assert.equal(calls, 2, '第一档退避后重拍');
+    t.mock.timers.tick(POLL_INTERVAL * 2);
+    await flush();
+    assert.equal(calls, 2, '第二档退避（4×）未到，不发请求');
+    t.mock.timers.tick(POLL_INTERVAL * 2);
+    await flush();
+    assert.equal(calls, 3, '第二档退避到点才重拍');
+    // 第 3 次失败后间隔是 16 秒（2×2³）。恢复：成功一拍后 interval 复位。
+    failing = false;
+    t.mock.timers.tick(POLL_INTERVAL * 8);
+    await flush();
+    assert.equal(calls, 4, '成功那一拍');
+    t.mock.timers.tick(POLL_INTERVAL);
+    await flush();
+    assert.equal(calls, 5, '成功后恢复 2 秒一拍');
+  } finally { off(); }
+});
+
+test('没有 live 场次时降频到空闲间隔，出现 live 立刻恢复', async t => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  let calls = 0;
+  let live = false;
+  const off = watchLiveScores(['m1'], () => {}, { fetch: async () => {
+    calls += 1;
+    return [{ matchId: 'm1', status: live ? 'live' : 'pending' }];
+  } });
+  try {
+    await flush();
+    // 连续 3 拍无 live 后降频：2+2+2 秒内应有 3 次调用
+    t.mock.timers.tick(POLL_INTERVAL * 2);
+    await flush();
+    t.mock.timers.tick(POLL_INTERVAL * 2);
+    await flush();
+    const beforeIdle = calls;
+    t.mock.timers.tick(POLL_INTERVAL * 2);
+    await flush();
+    assert.equal(calls, beforeIdle, '空闲期内 2 秒不再发请求（已降到 8 秒）');
+    t.mock.timers.tick(8000);
+    await flush();
+    assert.equal(calls, beforeIdle + 1, '空闲间隔到点才拍一次');
+
+    live = true;
+    t.mock.timers.tick(8000);
+    await flush();
+    const afterLive = calls;
+    t.mock.timers.tick(POLL_INTERVAL * 2);
+    await flush();
+    assert.equal(calls, afterLive + 1, '出现 live 后回到 2 秒节奏');
   } finally { off(); }
 });

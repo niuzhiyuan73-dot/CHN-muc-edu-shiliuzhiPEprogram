@@ -102,30 +102,58 @@ async function readDoc(scope, name, id) {
 }
 
 /**
- * 整表读取，自动翻页。
+ * 拼下一页的查询条件。
+ *
+ * 【为什么用「上一页最后一条的 _id」而不是 skip】（2026-10-21 审查 P1-4）
+ * `skip(n)` 的语义是「排序后扫描并丢弃前 n 条」，两个后果都不好受：
+ *   1. 成本随页数线性上升——第 10 页要白扫 900 条；
+ *   2. 翻页期间有写入时，窗口会漂移：新文档插到游标之前，第 2 页会与第 1 页
+ *      重叠（同一条被读两次），插到之后则可能整条漏掉。原实现用 orderBy('_id')
+ *      只稳住了「顺序」，稳不住「窗口」，台账仍可能少读一条、等级分少算一场。
+ * 游标分页每页都是 `_id > 上一页末条`，成本恒定，且天然免疫插入导致的漂移。
+ *
+ * where 自带 `_id` 条件时（如按编号批量取）不能直接覆盖，用 and 合并。
+ *
+ * @param {Object} where 原有等值条件
+ * @param {string|null} lastId 上一页最后一条的 _id；null 表示第一页
+ * @param {Object} cmd db.command
+ * @returns {Object}
+ */
+function cursorCond(where, lastId, cmd) {
+  const base = where && Object.keys(where).length > 0 ? where : null;
+  if (lastId === null || lastId === undefined) return base;
+  const next = { _id: cmd.gt(lastId) };
+  if (!base) return next;
+  if (base._id === undefined) return { ...base, ...next };
+  return cmd.and([base, next]);
+}
+
+/**
+ * 整表读取，游标翻页。
  *
  * 【翻页为什么必须带 orderBy】
- * skip/limit 是「先排序、再切一段」。不指定顺序时，数据库给出的次序没有
- * 任何保证，两次翻页之间若有人写入（或本就无序），第 2 页可能与第 1 页
- * 重叠、也可能整条漏掉。台账漏一条，等级分就少算一场，且查不出原因。
+ * 游标分页依赖「下一页从这条之后开始」，顺序不稳定的话游标本身就没有意义。
  * 按 _id 升序是唯一稳定且不依赖业务字段的排法。
  *
  * @param {Object} scope db
  * @param {string} name 集合名
+ * @param {Object} cmd db.command
  * @returns {Promise<Array<Object>>}
  */
-async function readAll(scope, name) {
+async function readAll(scope, name, cmd) {
   const out = [];
-  for (let offset = 0; ; offset += PAGE_SIZE) {
-    const res = await scope
-      .collection(name)
+  let lastId = null;
+  for (;;) {
+    const cond = cursorCond(null, lastId, cmd);
+    const query = cond ? scope.collection(name).where(cond) : scope.collection(name);
+    const res = await query
       .orderBy('_id', 'asc')
-      .skip(offset)
       .limit(PAGE_SIZE)
       .get();
     const batch = (res && res.data) || [];
     for (const doc of batch) out.push(doc);
     if (batch.length < PAGE_SIZE) break;
+    lastId = batch[batch.length - 1]._id;
   }
   // 云端每翻一页就是一次 RPC：深翻页同时放大单次耗时（默认 3 秒超时的大头）
   // 与每日读配额（官方 5 万次/天）。超过阈值留痕，真机验收时按日志定位慢在哪。
@@ -170,31 +198,39 @@ function stripForStorage(value) {
 
 /** 复制一份、去掉 _id，并把时间规格成 ISO 串（见 stripForStorage）。 */
 function withoutId(doc) {
-  const copy = stripForStorage(doc);
+  // 快路径：顶层全是原始类型（且无 undefined）时，深拷贝与规格化都是白做，
+  // 浅拷贝足够——随后就交给数据库序列化了（2026-10-21 审查 P2-11）。
+  // 比赛结算这类"读整条、改一处、整条写回"的路径每次都要拷一遍文档，
+  // 大文档上这是纯 CPU 开销。
+  const plain = doc && typeof doc === 'object' && Object.values(doc)
+    .every((value) => value === null || (typeof value !== 'object' && value !== undefined));
+  const copy = plain ? { ...doc } : stripForStorage(doc);
   delete copy._id;
   return copy;
 }
 
 /**
- * 带等值条件读取，自动翻页。翻页同理必须带 orderBy（见 readAll）。
+ * 带等值条件读取，游标翻页（同 readAll，见 cursorCond 的说明）。
  * @param {Object} scope db
  * @param {string} name 集合名
  * @param {Object} where 等值条件
+ * @param {Object} cmd db.command
  * @returns {Promise<Array<Object>>}
  */
-async function readWhere(scope, name, where) {
+async function readWhere(scope, name, where, cmd) {
   const out = [];
-  for (let offset = 0; ; offset += PAGE_SIZE) {
-    const res = await scope
-      .collection(name)
-      .where(where)
+  let lastId = null;
+  for (;;) {
+    const cond = cursorCond(where, lastId, cmd);
+    const query = cond ? scope.collection(name).where(cond) : scope.collection(name);
+    const res = await query
       .orderBy('_id', 'asc')
-      .skip(offset)
       .limit(PAGE_SIZE)
       .get();
     const batch = (res && res.data) || [];
     for (const doc of batch) out.push(doc);
     if (batch.length < PAGE_SIZE) break;
+    lastId = batch[batch.length - 1]._id;
   }
   if (out.length >= DEEP_READ_WARN) {
     console.warn(`[data] 深翻页告警：${name}（条件 ${JSON.stringify(where)}）单次读 ${out.length} 条（${Math.ceil(out.length / PAGE_SIZE)} 页 RPC）`);
@@ -207,22 +243,59 @@ async function readWhere(scope, name, where) {
  *
  * @param {Object} scope db 或事务对象，两者都有 .collection()
  * @param {boolean} inTx 是否处于事务中（事务里不能整表读）
+ * @param {Object} cmd db.command（事务内不查询，可为空）
  * @returns {Object} 仓储
  */
-function buildCollections(scope, inTx) {
+function buildCollections(scope, inTx, cmd) {
   const col = (key) => scope.collection(COLLECTIONS[key]);
 
   const list = (key) => {
     // 事务里做集合查询会被云开发拒绝，报错晦涩。这里主动拦下并说清原因，
     // 免得后来人以为是数据库抽风。
     if (inTx) throw new Error(`事务内不允许整表读取（${key}），请改用 getById`);
-    return readAll(scope, COLLECTIONS[key]);
+    return readAll(scope, COLLECTIONS[key], cmd);
   };
 
   const repo = {
     users: {
       list: () => list('users'),
       getById: (id) => readDoc(scope, COLLECTIONS.users, id),
+      /**
+       * 按一批 userId 取账号。
+       *
+       * 【为什么必须有它】（2026-10-21 审查 P0-1）
+       * `users` 是**平台级**集合（账号跟微信 OpenID 走，不带 schoolId），所以它的
+       * `list()` 是「把全平台所有学校的账号读进内存」。而业务要的都是「给这批
+       * userId 补昵称/头像」——本校几百人，全平台可能几千人，读放大十几倍，
+       * 还随其它学校用户增长而变慢。
+       *
+       * 这里按 _id 批量取（`_.in`，每次 100 个），RPC 数从「全平台页数」降到
+       * 「本校成员数 / 100」。事务内不能用条件查询，退化为逐个点读（走事务
+       * 的 doc 读，合法且已被读写预算计数）。
+       *
+       * @param {Array<string>} ids
+       * @returns {Promise<Array<Object>>}
+       */
+      listByIds: async (ids) => {
+        const uniq = [...new Set((Array.isArray(ids) ? ids : [])
+          .filter(id => typeof id === 'string' && id))];
+        if (uniq.length === 0) return [];
+        if (inTx) {
+          const out = [];
+          for (const id of uniq) {
+            const doc = await readDoc(scope, COLLECTIONS.users, id);
+            if (doc) out.push(doc);
+          }
+          return out;
+        }
+        const out = [];
+        for (let i = 0; i < uniq.length; i += PAGE_SIZE) {
+          const chunk = uniq.slice(i, i + PAGE_SIZE);
+          const res = await col('users').where({ _id: cmd.in(chunk) }).get();
+          for (const doc of (res && res.data) || []) out.push(doc);
+        }
+        return out;
+      },
       // 【为什么必须带 orderBy】同一个 OpenID 可能留下两条账号（旧协议 `u_…`
       // 与协议 2 `acc:…` 两套编号并存，见 2026-10-16 只读审计 H5/P1）。不加
       // orderBy 时数据库返回哪一条**不确定**，表现为「注册过却进不去」「榜单里
@@ -246,7 +319,7 @@ function buildCollections(scope, inTx) {
       // 比赛入签表。走条件查询，省掉一次整表翻页。
       listByEvent: (eventId) => {
         if (inTx) throw new Error('事务内不允许条件读取（matches），请改用 getById');
-        return readWhere(scope, COLLECTIONS.matches, { eventId });
+        return readWhere(scope, COLLECTIONS.matches, { eventId }, cmd);
       },
       getById: (id) => readDoc(scope, COLLECTIONS.matches, id),
       insert: (doc) => col('matches').doc(doc._id).set({ data: withoutId(doc) }),
@@ -266,7 +339,7 @@ function buildCollections(scope, inTx) {
       // 办法实现，免得将来「一场比赛报了两百人」时静默少读一段。
       listByEvent: (eventId) => {
         if (inTx) throw new Error('事务内不允许条件读取（eventSignups），请改用 getById');
-        return readWhere(scope, COLLECTIONS.eventSignups, { eventId });
+        return readWhere(scope, COLLECTIONS.eventSignups, { eventId }, cmd);
       },
       getById: (id) => readDoc(scope, COLLECTIONS.eventSignups, id),
       insert: (doc) => col('eventSignups').doc(doc._id).set({ data: withoutId(doc) }),
@@ -285,7 +358,7 @@ function buildCollections(scope, inTx) {
       // 一场学院赛的名单按赛事过滤：与 eventSignups 同一套翻页办法
       listByEvent: (eventId) => {
         if (inTx) throw new Error('事务内不允许条件读取（collegeEntries），请改用 getById');
-        return readWhere(scope, COLLECTIONS.collegeEntries, { eventId });
+        return readWhere(scope, COLLECTIONS.collegeEntries, { eventId }, cmd);
       },
       getById: (id) => readDoc(scope, COLLECTIONS.collegeEntries, id),
       insert: (doc) => col('collegeEntries').doc(doc._id).set({ data: withoutId(doc) }),
@@ -297,7 +370,7 @@ function buildCollections(scope, inTx) {
       // 一场学院赛的大场数远在单页之内，但仍按同一套翻页办法实现
       listByEvent: (eventId) => {
         if (inTx) throw new Error('事务内不允许条件读取（ties），请改用 getById');
-        return readWhere(scope, COLLECTIONS.ties, { eventId });
+        return readWhere(scope, COLLECTIONS.ties, { eventId }, cmd);
       },
       getById: (id) => readDoc(scope, COLLECTIONS.ties, id),
       insert: (doc) => col('ties').doc(doc._id).set({ data: withoutId(doc) }),
@@ -308,7 +381,7 @@ function buildCollections(scope, inTx) {
       list: () => list('lineups'),
       listByEvent: (eventId) => {
         if (inTx) throw new Error('事务内不允许条件读取（lineups），请改用 getById');
-        return readWhere(scope, COLLECTIONS.lineups, { eventId });
+        return readWhere(scope, COLLECTIONS.lineups, { eventId }, cmd);
       },
       getById: (id) => readDoc(scope, COLLECTIONS.lineups, id),
       insert: (doc) => col('lineups').doc(doc._id).set({ data: withoutId(doc) }),
@@ -320,6 +393,25 @@ function buildCollections(scope, inTx) {
     // 的接口形状必须一致，否则「本地能跑、云端 TypeError」还会再犯。
     liveScores: {
       getById: (id) => readDoc(scope, COLLECTIONS.liveScores, id),
+      /**
+       * 按一批编号取实时比分（轮询接口专用）。
+       *
+       * 【为什么必须批读】（2026-10-21 审查 P1-6）轮询每 2 秒一次，50 场若逐条
+       * 点读就是 50 个 RTT，分批并发也要 5 轮；一次 `_.in` 只花 1 个 RTT。
+       * 调用方仍须逐条判归属（编号是客户端给的）。
+       */
+      listByIds: async (ids) => {
+        const uniq = [...new Set((Array.isArray(ids) ? ids : [])
+          .filter(id => typeof id === 'string' && id))];
+        if (uniq.length === 0) return [];
+        const out = [];
+        for (let i = 0; i < uniq.length; i += PAGE_SIZE) {
+          const chunk = uniq.slice(i, i + PAGE_SIZE);
+          const res = await col('liveScores').where({ _id: cmd.in(chunk) }).get();
+          for (const doc of (res && res.data) || []) out.push(doc);
+        }
+        return out;
+      },
       insert: (doc) => col('liveScores').doc(doc._id).set({ data: withoutId(doc) }),
       update: (id, patch) => col('liveScores').doc(id).update({ data: withoutId(patch) }),
     },
@@ -337,7 +429,7 @@ function buildCollections(scope, inTx) {
       list: () => list('memberships'),
       listByUser: (userId) => {
         if (inTx) throw new Error('事务内不允许条件读取（memberships），请改用 get');
-        return readWhere(scope, COLLECTIONS.memberships, { userId });
+        return readWhere(scope, COLLECTIONS.memberships, { userId }, cmd);
       },
       get: (id) => readDoc(scope, COLLECTIONS.memberships, id),
       set: (id, doc) => col('memberships').doc(id).set({ data: withoutId(doc) }),
@@ -387,14 +479,46 @@ function buildCollections(scope, inTx) {
     };
   }
 
-  return attachSchoolRepository(repo, {
+  // 团队运动三集合的「按赛事取子集」。
+  //
+  // 业务里既有 `ctx.repo.forScope(ctx).teamMatches.listByEvent(...)`，也有
+  // 直接把 forScope 结果存进 `repo` 再调用的写法；本地模拟仓储顶层与受范围
+  // 两层都提供同名方法（school-memory-repo.js），云端必须对齐，否则又是
+  // 「本地绿、云端 TypeError」。eventId 由 teamKey 派生（内含 schoolId +
+  // association），所以按它查询天然带范围，不需要再拼 schoolId。
+  //
+  // 必须放在 attachSchoolRepository **之后**：team* 属于 SCHOOL_COLLECTIONS，
+  // 顶层对象由那一步创建（补齐循环的清单里没有它们）。
+  attachSchoolRepository(repo, {
+    // 范围查询要能构造范围操作符（如 matchTime >= resetTime），故把 db.command
+    // 一并交给学校仓储扩展（见 listRatedSince）。
+    cmd,
     read: (key, id) => readDoc(scope, COLLECTIONS[key], id),
     set: (key, id, doc) => col(key).doc(id).set({ data: withoutId(doc) }),
     query: (key, where) => {
       if (inTx) throw new Error(`事务内不允许条件读取（${key}），请改用 getById`);
-      return readWhere(scope, COLLECTIONS[key], where);
+      return readWhere(scope, COLLECTIONS[key], where, cmd);
     },
   }, inTx);
+
+  // 团队运动三集合的「按赛事取子集」。
+  //
+  // 业务里既有 `ctx.repo.forScope(ctx).teamMatches.listByEvent(...)`，也有直接
+  // 把 forScope 结果存进 `repo` 再调用的写法；本地模拟仓储顶层与受范围两层
+  // 都提供同名方法（school-memory-repo.js），云端必须对齐，否则又是「本地绿、
+  // 云端 TypeError」。eventId 由 teamKey 派生（内含 schoolId + association），
+  // 按它查询天然带范围，不需要再拼 schoolId。
+  //
+  // 必须放在 attachSchoolRepository **之后**：team* 属于 SCHOOL_COLLECTIONS，
+  // 顶层对象由那一步创建（上面补齐循环的清单里没有它们）。
+  for (const key of ['teamEventEntries', 'teamMatches', 'teamMatchStats']) {
+    repo[key].listByEvent = (eventId) => {
+      if (inTx) throw new Error(`事务内不允许条件读取（${key}），请改用 getById`);
+      return readWhere(scope, COLLECTIONS[key], { eventId }, cmd);
+    };
+  }
+
+  return repo;
 }
 
 /**
@@ -478,13 +602,13 @@ function instrumentTransaction(transaction) {
  * @returns {Object} 仓储，含 transaction
  */
 function createRepo(db) {
-  const repo = buildCollections(db, false);
+  const repo = buildCollections(db, false, db.command);
 
   repo.transaction = (fn) =>
     db.runTransaction(async (transaction) => {
       const instrumented = instrumentTransaction(transaction);
       try {
-        return await fn(buildCollections(instrumented.transaction, true));
+        return await fn(buildCollections(instrumented.transaction, true, db.command));
       } finally {
         // 观测层：接近临界的事务留痕，供真机验收核对云端真实上限（审计 C4）。
         if (instrumented.stats.writes >= TX_WARN_WRITES) {

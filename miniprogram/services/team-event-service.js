@@ -334,7 +334,7 @@ async function getTeamEvent(payload = {}, ctx) {
   const manage = canManageAssociationSpace(ctx);
   if (event.status === TEAM_EVENT_STATUS.DRAFT && !manage) return ok(refused('赛事尚未发布'));
 
-  const entries = (await repo.teamEventEntries.list()).filter(entry => entry.eventId === event._id);
+  const entries = await repo.teamEventEntries.listByEvent(event._id);
   const [teams, dir] = await Promise.all([repo.teams.list(), buildDirectory(ctx)]);
   const teamName = new Map(teams.map(team => [team._id, team.name]));
   // 院队名按学院目录现拼：报名记录指向的院队即使还没落库（历史数据 / 惰性预置），
@@ -360,8 +360,7 @@ async function getTeamEvent(payload = {}, ctx) {
       placement: event.status === TEAM_EVENT_STATUS.FINISHED ? Number(entry.placement) || null : null,
     }));
 
-  const matches = (await repo.teamMatches.list())
-    .filter(match => match.eventId === event._id)
+  const matches = (await repo.teamMatches.listByEvent(event._id))
     .sort((a, b) => (Number(a.round) - Number(b.round)) || (Number(a.slot) - Number(b.slot)));
   // 积分表对所有人可见（它就是赛程的一部分），名次只认赛事上已结算的那份
   const strategy = teamSportStrategyFor(ctx.association, event);
@@ -375,7 +374,7 @@ async function getTeamEvent(payload = {}, ctx) {
 
   // 哪些比赛的统计还有未审核的新版本：赛程列表上要能看见「统计待审核」，
   // 否则管理员得逐场点开才发现有人改过统计
-  const statDocs = (await repo.teamMatchStats.list()).filter(row => row.eventId === event._id);
+  const statDocs = await repo.teamMatchStats.listByEvent(event._id);
   const pendingStatMatches = new Set(
     statDocs.filter(row => row.status === TEAM_STAT_STATUS.PENDING).map(row => row.matchId)
   );
@@ -796,8 +795,8 @@ async function submitTeamEntry(payload = {}, ctx) {
   // 所有有效报名变动都会递增赛事版本；事务内比较完整快照，封住查询后的新增行窗口。
   if (football) {
     const chosenIds = new Set(roster.map(row => row.userId));
-    const occupied = (await repo.teamEventEntries.list()).find(entry => entry.eventId === event._id
-      && entry.teamId !== team._id
+    const occupied = (await repo.teamEventEntries.listByEvent(event._id)).find(entry =>
+      entry.teamId !== team._id
       && [TEAM_ENTRY_STATUS.SUBMITTED, TEAM_ENTRY_STATUS.APPROVED, TEAM_ENTRY_STATUS.LOCKED].includes(entry.status)
       && (entry.roster || []).some(row => chosenIds.has(row.userId)));
     if (occupied) return ok(refused('名单中有球员已代表本届赛事的其他球队报名，请调整名单'));
@@ -971,8 +970,8 @@ async function lockTeamEntries(payload = {}, ctx) {
   if (![TEAM_EVENT_STATUS.REGISTRATION, TEAM_EVENT_STATUS.LOCKED].includes(event.status)) {
     return ok(refused('只有在报名阶段可以锁定名单'));
   }
-  const entries = (await repo.teamEventEntries.list()).filter(entry => entry.eventId === event._id
-    && [TEAM_ENTRY_STATUS.APPROVED, TEAM_ENTRY_STATUS.LOCKED].includes(entry.status));
+  const entries = (await repo.teamEventEntries.listByEvent(event._id)).filter(entry =>
+    [TEAM_ENTRY_STATUS.APPROVED, TEAM_ENTRY_STATUS.LOCKED].includes(entry.status));
   if (entries.some(entry => (entry.roster || []).length < (Number(event.entryMin) || 5))) {
     return ok(refused('有球队名单人数不足，先补齐再锁定'));
   }
@@ -1228,12 +1227,12 @@ async function drawTeamEvent(payload = {}, ctx) {
     return ok(refused('赛事已结束，不能再抽签'));
   }
 
-  const entries = (await repo.teamEventEntries.list())
-    .filter(entry => entry.eventId === event._id && entry.status === TEAM_ENTRY_STATUS.LOCKED)
+  const entries = (await repo.teamEventEntries.listByEvent(event._id))
+    .filter(entry => entry.status === TEAM_ENTRY_STATUS.LOCKED)
     .sort((a, b) => String(a.teamId).localeCompare(String(b.teamId)));
   if (entries.length < 2) return ok(refused('至少 2 支球队才能抽签'));
 
-  const existingMatches = (await repo.teamMatches.list()).filter(match => match.eventId === event._id);
+  const existingMatches = await repo.teamMatches.listByEvent(event._id);
   if (football.isFootball(ctx) && existingMatches.length) return ok(refused('足球赛程已经生成；首版不重抽，请核对现有签表或重建赛事'));
   if (existingMatches.some(match => match.status === TEAM_MATCH_STATUS.LIVE || match.liveScore
     || match.footballDraft || match.footballPublished || match.footballLineups
@@ -2019,8 +2018,8 @@ async function updateTeamRoundSchedule(payload = {}, ctx) {
   if (event.status === TEAM_EVENT_STATUS.CANCELED) return ok(refused('赛事已取消'));
 
   const stage = payload.stage ? String(payload.stage) : '';
-  const targets = (await repo.teamMatches.list()).filter(match => match.eventId === event._id
-    && Number(match.round) === round
+  const targets = (await repo.teamMatches.listByEvent(event._id)).filter(match =>
+    Number(match.round) === round
     && (!stage || match.stage === stage));
   if (targets.length === 0) return ok(refused('这一轮还没有比赛'));
   if (8 + targets.length * 2 > 96) return ok(refused('本轮场次超过云端单事务安全容量，请按阶段分别顺延', { code: 'TEAM_BATCH_LIMIT' }));
@@ -2089,7 +2088,7 @@ async function advanceTeamRound(payload = {}, ctx) {
     return ok(refused('赛事已结束'));
   }
 
-  const matches = (await repo.teamMatches.list()).filter(match => match.eventId === event._id);
+  const matches = await repo.teamMatches.listByEvent(event._id);
   const plan = planNextRound({
     eventId: event._id,
     draw: event.draw,
@@ -2146,7 +2145,7 @@ async function settleTeamEvent(payload = {}, ctx) {
   if (!inScope(event, ctx)) return ok(refused('赛事不存在，或不在本协会'));
   if (event.status === TEAM_EVENT_STATUS.CANCELED) return ok(refused('赛事已取消'));
   if (event.status === TEAM_EVENT_STATUS.FINISHED && (event.placements || []).length) {
-    const entries = (await repo.teamEventEntries.list()).filter(row => row.eventId === event._id);
+    const entries = await repo.teamEventEntries.listByEvent(event._id);
     const writes = entries.filter(entry => event.placements.some(row => row.teamId === entry.teamId && row.rank !== entry.placement))
       .map(entry => ({ key: 'teamEventEntries', doc: { ...entry,
         placement: event.placements.find(row => row.teamId === entry.teamId).rank, updatedAt: ctx.now } }));
@@ -2155,7 +2154,7 @@ async function settleTeamEvent(payload = {}, ctx) {
       nextEvent: { ...event, revision: (Number(event.revision) || 0) + 1, updatedAt: ctx.now }, result: { placements: event.placements } }));
   }
 
-  const matches = (await repo.teamMatches.list()).filter(match => match.eventId === event._id);
+  const matches = await repo.teamMatches.listByEvent(event._id);
   if (matches.length === 0) return ok(refused('还没有赛程，无法结算'));
   if (football.isFootball(ctx) && matches.some(match => match.footballDraft)) return ok(refused('仍有足球报告待审核，请先审核后结算'));
   const pending = matches.filter(
@@ -2163,8 +2162,8 @@ async function settleTeamEvent(payload = {}, ctx) {
   );
   if (pending.length > 0) return ok(refused(`还有 ${pending.length} 场未发布，无法结算`));
 
-  const entries = (await repo.teamEventEntries.list())
-    .filter(entry => entry.eventId === event._id && entry.status === TEAM_ENTRY_STATUS.LOCKED);
+  const entries = (await repo.teamEventEntries.listByEvent(event._id))
+    .filter(entry => entry.status === TEAM_ENTRY_STATUS.LOCKED);
   const teams = await repo.teams.list();
   const teamName = new Map(teams.map(team => [team._id, team.name]));
 

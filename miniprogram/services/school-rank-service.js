@@ -128,10 +128,10 @@ async function loadSeason(ctx) {
  * @returns {Promise<Array<Object>>}
  */
 async function replayMembersOf(ctx) {
-  const [rows, users] = await Promise.all([
-    ctx.repo.forScope(ctx).schoolMembers.list(),
-    ctx.repo.users.list(),
-  ]);
+  const rows = await ctx.repo.forScope(ctx).schoolMembers.list();
+  // 账号按在册成员编号批量取：users 是平台级集合，list() 会连别校账号一起读，
+  // 读量随平台总用户数增长（2026-10-21 审查 P0-1）。
+  const users = await ctx.repo.users.listByIds(rows.map(row => row.userId));
   const userById = new Map(users.map(user => [user._id, user]));
   return rows
     .filter(row => row.status === SCHOOL_MEMBER_STATUS.ACTIVE)
@@ -175,13 +175,22 @@ async function trainingFactsOf(ctx) {
  *     赛事分按「结算序号最大的那场」挂载 pointDelta。
  *
  * @param {Object} ctx
+ * @param {Object} [options]
+ * @param {boolean} [options.needMatches=true] 是否需要比赛流水（见下）
  * @returns {Promise<{season:Object, members:Array<Object>, matches:Array<Object>, pointFacts:Array<Object>}>}
  */
-async function loadScopeView(ctx) {
+async function loadScopeView(ctx, options = {}) {
+  const { needMatches = true } = options;
   const season = await loadSeason(ctx);
+  // 【为什么榜单可以不读 matches】（2026-10-21 审查 P0-2）
+  // 榜单每行的 elo / 胜 / 负 / 出场数全部来自 member_ratings（Elo 逐场结算后
+  // 已落库，见 extractPoolStats），积分来自 events + 训练事实。matches 只在
+  // **个人主页的走势**里用得到（buildRatingHistory）。
+  // 而 matches 是只增不减的最大集合：把它读回来只为两个不用的接口，等于
+  // 第 5 年打开榜单要读 5 年的流水。榜单与成绩因此显式关掉它。
   const [members, matches, ratingDocs, events, trainings, trainingRegistrations] = await Promise.all([
     replayMembersOf(ctx),
-    ctx.repo.forScope(ctx).matches.list(),
+    needMatches ? ctx.repo.forScope(ctx).matches.list() : Promise.resolve([]),
     ctx.repo.forScope(ctx).memberRatings.list(),
     ctx.repo.forScope(ctx).events.list(),
     ctx.repo.forScope(ctx).associationTrainings.list(),
@@ -252,6 +261,8 @@ function buildRows(users, project, myId) {
     isMe: Boolean(myId) && row._id === myId,
     nickName: row.nickName,
     // 只参与搜索，不渲染；页面上显示的一律是昵称
+    // 下发但**不渲染**：只用于按真实姓名搜索。榜单里只有出场过的参赛者，
+    // 与赛事公示名单同口径，不含未参赛会员（2026-10-21 评估后保留）。
     realName: realNameById.get(row._id) || '',
     avatarText: avatarOf(row.nickName),
     avatarUrl: row.avatarUrl || '',
@@ -315,7 +326,8 @@ async function getSchoolRanking(payload = {}, ctx) {
       ...emptyRanking(activeProject, activeProjectLabel) });
   }
 
-  const { members } = await loadScopeView(ctx);
+  // 榜单不需要比赛流水（分数全在 member_ratings 里），只取名册与积分事实。
+  const { members } = await loadScopeView(ctx, { needMatches: false });
   const myId = ctx.actorId || '';
   const allRows = buildRows(members, activeProject, myId);
   const rows = allRows.slice(0, TOP_LIMIT);
@@ -374,7 +386,8 @@ async function getSchoolMemberStats(payload = {}, ctx) {
   const wanted = new Set((Array.isArray(payload.userIds) ? payload.userIds : [])
     .filter(id => typeof id === 'string' && id));
 
-  const { members } = await loadScopeView(ctx);
+  // 成绩同榜单：评级已落库，不需要读比赛流水。
+  const { members } = await loadScopeView(ctx, { needMatches: false });
   const rows = members
     .filter(member => wanted.size === 0 || wanted.has(member._id))
     .map(member => ({

@@ -35,11 +35,15 @@ async function listAssociationMembers(payload = {}, ctx) {
     ctx.repo.forScope(ctx).schoolMembers.list(),
     ctx.repo.forScope(ctx).colleges.list(),
   ]);
-  const collegeName = id => (colleges.find(row => row.collegeId === id) || {}).name || '';
+  // 学院名走 Map（原先 find 在循环里，O(成员 × 学院)，2026-10-21 审查 P2-7）。
+  const collegeNameById = new Map(colleges.map(row => [row.collegeId, row.name]));
+  const collegeName = id => collegeNameById.get(id) || '';
 
-  // 一次取齐本校账号建索引，避免在循环里逐条 getById（一本校 200 人 = 200 次
-  // RPC）。见 2026-10-16 只读审计 H3。
-  const userById = new Map((await ctx.repo.users.list()).map(user => [user._id, user]));
+  // 账号按这批在册成员的编号批量取：users 是平台级集合，list() 会把别校账号
+  // 一起读进来，读量随平台总用户数增长（2026-10-21 审查 P0-1）。
+  const userById = new Map(
+    (await ctx.repo.users.listByIds(rows.map(row => row.userId))).map(user => [user._id, user]),
+  );
 
   const base = [];
   for (const row of rows) {

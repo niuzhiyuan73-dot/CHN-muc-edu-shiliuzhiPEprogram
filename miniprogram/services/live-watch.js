@@ -34,6 +34,23 @@
 const POLL_INTERVAL = 2000;
 
 /**
+ * 没有比赛在打时的间隔（毫秒）。
+ *
+ * 【为什么要放宽】（2026-10-21 审查 P1-6）
+ * 每拍请求都要重新解析身份（6 次点读）再按场次读实时比分，10 场观众一分钟
+ * 就是 480 次读。而「比赛还没开打 / 已经打完」的场次占大多数时间，2 秒一问
+ * 完全是空转。连续 IDLE_AFTER 拍都没有 live 场次时降到 8 秒，一旦有人开台
+ * （返回里出现 status==='live'）立刻恢复 2 秒。
+ */
+const IDLE_INTERVAL = 8000;
+
+/** 连续多少拍没有 live 场次才降频。设 3 是为了不误伤「刚点开始还没同步」的窗口。 */
+const IDLE_AFTER = 3;
+
+/** 失败退避的上限（毫秒）。 */
+const BACKOFF_MAX = 30000;
+
+/**
  * 当前订阅。同一时刻只允许一个页面在轮询——小程序同一时刻只有一个页面
  * 可见，用单例既省定时器，也天然做到「重新订阅即停旧表」。
  */
@@ -99,25 +116,39 @@ function clearTimer(target) {
  * @param {Object} target
  */
 async function poll(target) {
-  if (!target || target.stopped || target.paused || target.inFlight) return;
+  if (!target || target.stopped || target.paused || target.inFlight) return undefined;
   target.inFlight = true;
 
   let views;
+  let failed = false;
   try {
     views = await target.fetch(target.ids);
   } catch (err) {
-    return undefined; // 这一拍失败：不回调、不重试，下一拍照常
+    // 这一拍失败：不回调、不重试，但**要退避**——故障期所有客户端若都保持
+    // 原节奏猛打，恢复期会被打得更久（2026-10-21 审查 P2-12）。
+    failed = true;
   } finally {
     target.inFlight = false;
   }
   // 等待期间页面可能已经取消订阅或隐藏了
   if (!target || target.stopped || target.paused) return undefined;
 
-  const list = Array.isArray(views) ? views : [];
-  if (sameAsLast(target.last, list)) return undefined;
+  if (failed) {
+    target.failStreak += 1;
+    tuneInterval(target);
+    return undefined;
+  }
+  target.failStreak = 0;
 
-  target.last = toMap(list);
-  target.onUpdate(list);
+  const list = Array.isArray(views) ? views : [];
+  // 有 live 场次说明比赛正在打，保持高频；否则累计「空转」拍数，到阈值降频。
+  const hasLive = list.some((view) => view && view.status === 'live');
+  target.idleStreak = hasLive ? 0 : target.idleStreak + 1;
+
+  if (!sameAsLast(target.last, list)) {
+    target.last = toMap(list);
+    target.onUpdate(list);
+  }
 
   // 已经打完的场次不必再轮询。页面侧的 liveIds 本就排除 finished 的场次，
   // 但那是订阅那一刻算的；一场比赛是在轮询途中打完的，这里同步把名单缩一缩，
@@ -130,19 +161,42 @@ async function poll(target) {
     if (remaining.length !== target.ids.length) {
       target.ids = remaining;
       if (target.last) for (const id of finished) target.last.delete(id);
-      if (remaining.length === 0) clearTimer(target);
+      if (remaining.length === 0) {
+        clearTimer(target);
+        return undefined;
+      }
     }
   }
+  tuneInterval(target);
   return undefined;
+}
+
+/** 记下当前应当使用的间隔（不重建定时器）。 */
+function desiredInterval(target) {
+  if (target.failStreak > 0) {
+    return Math.min(POLL_INTERVAL * Math.pow(2, target.failStreak), BACKOFF_MAX);
+  }
+  return target.idleStreak >= IDLE_AFTER ? IDLE_INTERVAL : POLL_INTERVAL;
+}
+
+/** 间隔变了才重建定时器（setInterval 的周期不能原地修改）。 */
+function tuneInterval(target) {
+  if (!target || target.stopped || target.paused || target.ids.length === 0) return;
+  const next = desiredInterval(target);
+  if (next === target.interval) return;
+  target.interval = next;
+  schedule(target);
 }
 
 /** 起表（为空名单时什么也不做） */
 function schedule(target) {
   clearTimer(target);
   if (target.ids.length === 0) return;
+  const interval = target.interval || POLL_INTERVAL;
+  target.interval = interval;
   target.timer = setInterval(() => {
     poll(target);
-  }, POLL_INTERVAL);
+  }, interval);
   // Node 页面装配环境不因后台轮询常驻；微信的数值句柄没有此方法。
   if (target.timer && typeof target.timer.unref === 'function') target.timer.unref();
 }
@@ -176,6 +230,10 @@ function handleFor(target) {
   off.resume = () => {
     if (session !== target) return;
     target.paused = false;
+    // 回前台当作一次重新开始：退避与降频都清零，立即补一拍再按 2 秒跑。
+    target.failStreak = 0;
+    target.idleStreak = 0;
+    target.interval = POLL_INTERVAL;
     poll(target); // 立即补一次，消掉回前台的空窗
     schedule(target);
   };
@@ -218,6 +276,11 @@ function watchLiveScores(matchIds, onUpdate, options = {}) {
     timer: null,
     paused: false,
     stopped: false,
+    // 自适应间隔用：连续失败拍数（指数退避）、连续无 live 拍数（降频）、
+    // 当前 setInterval 周期（变了才重建定时器）。
+    failStreak: 0,
+    idleStreak: 0,
+    interval: POLL_INTERVAL,
   };
   session = target;
 

@@ -1,3 +1,6 @@
+// 入口限流按 openId 每秒计数，而这些用例用同一身份连打几十次（申请→审核→再申请、
+// 连续路由等），属于压测式调用而非真实交互，故跑测试时关掉（生产默认开启）。
+process.env.RATE_LIMIT = 'off';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

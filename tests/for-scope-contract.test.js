@@ -35,7 +35,11 @@ const CLOUD_ONLY_KEYS = [];
 const REQUIRED_METHODS = ['getById', 'insert', 'list', 'set', 'update'];
 // 带 eventId 的从属集合额外提供 listByEvent：按赛事取子集走条件查询，
 // 免得整表翻页后内存过滤（2026-10-21 读放大治理）。两端必须同时有、同时无。
-const EVENT_SCOPED = ['matches', 'eventSignups', 'collegeEntries', 'ties', 'lineups'];
+// 团队运动的报名 / 比赛 / 统计三个集合同在 2026-10-21 并入（P1-5）。
+const EVENT_SCOPED = ['matches', 'eventSignups', 'collegeEntries', 'ties', 'lineups',
+  'teamEventEntries', 'teamMatches', 'teamMatchStats'];
+// 带赛季维度的集合额外提供 listRatedSince（status + matchTime 下推到查询）。
+const SEASON_SCOPED = ['matches'];
 
 const collectionKeys = surface =>
   Object.keys(surface).filter(key => !RESULT_LEVEL.includes(key)).sort();
@@ -66,8 +70,12 @@ test('两端 forScope 每个集合的方法面逐字相同', () => {
 test('受范围仓储的集合方法面就是约定的那一套（钉住契约，别慢慢缩水）', () => {
   const cloud = createMemoryRepo().forScope(SCOPE);
   for (const key of Object.keys(cloud).filter(k => !RESULT_LEVEL.includes(k))) {
+    // 2026-10-21：matches 多一个 listRatedSince —— 榜单要「本赛季已生效比赛」，
+    // 把 status + matchTime >= resetTime 下推到查询，免得每次读全部历史流水。
+    // 只有 matches 有它（其余集合没有赛季维度），故单列一份清单而不是放开校验。
+    const seasonScoped = SEASON_SCOPED.includes(key) ? ['listRatedSince'] : [];
     const expected = EVENT_SCOPED.includes(key)
-      ? [...REQUIRED_METHODS, 'listByEvent'].sort()
+      ? [...REQUIRED_METHODS, 'listByEvent', ...seasonScoped].sort()
       : REQUIRED_METHODS;
     assert.deepEqual(methodNames(cloud[key]), expected,
       `${key} 的方法面变了，请同步本测试与另一端实现`);

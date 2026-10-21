@@ -345,8 +345,11 @@ async function listTrainingRegistrations(payload = {}, ctx) {
 
   // 普通会员只看有效报名名单（昵称 / 头像），不下发取消记录与任何隐私字段。
   if (!canManage) {
-    // 一次取齐账号建索引，别在循环里逐条 getById（见 2026-10-16 只读审计 H3）。
-    const userById = new Map((await ctx.repo.users.list()).map(user => [user._id, user]));
+    // 账号按「已报名的人」批量取，别读全平台 users（2026-10-21 审查 P0-1）。
+    const userById = new Map(
+      (await ctx.repo.users.listByIds(registeredRows.map(row => row.userId)))
+        .map(user => [user._id, user]),
+    );
     const members = [];
     for (const row of registeredRows) {
       const user = userById.get(row.userId);
@@ -390,9 +393,14 @@ async function listTrainingRegistrations(payload = {}, ctx) {
 
   const registrations = [];
   const colleges = await ctx.repo.forScope(ctx).colleges.list();
-  const collegeName = id => (colleges.find(row => row.collegeId === id) || {}).name || '';
+  // 学院名走 Map（原先 find 在循环里，2026-10-21 审查 P2-7）。
+  const collegeNameById = new Map(colleges.map(row => [row.collegeId, row.name]));
+  const collegeName = id => collegeNameById.get(id) || '';
   // 同理：账号与学校身份各取一次建索引，页面每条再逐条 getById 是 N+1。
-  const userById = new Map((await ctx.repo.users.list()).map(user => [user._id, user]));
+  // 账号按当前页的人批量取，不读全平台 users（2026-10-21 审查 P0-1）。
+  const userById = new Map(
+    (await ctx.repo.users.listByIds(page.map(row => row.userId))).map(user => [user._id, user]),
+  );
   const memberById = new Map((await ctx.repo.forScope(ctx).schoolMembers.list())
     .map(row => [row._id, row]));
   for (const row of page) {

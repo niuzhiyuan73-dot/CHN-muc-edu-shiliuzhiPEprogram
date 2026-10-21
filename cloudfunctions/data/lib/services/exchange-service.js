@@ -664,10 +664,16 @@ async function getExchangeEvent(payload = {}, ctx) {
   const placement = event.draw
     ? placementsFromExchange({ event, draw: event.draw, matches: existingMatches })
     : { ok: false, message: '' };
-  const names = new Map((await ctx.repo.users.list()).map(user => [user._id, user.nickName || '']));
-  const referees = (await ctx.repo.schoolMembers.list())
-    .filter(row => row.status === SCHOOL_MEMBER_STATUS.ACTIVE && event.participantSchoolIds.includes(row.schoolId))
-    .map(row => ({ userId: row.userId, nickName: names.get(row.userId) || '', schoolId: row.schoolId,
+  // 只取「本校在册 + 参与本次邀请赛的学校」这批人，再按他们的编号批量取昵称。
+  // 原先是 users.list()（全平台账号整表读）后给 referees 查表——一次跨校赛事
+  // 详情就把全平台账号读回来了（2026-10-21 审查 P0-1）。
+  const refereeRows = (await ctx.repo.schoolMembers.list())
+    .filter(row => row.status === SCHOOL_MEMBER_STATUS.ACTIVE && event.participantSchoolIds.includes(row.schoolId));
+  const names = new Map(
+    (await ctx.repo.users.listByIds(refereeRows.map(row => row.userId)))
+      .map(user => [user._id, user.nickName || '']),
+  );
+  const referees = refereeRows.map(row => ({ userId: row.userId, nickName: names.get(row.userId) || '', schoolId: row.schoolId,
       schoolName: event.schoolNames[row.schoolId] || '' }));
   const canceled = event.status === 'canceled';
   const isOrganizer = isPlatformAdmin(ctx) || (event.schoolId === ctx.schoolId && manages(ctx));

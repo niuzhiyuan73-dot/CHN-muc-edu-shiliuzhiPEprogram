@@ -7,7 +7,9 @@ const clone = value => value === undefined ? undefined : JSON.parse(JSON.stringi
  * 不整表读完再内存过滤。顶层与 forScope 两处都要提供，方法面与云端
  * （cloud-repo.js / school-repository.js）逐字一致，由契约测试守住。
  */
-const EVENT_SCOPED = ['matches', 'eventSignups', 'collegeEntries', 'ties', 'lineups'];
+const EVENT_SCOPED = ['matches', 'eventSignups', 'collegeEntries', 'ties', 'lineups',
+  // 团队运动：报名 / 比赛 / 统计同样按赛事取子集（与云端 school-repository.js 一致）
+  'teamEventEntries', 'teamMatches', 'teamMatchStats'];
 const KEYS = ['users', 'schools', 'schoolAssociations', 'colleges', 'schoolMembers', 'schoolRoles', 'memberships', 'studentIdClaims', 'auditLogs',
   'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
   'associationGroups', 'associationGroupMembers',
@@ -48,6 +50,17 @@ function createSchoolMemoryRepo(seed = {}) {
       };
     }
     repo.memberships.get = repo.memberships.getById;
+    // 按一批 userId 取账号：与云端 listByIds 同口径（云端非事务走 `_.in` 批查、
+    // 事务内退化为逐条点读；这里两者都是点取）。业务用它替掉「读全平台 users
+    // 再建 Map」——users 是平台级集合，全表读会随别校用户增长而变慢
+    // （2026-10-21 审查 P0-1）。
+    repo.users.listByIds = async ids => {
+      const uniq = [...new Set((Array.isArray(ids) ? ids : []).filter(id => typeof id === 'string' && id))];
+      return uniq
+        .map(id => getState().users.get(id))
+        .filter(Boolean)
+        .map(clone);
+    };
     // 同一 OpenID 可能留下两条账号（旧协议 `u_…` 与协议 2 `acc:…`）。这里与
     // 云端适配器同口径：按 _id 升序取定，让「解析到哪一条」确定、可复现
     // （见 2026-10-16 只读审计 H5 / P1）。
@@ -125,6 +138,15 @@ function createSchoolMemoryRepo(seed = {}) {
             .filter(doc => owns(doc) && doc.eventId === eventId);
         }
       }
+      // 本赛季已生效的比赛：与云端 listRatedSince 同口径（status + matchTime 条件
+      // 下推）。内存仓储仍是「读后过滤」，但语义一致，榜单两端结果不会分叉。
+      if (result.matches) {
+        result.matches.listRatedSince = async sinceIso => (await repo.matches.list())
+          .filter(doc => Boolean(doc)
+            && doc.schoolId === scope.schoolId && doc.association === scope.association
+            && doc.status === 1
+            && (!sinceIso || String(doc.matchTime || '') >= sinceIso));
+      }
       if (!inTx) result.transaction = fn => repo.transaction(tx => fn(tx.forScope(scope)));
       return result;
     };
@@ -180,6 +202,12 @@ function createSchoolMemoryRepo(seed = {}) {
       repo[key].listBySchool = async schoolId => (await repo[key].list())
         .filter(doc => doc.schoolId === schoolId);
     }
+    // 实时比分：一场一条，_id = 'ls_' + matchId。轮询按编号批量读
+    // （与云端 liveScores.listByIds 同口径；逐条点读在轮询里要几十个 RTT）。
+    repo.liveScores.listByIds = async ids => {
+      const uniq = [...new Set((Array.isArray(ids) ? ids : []).filter(id => typeof id === 'string' && id))];
+      return uniq.map(id => getState().liveScores.get(id)).filter(Boolean).map(clone);
+    };
     repo.exchangeSignups.listByEvent = async eventId => (await repo.exchangeSignups.list()).filter(doc => doc.eventId === eventId);
     repo.exchangeMatches.listByEvent = async eventId => (await repo.exchangeMatches.list()).filter(doc => doc.eventId === eventId);
     // 顶层同样按赛事取子集：业务里既有 ctx.repo.forScope(...).matches.listByEvent，

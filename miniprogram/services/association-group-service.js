@@ -49,6 +49,11 @@ const MAX_NAME_LENGTH = 30;
 const MAX_DESCRIPTION_LENGTH = 300;
 const GROUP_LIST_LIMIT = 50;
 const REQUEST_ID_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
+/**
+ * 成员编号的形状：平台账号编号形如 `acc:<openid>`（也兼容历史 `u_…`）。
+ * 限 64 是因为它会直接进 schoolKey 当 _id 的一段（2026-10-21 审查 P2-10）。
+ */
+const MEMBER_ID_PATTERN = /^[A-Za-z0-9_:.-]{1,64}$/;
 
 const GROUP_STATUS = Object.freeze({ ACTIVE: 'active', ARCHIVED: 'archived', DELETED: 'deleted' });
 const GROUP_MEMBER_STATUS = Object.freeze({ ACTIVE: 'active', LEFT: 'left', REMOVED: 'removed' });
@@ -81,7 +86,12 @@ function normalizeMemberIds(input) {
   if (!Array.isArray(input)) return { ok: false, message: '成员清单格式无效' };
   const ids = [];
   for (const id of input) {
-    if (typeof id !== 'string' || !id) return { ok: false, message: '成员编号无效' };
+    // 只判「非空字符串」不够：这些 id 会直接拼进 schoolKey 当 _id，
+    // 而 encodeURIComponent 对非 ASCII 还会膨胀 3 倍。一条 1 MB 的 id 就能
+    // 造出超长主键（30 条 = 近 90 MB 请求体），配合没有限流的读接口就是
+    // 现成的资源耗尽手段（2026-10-21 审查 P2-10）。
+    // 号段与 GROUP_ID_PATTERN 同一口径：平台账号编号形如 `acc:xxxx`。
+    if (typeof id !== 'string' || !MEMBER_ID_PATTERN.test(id)) return { ok: false, message: '成员编号无效' };
     if (!ids.includes(id)) ids.push(id);
   }
   if (ids.length > MAX_MEMBERS_PER_WRITE) return { ok: false, message: `单次最多添加 ${MAX_MEMBERS_PER_WRITE} 名成员` };
@@ -131,14 +141,19 @@ function groupSummary(group, joined) {
  * @param {Array<string>} userIds
  */
 async function describeMembers(repo, ctx, userIds) {
-  const [colleges, users, members, roles, memberships] = await Promise.all([
+  const [colleges, members, roles, memberships] = await Promise.all([
     repo.forScope(ctx).colleges.list(),
-    repo.users.list(),
     repo.forScope(ctx).schoolMembers.list(),
     repo.forScope(ctx).schoolRoles.list(),
     repo.forScope(ctx).memberships.list(),
   ]);
-  const collegeName = id => (colleges.find(row => row.collegeId === id) || {}).name || '';
+  // 账号按「这批成员」批量取：users 是平台级集合，list() 会把别校账号读进来，
+  // 且随平台总用户数增长（2026-10-21 审查 P0-1）。
+  const users = await repo.users.listByIds(userIds);
+  // 学院名走 Map：原先是 colleges.find 放在循环里，O(成员数 × 学院数)
+  // （2026-10-21 审查 P2-7，同函数其余三张表本来就用 Map）。
+  const collegeNameById = new Map(colleges.map(row => [row.collegeId, row.name]));
+  const collegeName = id => collegeNameById.get(id) || '';
   const userById = new Map(users.map(user => [user._id, user]));
   const memberById = new Map(members.map(row => [row._id, row]));
   const roleById = new Map(roles.map(row => [row._id, row]));
