@@ -37,6 +37,17 @@ const WINDOW_MS = 1000;
  */
 const LIMITS = Object.freeze({ read: 8, write: 3 });
 
+/**
+ * 匿名桶的阈值（每「全站」每秒，不是每人）。
+ *
+ * 【为什么要单独设，而且设得更严】
+ * 没有 OPENID 的请求无法按人区分——所有匿名流量共享同一个桶。这既是它的
+ * 局限，也是必须把额度压到最低的理由：它挡不住「换身份」，只能挡住「同一个
+ * 来源猛打」。协议 2 的动作没有一个是匿名可用的，所以正常用户根本走不到这里
+ * （见 school-request.js 的入口拦截），这里的额度只要有就够。
+ */
+const ANON_LIMITS = Object.freeze({ read: 3, write: 1 });
+
 /** 只读动作的命名约定：get / list / search 开头。其余（含未知动作）一律按写算。 */
 const READ_ACTION = /^(get|list|search)/;
 
@@ -76,7 +87,10 @@ function guardRate(openId, action, nowMs = Date.now()) {
 
   const kind = kindOf(action);
   const nowSec = Math.floor(nowMs / WINDOW_MS);
-  const key = openId || 'anon';
+  // 没有 OPENID ⇒ 全站共享一个桶，用更严的额度（见 ANON_LIMITS 的说明）。
+  const anon = !openId;
+  const key = anon ? 'anon' : openId;
+  const limit = (anon ? ANON_LIMITS : LIMITS)[kind];
 
   let bucket = buckets.get(key);
   if (!bucket || bucket.sec !== nowSec) {
@@ -85,12 +99,12 @@ function guardRate(openId, action, nowMs = Date.now()) {
   }
   bucket[kind] += 1;
 
-  if (bucket[kind] > LIMITS[kind]) {
+  if (bucket[kind] > limit) {
     sweep(nowSec);
     return {
       message: kind === 'write' ? '操作过于频繁，请稍后再试' : '请求过于频繁，请稍后再试',
       kind,
-      limit: LIMITS[kind],
+      limit,
     };
   }
   return null;
@@ -101,4 +115,4 @@ function resetRateLimit() {
   buckets.clear();
 }
 
-module.exports = { guardRate, resetRateLimit, LIMITS, kindOf };
+module.exports = { guardRate, resetRateLimit, LIMITS, ANON_LIMITS, kindOf };

@@ -138,15 +138,6 @@ function createSchoolMemoryRepo(seed = {}) {
             .filter(doc => owns(doc) && doc.eventId === eventId);
         }
       }
-      // 本赛季已生效的比赛：与云端 listRatedSince 同口径（status + matchTime 条件
-      // 下推）。内存仓储仍是「读后过滤」，但语义一致，榜单两端结果不会分叉。
-      if (result.matches) {
-        result.matches.listRatedSince = async sinceIso => (await repo.matches.list())
-          .filter(doc => Boolean(doc)
-            && doc.schoolId === scope.schoolId && doc.association === scope.association
-            && doc.status === 1
-            && (!sinceIso || String(doc.matchTime || '') >= sinceIso));
-      }
       if (!inTx) result.transaction = fn => repo.transaction(tx => fn(tx.forScope(scope)));
       return result;
     };

@@ -120,21 +120,6 @@ function buildScoped(repo, io, inTx, options) {
       result[key].listByEvent = (eventId) => io.query(key, { ...scopeFields, eventId });
     }
   }
-  // 本赛季已生效的比赛：把 `status` 与 `matchTime >= resetTime` 一起下推到查询。
-  //
-  // 【为什么需要】（2026-10-21 审查 P0-2）
-  // 榜单 / 成绩 / 个人主页都要「本赛季计分比赛」，原做法是读全部历史流水再在
-  // 应用层按 resetTime 过滤。比赛只增不减，第 5 年的榜单一打开就要读 5 年的
-  // 流水。matchTime 落库是 ISO 串，同格式字符串的字典序即时间序，范围比较成立。
-  //
-  // 只在 forScope（学校 + 协会）上提供：没有范围字段的同类查询会跨校泄露。
-  if (result.matches) {
-    result.matches.listRatedSince = (sinceIso) => {
-      const where = { schoolId: scope.schoolId, association: scope.association, status: 1 };
-      if (typeof sinceIso === 'string' && sinceIso) where.matchTime = io.cmd.gte(sinceIso);
-      return io.query('matches', where);
-    };
-  }
   if (!inTx) result.transaction = (fn) => repo.transaction((tx) => fn(surfaceOf(tx, scope)));
   return result;
 }

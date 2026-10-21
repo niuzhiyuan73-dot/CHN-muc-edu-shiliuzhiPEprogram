@@ -490,8 +490,8 @@ function buildCollections(scope, inTx, cmd) {
   // 必须放在 attachSchoolRepository **之后**：team* 属于 SCHOOL_COLLECTIONS，
   // 顶层对象由那一步创建（补齐循环的清单里没有它们）。
   attachSchoolRepository(repo, {
-    // 范围查询要能构造范围操作符（如 matchTime >= resetTime），故把 db.command
-    // 一并交给学校仓储扩展（见 listRatedSince）。
+    // 范围条件要能构造操作符（gte / in 等），故把 db.command 一并交给学校仓储
+    // 扩展，供 listByEvent 之外的范围查询使用。
     cmd,
     read: (key, id) => readDoc(scope, COLLECTIONS[key], id),
     set: (key, id, doc) => col(key).doc(id).set({ data: withoutId(doc) }),

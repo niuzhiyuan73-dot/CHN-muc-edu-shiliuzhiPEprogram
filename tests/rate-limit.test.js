@@ -12,7 +12,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { guardRate, resetRateLimit, LIMITS, kindOf } = require('../cloudfunctions/data/src/core/rate-limit');
+const { guardRate, resetRateLimit, LIMITS, ANON_LIMITS, kindOf } = require('../cloudfunctions/data/src/core/rate-limit');
 
 /** 固定时间点：0 秒窗口起点，避免用例受真实时钟影响。 */
 const T0 = 1_700_000_000_000;
@@ -60,11 +60,18 @@ test('跨过 1 秒窗口后额度复位', () => {
   assert.equal(guardRate('openid-f', 'getSchoolRanking', T1), null, '下一秒应重新有额度');
 });
 
-test('未登录请求归入同一个匿名桶（匿名刷也受限）', () => {
+test('未登录请求走匿名桶，且额度比登录更严', () => {
   resetRateLimit();
-  for (let i = 0; i < LIMITS.write; i += 1) guardRate('', 'registerSchoolAccount', T0);
+  // 匿名桶是全站共享的一个桶（无法按人区分），所以额度必须压到最低。
+  assert.ok(ANON_LIMITS.read < LIMITS.read, '匿名读额度应低于登录用户');
+  assert.ok(ANON_LIMITS.write < LIMITS.write, '匿名写额度应低于登录用户');
+  for (let i = 0; i < ANON_LIMITS.write; i += 1) guardRate('', 'registerSchoolAccount', T0);
   const blocked = guardRate('', 'registerSchoolAccount', T0);
   assert.ok(blocked, '无 OPENID 也必须有闸门');
+  assert.equal(blocked.limit, ANON_LIMITS.write);
+
+  // 已登录用户不受匿名桶影响
+  assert.equal(guardRate('openid-anon-edge', 'registerSchoolAccount', T0), null);
 });
 
 test('动作分类：get/list/search 为读，其余（含未知）为写', () => {
@@ -80,5 +87,8 @@ test('动作分类：get/list/search 为读，其余（含未知）为写', () =
 test('阈值本身是常量，不会被调用方改写', () => {
   assert.equal(LIMITS.read, 8);
   assert.equal(LIMITS.write, 3);
+  assert.equal(ANON_LIMITS.read, 3);
+  assert.equal(ANON_LIMITS.write, 1);
   assert.ok(Object.isFrozen(LIMITS));
+  assert.ok(Object.isFrozen(ANON_LIMITS));
 });

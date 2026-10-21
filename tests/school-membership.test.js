@@ -443,3 +443,22 @@ test('转校通过后，原学校球队里的队员行自动转为「已离队�
   const team = await repo.forScope(teamScope).teams.getById(teamId);
   assert.equal(team.status, 'archived');
 });
+
+test('未登录只放行两个公开动作，其余一律要求登录', async () => {
+  const repo = fixture();
+
+  // 公开：选校/选院目录、未登录时的 guest 会话（登录页启动就要用）
+  assert.equal((await request(repo, 'getSchoolDirectory', {}, '')).data.ok, true);
+  assert.equal((await request(repo, 'getSchoolIdentitySession', {}, '')).data.ok, true);
+
+  // 其余一律拒绝。这条规则的意义是「收窄匿名攻击面」：协议 2 的每个动作都要
+  // 按 OPENID 解析账号，没有它只会白读「学校 + 协会」两条记录再把权限判死。
+  // 新增公开接口必须显式登记到 school-request.js 的 ANON_ACTIONS，否则默认拒绝。
+  const guarded = ['getSchoolMembers', 'getSchoolApplications', 'getSchoolRanking',
+    'listSchoolEvents', 'applySchoolMembership'];
+  for (const action of guarded) {
+    const res = await request(repo, action, {}, '');
+    assert.equal(res.ok, false, `${action} 未登录应被拒`);
+    assert.match(res.message, /请先登录/, `${action} 应给出「请先登录」而不是别的错`);
+  }
+});
