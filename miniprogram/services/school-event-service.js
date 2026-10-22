@@ -307,14 +307,24 @@ const fingerprintOf = record => JSON.stringify([
 
 async function listSchoolEvents(payload = {}, ctx) {
   if (!canReadAssociationSpace(ctx)) {
-    return ok({ ok: false, events: [], canManage: false, message: '没有读取协会空间的权限' });
+    return ok({ ok: false, events: [], canManage: false, total: 0, totalAll: 0, message: '没有读取协会空间的权限' });
   }
   const canManage = canManageAssociationSpace(ctx);
-  let rows = (await ctx.repo.forScope(ctx).events.list()).filter(isEventDoc);
-  if (typeof payload.status === 'number') rows = rows.filter(row => row.status === payload.status);
+  const allRows = (await ctx.repo.forScope(ctx).events.list()).filter(isEventDoc);
+  // status 支持单个值或一组值：首页要同时取「报名中 + 进行中」两种状态。
+  // 只接受数字，别把字符串拼进 includes 里——那会静默筛出空列表。
+  const wanted = Array.isArray(payload.status)
+    ? payload.status.filter(status => typeof status === 'number')
+    : (typeof payload.status === 'number' ? [payload.status] : []);
+  const rows = wanted.length > 0 ? allRows.filter(row => wanted.includes(row.status)) : allRows;
 
   // 人数直接用赛事汇总；本人报名状态仅点读当前页，读量不随报名总数增长。
   const myId = ctx.actorId;
+  // 默认「置顶 → 状态（报名中 > 进行中 > 已结束）→ 开赛时间倒序」。
+  // 状态优先级与 EVENT_STATUS 的取值顺序一致（SIGNUP 0 < ONGOING 1 < FINISHED 2），
+  // 所以这一档将来可以直接下推成 orderBy('status')，改查询时不用动业务口径。
+  // order='asc' 只反转「开赛时间」这一档：首页要看「最近要打的几场」。
+  const ascending = payload.order === 'asc';
   const sorted = rows.slice().sort((a, b) => {
     const pin = Number(Boolean(b.pinned)) - Number(Boolean(a.pinned));
     if (pin !== 0) return pin;
@@ -323,7 +333,7 @@ async function listSchoolEvents(payload = {}, ctx) {
     if (byStatus !== 0) return byStatus;
     const ta = Date.parse(a.startTime) || 0;
     const tb = Date.parse(b.startTime) || 0;
-    if (tb !== ta) return tb - ta;
+    if (tb !== ta) return ascending ? ta - tb : tb - ta;
     return a._id < b._id ? -1 : 1;
   });
   const limit = Number.isInteger(payload.limit) && payload.limit > 0
@@ -338,6 +348,10 @@ async function listSchoolEvents(payload = {}, ctx) {
     ok: true, canManage,
     hasMore: sorted.length > offset + page.length,
     nextOffset: offset + page.length,
+    // total 是「过滤后」的条数（分页基准）；totalAll 是过滤前的总量，
+    // 首页概况的「N 场赛事」用它——不能被「只看报名中」的筛选带偏。
+    total: sorted.length,
+    totalAll: allRows.length,
     events: page.map((doc, index) => eventSummary(
       doc,
       mine[index],

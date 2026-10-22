@@ -12,6 +12,14 @@
  * 不把整页拖垮；一个协会都读不到时给真实空态（游客与跨校只读浏览同理），
  * 不再用外校静态演示内容顶替（指南 §8）。
  *
+ * 【读量约束】（2026-10-22 大用户量复查 H-1）
+ * 首页是全校最热的入口，必须假设「每次打开都可能乘以全校在线人数」：
+ *   · 每个协会**一次**赛事查询，只取最近要开的几条（不循环取完）；
+ *   · 会员数与赛季是学校级的一份数字，**只读一次**（原先按 6 个协会各读一遍，
+ *     每遍都是全校名单 + 该校全部账号）；
+ *   · 公告是学校级一条通道，只取一次。
+ * 改这个文件时请守住这三条——任何「按协会重复读一份学校级数据」都是 6 倍放大。
+ *
  * 游客（无 viewerId）只看公告（需求整理 §11.8），赛事与概况不取。
  * ============================================================
  */
@@ -97,23 +105,28 @@ async function collectAnnouncements(api) {
 }
 
 /**
- * 循环取完某协会的赛事，返回全部事件 DTO 与赛事总数（分页循环取完，不截断）。
+ * 首页每个协会最多取几条赛事。
+ *
+ * 【为什么不再循环取完】（2026-10-22 大用户量复查 H-1）
+ * 原实现对每个协会 `collectEvents` 循环翻页取**全部**赛事，而首页只展示 3 条。
+ * 服务端排序是「置顶 → 状态（报名中 > 进行中 > 已结束）→ 时间」，再带上
+ * status=[0,1] 与 order=asc，前面几条就是「最近要开的几场」——取 5 条足够
+ * 跨协会合并出首页的 3 条。一个协会有 200 场赛事时，这一步从 2 页 RPC 降到 1 次。
  */
-async function collectEvents(api) {
-  const collected = [];
-  let offset = 0;
-  for (;;) {
-    const page = await api.listSchoolEvents({ limit: PAGE_LIMIT, offset });
-    if (!page.ok) throw new Error(page.message || '赛事读取失败');
-    collected.push(...(page.events || []));
-    if (!page.hasMore) return collected;
-    offset = page.nextOffset;
-  }
-}
+const HOME_EVENT_FETCH = 5;
+
+/** 首页「近期赛事」只关心这两个状态：报名中 0、进行中 1（已结束不出现） */
+const UPCOMING_EVENT_STATUS = [0, 1];
 
 /**
  * 一次聚合：遍历客户端注册表里的协会，逐个建绑定范围客户端并取数。
  * 单协会读失败（未启用 / 无权限）跳过，不拖垮整页。
+ *
+ * 【两轮而不是一轮】（2026-10-22 大用户量复查 H-1）
+ * 会员数与赛季是**学校级**的同一份数字：原先按 6 个协会各读一遍，每读一遍
+ * 都是「全校在册名单 + 该校全部账号」（2000 人的学校约 41 次 RPC），首页开一次
+ * 就是 250 次读。现在它们从协会循环里拎出来，等第一轮知道「哪些协会可读」之后
+ * 只读一次——多一轮 RTT，省掉 5 份重复。
  *
  * @param {Object} options
  * @param {string} options.schoolId
@@ -145,35 +158,54 @@ async function loadSchoolHomeView(options = {}) {
   const announcementDocs = announcementPage.announcements.map((item) => announcementRow(item));
   const announcementsHasMore = announcementPage.hasMore;
 
+  // 第一轮：每个协会一次调用，取「最近要开的几场」与「比赛总数」
   const perAssociation = await Promise.all(allAssociations().map(async (assoc) => {
-    const scope = { schoolId, association: assoc.id };
-    const api = client.forScope(scope);
+    const api = client.forScope({ schoolId, association: assoc.id });
     try {
       let events = [];
       let matchTotal = 0;
-      let seasonText = '';
-      let memberCount = 0;
+      let eventTotal = 0;
       if (viewerId) {
-        const [eventDocs, matches, season, members] = await Promise.all([
-          collectEvents(api),
+        const [page, matches] = await Promise.all([
+          api.listSchoolEvents({
+            limit: HOME_EVENT_FETCH, offset: 0, status: UPCOMING_EVENT_STATUS, order: 'asc',
+          }),
           api.listSchoolMatches({ limit: 1 }),
-          api.getSchoolSeason(),
-          api.listSchoolMembers({}),
         ]);
-        events = eventDocs;
+        if (!page || page.ok === false) throw new Error((page && page.message) || '赛事读取失败');
+        events = page.events || [];
+        // totalAll 是「不看状态筛选」的赛事总量：概况里的「N 场赛事」用它，
+        // 不能被「只看近期」的筛选带偏成个位数。
+        eventTotal = Number(page.totalAll || 0) || events.length;
         matchTotal = Number((matches && matches.total) || 0);
-        seasonText = `第 ${Number((season && season.season && season.seasonNumber) || 1)} 赛季`;
-        memberCount = Number((members && members.total) || 0);
       }
-      return { assoc: getAssociation(assoc.id), events, matchTotal, seasonText, memberCount };
+      return { assoc: getAssociation(assoc.id), events, matchTotal, eventTotal };
     } catch (err) {
       // 该校未启用此协会 / 无读取权限：该协会视为空，不冒充成功
       console.warn(`[home] 读取 ${schoolId}/${assoc.id} 首页数据失败`, err);
-      return { assoc: null, events: [], matchTotal: 0, seasonText: '', memberCount: 0 };
+      return { assoc: null, events: [], matchTotal: 0, eventTotal: 0 };
     }
   }));
 
   const readable = perAssociation.filter((row) => row.assoc !== null);
+
+  // 第二轮：会员数与赛季（学校级，任何可读协会读到的都是同一份）
+  let memberCount = 0;
+  let seasonText = '';
+  if (viewerId && readable.length > 0) {
+    const api = client.forScope({ schoolId, association: readable[0].assoc.id });
+    try {
+      const [season, members] = await Promise.all([
+        api.getSchoolSeason(),
+        api.listSchoolMembers({}),
+      ]);
+      seasonText = `第 ${Number((season && season.season && season.seasonNumber) || 1)} 赛季`;
+      memberCount = Number((members && members.total) || 0);
+    } catch (err) {
+      // 概况数字读不到就留空：宁可少一行数字，也不要编一个
+      console.warn(`[home] 读取 ${schoolId} 概况失败`, err);
+    }
+  }
 
   // 近期赛事聚合：报名中 / 进行中，开赛时间升序。筛选在整形前做——
   // eventRow 只带展示字段（isOngoing），isSignup 判据来自原始 DTO。
@@ -188,14 +220,11 @@ async function loadSchoolHomeView(options = {}) {
   // 一个协会都读不到时概况给 null（与访客同口径），不编数字。
   let summary = null;
   if (viewerId && readable.length > 0) {
-    const memberCount = readable[0].memberCount;
-    const matchCount = readable.reduce((sum, row) => sum + row.matchTotal, 0);
-    const eventCount = readable.reduce((sum, row) => sum + row.events.length, 0);
     summary = {
       memberCount,
-      matchCount,
-      eventCount,
-      seasonText: readable[0].seasonText,
+      matchCount: readable.reduce((sum, row) => sum + row.matchTotal, 0),
+      eventCount: readable.reduce((sum, row) => sum + row.eventTotal, 0),
+      seasonText,
     };
   }
 
