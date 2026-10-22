@@ -137,3 +137,53 @@ test('名额上限仍然生效：打满后提交被拒', async () => {
   assert.equal(blocked.ok, false);
   assert.match(blocked.message, /上限|满/);
 });
+
+/* ---------------- B-3：计数文档是权威，不是台账的复算结果 ---------------- */
+
+const { pairCountKey } = require('../miniprogram/utils/school');
+const scopeFor = SCOPE;
+
+test('首次提交会把计数文档预置出来（初值 0，占位由事务内递增）', async () => {
+  const { repo } = fixture();
+  const res = await call(repo, 'submitSchoolMatch', casualPayload('seed-first'));
+  assert.equal(res.ok, true, res.message);
+
+  const id = pairCountKey('demo_muc_member', 'demo_muc_member_2', 'all', scopeFor);
+  const doc = await repo.pairCounts.getById(id);
+  assert.ok(doc, '计数文档应当已存在');
+  assert.equal(doc.count, 1, '已提交的这一场要计进去');
+  assert.equal(doc.users.join(','), 'demo_muc_member,demo_muc_member_2');
+  assert.ok(doc.seededAt, '应当留下预置时间，便于排查「谁先建的这一行」');
+});
+
+test('计数文档优先于台账：手工写高的计数照样能拦下提交', async () => {
+  const { repo } = fixture();
+  // 台账里一场都没有，但计数文档说已经打满上限减一
+  const id = pairCountKey('demo_muc_member', 'demo_muc_member_2', 'all', scopeFor);
+  await repo.pairCounts.set(id, {
+    _id: id, schoolId: SCOPE.schoolId, association: SCOPE.association,
+    seasonStamp: 'all', seasonNumber: 1,
+    pairKey: 'demo_muc_member|demo_muc_member_2', users: ['demo_muc_member', 'demo_muc_member_2'],
+    count: RATED_PAIR_LIMIT - 1, revision: 3,
+  });
+
+  const last = await call(repo, 'submitSchoolMatch', casualPayload('auth-1'));
+  assert.equal(last.ok, true, `还差一场时应当放行：${last.message}`);
+  assert.equal((await repo.pairCounts.getById(id)).count, RATED_PAIR_LIMIT);
+
+  const over = await call(repo, 'submitSchoolMatch', casualPayload('auth-2'));
+  assert.equal(over.ok, false, '台账是空的，但计数文档说满了——必须以文档为准');
+  assert.match(over.message, /上限|满/);
+});
+
+test('并发录两场：两场都记上，计数不多不少', async () => {
+  const { repo } = fixture();
+  const id = pairCountKey('demo_muc_member', 'demo_muc_member_2', 'all', scopeFor);
+  const [a, b] = await Promise.all([
+    call(repo, 'submitSchoolMatch', casualPayload('race-a', { matchTime: at(-DAY) })),
+    call(repo, 'submitSchoolMatch', casualPayload('race-b', { matchTime: at(-DAY + 1000) })),
+  ]);
+  assert.equal(a.ok, true, a.message);
+  assert.equal(b.ok, true, b.message);
+  assert.equal((await repo.pairCounts.getById(id)).count, 2, '两场都要计进去，不能少记');
+});

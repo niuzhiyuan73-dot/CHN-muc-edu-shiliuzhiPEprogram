@@ -161,7 +161,10 @@ async function occupyPairUsage(tx, ctx, record, options) {
 
   const nowIso = iso(ctx.now);
   for (const item of pendingWrites) {
+    // 先铺开已有文档再覆盖：预算置时写的 seededAt 之类的字段不该被占位写回抹掉，
+    // 将来往这条文档上加新字段也不会因为少列一个键就消失。
     await tx.pairCounts.set(item.id, {
+      ...(item.doc || {}),
       _id: item.id, schoolId: ctx.schoolId, association: ctx.association,
       seasonStamp: seasonStampOf(season), seasonNumber: Number(season && season.seasonNumber) || 1,
       pairKey: item.pair.key, users: [item.pair.a, item.pair.b],
@@ -389,6 +392,58 @@ async function getSchoolMatch(payload = {}, ctx) {
   return ok({ ok: true, match: await withLive(matchSummary(doc, ctx, dir), ctx), message: '' });
 }
 
+/**
+ * 把这场比赛涉及的计数文档预置出来（幂等，只写初值不占位）。
+ *
+ * 【为什么必须在事务之前建】（2026-10-22 第二轮审查 B-3）
+ * 两个人同时给同一对录「本赛季第一场」时，两个事务里都读不到计数文档，于是
+ * 各自用台账算出的**同一个初值**去加一，写成 `count = seed + 1` —— 少记一场，
+ * 每对每赛季的上限被悄悄放宽（等级分是零和的，这种偏差事后看不出来）。
+ *
+ * 预置之后事务内一定读到同一份文档：后一个请求读到的就是前一个刚写下的值，
+ * 递增落在同一行上；即便云端因写冲突回滚重试，重读到的也是对方的成果。
+ *
+ * 【为什么写的是 seed 而不是 seed+1】
+ * 预置只是"把懒初始化提前"，不代表占位：提交若被名额闸门拒掉、或事务失败，
+ * 这条文档停在初值即可，下一次提交读到它照样算得对。重复预置也幂等。
+ *
+ * @param {Object} ctx
+ * @param {Object} record 待写入的比赛记录
+ * @param {Object} season 本范围赛季文档
+ * @param {Map<string,number>} usage pairKey → 本赛季已用次数（见 pairUsageOf）
+ * @returns {Promise<void>}
+ */
+async function ensurePairCounters(ctx, record, season, usage) {
+  if (!isCasualMatch(record)) return;
+  if (!Number.isFinite(RATED_PAIR_LIMIT) || RATED_PAIR_LIMIT <= 0) return;
+  const pairs = distinctPairs(record);
+  if (pairs.length === 0) return;
+
+  const scoped = ctx.repo.forScope(ctx);
+  // 一次事务写完这几对（双打最多 4 对）：省得每对单开一个事务
+  await scoped.transaction(async (tx) => {
+    for (const pair of pairs) {
+      const id = pairUsageKeyOf(pair, ctx, season);
+      const existing = await tx.pairCounts.getById(id);
+      if (existing) continue;
+      await tx.pairCounts.set(id, {
+        _id: id,
+        schoolId: ctx.schoolId,
+        association: ctx.association,
+        seasonStamp: seasonStampOf(season),
+        seasonNumber: Number(season && season.seasonNumber) || 1,
+        pairKey: pair.key,
+        users: [pair.a, pair.b],
+        count: Number(usage.get(pair.key) || 0),
+        revision: 1,
+        seededAt: iso(ctx.now),
+        updatedAt: iso(ctx.now),
+      });
+    }
+    return null;
+  });
+}
+
 /* ------------------------------------------------------------------ 写 */
 
 async function submitSchoolMatch(payload = {}, ctx) {
@@ -429,6 +484,13 @@ async function submitSchoolMatch(payload = {}, ctx) {
   // 只有计数文档缺失（历史数据）时才读本赛季台账。
   const season = await loadSeason(ctx);
   const pairUsage = await pairUsageOf(ctx, built.record, season);
+  // 把计数文档预置到事务之前：两个并发请求才不会各自拿同一个初值各加一次
+  // （见 ensurePairCounters）。预置失败不致命——事务内会回退到 seedUsage。
+  try {
+    await ensurePairCounters(ctx, built.record, season, pairUsage);
+  } catch (err) {
+    console.warn('[match] 名额计数预置失败，回退到台账初值', err && (err.message || err));
+  }
 
   const result = await ctx.repo.transaction(async tx => {
     const fresh = await freshContext(tx, ctx);
