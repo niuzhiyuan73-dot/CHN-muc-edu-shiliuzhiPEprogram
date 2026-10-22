@@ -120,6 +120,27 @@ function buildScoped(repo, io, inTx, options) {
       result[key].listByEvent = (eventId) => io.query(key, { ...scopeFields, eventId });
     }
   }
+  // 本赛季的比赛：把 `matchTime >= sinceIso` 下推到查询。
+  //
+  // 【为什么需要】（2026-10-22 第二轮审查 P-2）
+  // 「本赛季与每个人的交手次数」原来是把**全部历史比赛**读回来再按 resetTime
+  // 在应用层过滤。matches 是只增不减的最大集合，一个练了三年的协会打开一次
+  // 录分页要翻上百页 RPC，而真正用得上的只有本赛季那几十条。
+  //
+  // 【为什么不过滤 status】
+  // 名额口径（rating-cap.countedMatches）只排除**作废**的场次，待确认的照样占
+  // 名额。若这里按 status 收窄，等于顺手改了业务口径——过滤留在 countedMatches。
+  //
+  // 【为什么只挂在 forScope 上】
+  // 没有范围字段的同类查询会跨校泄露。matchTime 落库是 ISO 串，同格式字符串的
+  // 字典序即时间序，字符串范围比较成立。
+  if (result.matches) {
+    result.matches.listSince = (sinceIso) => {
+      const where = { schoolId: scope.schoolId, association: scope.association };
+      if (typeof sinceIso === 'string' && sinceIso) where.matchTime = io.cmd.gte(sinceIso);
+      return io.query('matches', where);
+    };
+  }
   if (!inTx) result.transaction = (fn) => repo.transaction((tx) => fn(surfaceOf(tx, scope)));
   return result;
 }

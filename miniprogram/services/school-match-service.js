@@ -51,7 +51,7 @@ const {
 } = require('./match-record.js');
 const { settleMatchInTransaction } = require('./school-rating-service.js');
 const {
-  checkSubmitAllowed, seasonPairCounts, crossPairList, tallyPairUsage,
+  seasonPairCounts, crossPairList, tallyPairUsage,
   findCappedPairs, pairCapMessage, isCasualMatch,
 } = require('./rating-cap.js');
 const { loadSeason } = require('./school-rank-service.js');
@@ -313,13 +313,66 @@ async function listSchoolMatches(payload = {}, ctx) {
     total: rows.length, hasMore: rows.length > offset + matches.length, pendingCount, message: '' });
 }
 
+/** 赛季分界点 → ISO 串（`listSince` 的入参）。无分界点返回 ''，表示不限时间。 */
+function sinceIsoOf(season) {
+  const raw = season && season.resetTime;
+  if (!raw) return '';
+  const ms = new Date(raw).getTime();
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : '';
+}
+
+/**
+ * 这场比赛涉及的每一对，本赛季已经用掉多少次名额。
+ *
+ * 【为什么要分两条路】（2026-10-22 第二轮审查 P-2）
+ * 计数文档（pairCounts）是名额的权威数据：`occupyPairUsage` 事务内先点读它，
+ * 读不到才用事务外的台账算初值（历史数据、规则生效前录的场次）。
+ * 而原实现**无论文档在不在**都先把全量台账读一遍用于预判与初值——练了三年的
+ * 协会，一次录分要翻上百页 RPC，绝大多数场次却根本用不到那份台账。
+ *
+ * 现在：先点读这场涉及的最多 4 对（双打 4 对）。全都有文档 ⇒ 直接用文档里的
+ * count，一次台账都不读；只有缺文档时才回落到「本赛季台账」兜底。
+ *
+ * @param {Object} ctx
+ * @param {Object} record 待写入的比赛记录
+ * @param {Object} season 本范围赛季文档
+ * @returns {Promise<Map<string,number>>} pairKey → 本赛季已用次数
+ */
+async function pairUsageOf(ctx, record, season) {
+  if (!isCasualMatch(record)) return new Map();
+  if (!Number.isFinite(RATED_PAIR_LIMIT) || RATED_PAIR_LIMIT <= 0) return new Map();
+  const scoped = ctx.repo.forScope(ctx);
+  const pairs = distinctPairs(record);
+  const docs = await Promise.all(pairs.map(pair =>
+    scoped.pairCounts.getById(pairUsageKeyOf(pair, ctx, season))));
+
+  const usage = new Map();
+  const missing = [];
+  pairs.forEach((pair, index) => {
+    const doc = docs[index];
+    if (doc) usage.set(pair.key, Number(doc.count) || 0);
+    else missing.push(pair);
+  });
+  if (missing.length === 0) return usage;
+
+  const ledger = await scoped.matches.listSince(sinceIsoOf(season));
+  const seeded = tallyPairUsage(ledger, { seasonStart: season.resetTime });
+  for (const pair of missing) {
+    if (seeded.has(pair.key)) usage.set(pair.key, seeded.get(pair.key));
+  }
+  return usage;
+}
+
 /** 录入页所需的本人、有效成员及本赛季交手次数；不暴露数字角色。 */
 async function getSchoolMatchEntryContext(_payload, ctx) {
   const viewer = ctx.actor && ctx.actor.platformStatus === PLATFORM_STATUS.ACTIVE
     ? { userId: ctx.actorId, nickName: ctx.actor.nickName || '' } : null;
   if (!canReadAssociationSpace(ctx)) return ok({ ok: true, viewer, canRecord: false,
     members: [], pairInfo: null, seasonStart: null, message: viewer ? '当前账号没有本协会有效身份，暂时不能录入成绩' : '请先登录后再录入比赛成绩' });
-  const [dir, season, ledger] = await Promise.all([buildDirectory(ctx), loadSeason(ctx), ctx.repo.forScope(ctx).matches.list()]);
+  const [dir, season] = await Promise.all([buildDirectory(ctx), loadSeason(ctx)]);
+  // 只读本赛季的流水：名额口径本来就按 resetTime 过滤，把范围下推到查询，
+  // 别为了一个显示数字把历年台账翻一遍（P-2）。
+  const ledger = await ctx.repo.forScope(ctx).matches.listSince(sinceIsoOf(season));
   return ok({ ok: true, viewer, canRecord: canParticipateInAssociation(ctx),
     members: dir.members.filter(user => user.platformStatus === PLATFORM_STATUS.ACTIVE).map(user => ({
       userId: user._id, nickName: user.nickName || '', realName: user.realName || '',
@@ -372,12 +425,10 @@ async function submitSchoolMatch(payload = {}, ctx) {
     return ok(refused('只有参赛者、本学院负责人或管理员可以录入这场比赛的成绩'));
   }
 
-  // 防刷分闸门要读本范围完整台账；事务内不允许整表查询，故在事务外先取好。
-  const [ledger, season] = await Promise.all([
-    ctx.repo.forScope(ctx).matches.list(),
-    loadSeason(ctx),
-  ]);
-  const seedUsage = tallyPairUsage(ledger, { seasonStart: season.resetTime });
+  // 防刷分闸门：预判与初值共用同一份「每对已用次数」（见 pairUsageOf）。
+  // 只有计数文档缺失（历史数据）时才读本赛季台账。
+  const season = await loadSeason(ctx);
+  const pairUsage = await pairUsageOf(ctx, built.record, season);
 
   const result = await ctx.repo.transaction(async tx => {
     const fresh = await freshContext(tx, ctx);
@@ -396,12 +447,12 @@ async function submitSchoolMatch(payload = {}, ctx) {
         : refused('请求编号已使用，请重新录入');
     }
     const freshSeason = await loadSeason(fresh);
-    // 一对会员本赛季打满上限后不再让录：先按台账判一次（一句人话），
-    // 再按事务内的计数文档复核并占位——后者才是并发下真正管用的那一道
-    const gate = checkSubmitAllowed(built.record, ledger, {
-      seasonStart: freshSeason.resetTime, nameOf,
-    });
-    if (!gate.ok) return refused(gate.message);
+    // 一对会员本赛季打满上限后不再让录：先按同一份用量判一次（一句人话），
+    // 再按事务内的计数文档复核并占位——后者才是并发下真正管用的那一道。
+    const capped = findCappedPairs(distinctPairs(built.record), pairUsage, { limit: RATED_PAIR_LIMIT });
+    if (!capped.ok) return refused(pairCapMessage(capped.full, { limit: RATED_PAIR_LIMIT, nameOf }));
+    // 赛季在事务外/事务内若跨过了重置点，旧赛季的用量不能当成新赛季的初值
+    const seedUsage = seasonStampOf(freshSeason) === seasonStampOf(season) ? pairUsage : new Map();
     const occupied = await occupyPairUsage(tx, fresh, built.record, {
       limit: RATED_PAIR_LIMIT, season: freshSeason, seedUsage, nameOf,
     });

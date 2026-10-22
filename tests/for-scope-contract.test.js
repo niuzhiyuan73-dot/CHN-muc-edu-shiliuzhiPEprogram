@@ -68,10 +68,13 @@ test('两端 forScope 每个集合的方法面逐字相同', () => {
 test('受范围仓储的集合方法面就是约定的那一套（钉住契约，别慢慢缩水）', () => {
   const cloud = createMemoryRepo().forScope(SCOPE);
   for (const key of Object.keys(cloud).filter(k => !RESULT_LEVEL.includes(k))) {
-    const expected = EVENT_SCOPED.includes(key)
-      ? [...REQUIRED_METHODS, 'listByEvent'].sort()
+    let expected = EVENT_SCOPED.includes(key)
+      ? [...REQUIRED_METHODS, 'listByEvent']
       : REQUIRED_METHODS;
-    assert.deepEqual(methodNames(cloud[key]), expected,
+    // matches 额外一个 listSince：把「本赛季」下推成 matchTime >= 分界点，
+    // 免得为了一次录分把历年台账翻一遍（2026-10-22 第二轮审查 P-2）。
+    if (key === 'matches') expected = [...expected, 'listSince'];
+    assert.deepEqual(methodNames(cloud[key]), expected.sort(),
       `${key} 的方法面变了，请同步本测试与另一端实现`);
   }
 });

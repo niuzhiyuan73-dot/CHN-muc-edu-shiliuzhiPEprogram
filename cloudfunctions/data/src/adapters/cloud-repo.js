@@ -52,7 +52,11 @@ function isMissingCollection(err) {
   if (!err) return false;
   const code = err.errCode !== undefined ? err.errCode : err.code;
   const msg = String(err.errMsg || err.message || '');
-  return code === -502005 || /collection|db or table/i.test(msg);
+  // 【为什么不能只 /collection/ 一把抓】（2026-10-22 第二轮审查 S-3）
+  // 权限不足、查询语法错误、超时的提示里都可能出现 "collection"，只按名词匹配
+  // 会把它们统统误报成「集合不存在，请先建齐集合」——排查方向被彻底带偏
+  // （这正是 10-17 审计 C3 修了一半的地方）。这里要求名词后紧跟 not exist。
+  return code === -502005 || /(collection|db or table)[^.]{0,24}not exist/i.test(msg);
 }
 
 /**
@@ -125,7 +129,12 @@ function cursorCond(where, lastId, cmd) {
   const next = { _id: cmd.gt(lastId) };
   if (!base) return next;
   if (base._id === undefined) return { ...base, ...next };
-  return cmd.and([base, next]);
+  // 【为什么这里直接抛，而不是 and 起来】（2026-10-22 第二轮审查 B-5）
+  // 原实现写的是 `cmd.and([base, next])`，但 `db.command.and` 收的是**查询命令**
+  // 数组，把普通等值条件对象塞进去并不等价于「两个条件都要满足」；而且这条
+  // 分支从未被任何调用方走到（按编号批量取走 listByIds，其余条件都不含 _id），
+  // 属于"看着能用、一用就错"的死代码。与其留着，不如让它响亮地失败。
+  throw new Error('游标分页不支持已有的 _id 条件：请改用 listByIds 之类的批读接口');
 }
 
 /**

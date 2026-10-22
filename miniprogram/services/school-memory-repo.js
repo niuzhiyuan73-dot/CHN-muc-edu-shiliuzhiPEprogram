@@ -137,6 +137,12 @@ function createSchoolMemoryRepo(seed = {}) {
           result[key].listByEvent = async eventId => (await repo[key].list())
             .filter(doc => owns(doc) && doc.eventId === eventId);
         }
+        // 本赛季的比赛（`matchTime >= sinceIso`）：与云端 listSince 同口径。
+        // 模拟端在内存里按 ISO 串比较——与云端字符串范围比较等价。
+        if (key === 'matches') {
+          result[key].listSince = async sinceIso => (await repo[key].list())
+            .filter(doc => owns(doc) && (!sinceIso || String(doc.matchTime || '') >= sinceIso));
+        }
       }
       if (!inTx) result.transaction = fn => repo.transaction(tx => fn(tx.forScope(scope)));
       return result;

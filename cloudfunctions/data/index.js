@@ -41,6 +41,7 @@
 if (!process.env.TZ) process.env.TZ = 'Asia/Shanghai';
 
 const cloud = require('wx-server-sdk');
+const crypto = require('crypto');
 
 const { fail } = require('./src/envelope.js');
 const { createRepo } = require('./src/adapters/cloud-repo.js');
@@ -48,6 +49,23 @@ const { handleSchoolRequest } = require('./src/core/school-request.js');
 const { isSchoolRequest } = require('./src/core/route.js');
 
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
+
+/**
+ * 日志里的用户标识：OpenID 的短哈希。
+ *
+ * 【为什么不能直接记 OpenID】（2026-10-22 第二轮审查 S-4）
+ * OpenID 是微信用户的唯一标识，属于个人信息。云函数日志保留一段时间且对
+ * 有控制台权限的人可检索，把明文 OpenID 写进去超出了排障的必要范围。
+ * 取 8 位哈希：同一个人每次都映射到同一个值，仍然能按用户串起一次故障的
+ * 全部请求，但日志本身不再能反向定位到具体账号。
+ *
+ * @param {string} openId
+ * @returns {string|undefined}
+ */
+function maskOpenId(openId) {
+  if (!openId) return undefined;
+  return crypto.createHash('sha1').update(String(openId)).digest('hex').slice(0, 8);
+}
 
 /** 容器级仓储单例 */
 let repo = null;
@@ -85,7 +103,8 @@ exports.main = async (event = {}) => {
       action: event && event.action,
       schoolId: event && event.schoolId,
       association: event && event.association,
-      openId: openId || undefined,
+      // 只记哈希，不记明文 OpenID（见 maskOpenId 的说明）
+      openIdHash: maskOpenId(openId),
       error: err && (err.stack || err.message || err),
     });
     return fail('服务异常，请稍后再试');
