@@ -84,6 +84,7 @@ npm run check:cloud-sync  # 只校验不写入；漂移时退出码 1
 | `users` | `openId` | ✅ |
 | `matches` | `schoolId` + `association` + `status` | — |
 | `matches` | `eventId` / `collegeEventId` / `tieId` | — |
+| `matches` | 比赛列表的时间、赛事、状态及 A/B 参与者分页索引，字段顺序与方向见[数据库索引清单 §2.3](../docs/数据库索引清单.md#23-比赛列表分页索引2026-10-22p-3) | — |
 | `member_ratings` | `schoolId` + `association` | — |
 | `school_members` / `school_roles` / `colleges` | `schoolId` | — |
 | `memberships` / `association_*` / `exchange_*` / `pair_counts` | `schoolId` + `association` | — |

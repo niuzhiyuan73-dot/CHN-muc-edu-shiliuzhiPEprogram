@@ -62,6 +62,7 @@ const { liveScoreOf } = require('./live-score.js');
 const { advanceSchoolEvent } = require('./school-event-service.js');
 // 学院赛小场生效后的收尾：把结果写回大场、必要时排出下一轮（M2-c2）。
 const { advanceCollegeAfterLeg } = require('./school-college-advance.js');
+const { isListMatch, listFilter } = require('./match-list-query.js');
 
 const ok = data => ({ ok: true, data });
 const refused = (message, extra = {}) => ({ ok: false, message, ...extra });
@@ -69,9 +70,8 @@ const refused = (message, extra = {}) => ({ ok: false, message, ...extra });
 const REQUEST_ID_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
 const MATCH_LIST_LIMIT = 100;
 /**
- * listSchoolMatches 的 limit 硬上限。调用方传再大也只给这么多——每行还要附带
- * 一次实时比分读，无上限的 limit 既是回包超限（云函数回包约 1MB）也是耗时
- * 炸弹（2026-10-17 只读审计 C6/C8）。与 MATCH_LIST_LIMIT 同值：默认即上限。
+ * listSchoolMatches 的 limit 硬上限。数据库只取当前页、实时比分按页批读，
+ * 仍须限制 DTO 数量以控制回包体积。与 MATCH_LIST_LIMIT 同值：默认即上限。
  */
 const MATCH_LIST_MAX = 100;
 
@@ -83,8 +83,7 @@ const freshContext = (tx, ctx) => buildSchoolContext({
 const matchAuditKey = (matchId, action, revision) =>
   schoolKey('mau', matchId, action, String(revision));
 
-const isMatchDoc = doc => Boolean(doc && Array.isArray(doc.teamA) && Array.isArray(doc.teamB) &&
-  typeof doc.status === 'number' && doc.matchTime);
+const isMatchDoc = isListMatch;
 
 /**
  * 交手名额的计数文档（每对每赛季一条）。
@@ -289,31 +288,33 @@ async function listSchoolMatches(payload = {}, ctx) {
   if (!canReadAssociationSpace(ctx)) {
     return ok({ ok: false, matches: [], canManage: false, message: '没有读取协会空间的权限' });
   }
-  const dir = await buildDirectory(ctx);
-  let rows = (await ctx.repo.forScope(ctx).matches.list()).filter(isMatchDoc);
-  if (typeof payload.pool === 'number') rows = rows.filter(row => row.pool === payload.pool);
-  if (typeof payload.eventId === 'string' && payload.eventId) {
-    rows = rows.filter(row => row.eventId === payload.eventId);
-  }
-  if (typeof payload.userId === 'string' && payload.userId) {
-    rows = rows.filter(row => isParticipant(row, payload.userId));
-  }
-  const pendingCount = rows.filter(row => row.status === MATCH_STATUS.PENDING).length;
-  if (typeof payload.status === 'number') rows = rows.filter(row => row.status === payload.status);
-  rows.sort((a, b) => (Date.parse(b.matchTime) || 0) - (Date.parse(a.matchTime) || 0));
-  // limit 加上限、并支持 offset 翻页：无上限时一个畸形入参就能把整库比赛
-  // （每场还带一次实时比分读）全量拉回来，既超云函数回包上限（约 1MB）又拖垮
-  // 耗时（2026-10-17 只读审计 C6/C8）。要读全量的调用方按 offset 翻页，
-  // total / hasMore 就是为这个准备的。
   const limit = Number.isInteger(payload.limit) && payload.limit >= 0
     ? Math.min(payload.limit, MATCH_LIST_MAX) : MATCH_LIST_LIMIT;
   const offset = Number.isInteger(payload.offset) && payload.offset >= 0 ? payload.offset : 0;
-  const matches = [];
-  for (const doc of rows.slice(offset, offset + limit)) {
-    matches.push(await withLive(matchSummary(doc, ctx, dir), ctx));
+  const cursor = payload.cursor === undefined || payload.cursor === null ? null : payload.cursor;
+  if (cursor && (typeof cursor !== 'object' || Array.isArray(cursor) ||
+      typeof cursor.id !== 'string' || !cursor.id || cursor.id.length > 512 ||
+      typeof cursor.matchTime !== 'string' || cursor.matchTime.length > 32 ||
+      !Number.isFinite(Date.parse(cursor.matchTime)) || new Date(cursor.matchTime).toISOString() !== cursor.matchTime)) {
+    return ok(refused('比赛分页游标无效'));
   }
+  if (cursor !== null && (!cursor || offset > 0)) return ok(refused('比赛分页游标无效'));
+  const [dir, page] = await Promise.all([
+    buildDirectory(ctx),
+    ctx.repo.forScope(ctx).matches.listPage({ filter: listFilter(payload), limit, offset, cursor }),
+  ]);
+  const states = page.rows.length ? await ctx.repo.liveScores.listByIds(
+    page.rows.map(doc => schoolLiveKey(doc._id, ctx))) : [];
+  const byId = new Map(states.filter(state => belongsToSchoolScope(state, ctx)).map(state => [state._id, state]));
+  const matches = page.rows.map(doc => {
+    const summary = matchSummary(doc, ctx, dir);
+    const state = byId.get(schoolLiveKey(doc._id, ctx));
+    return state ? { ...summary, live: liveScoreOf(state) } : summary;
+  });
+  const last = page.rows[page.rows.length - 1];
   return ok({ ok: true, canManage: canManageAssociationSpace(ctx), matches,
-    total: rows.length, hasMore: rows.length > offset + matches.length, pendingCount, message: '' });
+    total: page.total, hasMore: page.hasMore, pendingCount: page.pendingCount,
+    nextCursor: page.hasMore && last ? { matchTime: last.matchTime, id: last._id } : null, message: '' });
 }
 
 /** 赛季分界点 → ISO 串（`listSince` 的入参）。无分界点返回 ''，表示不限时间。 */

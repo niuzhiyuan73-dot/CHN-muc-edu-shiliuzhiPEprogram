@@ -24,6 +24,7 @@
 
 /** 浅拷贝一条文档。null / 原始值原样返回。 */
 const { SCHOOL_COLLECTIONS, attachSchoolRepository } = require('../../cloudfunctions/data/src/school-repository.js');
+const { memoryMatchPage } = require('../../miniprogram/services/match-list-query');
 
 function clone(doc) {
   return doc === null || typeof doc !== 'object' ? doc : { ...doc };
@@ -363,6 +364,7 @@ function createMemoryRepo(seed = {}) {
     const built = attachSchoolRepository(repo, {
       // 与云端 io.cmd 对应：listRatedSince 等范围查询靠它构造操作符。
       cmd: command,
+      matchPage: async (scope, options) => memoryMatchPage(list('matches'), scope, options),
       read,
       set: async (key, id, doc) => {
         if (onWrite) onWrite(key);

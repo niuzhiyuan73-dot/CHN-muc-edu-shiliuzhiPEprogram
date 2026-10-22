@@ -22,9 +22,40 @@
 
 const { COLLECTIONS } = require('../repository.js');
 const { attachSchoolRepository } = require('../school-repository.js');
+const { matchListWhere } = require('../../lib/services/match-list-query.js');
+const { MATCH_STATUS } = require('../../lib/utils/constants.js');
 
 /** 单页条数，取云开发云函数端的查询上限 */
 const PAGE_SIZE = 100;
+
+/** 列表只返回一页文档；总数在数据库聚合，不能为了数字把台账翻回应用层。 */
+async function readMatchPage(scope, schoolScope, options) {
+  const { filter = {}, limit, offset = 0, cursor = null } = options;
+  const collection = () => scope.collection(COLLECTIONS.matches).aggregate();
+  const rowsOf = result => result.list || result.data || [];
+  const count = async where => {
+    const rows = rowsOf(await collection().match(where).count('total').end());
+    return rows.length ? rows[0].total : 0;
+  };
+  const where = matchListWhere(schoolScope, filter);
+  const pageWhere = cursor ? matchListWhere(schoolScope, filter, cursor) : where;
+  const pendingFilter = { ...filter, status: MATCH_STATUS.PENDING };
+  const pendingPromise = count(matchListWhere(schoolScope, pendingFilter));
+  const totalPromise = filter.status === MATCH_STATUS.PENDING ? pendingPromise : count(where);
+  const remainingPromise = cursor ? count(pageWhere) : totalPromise;
+  const pagePromise = limit === 0 ? Promise.resolve([]) : (async () => {
+    // 兼容任意非负 offset；超出结果集直接返回，避免把巨大的 skip 传给数据库。
+    if (!cursor && offset > 0 && offset >= await totalPromise) return [];
+    let query = collection().match(pageWhere).sort({ matchTime: -1, _id: -1 });
+    // offset 兼容既有调用；持续翻页优先传游标，避免深 skip 扫描和插入漂移。
+    if (!cursor && offset) query = query.skip(offset);
+    return rowsOf(await query.limit(limit).end());
+  })();
+  const [rows, total, pendingCount, remaining] = await Promise.all([
+    pagePromise, totalPromise, pendingPromise, remainingPromise,
+  ]);
+  return { rows, total, pendingCount, hasMore: remaining > (cursor ? 0 : offset) + rows.length };
+}
 
 /** 单次整表读超过这个条数就告警：云端每翻一页是一次 RPC，深翻页同时放大耗时与读配额 */
 const DEEP_READ_WARN = 500;
@@ -502,6 +533,10 @@ function buildCollections(scope, inTx, cmd) {
     // 范围条件要能构造操作符（gte / in 等），故把 db.command 一并交给学校仓储
     // 扩展，供 listByEvent 之外的范围查询使用。
     cmd,
+    matchPage: (schoolScope, options) => {
+      if (inTx) throw new Error('事务内不允许条件读取（matches），请改用 getById');
+      return readMatchPage(scope, schoolScope, options);
+    },
     read: (key, id) => readDoc(scope, COLLECTIONS[key], id),
     set: (key, id, doc) => col(key).doc(id).set({ data: withoutId(doc) }),
     query: (key, where) => {

@@ -2,6 +2,7 @@
 const { schoolScope } = require('../utils/school.js');
 const { MEET_COLLECTIONS, meetScope } = require('../utils/meet-scope.js');
 const clone = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+const { memoryMatchPage } = require('./match-list-query');
 /**
  * 带 eventId 的「从属集合」：按赛事取子集用 listByEvent（条件查询 + 索引），
  * 不整表读完再内存过滤。顶层与 forScope 两处都要提供，方法面与云端
@@ -140,6 +141,11 @@ function createSchoolMemoryRepo(seed = {}) {
         // 本赛季的比赛（`matchTime >= sinceIso`）：与云端 listSince 同口径。
         // 模拟端在内存里按 ISO 串比较——与云端字符串范围比较等价。
         if (key === 'matches') {
+          result[key].listPage = async options => {
+            if (inTx) throw new Error('事务内不允许条件读取（matches），请改用 getById');
+            const page = memoryMatchPage([...getState().matches.values()], scope, options);
+            return { ...page, rows: page.rows.map(clone) };
+          };
           result[key].listSince = async sinceIso => (await repo[key].list())
             .filter(doc => owns(doc) && (!sinceIso || String(doc.matchTime || '') >= sinceIso));
         }

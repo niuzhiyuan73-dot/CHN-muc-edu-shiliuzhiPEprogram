@@ -135,6 +135,10 @@ function buildScoped(repo, io, inTx, options) {
   // 没有范围字段的同类查询会跨校泄露。matchTime 落库是 ISO 串，同格式字符串的
   // 字典序即时间序，字符串范围比较成立。
   if (result.matches) {
+    result.matches.listPage = (options) => {
+      if (inTx) throw new Error('事务内不允许条件读取（matches），请改用 getById');
+      return io.matchPage(scope, options);
+    };
     result.matches.listSince = (sinceIso) => {
       const where = { schoolId: scope.schoolId, association: scope.association };
       if (typeof sinceIso === 'string' && sinceIso) where.matchTime = io.cmd.gte(sinceIso);

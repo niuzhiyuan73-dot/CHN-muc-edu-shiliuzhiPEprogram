@@ -629,9 +629,10 @@ function editionOptions(year) {
  *    等价。序列化只做一次，之后每次只 parse，比每次重新 stringify 快一个量级。
  */
 let meetRecordsSnapshotJson = null;
+// 首份快照完成前，所有 reset 共享同一份生成任务，避免重复跑三届服务流程。
+let meetRecordsPending = null;
 
-async function createMeetDemoRecords() {
-  if (meetRecordsSnapshotJson) return JSON.parse(meetRecordsSnapshotJson);
+async function buildMeetRecordsSnapshot() {
   const records = {};
   const seen = new Map();
   for (const year of MEET_EDITIONS) {
@@ -647,7 +648,19 @@ async function createMeetDemoRecords() {
       seen.set(key, ids);
     }
   }
-  meetRecordsSnapshotJson = JSON.stringify(records);
+  return JSON.stringify(records);
+}
+
+async function createMeetDemoRecords() {
+  if (!meetRecordsSnapshotJson) {
+    if (!meetRecordsPending) {
+      meetRecordsPending = buildMeetRecordsSnapshot()
+        .then(json => { meetRecordsSnapshotJson = json; })
+        .finally(() => { meetRecordsPending = null; });
+    }
+    // 失败时所有等待者收到同一错误；finally 清理后，下次调用可重新生成。
+    await meetRecordsPending;
+  }
   return JSON.parse(meetRecordsSnapshotJson);
 }
 
