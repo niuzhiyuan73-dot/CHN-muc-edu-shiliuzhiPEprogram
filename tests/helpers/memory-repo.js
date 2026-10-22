@@ -33,9 +33,10 @@ function clone(doc) {
  * 极简 `db.command` 替身：只实现学校仓储实际用到的操作符（gte / gt / in / and）。
  *
  * 【为什么必须有】（2026-10-21）
- * 云端 `matches.listRatedSince` 把 `matchTime >= resetTime` 下推成 `cmd.gte(...)`。
- * 内存仓储若把那个对象当成「等于某个对象」来比，条件恒假、榜单会**静默变空**——
- * 这类「本地绿、云端对」的分叉正是这组契约测试要防的。
+ * 云端 `matches.listSince` 把 `matchTime >= 分界点` 下推成 `cmd.gte(...)`
+ * （名单里原名 listRatedSince，2026-10-22 以不带 status 过滤的形态重新落地）。
+ * 内存仓储若把那个对象当成「等于某个对象」来比，条件恒假、录分页的交手次数会
+ * **静默变空**——这类「本地绿、云端对」的分叉正是这组契约测试要防的。
  */
 const CMD = Symbol('db.command');
 const command = {
