@@ -145,9 +145,26 @@ function buildScoped(repo, io, inTx, options) {
       return io.query('matches', where);
     };
   }
+
+  // 某个会员的训练报名（个人主页算训练积分用）。
+  //
+  // 【为什么按人查】（2026-10-22 大用户量复查 H-2）
+  // 训练报名是只增不减的集合：3000 条 / 3000 人是 30 页 RPC，而个人主页只需要
+  // 这个人的几十条。原来靠「读全范围再按 userId 筛」，读量随办学年限线性增长。
+  //
+  // userId 缺失时**返回空数组**，不退化成整表读——调用方漏传参数不该变成
+  // 一次全表扫描。
+  if (result.trainingRegistrations) {
+    result.trainingRegistrations.listByUser = (userId) => {
+      if (inTx) throw new Error('事务内不允许条件读取（trainingRegistrations），请改用 getById');
+      if (typeof userId !== 'string' || !userId) return Promise.resolve([]);
+      return io.query('trainingRegistrations', {
+        schoolId: scope.schoolId, association: scope.association, userId,
+      });
+    };
+  }
   if (!inTx) result.transaction = (fn) => repo.transaction((tx) => fn(surfaceOf(tx, scope)));
-  return result;
-}
+  return result;}
 
 function attachSchoolRepository(repo, io, inTx) {
   for (const key of SCHOOL_COLLECTIONS) {

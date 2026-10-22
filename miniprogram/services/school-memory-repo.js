@@ -149,6 +149,15 @@ function createSchoolMemoryRepo(seed = {}) {
           result[key].listSince = async sinceIso => (await repo[key].list())
             .filter(doc => owns(doc) && (!sinceIso || String(doc.matchTime || '') >= sinceIso));
         }
+        // 某个会员的训练报名：与云端 listByUser 同口径（缺 userId 时返回空数组，
+        // 不退化成整表读）。
+        if (key === 'trainingRegistrations') {
+          result[key].listByUser = async userId => {
+            if (inTx) throw new Error('事务内不允许条件读取（trainingRegistrations），请改用 getById');
+            if (typeof userId !== 'string' || !userId) return [];
+            return (await repo[key].list()).filter(doc => owns(doc) && doc.userId === userId);
+          };
+        }
       }
       if (!inTx) result.transaction = fn => repo.transaction(tx => fn(tx.forScope(scope)));
       return result;

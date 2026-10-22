@@ -41,7 +41,7 @@ const { canResetSeason } = require('./season.js');
 const { formatElo, formatPercent } = require('../utils/format.js');
 const {
   ALL_RATING_POOLS, ALL_RANK_PROJECTS, RANK_PROJECT_LABEL, RANK_PROJECT_CONFIG,
-  USER_STATUS, SETTLEMENT_STATUS,
+  USER_STATUS, SETTLEMENT_STATUS, MATCH_STATUS,
 } = require('../utils/constants.js');
 const {
   scopeKey, belongsToSchoolScope, SCHOOL_MEMBER_STATUS, PLATFORM_STATUS,
@@ -56,6 +56,20 @@ const BOARD_LABEL = '等级分榜';
 
 /** 榜单页最多展示多少名。与旧栈 rank-view.TOP_LIMIT 一致，是界面口径不是可调参数。 */
 const TOP_LIMIT = 10;
+
+/**
+ * 个人主页最多回看该会员多少场比赛。
+ *
+ * 【为什么需要一个数】（2026-10-22 大用户量复查 H-2）
+ * 走势 / 交锋 / 搭档 / 逐场战绩 / 近期状态全部只筛**这个人**的比赛。原来靠
+ * `loadScopeView` 把本范围全部历史比赛读回来再筛——8000 场就是 80 页 RPC，
+ * 而且随年限线性变慢（第 5 年打开一次要翻 400 页）。
+ *
+ * 500 场对「3 年 8000 场、2000 人」的学校是人均 4 场的 100 多倍，实际只有校队
+ * 级别的重度选手会触到；触到时更早的场次不进走势与交锋统计——个人主页是
+ * 战绩概览，不是完整档案。这条口径写在这里，将来要改就改这一个数。
+ */
+const PROFILE_MATCH_FETCH = 500;
 
 /** 前三名的奖牌样式，其余为空串（与 rank-view.MEDALS 一致）。 */
 const MEDALS = ['gold', 'silver', 'bronze'];
@@ -162,6 +176,28 @@ async function trainingFactsOf(ctx) {
 }
 
 /**
+ * 从比赛文档里挑出「已生效、且带计分结算快照」的场次，按结算序号连成 Elo 链。
+ *
+ * 抽出来是因为两处要用：榜单/成绩的整范围视图（`loadScopeView`）与个人主页
+ * 的「我参与的比赛」定向读取。两边必须同一个口径，否则个人主页的走势会和
+ * 榜单对不上——这类分叉在数据层最难被发现。
+ *
+ * @param {Array<Object>} rows 比赛文档（任意子集）
+ * @returns {Array<Object>} 已按 settlementSeq 升序、players 补好 pointDelta 槽位
+ */
+function ratedMatchesOf(rows) {
+  return (Array.isArray(rows) ? rows : [])
+    .filter(match => match.status === MATCH_STATUS.ACTIVE && match.settlement
+      && match.settlement.status === SETTLEMENT_STATUS.RATED)
+    .map(match => ({
+      ...match,
+      // players 取自快照并补 pointDelta 槽位：赛事分挂载由 mountEventPointDeltas 完成
+      players: (match.settlement.players || []).map(player => ({ ...player, pointDelta: 0 })),
+    }))
+    .sort((a, b) => Number(a.settlement.settlementSeq || 0) - Number(b.settlement.settlementSeq || 0));
+}
+
+/**
  * 装载本范围的读取视图：在册会员 + 落库评级 + 计分比赛 + 赛季积分。
  * ============================================================
  * 这是三个读接口（榜单 / 会员成绩 / 个人主页）共用的取数层，取代旧的
@@ -177,10 +213,10 @@ async function trainingFactsOf(ctx) {
  * @param {Object} ctx
  * @param {Object} [options]
  * @param {boolean} [options.needMatches=true] 是否需要比赛流水（见下）
- * @returns {Promise<{season:Object, members:Array<Object>, matches:Array<Object>, pointFacts:Array<Object>}>}
+ * @returns {Promise<{season:Object, members:Array<Object>, matches:Array<Object>, pointFacts:Array<Object>, events:Array<Object>}>}
  */
 async function loadScopeView(ctx, options = {}) {
-  const { needMatches = true } = options;
+  const { needMatches = true, pointsFor = '' } = options;
   const season = await loadSeason(ctx);
   // 【为什么榜单可以不读 matches】（2026-10-21 审查 P0-2）
   // 榜单每行的 elo / 胜 / 负 / 出场数全部来自 member_ratings（Elo 逐场结算后
@@ -188,13 +224,20 @@ async function loadScopeView(ctx, options = {}) {
   // **个人主页的走势**里用得到（buildRatingHistory）。
   // 而 matches 是只增不减的最大集合：把它读回来只为两个不用的接口，等于
   // 第 5 年打开榜单要读 5 年的流水。榜单与成绩因此显式关掉它。
+  // 训练报名：只算一个人的积分时按 userId 下推（个人主页）。
+  // trainingRegistrations 是只增不减的集合，3000 条就是 30 页 RPC，而个人主页
+  // 只用到这个人的几十条。注意**只有传了 pointsFor 的那个人的 points 可信**：
+  // 其他人的训练积分会因为缺数据而偏低，所以这条路只给单人的读接口用。
+  const registrationsOf = pointsFor
+    ? ctx.repo.forScope(ctx).trainingRegistrations.listByUser(pointsFor)
+    : ctx.repo.forScope(ctx).trainingRegistrations.list();
   const [members, matches, ratingDocs, events, trainings, trainingRegistrations] = await Promise.all([
     replayMembersOf(ctx),
     needMatches ? ctx.repo.forScope(ctx).matches.list() : Promise.resolve([]),
     ctx.repo.forScope(ctx).memberRatings.list(),
     ctx.repo.forScope(ctx).events.list(),
     ctx.repo.forScope(ctx).associationTrainings.list(),
-    ctx.repo.forScope(ctx).trainingRegistrations.list(),
+    registrationsOf,
   ]);
 
   // ── 评级：按「userId|pool」建索引；缺档按性别兜底，读请求不写库 ──
@@ -210,15 +253,7 @@ async function loadScopeView(ctx, options = {}) {
 
   // ── 计分比赛：带「计分」结算快照的已生效比赛，按结算序号连成 Elo 链 ──
   const pointFacts = collectEventPointFacts({ events, resetTime: season.resetTime });
-  const ratedMatches = matches
-    .filter(match => match.status === 1 && match.settlement
-      && match.settlement.status === SETTLEMENT_STATUS.RATED)
-    .map(match => ({
-      ...match,
-      // players 取自快照并补 pointDelta 槽位：赛事分挂载由下面完成
-      players: (match.settlement.players || []).map(player => ({ ...player, pointDelta: 0 })),
-    }))
-    .sort((a, b) => Number(a.settlement.settlementSeq || 0) - Number(b.settlement.settlementSeq || 0));
+  const ratedMatches = ratedMatchesOf(matches);
 
   // ── 积分：独立聚合（赛事 + 训练），赛事分挂到各人最后一场 ──
   const pointsByUser = aggregatePoints({
@@ -233,7 +268,9 @@ async function loadScopeView(ctx, options = {}) {
     member.points = pointsByUser.get(member._id) || 0;
   }
 
-  return { season, members: viewMembers, matches: ratedMatches, pointFacts };
+  // events 一并带出：个人主页要按「我参加过的赛事」算荣誉，原先它自己又读了
+  // 一遍同一份 events（整表读 × 2）。多回一个字段，调用方按需取。
+  return { season, members: viewMembers, matches: ratedMatches, pointFacts, events };
 }
 
 /* ------------------------------------------------------------------ 排行榜 */
@@ -462,17 +499,35 @@ async function getSchoolMemberProfile(payload = {}, ctx) {
   const historyLimit = Number.isInteger(payload.historyLimit) && payload.historyLimit > 0
     ? Math.min(payload.historyLimit, 200) : 20;
 
-  const { members, matches } = await loadScopeView(ctx);
-  const member = members.find(row => row._id === userId);
-  if (!member) return ok({ ok: false, found: false, message: '没有找到这位会员' });
-
-  const [memberDoc, role, membership, colleges, events] = await Promise.all([
+  // 【为什么不整范围回放】（2026-10-22 大用户量复查 H-2）
+  // `loadScopeView` 默认 needMatches: true —— 把本范围**全部历史比赛**读回来，
+  // 而个人主页的每一块（走势 / 交锋 / 搭档 / 逐场 / 近期状态）都只筛这一个人。
+  // 8000 场 = 80 页 RPC，且随年限线性变慢。
+  //
+  // 现在：比赛改成「按参赛者下推」只取这个人参与的（团队/个人赛都按 teamA/teamB
+  // 过滤，索引见 docs/数据库索引清单.md 的 by_scope_team_*_match_time）。
+  // members（含评级与积分）仍要整范围——它是「我在同项目里排第几」的分母，
+  // 本轮不动，见报告里 H-2 的后续项。
+  //
+  // events 直接复用 loadScopeView 已读的那一份：原来这里又读了一遍同一份。
+  const [view, memberDoc, role, membership, colleges] = await Promise.all([
+    loadScopeView(ctx, { needMatches: false, pointsFor: userId }),
     ctx.repo.schoolMembers.getById(schoolMemberKey(userId, ctx.schoolId)),
     ctx.repo.schoolRoles.getById(schoolRoleKey(userId, ctx.schoolId)),
     ctx.repo.memberships.get(schoolMembershipKey(userId, ctx)),
     ctx.repo.forScope(ctx).colleges.list(),
-    ctx.repo.forScope(ctx).events.list(),
   ]);
+  const { members, pointFacts, events } = view;
+  const member = members.find(row => row._id === userId);
+  if (!member) return ok({ ok: false, found: false, message: '没有找到这位会员' });
+
+  // 只读「我参与过的」比赛，并按与整范围视图同一口径连成 Elo 链
+  const myMatches = await ctx.repo.forScope(ctx).matches.listPage({
+    filter: { userId }, limit: PROFILE_MATCH_FETCH,
+  });
+  const matches = ratedMatchesOf(myMatches.rows);
+  mountEventPointDeltas(matches, pointFacts);
+
   const collegeName = id => (colleges.find(row => row.collegeId === id) || {}).name || '';
   const nameOf = id => (members.find(row => row._id === id) || {}).nickName || id;
 

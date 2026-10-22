@@ -74,6 +74,9 @@ test('受范围仓储的集合方法面就是约定的那一套（钉住契约�
     // matches 额外一个 listSince：把「本赛季」下推成 matchTime >= 分界点，
     // 免得为了一次录分把历年台账翻一遍（2026-10-22 第二轮审查 P-2）。
     if (key === 'matches') expected = [...expected, 'listSince', 'listPage'];
+    // trainingRegistrations 额外一个 listByUser：个人主页算训练积分只读这个人的
+    // 几十条，不必为一个人翻完只增不减的 3000 条报名（2026-10-22 H-2）。
+    if (key === 'trainingRegistrations') expected = [...expected, 'listByUser'];
     assert.deepEqual(methodNames(cloud[key]), expected.sort(),
       `${key} 的方法面变了，请同步本测试与另一端实现`);
   }
