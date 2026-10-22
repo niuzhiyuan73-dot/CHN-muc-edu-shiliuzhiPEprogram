@@ -40,7 +40,7 @@ const {
 const { freshMeetContext } = require('./meet-context.js');
 const { meetReadable, canManageMeet, canPublishMeetResult, isChiefJudge } = require('./meet-permission.js');
 
-const { unchanged, liveMeet } = require('./meet-consistency.js');
+const { unchanged, liveMeet, publishedRowsOf } = require('./meet-consistency.js');
 
 const ok = (data) => ({ ok: true, data });
 const refused = (message, extra = {}) => ({ ok: false, message, ...extra });
@@ -289,8 +289,8 @@ async function advanceMeetEvent(payload = {}, ctx) {
       missing.push(`预赛第 ${session.index} 组`);
       continue;
     }
-    const items = rows.filter((row) => row.publicationKey === publication._id
-      && row.version === publication.version);
+    // 明细索引可能还在写，这里按发布快照兜底（见 meet-consistency.publishedRowsOf）
+    const items = publishedRowsOf(publication, rows);
     heats.push({
       index: Number(session.index),
       rows: items.map((row) => ({

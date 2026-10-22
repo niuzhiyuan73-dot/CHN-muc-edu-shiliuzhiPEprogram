@@ -45,7 +45,7 @@ const {
 const { matchesOf, roundNoOf } = require('./meet-advance-service.js');
 const { buildMeetContext, freshMeetContext } = require('./meet-context.js');
 const { collegeKey } = require('../utils/school.js');
-const { unchanged, touchEvent, liveMeet } = require('./meet-consistency.js');
+const { unchangedEvent, touchEvent, liveMeet, publishedRowsOf } = require('./meet-consistency.js');
 const { meetReadable, canManageMeet, canPublishMeetResult } = require('./meet-permission.js');
 
 const ok = (data) => ({ ok: true, data });
@@ -795,15 +795,17 @@ async function publishMeetResults(payload = {}, ctx) {
   const publicationKey = meetPublicationKey(ctx.meetId, eventKey, sessionKey);
   const current = publications.find((doc) => doc._id === publicationKey);
 
-  return ctx.repo.transaction(async (tx) => {
+  // 事务里只做两件必须原子的事：给成绩「挂牌」（发布快照）与把学院总榜改到位。
+  // 结果行与荣誉是**派生索引**，放到事务之后分批写（见 writeMeetResultDetail）——
+  // 它们在事务内是「一条报名两个操作」，26 院满员的项目单这一项就 100 多个操作，
+  // 而云端事务预算只有约 100（cloud-repo.js 的 TX_OPERATION_BUDGET）。
+  const committed = await ctx.repo.transaction(async (tx) => {
     const fresh = await freshMeetContext(tx, ctx);
     if (!canPublishMeetResult(fresh)) return refused('只有校级管理员及以上或本届总裁判可以发布成绩');
     if (!liveMeet(fresh)) return refused('运动会不存在或已删除');
-    if (!await unchanged(tx, 'sportsMeetEvents', [event])
-      || !await unchanged(tx, 'sportsMeetSessions', ownSessions)
-      || !await unchanged(tx, 'sportsMeetEntries', approved)
-      || !await unchanged(tx, 'sportsMeetScores', scores.filter(row => row.eventKey === eventKey))
-      || !await unchanged(tx, 'sportsMeetJudgeAssignments', assignments.filter(row => row.eventKey === eventKey))) return refused('报名、裁判或成绩已变化，请刷新后重试');
+    // 一次版本戳校验替代「逐条比对报名 / 场次 / 裁判 / 成绩」：
+    // 这些写路径都会 touchEvent 递增 revision（见 meet-consistency.unchangedEvent）
+    if (!await unchangedEvent(tx, event)) return refused('报名、裁判或成绩已变化，请刷新后重试');
     const latest = await tx.sportsMeetPublications.getById(publicationKey);
     if ((latest ? latest.version : null) !== (current ? current.version : null)) {
       return refused('发布状态已变化，请刷新后重试');
@@ -823,10 +825,13 @@ async function publishMeetResults(payload = {}, ctx) {
     // rows 摘要随发布存档：下次重发时要靠它把旧学院的分减回去。
     // 不存档的话，「无痕更正」发一次就把学院总分翻一倍——结果行被同主键覆盖，
     // 旧值无从得知，而总榜是累加出来的。
+    // `value` 也一并存档：明细索引还没写完的那一小段窗口里，展示要靠这份快照
+    // 兜底（见 meet-consistency.publishedRowsOf），少了它成绩值会显示成「—」。
     const rowDigest = rows.map((row) => ({
       entryKey: row.entryKey,
       collegeId: row.collegeId,
       userIds: Array.isArray(row.userIds) ? [...row.userIds] : [],
+      value: row.value === undefined ? null : row.value,
       rank: row.rank,
       points: row.points,
       status: row.status,
@@ -847,14 +852,9 @@ async function publishMeetResults(payload = {}, ctx) {
       publishedBy: fresh.actorId, publishedAt: now,
       reason: String(payload.reason || '').slice(0, 100),
     });
-    for (const row of rows) {
-      await tx.sportsMeetResultRows.set(meetResultRowKey(publicationKey, row.entryKey), {
-        schoolId: fresh.schoolId, meetId: fresh.meetId, eventKey,
-        publicationKey, version,
-        ...row,
-        updatedAt: now,
-      });
-    }
+
+    // 上一版的行摘要：重发时要靠它把旧学院的分减回去，也要靠它作废已失效的荣誉。
+    const oldRows = Array.isArray(latest && latest.rows) ? latest.rows : [];
 
     // 学院总分与个人荣誉：**只在正式成绩发布时**更新。
     // 预赛的名次是组内排名，不是奖牌名次，计进去会让总榜出现一批假金牌。
@@ -871,11 +871,12 @@ async function publishMeetResults(payload = {}, ctx) {
         delta.set(key, cur);
       };
       // 旧行先减、新行后加：净额为 0 的学院一次都不用写
-      const oldRows = Array.isArray(latest && latest.rows) ? latest.rows : [];
       for (const row of oldRows) bump(row.collegeId, -1, row);
       for (const row of rowDigest) bump(row.collegeId, 1, row);
 
       for (const [collegeId, change] of delta) {
+        // 重发同样结果时绝大多数学院净额为 0，跳过可以省掉一半读写
+        if (!change.points && !change.gold && !change.silver && !change.bronze) continue;
         const key = meetStandingKey(fresh.meetId, collegeId);
         const doc = await tx.sportsMeetStandings.getById(key);
         const base = doc || {
@@ -891,42 +892,8 @@ async function publishMeetResults(payload = {}, ctx) {
           updatedAt: now,
         });
       }
-
-      // 旧版有、新版没有的记录（例如报名被撤回、被排除出签表）：
-      // 荣誉必须一并作废，否则「我的荣誉」会一直挂着一个已不成立的第一名。
-      const liveKeys = new Set(rowDigest.map((row) => row.entryKey));
-      for (const row of oldRows) {
-        if (liveKeys.has(row.entryKey)) continue;
-        await tx.sportsMeetHonors.set(meetHonorKey(fresh.meetId, row.entryKey), {
-          _id: meetHonorKey(fresh.meetId, row.entryKey),
-          schoolId: fresh.schoolId, meetId: fresh.meetId, eventKey,
-          entryKey: row.entryKey, collegeId: row.collegeId,
-          userIds: Array.isArray(row.userIds) ? [...row.userIds] : [],
-          rank: null, points: 0, version, publishedAt: now, updatedAt: now,
-        });
-      }
-
-      // 荣誉一条参赛记录一条；不再得奖的记录直接覆盖成「无名次」，
-      // 而不是留着旧名次——那会让「我的荣誉」显示一个已经作废的第一名。
-      for (const row of rowDigest) {
-        const key = meetHonorKey(fresh.meetId, row.entryKey);
-        const worth = row.status === ROW_STATUS.RESULT && Number(row.rank) > 0;
-        await tx.sportsMeetHonors.set(key, {
-          _id: key,
-          schoolId: fresh.schoolId,
-          meetId: fresh.meetId,
-          eventKey,
-          entryKey: row.entryKey,
-          collegeId: row.collegeId,
-          userIds: Array.isArray(row.userIds) ? [...row.userIds] : [],
-          rank: worth ? row.rank : null,
-          points: worth ? row.points : 0,
-          version,
-          publishedAt: now,
-          updatedAt: now,
-        });
-      }
     }
+
     // 多枪项目的发布键是 'all'，没有对应指派记录，要回到各场次上取人数
     const publishWarning = judgeCountWarning(aggregateFinal
       ? Math.max(0, ...ownSessions.map((row) => assignments.filter(
@@ -936,15 +903,122 @@ async function publishMeetResults(payload = {}, ctx) {
 
     return ok({
       warning: publishWarning,
+      version,
+      writtenAt: now,
+      official,
+      // 派生索引要用它作废「旧版有、新版没有」的荣誉
+      staleHonorRows: official ? oldRows : [],
       publication: {
         eventKey, version, sessionKey, official,
         rows: rows.map((row) => ({
           entryKey: row.entryKey, collegeId: row.collegeId,
+          value: row.value === undefined ? null : row.value,
           rank: row.rank, points: row.points, status: row.status,
         })),
       },
     });
   });
+
+  if (!committed.ok || !committed.data) return committed;
+
+  // 事务之后：结果行与个人荣誉（派生索引），分批写。
+  // 失败不影响「已发布」这个事实——读取侧会回落到发布快照（publishedRowsOf），
+  // 下次重新发布也会整体覆盖自愈。
+  const detailWritten = await writeMeetResultDetail({
+    repo: ctx.repo,
+    schoolId: ctx.schoolId,
+    meetId: ctx.meetId,
+    eventKey,
+    publicationKey,
+    version: committed.data.version,
+    rows,
+    staleHonorRows: committed.data.staleHonorRows,
+    official: committed.data.official,
+    now: committed.data.writtenAt,
+  });
+
+  const result = committed.data.publication;
+  if (!detailWritten) result.detailPending = true;
+  return ok({ warning: committed.data.warning, publication: result });
+}
+
+/** 派生索引每批写多少条：只影响网络往返次数，不受事务预算约束 */
+const RESULT_DETAIL_BATCH = 10;
+
+/**
+ * 批量写文档（非事务，可并发）。发布之后的派生索引用它。
+ *
+ * @param {Object} collection 集合接口（需有 set）
+ * @param {Array<[string, Object]>} entries [主键, 文档]
+ * @returns {Promise<boolean>} 全部写入成功返回 true
+ */
+async function writeDetailBatch(collection, entries) {
+  for (let i = 0; i < entries.length; i += RESULT_DETAIL_BATCH) {
+    const slice = entries.slice(i, i + RESULT_DETAIL_BATCH);
+    try {
+      await Promise.all(slice.map(([key, doc]) => collection.set(key, doc)));
+    } catch (err) {
+      console.warn('[meet] 成绩明细写入失败', err && (err.message || err));
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * 发布之后的派生索引：结果行 + 个人荣誉。
+ *
+ * 【为什么必须在事务外】（2026-10-22 大用户量复查 W-0）
+ * 这两张表都是「一条报名一条」。26 个学院满员的田赛项目是 52 条报名，
+ * 光它们就是 104 个事务操作，加学院总榜的 52 个，必然撞云端事务预算（约 100）——
+ * 报错文案是「事务读写总操作预算不足：请缩小本次处理范围」，管理员只会看到
+ * 「服务异常」。而它们本质上是**可从发布快照重建的数据**，不需要与「发布挂牌」原子。
+ *
+ * 【幂等】
+ * 主键只由 (publicationKey, entryKey) 与 (meetId, entryKey) 决定，内容由
+ * 「本次 rows + 版本号」决定。中途失败后重新发布一次就整体覆盖，不会留下半截脏数据。
+ *
+ * @returns {Promise<boolean>} 是否全部写完
+ */
+async function writeMeetResultDetail({
+  repo, schoolId, meetId, eventKey, publicationKey, version, rows, staleHonorRows, official, now,
+}) {
+  const rowEntries = rows.map((row) => [meetResultRowKey(publicationKey, row.entryKey), {
+    schoolId, meetId, eventKey, publicationKey, version, ...row, updatedAt: now,
+  }]);
+  if (!await writeDetailBatch(repo.sportsMeetResultRows, rowEntries)) return false;
+
+  if (!official) return true;
+
+  const honorEntries = [];
+  // 旧版有、新版没有的记录（例如报名被撤回、被排除出签表）：荣誉必须一并作废，
+  // 否则「我的荣誉」会一直挂着一个已不成立的第一名。
+  const liveKeys = new Set(rows.map((row) => row.entryKey));
+  for (const row of staleHonorRows) {
+    if (liveKeys.has(row.entryKey)) continue;
+    const key = meetHonorKey(meetId, row.entryKey);
+    honorEntries.push([key, {
+      _id: key, schoolId, meetId, eventKey,
+      entryKey: row.entryKey, collegeId: row.collegeId,
+      userIds: Array.isArray(row.userIds) ? [...row.userIds] : [],
+      rank: null, points: 0, version, publishedAt: now, updatedAt: now,
+    }]);
+  }
+  // 荣誉一条参赛记录一条；不再得奖的记录直接覆盖成「无名次」，
+  // 而不是留着旧名次——那会让「我的荣誉」显示一个已经作废的第一名。
+  for (const row of rows) {
+    const key = meetHonorKey(meetId, row.entryKey);
+    const worth = row.status === ROW_STATUS.RESULT && Number(row.rank) > 0;
+    honorEntries.push([key, {
+      _id: key, schoolId, meetId, eventKey,
+      entryKey: row.entryKey, collegeId: row.collegeId,
+      userIds: Array.isArray(row.userIds) ? [...row.userIds] : [],
+      rank: worth ? row.rank : null,
+      points: worth ? row.points : 0,
+      version, publishedAt: now, updatedAt: now,
+    }]);
+  }
+  return writeDetailBatch(repo.sportsMeetHonors, honorEntries);
 }
 
 /**
@@ -1004,9 +1078,7 @@ async function getPublishedResults(payload = {}, ctx) {
       version: doc.version,
       publishedAt: doc.publishedAt,
       reason: doc.reason || '',
-      items: rows
-        .filter((row) => row.publicationKey === doc._id && row.version === doc.version)
-        .map(rowLabel),
+      items: publishedRowsOf(doc, rows).map(rowLabel),
     }));
 
   const official = rounds.find((row) => row.official) || null;
@@ -1099,8 +1171,7 @@ async function listMeetPublishedResults(payload = {}, ctx) {
         version: doc.version,
         publishedAt: doc.publishedAt,
         reason: doc.reason || '',
-        items: selectedRows
-          .filter((row) => row.publicationKey === doc._id && row.version === doc.version)
+        items: publishedRowsOf(doc, selectedRows)
           .sort((a, b) => (Number(a.rank) || 99) - (Number(b.rank) || 99))
           .map((row) => ({
             entryKey: row.entryKey,
