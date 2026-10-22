@@ -643,13 +643,20 @@ async function getMeetSchedule(payload = {}, ctx) {
   }
   // 裁判姓名：场次文档上只有 judgeIds 名单（要落库、开赛要判长度），姓名在这里
   // 解析一次带上页面。页面若直接显示 ID，管理员就看不到自己派了谁——用户反馈。
-  const judgeNames = new Map();
+  //
+  // 【为什么批读而不是逐个 getById】（2026-10-22 第二轮审查 P-4）
+  // 一场运动会 40 个项目 × 每项 2~3 名裁判，逐条 `await` 就是 60~120 次**串行**
+  // RPC，赛程页光解析姓名就要等一两秒。`users.listByIds` 每 100 个一批，通常
+  // 1 次往返就够。
   const allJudgeIds = new Set();
   for (const list of judgesOf.values()) for (const judgeId of list) allJudgeIds.add(judgeId);
-  for (const judgeId of allJudgeIds) {
-    const user = await ctx.repo.users.getById(judgeId);
-    judgeNames.set(judgeId, (user && (user.realName || user.nickName)) || judgeId);
-  }
+  const judgeIds = [...allJudgeIds];
+  const judgeUsers = judgeIds.length > 0 ? await ctx.repo.users.listByIds(judgeIds) : [];
+  const judgeUserById = new Map(judgeUsers.map(user => [user._id, user]));
+  const judgeNames = new Map(judgeIds.map((judgeId) => {
+    const user = judgeUserById.get(judgeId);
+    return [judgeId, (user && (user.realName || user.nickName)) || judgeId];
+  }));
   const judgesSummary = (sessionKey) => (judgesOf.get(sessionKey) || [])
     .map((judgeId) => ({ judgeId, name: judgeNames.get(judgeId) || judgeId }));
 

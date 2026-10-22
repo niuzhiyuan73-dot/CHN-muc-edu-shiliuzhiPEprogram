@@ -16,9 +16,12 @@
  */
 
 const { canReadAssociationSpace } = require('./association-space-permission.js');
-const { schoolLiveKey, belongsToSchoolScope } = require('../utils/school.js');
-const { MATCH_STATUS } = require('../utils/constants.js');
+const {
+  schoolLiveKey, belongsToSchoolScope, schoolMemberKey, collegeKey,
+} = require('../utils/school.js');
+const { MATCH_STATUS, ROLE } = require('../utils/constants.js');
 const { canRecordScore, fillScheduledMatch } = require('./match-record.js');
+const { legacyRoleOf } = require('./school-actor.js');
 const {
   LIVE_STATUS, SIDE, createLive, applyRally,
   undoRally: undoLiveRally, hasRally, isFinalized, liveScoreOf, toOfficialScores,
@@ -35,32 +38,118 @@ const iso = value => new Date(value).toISOString();
 /** getSchoolLiveScores 一次最多跟多少场：轮询接口，编号由客户端给，必须限量 */
 const LIVE_IDS_MAX = 50;
 
+/**
+ * 判球编号（rallyId）的字符集与长度上限。
+ *
+ * 【为什么必须卡】（2026-10-22 第二轮审查 S-2）
+ * 这个编号由客户端生成，会**原样存进实时态文档**的逐球流水（`rallies[].id`），
+ * 而每次判球都是整条文档重写。原实现只做了 `String(payload.rallyId)`，
+ * 一条 1 MB 的编号就能让该场 `liveScores` 文档超出单文档上限：此后每一次判球
+ * 都写入失败，这场比赛既不能继续计分、也不能撤销或定稿，只能改库修数据。
+ *
+ * 字符集比照客户端实际生成方式 `<matchId>-<时间戳>-<序号>`（matchId 里可能
+ * 含 encodeURIComponent 产生的 `%`），所以放行 `% : . _ -`。
+ */
+const RALLY_ID_MAX = 200;
+const RALLY_ID_PATTERN = new RegExp(`^[A-Za-z0-9%._:-]{1,${RALLY_ID_MAX}}$`);
+
+/**
+ * 不需要"别人属于哪个学院"时的空目录。
+ *
+ * `canRecordScore` 只在**学院负责人**（ROLE.STAFF）那一档才调用 involvesCollege，
+ * 即"这位操作者的学院，是否等于某个参赛者的学院"。管理员与参赛者本人都在此之前
+ * 就返回了，所以他们根本不需要学院映射（见 match-record.js 的 canRecordScore）。
+ */
+const EMPTY_RECORD_DIR = Object.freeze({
+  actorCollege: '',
+  collegeIdOf: () => '',
+  collegeNameById: () => '',
+  collegeOf: () => '',
+});
+
+/**
+ * 只取"这场比赛用得上"的那几个学院，而不是全院名单。
+ *
+ * 【为什么不能直接用 buildDirectory】（2026-10-22 第二轮审查 P-1）
+ * `buildDirectory` 会读全校在册名单 + 这批人的账号：2000 人的学校是
+ * 20 + 20 = 40 次 RPC。而 `guard()` 在**每一次判球**都会调用它——一场 50 球的
+ * 比赛光"确认你有没有权限"就要 2000 次 RPC，同场多个场地并行时直接打空
+ * 全校每日读配额（5 万次），限流按 3 写/秒也拦不住（3 × 48 = 144 RPC/秒）。
+ *
+ * 真正需要的信息只有：操作者自己的学院名，加上**这场比赛的两队选手**各自
+ * 属于哪个学院。单人赛 2 人、双人赛 4 人，最多 4 次点读 + 2 次学院名点读。
+ *
+ * @param {Object} ctx 请求上下文（含 schoolMember）
+ * @param {Object} match 比赛记录
+ * @returns {Promise<Object>} 与 recordOptions 兼容的目录形状
+ */
+async function liveRecordDir(ctx, match) {
+  const memberCollegeId = (ctx.schoolMember && ctx.schoolMember.collegeId) || '';
+  // 没有学院归属 ⇒ involvesCollege 的两个条件（college 非空、collegeOf 是函数）
+  // 必然不成立，与"全院目录里查不到他的学院"是同一个结论，读都不用读。
+  if (!memberCollegeId) return EMPTY_RECORD_DIR;
+
+  const participants = [...new Set([...(match.teamA || []), ...(match.teamB || [])])];
+  const [actorCollege, rows] = await Promise.all([
+    ctx.repo.colleges.getById(collegeKey(ctx.schoolId, memberCollegeId)),
+    Promise.all(participants.map(userId =>
+      ctx.repo.schoolMembers.getById(schoolMemberKey(userId, ctx.schoolId)))),
+  ]);
+  const actorCollegeName = (actorCollege && actorCollege.name) || '';
+
+  const collegeIdByUser = new Map();
+  rows.forEach((row, index) => {
+    if (row && row.collegeId) collegeIdByUser.set(participants[index], row.collegeId);
+  });
+
+  // 一张「学院编号 → 全名」表，先放操作者自己的学院，再补参赛者涉及的学院。
+  // 两边必须走同一张表：involvesCollege 比较的是"操作者学院名 === 参赛者学院名"，
+  // 若操作者的学院没有登记进来，同一学院也会被判成不同学院（越权拦截误伤）。
+  const nameById = new Map();
+  if (memberCollegeId && actorCollegeName) nameById.set(memberCollegeId, actorCollegeName);
+  const missingIds = [...new Set([...collegeIdByUser.values()])].filter(id => !nameById.has(id));
+  const missing = await Promise.all(missingIds.map(id =>
+    ctx.repo.colleges.getById(collegeKey(ctx.schoolId, id))));
+  missing.forEach((doc) => {
+    if (doc && doc.collegeId) nameById.set(doc.collegeId, doc.name || '');
+  });
+
+  return {
+    actorCollege: actorCollegeName,
+    collegeIdOf: userId => collegeIdByUser.get(userId) || '',
+    collegeNameById: id => nameById.get(id) || '',
+    collegeOf: userId => nameById.get(collegeIdByUser.get(userId)) || '',
+  };
+}
+
 /** 计分权与录分权一字不差：能录这一场的人才能开台 / 判球 / 撤销 / 定稿。 */
 function mayRecord(doc, ctx, dir) {
   return canRecordScore(doc, ctx.actorId, recordOptions(ctx, dir));
 }
 
-/** 找一场比赛并校验计分权，四个写接口共用。读列表已在事务外取好目录。 */
-async function liveTarget(ctx, matchId, dir) {
-  const match = await ctx.repo.matches.getById(matchId);
+/** 写接口公共入参：登录、比赛编号、读权限、计分权。 */
+async function guard(payload, ctx, options = {}) {
+  if (!ctx.actorId) return { error: '请先登录' };
+  if (typeof payload.matchId !== 'string' || !payload.matchId) return { error: '缺少比赛编号' };
+  if (!canReadAssociationSpace(ctx)) return { error: '没有读取协会空间的权限' };
+
+  const match = await ctx.repo.matches.getById(payload.matchId);
   if (!isMatchDoc(match) || !belongsToSchoolScope(match, ctx)) return { error: '找不到这场比赛' };
   // 已生效 / 已作废的比赛不再开实时台：改历史要走撤销，重录要走录分页。
   if (match.status !== MATCH_STATUS.PENDING) {
     return { error: '这场比赛已生效或已作废，不能再计分' };
   }
-  if (!mayRecord(match, ctx, dir)) return { error: '你无权为这场比赛计分' };
-  return { match };
-}
 
-/** 写接口公共入参：登录、比赛编号、读权限、范围目录。 */
-async function guard(payload, ctx) {
-  if (!ctx.actorId) return { error: '请先登录' };
-  if (typeof payload.matchId !== 'string' || !payload.matchId) return { error: '缺少比赛编号' };
-  if (!canReadAssociationSpace(ctx)) return { error: '没有读取协会空间的权限' };
-  const dir = await buildDirectory(ctx);
-  const target = await liveTarget(ctx, payload.matchId, dir);
-  if (target.error) return { error: target.error };
-  return { dir, match: target.match };
+  // 定稿要把正式比分写回比赛记录，`fillScheduledMatch` 需要本院在册名单做校验，
+  // 因此只有那一条路读全院目录（一场比赛只发生一次）；判球/撤销走最小读取。
+  // 学院关系只对**学院负责人**这一档有意义：管理员与参赛者本人在 canRecordScore
+  // 里更早就返回了，为他们读学院映射是纯浪费。
+  const dir = options.withRoster
+    ? await buildDirectory(ctx)
+    : (legacyRoleOf(ctx) === ROLE.STAFF ? await liveRecordDir(ctx, match) : EMPTY_RECORD_DIR);
+
+  if (!mayRecord(match, ctx, dir)) return { error: '你无权为这场比赛计分' };
+  return { dir, match };
 }
 
 async function startSchoolLiveScore(payload = {}, ctx) {
@@ -86,7 +175,12 @@ async function recordSchoolRally(payload = {}, ctx) {
 
   const id = schoolLiveKey(payload.matchId, ctx);
   const side = payload.side;
-  const rallyId = String(payload.rallyId || '');
+  // 编号必填且必须合法：它既是幂等去重的依据（缺了就会重复计分），
+  // 又会原样落库成文档字段（过长会把整场计分台写死），见 RALLY_ID_PATTERN。
+  const rallyId = typeof payload.rallyId === 'string' ? payload.rallyId.trim() : '';
+  if (!RALLY_ID_PATTERN.test(rallyId)) {
+    return ok(refused('判球编号无效（缺失或格式不正确），请刷新页面后重试', { live: null }));
+  }
 
   const result = await ctx.repo.transaction(async tx => {
     // 事务内重读：并发判球以库里那份为准，避免两个请求都基于旧分各加一。
@@ -138,7 +232,9 @@ async function undoSchoolRally(payload = {}, ctx) {
 }
 
 async function finishSchoolLiveScore(payload = {}, ctx) {
-  const ready = await guard(payload, ctx);
+  // 定稿要把比分写回比赛记录，`fillScheduledMatch` 用 dir.memberIds 校验阵容，
+  // 所以这一条路（每场一次）仍然读全院目录。
+  const ready = await guard(payload, ctx, { withRoster: true });
   if (ready.error) return ok(refused(ready.error, { live: null, match: null }));
 
   const id = schoolLiveKey(payload.matchId, ctx);

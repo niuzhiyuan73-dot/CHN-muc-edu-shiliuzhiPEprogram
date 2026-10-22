@@ -28,7 +28,7 @@ const { parseMeetTime } = require('./meet-time.js');
  */
 
 const {
-  MEET_STATUS, MEET_INTEREST_STATUS, MEET_ENTRY_STATUS,
+  MEET_STATUS, MEET_INTEREST_STATUS, MEET_ENTRY_STATUS, MEET_ENTRY_MAX_MEMBERS,
   meetEventKey, meetInterestKey, meetEntryKey, meetQuotaKey, meetClaimKey,
   meetParticipantCounterKey, meetCollegeKey, listAliveEvents, meetEntrySlot,
 } = require('../utils/meet-scope.js');
@@ -45,6 +45,46 @@ const refused = (message, extra = {}) => ({ ok: false, message, ...extra });
 
 /** 4.2 默认：个人项目每人最多 2 项（D35），团体与接力不计入 */
 const PERSONAL_LIMIT = 2;
+
+/**
+ * 单条正式名单的人数上限 —— 数字本身在 `utils/meet-scope.js`，与
+ * `meet-service.js` 配置侧共用一处（见那里的说明）。
+ *
+ * 【为什么必须有上限】（2026-10-22 第二轮审查 B-1）
+ * 云数据库事务的操作预算约 100（`cloud-repo.js` 的 TX_OPERATION_BUDGET）。
+ * 原实现在**事务内**按人做身份校验 + 声明 + 计数 + 意向四处读写：每人约 9 个
+ * 操作，固定开销 ≈ 14，于是 `100 - 14` 只够 **9~10 人**。而配置侧允许把团体
+ * 项目配到 200 人、模板里「入场式展示」默认就是 20 人 —— 管理员照默认值配一个
+ * 20 人项目，学院部长点提交只会看到「事务读写总操作预算不足：请缩小本次处理
+ * 范围」，这句话是给开发者看的，部长无从下手。
+ *
+ * 【现在为什么能到 20】（同批改动）
+ * 把按人的三次点读（学籍 / 账号 / 意向）搬到事务外一次性取齐，事务内每人只剩
+ * 2 个操作（声明读 + 声明写）；`team` 计数不再写（它只写不读，见写入循环的
+ * 说明）；意向改「已选入」放到主事务之后独立提交。20 人 = 40 + 固定 19 ≈ 59
+ * 个操作，留足余量。
+ */
+
+/**
+ * 报名序号探测的最大次数。
+ *
+ * 撤回 / 驳回只改状态、不释放 `_id`（`releaseEntry`），所以连续号段可能被历史
+ * 名单占满。原实现是 `while (await getById(key))` 无上限，占满时会一路探测到
+ * 事务预算耗尽，最终报「事务读写总操作预算不足」——把"序号排满"这个真实原因
+ * 完全掩盖掉（2026-10-22 第二轮审查 B-2）。
+ */
+const SLOT_PROBE_MAX = 50;
+
+/**
+ * 申请人池一次最多返回多少人。
+ *
+ * 这个页面是"学院部长从申请人里挑人"的选人器，一屏最多也就看几十个；
+ * 而报名人数没有上限（同一学院可以给一个项目报几百人）。不封顶时，
+ * 一次列表要把所有人的学籍与账号都读出来才凑得出一张表
+ * （2026-10-22 第二轮审查 P-5）。
+ */
+const APPLICANT_POOL_MAX = 500;
+
 const { touchEvent } = require('./meet-consistency.js');
 
 const isActiveInterest = (doc) => Boolean(doc && doc.status === MEET_INTEREST_STATUS.PENDING);
@@ -154,6 +194,76 @@ async function touchCollegeScope(tx, { schoolId, meetId, collegeId, now }) {
     name: (college && college.name) || collegeId,
     at: now,
   });
+}
+
+/**
+ * 事务外的候选人快照：按人取齐学籍、账号、意向。
+ *
+ * 【为什么要搬到事务外】（2026-10-22 第二轮审查 B-1）
+ * 事务里每一次 `set` 都要先读归属（`school-repository.js` 的 buildScoped），
+ * 所以"每人 3 次身份点读"其实是把事务预算直接吃掉 3/N。搬到事务外以后，
+ * 事务内只留「声明占用」这一处真正需要原子性的判断（并发重复报名的唯一竞态）。
+ *
+ * 【为什么用 Promise.all 而不是批读接口】
+ * 三个集合都是按**确定性复合主键**取单条（`schoolMemberKey` / `meetInterestKey`），
+ * 没有等价的 where 条件；批读要靠 `_id in [...]`，而受范围仓储目前没有
+ * `listByIds`。并发点读的 RPC 数与原来相同（只是不再计入事务预算），
+ * 拿到批读能力后可以再降一次。
+ *
+ * @param {Object} ctx
+ * @param {string} eventKey 项目组别编号
+ * @param {Array<string>} userIds
+ * @returns {Promise<Map<string,{userId:string,member:Object|null,user:Object|null,interest:Object|null}>>}
+ */
+async function candidateSnapshotOf(ctx, eventKey, userIds) {
+  const rows = await Promise.all(userIds.map(async (userId) => {
+    const [member, user, interest] = await Promise.all([
+      ctx.repo.schoolMembers.getById(schoolMemberKey(userId, ctx.schoolId)),
+      ctx.repo.users.getById(userId),
+      ctx.repo.sportsMeetInterests.getById(meetInterestKey(ctx.meetId, eventKey, userId)),
+    ]);
+    return { userId, member: member || null, user: user || null, interest: interest || null };
+  }));
+  return new Map(rows.map((row) => [row.userId, row]));
+}
+
+/**
+ * 把入选者的意向标成「已选入」。
+ *
+ * 【为什么独立成事务，而不是并进提交名单那一个】
+ * 意向状态是**展示态**：名额占用靠 entry / quota，重复报名靠 claim，两者都在
+ * 主事务里；意向只是让申请人池不再把这个人列成「待选」。为这个人多付 2 个
+ * 事务操作会直接把 20 人名单顶出预算，所以拆到主事务之后，按 20 人一批提交。
+ *
+ * 【失败为什么不回滚】
+ * 名单已经落库（claim 已占），此时因为"展示态没写上"就把整次提交判失败，
+ * 会让部长重试时撞上「已在本项目报名」——比脏一个展示字段难解释得多。
+ * 因此这里吞掉错误，只让申请人池多显示一条待选。
+ *
+ * @param {Object} ctx
+ * @param {string} eventKey
+ * @param {Array<string>} userIds
+ * @param {string} entryKey 名单主键，用于回填到意向文档
+ * @param {string} nowIso 写入时间（与主事务同一个 `now`，避免两处时间不一致）
+ * @returns {Promise<void>}
+ */
+async function markInterestsSelected(ctx, eventKey, userIds, entryKey, nowIso) {
+  const CHUNK = 20;
+  for (let i = 0; i < userIds.length; i += CHUNK) {
+    const chunk = userIds.slice(i, i + CHUNK);
+    await ctx.repo.transaction(async (tx) => {
+      for (const userId of chunk) {
+        const key = meetInterestKey(ctx.meetId, eventKey, userId);
+        const interest = await tx.sportsMeetInterests.getById(key);
+        if (!interest) continue;
+        if (interest.status === MEET_INTEREST_STATUS.SELECTED && interest.entryKey === entryKey) continue;
+        await tx.sportsMeetInterests.set(key, {
+          ...interest, status: MEET_INTEREST_STATUS.SELECTED, entryKey, updatedAt: nowIso,
+        });
+      }
+      return null;
+    });
+  }
 }
 
 // ---------------------------------------------------------------- 学生端
@@ -330,18 +440,33 @@ async function getMeetApplicantPool(payload = {}, ctx) {
 
   const interests = (await ctx.repo.forMeet(scope).sportsMeetInterests.list())
     .filter((doc) => doc.eventKey === event.doc._id && doc.collegeId === resolved.collegeId
-      && isActiveInterest(doc));
+      && isActiveInterest(doc))
+    .slice(0, APPLICANT_POOL_MAX);
 
-  const members = await Promise.all(interests.map(async (doc) => {
-    const member = await ctx.repo.schoolMembers.getById(schoolMemberKey(doc.userId, ctx.schoolId));
-    const user = await ctx.repo.users.getById(doc.userId);
+  // 【为什么不再逐人点读两次】（2026-10-22 第二轮审查 P-5）
+  // 原实现 `Promise.all(interests.map(async ...))` 里每人两次 `getById`：
+  // 热门项目（800 米、入场式）一个学院几百人报名就是上千次点读，`Promise.all`
+  // 只是并发、不减少总量，读配额照付。
+  // 现在：本院在册名单**一次范围读**（`listBySchool`），账号按这批人**批读**
+  // （`users.listByIds`，每 100 个一批）。2000 人的学校从 2N 次降到约 25 次。
+  const userIds = interests.map((doc) => doc.userId);
+  const [roster, userRows] = await Promise.all([
+    ctx.repo.schoolMembers.listBySchool(ctx.schoolId),
+    userIds.length > 0 ? ctx.repo.users.listByIds(userIds) : [],
+  ]);
+  const memberByUser = new Map(roster.map((row) => [row.userId, row]));
+  const userById = new Map(userRows.map((user) => [user._id, user]));
+
+  const members = interests.map((doc) => {
+    const user = userById.get(doc.userId);
+    const member = memberByUser.get(doc.userId);
     return {
       userId: doc.userId,
       // 账号姓名在 nickName / realName 上；只读 name 会让整张申请人池都是「未命名」
       name: (user && (user.realName || user.nickName || user.name)) || '未命名',
       gender: (member && member.gender) || '',
     };
-  }));
+  });
 
   return ok({ collegeId: resolved.collegeId, event: { eventKey: event.doc._id, name: event.doc.name, group: event.doc.group, members: event.doc.members, entryForm: event.doc.entryForm }, items: members });
 }
@@ -356,8 +481,23 @@ async function submitMeetCollegeEntry(payload = {}, ctx) {
   const userIds = Array.isArray(payload.userIds) ? payload.userIds.map((id) => String(id).trim()).filter(Boolean) : [];
   if (userIds.length === 0) return refused('请选择参赛学生');
   if (new Set(userIds).size !== userIds.length) return refused('同一名学生不能重复选择');
+  // 人数上限放在最前：它是配置层面的硬边界，先于任何一次数据库读就拒掉，
+  // 免得"注定失败"的请求先花掉 3×N 次点读（见 MEET_ENTRY_MAX_MEMBERS）。
+  if (userIds.length > MEET_ENTRY_MAX_MEMBERS) {
+    return refused(`单条名单最多 ${MEET_ENTRY_MAX_MEMBERS} 人，当前 ${userIds.length} 人：请拆成多条提交，或让各学院分别报名`);
+  }
 
-  return ctx.repo.transaction(async (tx) => {
+  // 事务外先解析项目组别，只为拿到 eventKey 去拼意向主键；事务内还会再读一次，
+  // 那一遍才是权威的「是否已抽签」判据。
+  const scope = { schoolId: ctx.schoolId, meetId: ctx.meetId };
+  const preEvent = await loadEvent(ctx.repo.forMeet(scope), ctx, payload.eventKey);
+  if (!preEvent.ok) return refused(preEvent.message);
+  // 按人的学籍 / 账号 / 意向一次性取齐（见 candidateSnapshotOf 的说明）。
+  const snapshot = await candidateSnapshotOf(ctx, preEvent.doc._id, userIds);
+
+  // 事务内的写入时间，供事务后的意向回写复用（两处时间必须一致）
+  let writtenAt = '';
+  const result = await ctx.repo.transaction(async (tx) => {
     const fresh = await freshMeetContext(tx, ctx);
     const meet = await tx.sportsMeets.getById(fresh.meetId);
     if (!meet || meet.schoolId !== fresh.schoolId || meet.status === MEET_STATUS.DELETED) {
@@ -381,21 +521,21 @@ async function submitMeetCollegeEntry(payload = {}, ctx) {
       return refused(`该项目每组需 ${expected} 人，当前选了 ${userIds.length} 人`);
     }
 
-    // 成员资格：必须本学院在册，且提交过意向（D14／D16）
+    // 成员资格：必须本学院在册，且提交过意向（D14／D16）。
+    // 学籍 / 账号 / 意向取自事务外的快照（省事务预算），**声明（claim）仍在事务内
+    // 点读**——它才是"同一项目组别只能报一次"的并发竞态防线，必须原子。
     for (const userId of userIds) {
-      const member = await tx.schoolMembers.getById(schoolMemberKey(userId, fresh.schoolId));
-      if (!member || member.status !== SCHOOL_MEMBER_STATUS.ACTIVE) {
+      const row = snapshot.get(userId) || {};
+      if (!row.member || row.member.status !== SCHOOL_MEMBER_STATUS.ACTIVE) {
         return refused('名单包含非本校在册学生');
       }
-      const student = await tx.users.getById(userId);
-      if (!student || student.platformStatus !== 'active' || student.primarySchoolId !== fresh.schoolId) return refused('名单包含账号已停用或已转校的学生');
-      if (member.collegeId !== collegeId) return refused('名单包含其他学院的学生');
+      if (!row.user || row.user.platformStatus !== 'active' || row.user.primarySchoolId !== fresh.schoolId) return refused('名单包含账号已停用或已转校的学生');
+      if (row.member.collegeId !== collegeId) return refused('名单包含其他学院的学生');
       // D37：同一项目组别只报一次。先判重、再判意向——否则重复提交会被
       // 「未提交意向」误导（入选后意向状态已变成 selected）。
       const claim = await tx.sportsMeetParticipantClaims.getById(meetClaimKey(fresh.meetId, event.doc._id, userId));
       if (claim && claim.status === 'active') return refused('名单中有学生已在本项目报名');
-      const interest = await tx.sportsMeetInterests.getById(meetInterestKey(fresh.meetId, event.doc._id, userId));
-      if (!isPendingOrSelected(interest)) return refused('名单中有学生未提交参赛意向，不能直接选入');
+      if (!isPendingOrSelected(row.interest)) return refused('名单中有学生未提交参赛意向，不能直接选入');
     }
 
     // 额度（D29／D32）：used + pending 不能达到上限。
@@ -407,7 +547,8 @@ async function submitMeetCollegeEntry(payload = {}, ctx) {
     }
 
     // 兼项（D35）：个人项与多人协作组计入个人额度，团体/接力不计
-    if (countsTowardPersonalQuota(event.doc.entryForm)) {
+    const countsPersonal = countsTowardPersonalQuota(event.doc.entryForm);
+    if (countsPersonal) {
       for (const userId of userIds) {
         const counter = await counterOf(tx, fresh.meetId, userId);
         if (counter.personal >= PERSONAL_LIMIT) return refused(`名单中有学生已达到个人项目 ${PERSONAL_LIMIT} 项上限`);
@@ -417,7 +558,12 @@ async function submitMeetCollegeEntry(payload = {}, ctx) {
     let serial = Math.max(Number(quota.doc && quota.doc.lastSlot || 0), quota.used + quota.pending) + 1;
     let slot = meetEntrySlot(event.doc.entryForm, serial);
     let key = meetEntryKey(fresh.meetId, event.doc._id, collegeId, slot);
-    while (await tx.sportsMeetEntries.getById(key)) {
+    // 序号探测必须有上限：撤回 / 驳回只改状态、不释放 _id，连续被占用的号段
+    // 会让这个循环一路探测到事务预算耗尽，报错却是「预算不足」而非真实原因。
+    for (let probes = 0; await tx.sportsMeetEntries.getById(key); probes += 1) {
+      if (probes >= SLOT_PROBE_MAX) {
+        return refused(`本院该项目报名序号已排满（连续 ${SLOT_PROBE_MAX} 个），请联系管理员处理`);
+      }
       serial += 1;
       slot = meetEntrySlot(event.doc.entryForm, serial);
       key = meetEntryKey(fresh.meetId, event.doc._id, collegeId, slot);
@@ -450,23 +596,24 @@ async function submitMeetCollegeEntry(payload = {}, ctx) {
     });
 
     for (const userId of userIds) {
+      // 上一步的资格循环已经点读过同一个 key，事务读缓存命中，这里只计一次写。
       await tx.sportsMeetParticipantClaims.set(meetClaimKey(fresh.meetId, event.doc._id, userId), {
         kind: 'claim',
         schoolId: fresh.schoolId, meetId: fresh.meetId, eventKey: event.doc._id,
         userId, entryKey: key, collegeId, status: 'active', updatedAt: now,
       });
-      const counter = await counterOf(tx, fresh.meetId, userId);
-      await tx.sportsMeetParticipantClaims.set(meetParticipantCounterKey(fresh.meetId, userId), {
-        kind: 'counter',
-        schoolId: fresh.schoolId, meetId: fresh.meetId, userId,
-        personal: counter.personal + (countsTowardPersonalQuota(event.doc.entryForm) ? 1 : 0),
-        team: counter.team + (countsTowardPersonalQuota(event.doc.entryForm) ? 0 : 1),
-        updatedAt: now,
-      });
-      const interest = await tx.sportsMeetInterests.getById(meetInterestKey(fresh.meetId, event.doc._id, userId));
-      if (interest) {
-        await tx.sportsMeetInterests.set(meetInterestKey(fresh.meetId, event.doc._id, userId), {
-          ...interest, status: MEET_INTEREST_STATUS.SELECTED, entryKey: key, updatedAt: now,
+      // 兼项计数只对「计入个人额度」的项目组别维护。
+      // 【为什么团体项不再写 team 计数】`team` 这个数**从未被任何地方读取**
+      // （只有 personal 参与 PERSONAL_LIMIT 判定），却是每人 2 个事务操作，
+      // 正好把 10~20 人的团体名单顶出预算。团体人数看 entry.userIds 即可。
+      if (countsPersonal) {
+        const counter = await counterOf(tx, fresh.meetId, userId);
+        await tx.sportsMeetParticipantClaims.set(meetParticipantCounterKey(fresh.meetId, userId), {
+          kind: 'counter',
+          schoolId: fresh.schoolId, meetId: fresh.meetId, userId,
+          personal: counter.personal + 1,
+          team: counter.team,
+          updatedAt: now,
         });
       }
     }
@@ -477,8 +624,22 @@ async function submitMeetCollegeEntry(payload = {}, ctx) {
       schoolId: fresh.schoolId, meetId: fresh.meetId, collegeId, now,
     });
 
+    writtenAt = now;
     return ok({ entry, collegeId, byAdmin: resolved.byAdmin });
   });
+
+  // 意向转「已选入」：展示态，独立事务、失败不回滚（见 markInterestsSelected）。
+  if (result && result.ok && result.data && result.data.entry) {
+    const applied = result.data;
+    try {
+      await markInterestsSelected(ctx, applied.entry.eventKey, userIds, applied.entry._id, writtenAt);
+    } catch (err) {
+      // 有意忽略：claim 已占用，名单事实成立；意向状态只影响申请人池的展示。
+      console.warn('[meet] 意向状态回写失败', err && (err.message || err));
+    }
+    return ok({ entry: applied.entry, collegeId: applied.collegeId, byAdmin: applied.byAdmin });
+  }
+  return result;
 }
 
 /** 撤回/取消一条名单（截止前部长可改，D26；截止后需管理员窗口，D27） */

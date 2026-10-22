@@ -70,6 +70,24 @@ const MEET_ENTRY_STATUS = Object.freeze({
   WITHDRAWN: 'withdrawn',
 });
 
+/**
+ * 单条正式名单的人数上限（配置上限与提交校验共用同一个数字）。
+ *
+ * 【为什么会存在】（2026-10-22 第二轮审查 B-1）
+ * 云数据库事务预算约 100 个操作，提交名单要在**一个事务**里写完一条名单的
+ * 全部声明与计数。原实现每人约 9 个操作，于是 10 人以上的团体项目必然抛
+ * 「事务读写总操作预算不足」；而配置侧允许配到 200 人、内置模板里
+ * 「入场式展示」默认就是 20 人。两处数字各自为政，谁也没发现它们不相容。
+ *
+ * 现在：提交侧把按人的身份读取搬到事务外（每人只剩 2 个操作），配置侧与
+ * 提交侧**共用这一个常量**，20 人对得上全部内置模板，也不会再出现
+ * 「配得出、报不进」。
+ *
+ * 【要提高这个数字，必须同时改提交路径】
+ * 超过 20 人就得把名单拆成多次事务写入（分批 + 失败补偿），不能只调大这里。
+ */
+const MEET_ENTRY_MAX_MEMBERS = 20;
+
 /** 项目组别状态：删除用软删除，因为报名/成绩都可能已经指过来。 */
 const MEET_EVENT_STATUS = Object.freeze({
   ACTIVE: 'active',
@@ -299,6 +317,7 @@ module.exports = {
   MEET_ENTRY_STATUS,
   MEET_COLLEGE_LEAD_STATUS,
   MEET_EVENT_STATUS,
+  MEET_ENTRY_MAX_MEMBERS,
   isEventAlive,
   listAliveEvents,
   meetScope,

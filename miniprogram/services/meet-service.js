@@ -27,7 +27,7 @@ const { unchanged } = require('./meet-consistency.js');
  */
 
 const {
-  MEET_STATUS, MEET_EVENT_STATUS, MEET_ENTRY_STATUS,
+  MEET_STATUS, MEET_EVENT_STATUS, MEET_ENTRY_STATUS, MEET_ENTRY_MAX_MEMBERS,
   meetEventKey, meetCollegeKey, newMeetId, meetRequestScope, listAliveEvents,
 } = require('../utils/meet-scope.js');
 const {
@@ -569,8 +569,15 @@ async function configureMeetEvent(payload = {}, ctx) {
   const isMulti = template.entryForm === 'group' || template.entryForm === 'team';
   // members = 0 表示「人数不限」：入场式展示、团体操这类项目，各院上场人数由学院自定，
   // 系统只关心「有没有报」，不关心报了几个人（用户明确要这个口径）。
+  //
+  // 【上限为什么不再是 200】（2026-10-22 第二轮审查 B-1）
+  // 提交名单一条就是一个事务，事务预算约 100 个操作。原来这里允许配到 200 人，
+  // 而提交侧 10 人以上就会撞穿预算——「配得出、报不进」。现在两处共用
+  // MEET_ENTRY_MAX_MEMBERS：配置时就挡住不可能报满的人数，而不是让部长到提交
+  // 那一步才收到一句开发者文案。
   const members = isMulti
-    ? intOf(payload.members === undefined ? template.defaultMembers : payload.members, 0, 200, '每队（组）人数')
+    ? intOf(payload.members === undefined ? template.defaultMembers : payload.members,
+      0, MEET_ENTRY_MAX_MEMBERS, '每队（组）人数')
     : { ok: true, value: 1 };
   if (!members.ok) return refused(members.message);
   // 固定人数的项目不接受改人数（两人三足 2 人、三人板鞋 3 人）
