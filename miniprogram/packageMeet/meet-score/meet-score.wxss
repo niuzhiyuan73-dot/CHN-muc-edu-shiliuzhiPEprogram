@@ -6,7 +6,7 @@
 .meet-row-tag { font-size: var(--font-xs); padding: 4rpx 14rpx; border-radius: 999rpx; background: #f2f2f2; color: #777; }
 .meet-editor { margin-top: 16rpx; padding-top: 16rpx; border-top: 1rpx solid #f0f0f0; }
 .meet-hint { font-size: var(--font-caption); color: #888; padding: 8rpx 0; }
-.meet-warn { font-size: var(--font-caption); color: var(--color-primary); background: var(--color-danger-light); padding: 10rpx 16rpx; border-radius: 10rpx; margin-bottom: 10rpx; }
+.meet-warn { font-size: var(--font-caption); color: var(--color-danger-text); background: var(--color-danger-light); padding: 10rpx 16rpx; border-radius: 10rpx; margin-bottom: 10rpx; }
 .meet-score-row { display: flex; align-items: center; gap: 12rpx; padding: 10rpx 0; }
 .meet-score-college { width: 120rpx; font-size: var(--font-caption); color: #555; }
 .meet-score-input { flex: 1; height: 64rpx; padding: 0 16rpx; background: #f7f8fa; border-radius: 10rpx; font-size: var(--font-caption); }
@@ -16,9 +16,9 @@
 .meet-preview-college { flex: 1; }
 .meet-preview-value { width: 120rpx; text-align: right; }
 .meet-preview-void { padding: 6rpx 14rpx; border-radius: 999rpx; background: #f2f2f2; color: #777; font-size: var(--font-2xs); }
-.meet-preview-void.is-void { background: var(--color-danger-light); color: var(--color-primary); }
+.meet-preview-void.is-void { background: var(--color-danger-light); color: var(--color-danger-text); }
 .meet-notice { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: var(--color-success-light); color: var(--color-success-text); font-size: var(--font-caption); }
-.meet-error { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: var(--color-danger-light); color: var(--color-primary); font-size: var(--font-caption); }
+.meet-error { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: var(--color-danger-light); color: var(--color-danger-text); font-size: var(--font-caption); }
 
 /* 预赛/决赛切换 */
 .meet-rounds { white-space: nowrap; margin: 12rpx 0; }

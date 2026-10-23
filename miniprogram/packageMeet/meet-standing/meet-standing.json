@@ -1,4 +1,6 @@
 {
+  "navigationBarBackgroundColor": "#96700F",
+  "navigationBarTextStyle": "white",
   "navigationBarTitleText": "学院总榜",
   "enablePullDownRefresh": true,
   "usingComponents": {}

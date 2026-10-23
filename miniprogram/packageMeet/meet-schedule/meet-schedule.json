@@ -1,4 +1,6 @@
 {
+  "navigationBarBackgroundColor": "#96700F",
+  "navigationBarTextStyle": "white",
   "navigationBarTitleText": "赛程编排",
   "usingComponents": {}
 }

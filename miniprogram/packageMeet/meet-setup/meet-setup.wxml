@@ -2,7 +2,7 @@
   发起运动会：第一步基本信息（新发起才显示）→ 第二步逐项目勾选组别并设限额。
   继续配置（带 meetId 进入）直接落在第二步。
 -->
-<view class="page-container {{themeClass}}">
+<view class="page-container meet-theme">
 
   <view wx:if="{{notice}}" class="meet-notice">{{notice}}</view>
   <view wx:if="{{error}}" class="meet-error">{{error}}</view>

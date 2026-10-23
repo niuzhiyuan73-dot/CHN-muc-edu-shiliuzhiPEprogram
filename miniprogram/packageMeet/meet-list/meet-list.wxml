@@ -2,7 +2,7 @@
   历史运动会记录：运动会栏目唯一的一级标签（R02）。
   筹备中 / 报名中 / 进行中 / 已结束都在同一列表里，用状态标识区分，进行中由服务端置顶。
 -->
-<view class="page-container {{themeClass}}">
+<view class="page-container meet-theme">
 
   <view wx:if="{{loading}}" class="loading">正在加载…</view>
 

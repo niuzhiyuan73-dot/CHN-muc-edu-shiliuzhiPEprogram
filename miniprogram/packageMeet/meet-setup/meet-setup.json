@@ -1,4 +1,6 @@
 {
+  "navigationBarBackgroundColor": "#96700F",
+  "navigationBarTextStyle": "white",
   "navigationBarTitleText": "发起运动会",
   "usingComponents": {}
 }

@@ -1,4 +1,6 @@
 {
+  "navigationBarBackgroundColor": "#96700F",
+  "navigationBarTextStyle": "white",
   "navigationBarTitleText": "历史运动会记录",
   "enablePullDownRefresh": true,
   "usingComponents": {}

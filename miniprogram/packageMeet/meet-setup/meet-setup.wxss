@@ -25,7 +25,7 @@
 .meet-step { width: 52rpx; height: 52rpx; line-height: 52rpx; text-align: center; border-radius: 10rpx; background: var(--color-bg-subtle, #f5f6f8); font-size: var(--font-body); color: #333; }
 .meet-step-value { min-width: 48rpx; text-align: center; font-size: var(--font-caption); }
 .meet-notice { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: var(--color-success-light); color: var(--color-success-text); font-size: var(--font-caption); }
-.meet-error { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: var(--color-danger-light); color: var(--color-primary); font-size: var(--font-caption); }
+.meet-error { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: var(--color-danger-light); color: var(--color-danger-text); font-size: var(--font-caption); }
 
 /* 赛制 / 轮次切换 */
 .meet-pick-opts { margin-top: 12rpx; display: flex; align-items: center; gap: 12rpx; flex-wrap: wrap; }
@@ -36,8 +36,8 @@
 
 /* 已选项目的编辑行 */
 .meet-pick-saving { margin-left: 10rpx; font-size: var(--font-2xs); color: #999; }
-.meet-pick-failed { margin-left: 10rpx; font-size: var(--font-2xs); color: var(--color-primary); }
-.meet-pick-error { margin-top: 6rpx; font-size: var(--font-2xs); color: var(--color-primary); }
+.meet-pick-failed { margin-left: 10rpx; font-size: var(--font-2xs); color: var(--color-danger-text); }
+.meet-pick-error { margin-top: 6rpx; font-size: var(--font-2xs); color: var(--color-danger-text); }
 .meet-form-row { display: flex; align-items: center; gap: 12rpx; margin-top: 14rpx; flex-wrap: wrap; }
 .meet-form-label { width: 130rpx; font-size: var(--font-caption); color: #555; }
 .meet-form-unit { font-size: var(--font-xs); color: #888; }

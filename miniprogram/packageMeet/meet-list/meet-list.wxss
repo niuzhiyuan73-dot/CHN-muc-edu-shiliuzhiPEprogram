@@ -7,7 +7,7 @@
 .meet-card-name { font-size: var(--font-md); font-weight: 600; color: var(--color-text, #222); flex: 1; }
 .meet-card-meta { margin-top: 10rpx; font-size: var(--font-caption); color: var(--color-text-secondary, #666); }
 .meet-status { padding: 4rpx 14rpx; border-radius: 999rpx; font-size: var(--font-xs); background: #eee; color: #555; white-space: nowrap; }
-.meet-status-registration { background: var(--color-danger-light); color: var(--color-primary); }
+.meet-status-registration { background: var(--color-primary-light); color: var(--color-primary); }
 .meet-status-running { background: var(--color-success-light); color: var(--color-success-text); }
 .meet-more { margin-top: 12rpx; }
 .meet-count { margin-top: 16rpx; text-align: center; font-size: var(--font-xs); color: var(--color-text-secondary, #888); }

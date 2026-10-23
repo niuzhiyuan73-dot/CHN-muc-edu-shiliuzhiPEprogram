@@ -1,4 +1,6 @@
 {
+  "navigationBarBackgroundColor": "#96700F",
+  "navigationBarTextStyle": "white",
   "navigationBarTitleText": "录分与成绩发布",
   "usingComponents": {}
 }

@@ -2,7 +2,7 @@
   学院总榜 + 我的荣誉。分数由发布成绩时累加，本页只读。
   名次已由服务端按竞赛排名（1,2,2,4）算好，页面不重排。
 -->
-<view class="page-container {{themeClass}}">
+<view class="page-container meet-theme">
 
   <view wx:if="{{loading}}" class="loading">正在加载…</view>
 
