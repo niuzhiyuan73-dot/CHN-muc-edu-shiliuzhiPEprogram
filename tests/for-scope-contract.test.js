@@ -81,6 +81,10 @@ test('受范围仓储的集合方法面就是约定的那一套（钉住契约�
     if (key === 'trainingRegistrations' || key === 'associationGroupMembers') {
       expected = [...expected, 'listByUser'];
     }
+    // 名录页给每一行算权限标签：20 行 × 2 次点读 → 两条 listByIds（H-5）。
+    if (key === 'schoolRoles' || key === 'memberships') {
+      expected = [...expected, 'listByIds'];
+    }
     assert.deepEqual(methodNames(cloud[key]), expected.sort(),
       `${key} 的方法面变了，请同步本测试与另一端实现`);
   }

@@ -607,3 +607,36 @@ describe('榜单展示形状 —— 旧栈 loadRankView 的 S2 对应', () => {
     assert.ok(hit.rank > TOP_LIMIT);
   });
 });
+
+/**
+ * 榜单不读积分事实（2026-10-23 H-6 第一步）
+ * ============================================================
+ * 榜单每行只有 elo / 胜负 / 出场数 / 昵称，**不用赛季积分**——积分是个人主页的
+ * 事项。而积分要从 events + trainings + trainingRegistrations 三处聚合，
+ * 只读不写也要 33 页 RPC（训练报名 30 + 赛事 2 + 训练 1）。
+ */
+test('榜单不读积分事实：events / trainings / trainingRegistrations 一次都不读', async () => {
+  const repo = fixture();
+  const asked = [];
+  const rawForScope = repo.forScope;
+  repo.forScope = (input) => {
+    const surface = rawForScope(input);
+    for (const key of ['events', 'associationTrainings', 'trainingRegistrations', 'matches']) {
+      const collection = surface[key];
+      if (!collection) continue;
+      const original = collection.list;
+      collection.list = (...args) => { asked.push(key); return original(...args); };
+    }
+    return surface;
+  };
+  let data;
+  try {
+    data = await call(repo, 'getSchoolRanking', {});
+  } finally {
+    repo.forScope = rawForScope;
+  }
+  assert.equal(data.ok, true, data.message);
+  assert.deepEqual(asked, [], '榜单只该读名册与评级，不该读积分事实或比赛流水');
+  // 行里本来就没有积分字段，确认一下没被顺手加上
+  assert.ok(data.rows.every(row => row.points === undefined), '榜单行不含赛季积分');
+});

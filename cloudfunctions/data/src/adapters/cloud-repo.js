@@ -550,8 +550,14 @@ function buildCollections(scope, inTx, cmd) {
      * `readWhere` 用 `_id > lastId` 做游标，一页装不下时会拼出「既有 `_id: in(...)`
      * 又有 `_id: gt(...)`」的条件——`cursorCond` 已改成直接抛错。批读本来就知道
      * 自己只有这几十个编号，按 PAGE_SIZE 切片即可，不需要游标。
+     *
+     * 【为什么必须带范围条件】
+     * `_id` 是调用方给的。只按 `_id in (...)` 查等于把归属校验交给了调用方——
+     * 一处漏判就是跨校读。这里把范围字段一起拼进查询，拿不到别校/别协会的文档，
+     * 与 `list`/`query` 同一条底线。`scopeFields` 由仓储层按集合类型给
+     * （学校级集合只有 schoolId，其余还要 association）。
      */
-    byIds: async (key, ids) => {
+    byIds: async (key, ids, scopeFields = {}) => {
       if (inTx) throw new Error(`事务内不允许条件读取（${key}），请改用 getById`);
       const uniq = [...new Set((Array.isArray(ids) ? ids : [])
         .filter((id) => typeof id === 'string' && id))];
@@ -559,7 +565,7 @@ function buildCollections(scope, inTx, cmd) {
       const out = [];
       for (let i = 0; i < uniq.length; i += PAGE_SIZE) {
         const chunk = uniq.slice(i, i + PAGE_SIZE);
-        const res = await col(key).where({ _id: cmd.in(chunk) }).get();
+        const res = await col(key).where({ ...scopeFields, _id: cmd.in(chunk) }).get();
         for (const doc of (res && res.data) || []) out.push(doc);
       }
       return out;

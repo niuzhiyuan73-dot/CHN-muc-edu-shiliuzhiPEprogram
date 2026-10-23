@@ -137,8 +137,11 @@ function createSchoolMemoryRepo(seed = {}) {
         if (EVENT_SCOPED.includes(key)) {
           result[key].listByEvent = async eventId => (await repo[key].list())
             .filter(doc => owns(doc) && doc.eventId === eventId);
-          // 批量点取（与云端 listByIds 同口径）：赛事列表标「我报名了没」时
-          // 一页只发一次调用，而不是每行一次（2026-10-22 H-3）。
+        }
+        // 批量点取（与云端 listByIds 同口径）：赛事列表标「我报名了没」、
+        // 名录页给每一行算权限标签，都可以一页只发一次调用（2026-10-22 H-3／H-5）。
+        // `owns` 校验是这条路径的安全底线：主键可能来自调用方。
+        if (EVENT_SCOPED.includes(key) || key === 'schoolRoles' || key === 'memberships') {
           result[key].listByIds = async ids => {
             if (inTx) throw new Error(`事务内不允许条件读取（${key}），请改用 getById`);
             const uniq = [...new Set((Array.isArray(ids) ? ids : [])

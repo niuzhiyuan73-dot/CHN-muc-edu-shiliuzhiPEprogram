@@ -216,7 +216,7 @@ function ratedMatchesOf(rows) {
  * @returns {Promise<{season:Object, members:Array<Object>, matches:Array<Object>, pointFacts:Array<Object>, events:Array<Object>}>}
  */
 async function loadScopeView(ctx, options = {}) {
-  const { needMatches = true, pointsFor = '' } = options;
+  const { needMatches = true, pointsFor = '', needPoints = true } = options;
   const season = await loadSeason(ctx);
   // 【为什么榜单可以不读 matches】（2026-10-21 审查 P0-2）
   // 榜单每行的 elo / 胜 / 负 / 出场数全部来自 member_ratings（Elo 逐场结算后
@@ -228,16 +228,25 @@ async function loadScopeView(ctx, options = {}) {
   // trainingRegistrations 是只增不减的集合，3000 条就是 30 页 RPC，而个人主页
   // 只用到这个人的几十条。注意**只有传了 pointsFor 的那个人的 points 可信**：
   // 其他人的训练积分会因为缺数据而偏低，所以这条路只给单人的读接口用。
-  const registrationsOf = pointsFor
+  // 注意这里写成**惰性函数**：`needPoints: false` 时（榜单）一次都不该发出去。
+  // 若先算出 Promise 再在三元里挑，查询在赋值那一刻就已经上路了。
+  const registrationsOf = () => (pointsFor
     ? ctx.repo.forScope(ctx).trainingRegistrations.listByUser(pointsFor)
-    : ctx.repo.forScope(ctx).trainingRegistrations.list();
+    : ctx.repo.forScope(ctx).trainingRegistrations.list());
+  // 【为什么榜单连积分也不读】needPoints: false（2026-10-23 H-6 的第一步）
+  // 榜单每行只有 elo / 胜负 / 出场数 / 昵称，**不用赛季积分**——积分是个人主页
+  // 的事项。而积分要从 events + trainings + trainingRegistrations 三处聚合：
+  // 只读不写也要 33 页 RPC（训练报名 30 + 赛事 2 + 训练 1）。
+  // 传 false 时跳过这三处，`member.points` 保持 undefined（不是 0——0 会被
+  // 页面当成「这个人是零分」，而实际是「这次没算」）。
+  const empty = Promise.resolve([]);
   const [members, matches, ratingDocs, events, trainings, trainingRegistrations] = await Promise.all([
     replayMembersOf(ctx),
-    needMatches ? ctx.repo.forScope(ctx).matches.list() : Promise.resolve([]),
+    needMatches ? ctx.repo.forScope(ctx).matches.list() : empty,
     ctx.repo.forScope(ctx).memberRatings.list(),
-    ctx.repo.forScope(ctx).events.list(),
-    ctx.repo.forScope(ctx).associationTrainings.list(),
-    registrationsOf,
+    needPoints ? ctx.repo.forScope(ctx).events.list() : empty,
+    needPoints ? ctx.repo.forScope(ctx).associationTrainings.list() : empty,
+    needPoints ? registrationsOf() : empty,
   ]);
 
   // ── 评级：按「userId|pool」建索引；缺档按性别兜底，读请求不写库 ──
@@ -256,16 +265,18 @@ async function loadScopeView(ctx, options = {}) {
   const ratedMatches = ratedMatchesOf(matches);
 
   // ── 积分：独立聚合（赛事 + 训练），赛事分挂到各人最后一场 ──
-  const pointsByUser = aggregatePoints({
-    events,
-    trainings,
-    trainingRegistrations,
-    resetTime: season.resetTime,
-    members: viewMembers.map(m => ({ userId: m._id })),
-  });
   mountEventPointDeltas(ratedMatches, pointFacts);
-  for (const member of viewMembers) {
-    member.points = pointsByUser.get(member._id) || 0;
+  if (needPoints) {
+    const pointsByUser = aggregatePoints({
+      events,
+      trainings,
+      trainingRegistrations,
+      resetTime: season.resetTime,
+      members: viewMembers.map(m => ({ userId: m._id })),
+    });
+    for (const member of viewMembers) {
+      member.points = pointsByUser.get(member._id) || 0;
+    }
   }
 
   // events 一并带出：个人主页要按「我参加过的赛事」算荣誉，原先它自己又读了
@@ -363,8 +374,9 @@ async function getSchoolRanking(payload = {}, ctx) {
       ...emptyRanking(activeProject, activeProjectLabel) });
   }
 
-  // 榜单不需要比赛流水（分数全在 member_ratings 里），只取名册与积分事实。
-  const { members } = await loadScopeView(ctx, { needMatches: false });
+  // 榜单不需要比赛流水（分数全在 member_ratings 里），也不需要赛季积分
+  // （每行只有 elo / 胜负 / 出场数）。两者都关掉，省掉 80 + 33 页 RPC（H-6）。
+  const { members } = await loadScopeView(ctx, { needMatches: false, needPoints: false });
   const myId = ctx.actorId || '';
   const allRows = buildRows(members, activeProject, myId);
   const rows = allRows.slice(0, TOP_LIMIT);

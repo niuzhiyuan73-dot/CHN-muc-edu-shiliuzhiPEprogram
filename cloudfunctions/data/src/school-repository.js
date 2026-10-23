@@ -120,8 +120,16 @@ function buildScoped(repo, io, inTx, options) {
       result[key].listByEvent = (eventId) => io.query(key, { ...scopeFields, eventId });
       // 按一批 _id 取（一次 `_.in`，1 个 RTT）。赛事列表要标「我报名了没」：
       // 原来一页 20 条就是 20 次点读，按页批读后是 1 次（2026-10-22 H-3）。
-      // 调用方仍须逐条判归属——编号可能来自客户端。
-      result[key].listByIds = (ids) => io.byIds(key, ids);
+      // **范围字段一起拼进查询**：`_id` 可能是客户端给的，归属校验不能只靠调用方。
+      result[key].listByIds = (ids) => io.byIds(key, ids, scopeFields);
+    }
+    // 名录页要给每一行算权限标签：20 行 × (校级角色 + 协会身份) = 40 次点读。
+    // 两者都是「按主键点取」，主键由 userId 派生，正好可以整页批读（H-5）。
+    if (key === 'schoolRoles' || key === 'memberships') {
+      const scopeFields = key === 'memberships'
+        ? { schoolId: scope.schoolId, association: scope.association }
+        : { schoolId: scope.schoolId };
+      result[key].listByIds = (ids) => io.byIds(key, ids, scopeFields);
     }
   }
   // 本赛季的比赛：把 `matchTime >= sinceIso` 下推到查询。

@@ -78,3 +78,44 @@ test('成员名录只列本协会在册会员，字段脱敏', async () => {
   const searched = await request(repo, 'listAssociationMembers', { keyword: '民大' }, 'mock_openid_muc_member');
   assert.equal(searched.data.members.length, 3, '关键词命中本协会会员');
 });
+
+/**
+ * 名录页的权限标签按页批读（2026-10-22 大用户量复查 H-5）
+ * ============================================================
+ * 每一行都要显示权限标签，标签来自「校级角色 + 协会身份」两条文档。原先是每行
+ * 各点读一次——一页 20 条就是 40 次 RPC，而这些主键全由 userId 派生，正好可以
+ * 整页批读成 2 次。
+ */
+test('名录页的权限标签整页批读，不逐行点读', async () => {
+  const repo = fixture();
+  const originalForScope = repo.forScope;
+  const calls = { roles: 0, memberships: 0, rolePoint: 0, membershipPoint: 0 };
+  repo.forScope = (input) => {
+    const scoped = originalForScope(input);
+    for (const [key, counter] of [['schoolRoles', 'roles'], ['memberships', 'memberships']]) {
+      const collection = scoped[key];
+      const listByIds = collection.listByIds;
+      collection.listByIds = (...args) => { calls[counter] += 1; return listByIds(...args); };
+      const getById = collection.getById;
+      collection.getById = (...args) => {
+        calls[key === 'schoolRoles' ? 'rolePoint' : 'membershipPoint'] += 1;
+        return getById(...args);
+      };
+    }
+    return scoped;
+  };
+  let listed;
+  try {
+    listed = await request(repo, 'listAssociationMembers', { limit: 20 });
+  } finally {
+    repo.forScope = originalForScope;
+  }
+  assert.equal(listed.ok, true, listed.message || '');
+  assert.ok(listed.data.members.length > 0, '名录得有内容，否则这条用例什么也没守住');
+  assert.equal(calls.roles, 1, '校级角色一页只批读一次');
+  assert.equal(calls.memberships, 1, '协会身份一页只批读一次');
+  assert.equal(calls.rolePoint, 0, '不能逐行点读校级角色');
+  assert.equal(calls.membershipPoint, 0, '不能逐行点读协会身份');
+  // 标签本身仍要算对：管理员那一行不是空白
+  assert.ok(listed.data.members.some(row => row.permissionLabel), '权限标签不能因为改批读而丢失');
+});

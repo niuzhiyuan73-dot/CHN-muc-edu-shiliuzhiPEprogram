@@ -371,6 +371,15 @@ function createMemoryRepo(seed = {}) {
         target[key].set(id, { ...doc, _id: id });
       },
       query: (key, where) => list(key).filter((doc) => matchWhere(doc, where)),
+      // 按一批 _id 取（云端走 `_.in` 并按 PAGE_SIZE 切片）。**必须一起套范围条件**：
+      // 主键可能来自调用方，只按 _id 查等于把归属校验交给了调用方。
+      byIds: async (key, ids, scopeFields = {}) => {
+        const uniq = [...new Set((Array.isArray(ids) ? ids : [])
+          .filter((id) => typeof id === 'string' && id))];
+        if (uniq.length === 0) return [];
+        return list(key).filter((doc) => uniq.includes(doc._id)
+          && Object.entries(scopeFields).every(([field, value]) => doc[field] === value));
+      },
     }, inTx);
 
     // 基础集合的写方法直接落在 target 上，不走 io.set，故按方法名套钩子。

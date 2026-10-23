@@ -31,9 +31,10 @@ async function listAssociationMembers(payload = {}, ctx) {
   const limit = Number.isInteger(payload.limit) && payload.limit > 0
     ? Math.min(payload.limit, MAX_LIMIT) : DEFAULT_LIMIT;
 
+  const scoped = ctx.repo.forScope(ctx);
   const [rows, colleges] = await Promise.all([
-    ctx.repo.forScope(ctx).schoolMembers.list(),
-    ctx.repo.forScope(ctx).colleges.list(),
+    scoped.schoolMembers.list(),
+    scoped.colleges.list(),
   ]);
   // 学院名走 Map（原先 find 在循环里，O(成员 × 学院)，2026-10-21 审查 P2-7）。
   const collegeNameById = new Map(colleges.map(row => [row.collegeId, row.name]));
@@ -56,13 +57,23 @@ async function listAssociationMembers(payload = {}, ctx) {
   }
 
   const page = searchMemberPage(base, { keyword: payload.keyword, cursor: payload.cursor, limit });
-  // 权限标签只为当前这一页补算，避免对整份名录做 2×N 次读。
-  const members = await Promise.all(page.members.map(async member => {
-    const [role, membership] = await Promise.all([
-      ctx.repo.schoolRoles.getById(schoolRoleKey(member.userId, ctx.schoolId)),
-      ctx.repo.memberships.get(schoolMembershipKey(member.userId, ctx)),
-    ]);
-    return { ...member, permissionLabel: permissionLabelOf(role, membership) };
+  // 权限标签只为当前这一页补算。原来每行 2 次点读（校级角色 + 协会身份），
+  // 一页 20 条就是 40 次 RPC——主键都由 userId 派生，正好整页批读各 1 次
+  // （2026-10-22 H-5）。
+  const roleKeys = page.members.map(member => schoolRoleKey(member.userId, ctx.schoolId));
+  const membershipKeys = page.members.map(member => schoolMembershipKey(member.userId, ctx));
+  const [roleDocs, membershipDocs] = await Promise.all([
+    roleKeys.length ? scoped.schoolRoles.listByIds(roleKeys) : [],
+    membershipKeys.length ? scoped.memberships.listByIds(membershipKeys) : [],
+  ]);
+  const roleById = new Map(roleDocs.map(doc => [doc._id, doc]));
+  const membershipById = new Map(membershipDocs.map(doc => [doc._id, doc]));
+  const members = page.members.map((member, index) => ({
+    ...member,
+    permissionLabel: permissionLabelOf(
+      roleById.get(roleKeys[index]) || null,
+      membershipById.get(membershipKeys[index]) || null,
+    ),
   }));
 
   return ok({ ok: true, members, nextCursor: page.nextCursor, hasMore: page.hasMore,
