@@ -4,6 +4,7 @@ const { buildSchoolContext } = require('./school-context.js');
 const { buildMeetContext } = require('../../lib/services/meet-context.js');
 const { SCHOOL_MEET_ACTIONS } = require('../../lib/utils/school-actions.js');
 const { guardRate } = require('./rate-limit.js');
+const contextCache = require('../../lib/services/context-cache.js');
 const handlers = {
   ...require('./school-member-handlers.js'),
   ...require('./school-space-handlers.js'),
@@ -54,18 +55,29 @@ async function handleSchoolRequest(event, { repo, openId, now = new Date() }) {
   const limited = guardRate(openId, event.action);
   if (limited) return fail(limited.message);
 
-  // 运动会分支：只要求 schoolId，meetId 按动作可选（列表/建赛/搜项目都没有届）。
-  if (MEET_ACTIONS.has(event.action)) {
-    if (!event.schoolId) return fail('运动会接口必须指定学校');
-    const meetCtx = await buildMeetContext({ repo, openId, now,
-      scope: { schoolId: event.schoolId, meetId: event.meetId } });
-    return handlers[event.action](event.payload || {}, meetCtx);
-  }
+  // 【身份上下文缓存】（2026-10-23 H-10）读动作的上下文缓存 5 秒；写动作不缓存，
+  // 且执行完把整份缓存失效——写请求可能改了**别人**的权限/状态，而缓存里存的是
+  // 别人的上下文。全清而不是精确失效，是因为精确失效需要每个写接口上报「改了谁」，
+  // 漏一处就是静默的越权窗口（详见 services/context-cache.js 的文件头）。
+  //
+  // 用 try/finally 保证 handler 抛错时也失效：一次失败的事务可能已经改了一半。
+  const readOnly = contextCache.isReadAction(event.action);
+  try {
+    // 运动会分支：只要求 schoolId，meetId 按动作可选（列表/建赛/搜项目都没有届）。
+    if (MEET_ACTIONS.has(event.action)) {
+      if (!event.schoolId) return fail('运动会接口必须指定学校');
+      const meetCtx = await buildMeetContext({ repo, openId, now, action: event.action,
+        scope: { schoolId: event.schoolId, meetId: event.meetId } });
+      return await handlers[event.action](event.payload || {}, meetCtx);
+    }
 
-  if (!event.schoolId || !event.association) return fail('学校接口必须指定学校和项目');
-  const ctx = await buildSchoolContext({ repo, openId, now,
-    scope: { schoolId: event.schoolId, association: event.association } });
-  return handlers[event.action](event.payload || {}, ctx);
+    if (!event.schoolId || !event.association) return fail('学校接口必须指定学校和项目');
+    const ctx = await buildSchoolContext({ repo, openId, now, action: event.action,
+      scope: { schoolId: event.schoolId, association: event.association } });
+    return await handlers[event.action](event.payload || {}, ctx);
+  } finally {
+    if (!readOnly) contextCache.invalidateAll();
+  }
 }
 
 module.exports = { handleSchoolRequest };

@@ -252,18 +252,25 @@ function createSchoolMemoryRepo(seed = {}) {
         };
         // 运动会录分页的两个下推（与云端 forMeet 同口径，2026-10-23 H-9）：
         // 本场次的报名按编号批读、成绩按 sessionKey 取，不再读一届全部。
-        if (key === 'sportsMeetEntries') {
+        if (key === 'sportsMeetEntries' || key === 'sportsMeetSessions') {
           result[key].listByProject = async projectKey => {
-            if (inTx) throw new Error('事务内不允许条件读取（sportsMeetEntries），请改用 getById');
+            if (inTx) throw new Error(`事务内不允许条件读取（${key}），请改用 getById`);
             if (typeof projectKey !== 'string' || !projectKey) return [];
             return (await repo[key].list()).filter(doc => owns(doc) && doc.eventKey === projectKey);
           };
         }
-        if (key === 'sportsMeetScores') {
+        if (key === 'sportsMeetScores' || key === 'sportsMeetJudgeAssignments') {
           result[key].listBySession = async sessionKey => {
-            if (inTx) throw new Error('事务内不允许条件读取（sportsMeetScores），请改用 getById');
+            if (inTx) throw new Error(`事务内不允许条件读取（${key}），请改用 getById`);
             if (typeof sessionKey !== 'string' || !sessionKey) return [];
             return (await repo[key].list()).filter(doc => owns(doc) && doc.sessionKey === sessionKey);
+          };
+        }
+        if (key === 'sportsMeetJudgeAssignments') {
+          result[key].listByJudge = async judgeId => {
+            if (inTx) throw new Error('事务内不允许条件读取（sportsMeetJudgeAssignments），请改用 getById');
+            if (typeof judgeId !== 'string' || !judgeId) return [];
+            return (await repo[key].list()).filter(doc => owns(doc) && doc.judgeId === judgeId);
           };
         }
       }

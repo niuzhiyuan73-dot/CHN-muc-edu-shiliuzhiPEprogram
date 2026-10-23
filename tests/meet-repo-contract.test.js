@@ -60,8 +60,13 @@ function expectedMethodsOf(key) {
   let expected = [...REQUIRED_METHODS];
   // 录分页只要「本场次的报名与成绩」（2026-10-23 H-9）：一届的报名与成绩可上千条，
   // 而一个场次十几条。报名按编号批读、成绩按 sessionKey 查。
-  if (key === 'sportsMeetEntries') expected = [...expected, 'listByProject'];
-  if (key === 'sportsMeetScores') expected = [...expected, 'listBySession'];
+  if (key === 'sportsMeetEntries' || key === 'sportsMeetSessions') {
+    expected = [...expected, 'listByProject'];
+  }
+  if (key === 'sportsMeetScores' || key === 'sportsMeetJudgeAssignments') {
+    expected = [...expected, 'listBySession'];
+  }
+  if (key === 'sportsMeetJudgeAssignments') expected = [...expected, 'listByJudge'];
   return expected.sort();
 }
 

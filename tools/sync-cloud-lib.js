@@ -78,6 +78,9 @@ const MANIFEST = [
   'services/school-member.js',
   // 身份业务编排依赖注入仓储，不直接引用 wx、Node 或云 SDK。
   'services/school-context.js',
+  // 身份上下文缓存（H-10）：上下文在云端每请求都要建，缓存必须与 buildSchoolContext
+  // 同源；模拟端也 require 同一份，两端才能用同一套 TTL 与失效规则。
+  'services/context-cache.js',
   'services/school-membership-service.js',
   // 协会空间：权限、受众、成员搜索为纯模块；各 service 只依赖注入的 repo 与上下文。
   'services/association-space-permission.js',

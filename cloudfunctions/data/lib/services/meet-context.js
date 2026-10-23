@@ -20,6 +20,7 @@
  */
 
 const { schoolMemberKey, schoolRoleKey } = require('../utils/school.js');
+const contextCache = require('./context-cache.js');
 
 /**
  * 组装运动会上下文。
@@ -30,11 +31,26 @@ const { schoolMemberKey, schoolRoleKey } = require('../utils/school.js');
  * @param {string} [options.actorId] 仅限已认证的内部事务重读
  * @param {{schoolId:string, meetId?:string}} options.scope
  * @param {Date} [options.now]
+ * @param {string} [options.action] 只有读动作才允许走缓存（见 context-cache）
  */
-async function buildMeetContext({ repo, openId = '', actorId = '', scope, now = new Date() }) {
+async function buildMeetContext({
+  repo, openId = '', actorId = '', scope, now = new Date(), action = '',
+}) {
   const schoolId = String((scope && scope.schoolId) || '').trim();
   const meetId = String((scope && scope.meetId) || '').trim();
   if (!schoolId) throw new Error('运动会接口缺少学校');
+
+  // 与学校上下文同一套缓存规则（2026-10-23 H-10）：运动会也要读学校、账号、
+  // 名册、校级角色、届次——一个页面连发几个请求就是几十次重复读。
+  // key 加 `meet|` 前缀，避免与同期同校的协会上下文串味。
+  const cacheable = contextCache.isReadAction(action);
+  const cacheKey = cacheable
+    ? `meet|${contextCache.keyOf({ schoolId, association: meetId }, openId, actorId)}`
+    : '';
+  if (cacheable) {
+    const cached = contextCache.get(cacheKey);
+    if (cached) return Object.freeze({ repo, schoolId, meetId, now, ...cached });
+  }
 
   const [school, actor] = await Promise.all([
     repo.schools.getById(schoolId),
@@ -53,12 +69,7 @@ async function buildMeetContext({ repo, openId = '', actorId = '', scope, now = 
     : [null, null, meetId ? repo.sportsMeets.getById(meetId) : null];
 
   const owned = (doc) => (doc && doc.schoolId === schoolId && doc.userId === actor._id ? doc : null);
-
-  return Object.freeze({
-    repo,
-    schoolId,
-    meetId,
-    now,
+  const docs = {
     actor,
     openId: openId || (actor && actor.openId) || '',
     actorId: actor ? actor._id : '',
@@ -67,7 +78,9 @@ async function buildMeetContext({ repo, openId = '', actorId = '', scope, now = 
     schoolRole: owned(role),
     // 不属于本届或不属于本校的记录一律当「不存在」，不让越界数据进入上下文。
     meet: meet && meet.schoolId === schoolId ? meet : null,
-  });
+  };
+  if (cacheable) contextCache.set(cacheKey, docs);
+  return Object.freeze({ repo, schoolId, meetId, now, ...docs });
 }
 
 /** 事务内重读上下文：权限必须在写入的同一事务里再判一次。 */

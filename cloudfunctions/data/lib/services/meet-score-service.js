@@ -242,23 +242,27 @@ async function getMeetSessionScores(payload = {}, ctx) {
   // 场次与指派仍整表读：它们还要参与「我是不是这个项目的裁判」的判定，
   // 量级是几十到几百条，先把最贵的两个集合收窄。
   const meetRepo = ctx.repo.forMeet(scope);
-  const [session, assignment, event, sessions, assignments] = await Promise.all([
+  const [session, assignment] = await Promise.all([
     meetRepo.sportsMeetSessions.getById(sessionKey),
     meetRepo.sportsMeetJudgeAssignments.getById(
       meetJudgeKey(ctx.meetId, sessionKey, ctx.actorId || '-'),
     ),
-    listAliveEvents(meetRepo.sportsMeetEvents),
-    meetRepo.sportsMeetSessions.list(),
-    meetRepo.sportsMeetJudgeAssignments.list(),
   ]);
   if (!session || session.meetId !== ctx.meetId) return refused('场次不存在或不属于本届运动会');
   // 重抽之后旧场次被作废（voidedAt）：它不是「不存在」，但不能再录分——
   // 说清楚原因，别让裁判以为点错了场次。
   if (session.voidedAt) return refused('该场次已因重新抽签作废，请刷新后从任务列表进入新场次');
-  // 本项目的报名（预赛分组才收窄到本场）+ 本场次的成绩
-  const [entries, scores] = await Promise.all([
+
+  // 拿到 eventKey 之后才能收窄：本项目的场次 / 报名、本场次的成绩与裁判指派、
+  // 我在本届的全部指派。原来这五处都是「一届全部」，而一届的报名与成绩是
+  // 「项目 × 学院 × 名额 × 裁判」，上千条很常见。
+  const [event, sessions, entries, scores, myAssignments, sessionAssignments] = await Promise.all([
+    listAliveEvents(meetRepo.sportsMeetEvents),
+    meetRepo.sportsMeetSessions.listByProject(session.eventKey),
     meetRepo.sportsMeetEntries.listByProject(session.eventKey),
     meetRepo.sportsMeetScores.listBySession(sessionKey),
+    ctx.actorId ? meetRepo.sportsMeetJudgeAssignments.listByJudge(ctx.actorId) : Promise.resolve([]),
+    meetRepo.sportsMeetJudgeAssignments.listBySession(sessionKey),
   ]);
   const doc = event.find((row) => row._id === session.eventKey);
   // 胜负项目没有分数可录：让裁判看到「这场由谁判胜」，而不是把他带到录分框前再报错
@@ -280,8 +284,13 @@ async function getMeetSessionScores(payload = {}, ctx) {
 
   const isAdmin = canManageMeet(ctx);
   const docEvent = doc || {};
-  if (!isAdmin && !assignments.some(row => row.status === 'active' && row.judgeId === ctx.actorId
-    && sessions.some(item => item._id === row.sessionKey && item.eventKey === session.eventKey))) return ok({ session: {sessionKey, eventKey: session.eventKey}, items: [], canEnter: false });
+  // 本项目有哪些场次：判「我被指派到本项目任一场次」用（连续几个项目同一批裁判
+  // 时不逐场指派，同项目内默认就是同一组人）。
+  const eventSessions = new Set(sessions.map(item => item._id));
+  if (!isAdmin && !myAssignments.some(row => row.status === 'active'
+    && row.judgeId === ctx.actorId && eventSessions.has(row.sessionKey))) {
+    return ok({ session: { sessionKey, eventKey: session.eventKey }, items: [], canEnter: false });
+  }
   // 预赛分组的场次只列本组的人：把全项目的人都摆到「预赛第 2 组」的录分页上，
   // 裁判必然会录错行。没有 entryKeys 的场次（直接决赛）才是全项目。
   const assigned = Array.isArray(session.entryKeys) && session.entryKeys.length > 0
@@ -319,21 +328,19 @@ async function getMeetSessionScores(payload = {}, ctx) {
   //   · 裁判本人被指派到本场次；
   //   · **或**被指派到同一项目的任一场次——连续几个项目同一批裁判时，
   //     逐场逐个指派不现实，同项目内默认他们就是同一组人。
-  const eventSessions = new Set(sessions
-    .filter((doc) => doc.eventKey === session.eventKey)
-    .map((doc) => doc._id));
-  const assignedInEvent = assignments.some((doc) => doc.status === 'active'
+  const assignedInEvent = myAssignments.some((doc) => doc.status === 'active'
     && doc.judgeId === ctx.actorId && eventSessions.has(doc.sessionKey));
-  // 本场已选裁判（姓名版）：录分页要能看到这场有谁执裁
-  const judgeNames = new Map();
-  for (const row of assignments.filter((doc) => doc.status === 'active'
-    && doc.sessionKey === sessionKey)) {
-    const user = await ctx.repo.users.getById(row.judgeId);
-    judgeNames.set(row.judgeId, (user && (user.realName || user.nickName)) || row.judgeId);
-  }
-  const judges = assignments
-    .filter((doc) => doc.status === 'active' && doc.sessionKey === sessionKey)
-    .map((doc) => ({ judgeId: doc.judgeId, name: judgeNames.get(doc.judgeId) || doc.judgeId }));
+  // 本场已选裁判（姓名版）：录分页要能看到这场有谁执裁。
+  // 名单已经按本场次下推过，这里只需按人去重后点读姓名。
+  const activeJudges = sessionAssignments.filter(doc => doc.status === 'active');
+  const judgeIds = [...new Set(activeJudges.map(doc => doc.judgeId))];
+  const judgeUsers = judgeIds.length ? await ctx.repo.users.listByIds(judgeIds) : [];
+  const judgeNameById = new Map(
+    judgeUsers.map(user => [user._id, user.realName || user.nickName || user._id]),
+  );
+  const judges = judgeIds.map(judgeId => ({
+    judgeId, name: judgeNameById.get(judgeId) || judgeId,
+  }));
 
   return ok({
     session: {

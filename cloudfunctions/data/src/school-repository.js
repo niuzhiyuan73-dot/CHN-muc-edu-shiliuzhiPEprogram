@@ -133,23 +133,33 @@ function buildScoped(repo, io, inTx, options) {
     // 【为什么只下推这两处】`sportsMeetSessions` 与 `sportsMeetJudgeAssignments`
     // 还要参与「我是不是这个项目的裁判」的权限判定，量级是几十到几百条，
     // 本轮不动——先把最贵的两个集合收窄。
-    if (key === 'sportsMeetEntries') {
-      // 录分页列的是**本项目**的报名（预赛分组才收窄到本场），所以按 eventKey 查，
-      // 而不是按场次的 entryKeys 批读——直接决赛的场次本来就要全项目的人。
-      // 命名用 listByProject 而不是 listByEvent：运动会的 `sportsMeetEvents` 是
-      // 「比赛项目」，而协会侧的 listByEvent 指的是「一场赛事」。同名不同义会让
-      // 仓储契约扫描把它们混为一谈（协会侧的 listByEvent 顶层也有，运动会没有
-      // 顶层的等价值——它必须带 meetId 范围）。
+    // 命名用 listByProject 而不是 listByEvent：运动会的 `sportsMeetEvents` 是
+    // 「比赛项目」，而协会侧的 listByEvent 指的是「一场赛事」。同名不同义会让仓储
+    // 契约扫描把它们混为一谈（协会侧的 listByEvent 顶层也有，运动会没有顶层的
+    // 等价值——它必须带 meetId 范围）。
+    if (key === 'sportsMeetEntries' || key === 'sportsMeetSessions') {
+      // 报名与场次都按「本项目」取：录分页列的是本项目的报名（预赛分组才收窄到
+      // 本场，直接决赛的场次本来就要全项目的人），裁判权限判定要的是「本项目
+      // 有哪些场次」。
       result[key].listByProject = (projectKey) => {
         if (typeof projectKey !== 'string' || !projectKey) return Promise.resolve([]);
         return io.query(key, { ...expected, eventKey: projectKey });
       };
     }
-    if (key === 'sportsMeetScores') {
-      // sessionKey 在写入时落库（见 meet-score-service 的 doc 结构），可直接按它查。
+    if (key === 'sportsMeetScores' || key === 'sportsMeetJudgeAssignments') {
+      // sessionKey 在写入时落库（见 meet-score-service / meet-schedule-service 的 doc），
+      // 可以直接按它查：本场次的成绩、本场次的裁判指派。
       result[key].listBySession = (sessionKey) => {
         if (typeof sessionKey !== 'string' || !sessionKey) return Promise.resolve([]);
         return io.query(key, { ...expected, sessionKey });
+      };
+    }
+    if (key === 'sportsMeetJudgeAssignments') {
+      // 「我在本届被指派到哪些场次」：权限判定只需要这个人的指派，
+      // 不需要把一届所有指派（场次 × 裁判数）读回来再筛。
+      result[key].listByJudge = (judgeId) => {
+        if (typeof judgeId !== 'string' || !judgeId) return Promise.resolve([]);
+        return io.query(key, { ...expected, judgeId });
       };
     }
     // 名录页要给每一行算权限标签：20 行 × (校级角色 + 协会身份) = 40 次点读。
