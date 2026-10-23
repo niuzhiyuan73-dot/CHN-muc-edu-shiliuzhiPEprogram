@@ -22,7 +22,7 @@
 
 const { permissionOf, isPlatformAdminCtx, PERMISSION } = require('./school-permission.js');
 const { ROLE, USER_STATUS } = require('../utils/constants.js');
-const { PLATFORM_STATUS } = require('../utils/school.js');
+const { PLATFORM_STATUS, collegeKey, schoolMemberKey } = require('../utils/school.js');
 
 /**
  * S2 角色 → 旧栈 ROLE 数值，供旧栈纯判定复用。
@@ -185,6 +185,94 @@ function legacyActorOf(ctx, dir) {
   };
 }
 
+/** 没有学院归属时的空目录：`involvesCollege` 的两个条件必然不成立。 */
+const EMPTY_RECORD_DIR = Object.freeze({
+  actorCollege: '',
+  collegeIdOf: () => '',
+  collegeNameById: () => '',
+  collegeOf: () => '',
+});
+
+/**
+ * 只取「这场比赛用得上」的那几个学院，而不是全院名单（2026-10-23 H-4）。
+ *
+ * 【为什么不能直接用 buildDirectory】（2026-10-22 第二轮审查 P-1）
+ * `buildDirectory` 会读全校在册名单 + 这批人的账号：2000 人的学校是
+ * 20 + 20 = 40 次 RPC。判球路径上**每一球**都要判一次权限，一场 50 球的比赛
+ * 光"确认你有没有权限"就要 2000 次 RPC，同场多个场地并行时直接打空全校
+ * 每日读配额。
+ *
+ * 真正需要的信息只有：操作者自己的学院名，加上**这场比赛的两队选手**各自
+ * 属于哪个学院。单人赛 2 人、双人赛 4 人，最多 4 次点读 + 2 次学院名点读。
+ *
+ * 【为什么现在放到这里】原来只服务实时比分（school-live-service），赛事 /
+ * 比赛详情同样只需要这一小块——两处各写一份必然分叉，因此上收到适配层。
+ *
+ * @param {Object} ctx 请求上下文（含 schoolMember）
+ * @param {Object} doc 比赛或赛事文档（读 teamA / teamB）
+ * @returns {Promise<Object>} 与 recordOptions 兼容的目录形状
+ */
+async function recordDirOf(ctx, doc) {
+  const memberCollegeId = (ctx.schoolMember && ctx.schoolMember.collegeId) || '';
+  // 没有学院归属 ⇒ involvesCollege 的两个条件（college 非空、collegeOf 是函数）
+  // 必然不成立，与"全院目录里查不到他的学院"是同一个结论，读都不用读。
+  if (!memberCollegeId) return EMPTY_RECORD_DIR;
+
+  const participants = [...new Set([...((doc && doc.teamA) || []), ...((doc && doc.teamB) || [])])];
+  const [actorCollege, rows] = await Promise.all([
+    ctx.repo.colleges.getById(collegeKey(ctx.schoolId, memberCollegeId)),
+    Promise.all(participants.map(userId =>
+      ctx.repo.schoolMembers.getById(schoolMemberKey(userId, ctx.schoolId)))),
+  ]);
+  const actorCollegeName = (actorCollege && actorCollege.name) || '';
+
+  const collegeIdByUser = new Map();
+  rows.forEach((row, index) => {
+    if (row && row.collegeId) collegeIdByUser.set(participants[index], row.collegeId);
+  });
+
+  // 一张「学院编号 → 全名」表，先放操作者自己的学院，再补参赛者涉及的学院。
+  // 两边必须走同一张表：involvesCollege 比较的是"操作者学院名 === 参赛者学院名"，
+  // 若操作者的学院没有登记进来，同一学院也会被判成不同学院（越权拦截误伤）。
+  const nameById = new Map();
+  if (memberCollegeId && actorCollegeName) nameById.set(memberCollegeId, actorCollegeName);
+  const missingIds = [...new Set([...collegeIdByUser.values()])].filter(id => !nameById.has(id));
+  const missing = await Promise.all(missingIds.map(id =>
+    ctx.repo.colleges.getById(collegeKey(ctx.schoolId, id))));
+  missing.forEach((doc2) => {
+    if (doc2 && doc2.collegeId) nameById.set(doc2.collegeId, doc2.name || '');
+  });
+
+  return {
+    actorCollege: actorCollegeName,
+    collegeIdOf: userId => collegeIdByUser.get(userId) || '',
+    collegeNameById: id => nameById.get(id) || '',
+    collegeOf: userId => nameById.get(collegeIdByUser.get(userId)) || '',
+  };
+}
+
+/**
+ * 只取「操作者自己的学院名」——一次点读，而不是全院目录（2026-10-23 H-4）。
+ *
+ * 【为什么够用】`legacyActorOf` 组装旧栈账号时，从目录里唯一取的就是
+ * `dir.actorCollege`。为这一个字符串去读全校在册名单 + 这批人的账号（2000 人
+ * 是 40 次 RPC），在赛事详情这种每次打开都走的读接口上尤其不划算。
+ *
+ * 不能直接用 `ctx.actor.college`：账号上的学院是历史遗留字段，权威值是
+ * `school_members.collegeId`（转学院只改名册）。所以这里按 schoolMember 的
+ * collegeId 点读学院目录取全名，与 buildDirectory 同一口径。
+ *
+ * @param {Object} ctx
+ * @returns {Promise<string>} 学院全名；没有学院归属时为空串
+ */
+async function actorCollegeNameOf(ctx) {
+  const collegeId = (ctx.schoolMember && ctx.schoolMember.collegeId) || '';
+  if (!collegeId) return '';
+  const doc = await ctx.repo.colleges.getById(collegeKey(ctx.schoolId, collegeId));
+  return (doc && doc.name) || '';
+}
+
 module.exports = {
   legacyRoleOf, buildDirectory, buildCollegeDirectory, recordOptions, legacyActorOf,
+  actorCollegeNameOf, recordDirOf, EMPTY_RECORD_DIR,
 };

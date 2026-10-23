@@ -43,10 +43,10 @@ const {
   canReadAssociationSpace, canManageAssociationSpace, canParticipateInAssociation,
 } = require('./association-space-permission.js');
 // 角色 / 名单的推导收在 school-actor，两套栈只有一份口径。
-const { buildDirectory, legacyActorOf } = require('./school-actor.js');
+const { buildDirectory, legacyActorOf, actorCollegeNameOf } = require('./school-actor.js');
 const {
   schoolKey, belongsToSchoolScope, schoolEventKey, schoolEventSignupKey,
-  associationGroupMemberKey,
+  associationGroupMemberKey, schoolMemberKey,
 } = require('../utils/school.js');
 // 小组限制（受众范围）与训练共用同一套纯规则（B6）。
 const { buildAudience, readAudience, audienceAllows } = require('./association-audience.js');
@@ -433,8 +433,12 @@ async function getSchoolEvent(payload = {}, ctx) {
   // 管理动作的按钮可见性由服务端算好，页面照着渲染。
   // 判据复用写入端同一把尺子（canStartEvent / canDrawEvent / canFinishEvent）；
   // 写入时仍会再校验一遍——能力只说明「这一刻理论上可不可以」，不是写入许可。
-  const dir = await buildDirectory(ctx);
-  const actor = legacyActorOf(ctx, dir);
+  //
+  // 【2026-10-23 H-4】这里原先调 buildDirectory：只为拿操作者自己的学院名，
+  // 却要读全校在册名单 + 这批人的账号（2000 人 = 40 次 RPC）。详情页是每场
+  // 赛事都会打开的读接口，换成一个点读。
+  const actorCollege = await actorCollegeNameOf(ctx);
+  const actor = legacyActorOf(ctx, { actorCollege });
 
   return ok({
     ok: true, canManage, canParticipate,
@@ -482,17 +486,33 @@ async function listSchoolEventSignups(payload = {}, ctx) {
   const doc = await ctx.repo.events.getById(payload.eventId);
   if (!isEventDoc(doc) || !belongsToSchoolScope(doc, ctx)) return ok(refused('赛事不存在'));
 
-  const dir = await buildDirectory(ctx);
-  const actor = legacyActorOf(ctx, dir);
-  const memberById = new Map(dir.members.map(member => [member._id, member]));
-
-  const rows = (await ctx.repo.forScope(ctx).eventSignups.listByEvent(doc._id))
+  // 【2026-10-23 H-4】原先靠 buildDirectory 拿「全校会员 + 学院改名表」，
+  // 而这一页只显示本场赛事的报名者。改成：报名台账 → 按这批人批读账号
+  // （1 次 RPC）→ 学院目录（1 页，26 条）。
+  const [ledger, actorCollege, colleges] = await Promise.all([
+    ctx.repo.forScope(ctx).eventSignups.listByEvent(doc._id),
+    actorCollegeNameOf(ctx),
+    ctx.repo.forScope(ctx).colleges.list(),
+  ]);
+  const actor = legacyActorOf(ctx, { actorCollege });
+  const rows = ledger
     .filter(row => row.status !== SIGNUP_STATUS.CANCELED)
     .sort((a, b) => (String(a.signTime || '') < String(b.signTime || '') ? -1 : 1));
+  const signupUsers = await ctx.repo.users.listByIds(rows.map(row => row.userId));
+  const memberById = new Map(signupUsers.map(member => [member._id, member]));
+  const collegeNameById = new Map(colleges.map(row => [row.collegeId, row.name]));
+  // 报名者的学院取自名册（权威值），不是账号上的历史字段
+  const memberRows = await Promise.all(rows.map(row =>
+    ctx.repo.schoolMembers.getById(schoolMemberKey(row.userId, ctx.schoolId))));
+  const collegeIdByUser = new Map();
+  memberRows.forEach((row, index) => {
+    if (row && row.collegeId) collegeIdByUser.set(rows[index].userId, row.collegeId);
+  });
+  const collegeOf = userId => collegeNameById.get(collegeIdByUser.get(userId)) || '';
 
   const signups = rows.map(row => {
     const member = memberById.get(row.userId) || {};
-    const college = dir.collegeOf(row.userId);
+    const college = collegeOf(row.userId);
     return {
       userId: row.userId,
       nickName: member.nickName || row.userId,

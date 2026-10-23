@@ -36,14 +36,16 @@ const {
   canReadAssociationSpace, canManageAssociationSpace, canParticipateInAssociation,
 } = require('./association-space-permission.js');
 // 角色 / 名单的推导收在 school-actor，两套栈只有一份口径。
-const { legacyRoleOf, buildDirectory, recordOptions } = require('./school-actor.js');
+const {
+  legacyRoleOf, buildDirectory, recordOptions, recordDirOf, EMPTY_RECORD_DIR,
+} = require('./school-actor.js');
 const {
   schoolKey, schoolMemberKey, belongsToSchoolScope, schoolMatchKey, schoolLiveKey,
   pairCountKey, PLATFORM_STATUS, SCHOOL_MEMBER_STATUS,
 } = require('../utils/school.js');
 const {
   MATCH_TYPE, MATCH_TYPE_LABEL,
-  MATCH_STATUS, MATCH_STATUS_LABEL, MATCH_COMPETITION, MATCH_OUTCOME, EVENT_STATUS,
+  MATCH_STATUS, MATCH_STATUS_LABEL, MATCH_COMPETITION, MATCH_OUTCOME, EVENT_STATUS, ROLE,
 } = require('../utils/constants.js');
 const {
   canRecordScore, canConfirm, canConfirmIdentity, canAssignReferee, canForfeit, needsScore,
@@ -389,7 +391,12 @@ async function getSchoolMatch(payload = {}, ctx) {
   if (typeof payload.matchId !== 'string' || !payload.matchId) return ok(refused('缺少比赛编号'));
   const doc = await ctx.repo.matches.getById(payload.matchId);
   if (!isMatchDoc(doc) || !belongsToSchoolScope(doc, ctx)) return ok(refused('找不到这场比赛'));
-  const dir = await buildDirectory(ctx);
+  // 【2026-10-23 H-4】单场详情只需要「操作者学院 + 这两队选手的学院」：
+  // 学院关系只在**学院负责人**那一档参与判定（管理员与参赛者本人在
+  // canRecordScore 里更早就返回了），没必要为此读全院名册（2000 人 = 40 次 RPC）。
+  const dir = legacyRoleOf(ctx) === ROLE.STAFF
+    ? await recordDirOf(ctx, doc)
+    : EMPTY_RECORD_DIR;
   return ok({ ok: true, match: await withLive(matchSummary(doc, ctx, dir), ctx), message: '' });
 }
 

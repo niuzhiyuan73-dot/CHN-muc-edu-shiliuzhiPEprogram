@@ -570,6 +570,38 @@ function buildCollections(scope, inTx, cmd) {
       }
       return out;
     },
+    /**
+     * 条件 + 排序 + 限量一起下推，只取回需要的那几条。
+     *
+     * 【为什么不用 readWhere】（2026-10-23 方案 A 第 2 步）
+     * `readWhere` 的语义是「把满足条件的文档全部读回来」，它有游标但**没有
+     * 排序与上限**——榜单要「按 elo 前 10」，用它就是先读完全部再内存排序，
+     * 等于没下推。这里把 orderBy 与 limit 交给数据库，一页即可返回。
+     *
+     * @param {string} key 集合键
+     * @param {Object} where 等值 + 操作符条件
+     * @param {Array<{field:string,direction:'asc'|'desc'}>} order 排序规则（按数组顺序链式调用）
+     * @param {number} limit 条数（≤ PAGE_SIZE，调用方负责夹取）
+     */
+    top: async (key, where, order, limit) => {
+      if (inTx) throw new Error(`事务内不允许条件读取（${key}），请改用 getById`);
+      const size = Math.max(1, Math.min(Number(limit) || 1, PAGE_SIZE));
+      let query = col(key).where(where);
+      for (const rule of (order || [])) query = query.orderBy(rule.field, rule.direction);
+      const res = await query.limit(size).get();
+      return (res && res.data) || [];
+    },
+    /**
+     * 只回一个数字的计数（聚合在数据库侧完成，不读文档）。
+     *
+     * 【为什么单独开】「我在同项目排第几」= 比我高的人数 + 1。为了这一个数字
+     * 读回 8000 条评级，是这块读放大里最不划算的一笔。
+     */
+    count: async (key, where) => {
+      if (inTx) throw new Error(`事务内不允许条件读取（${key}），请改用 getById`);
+      const res = await col(key).where(where).count();
+      return Number((res && res.total) || 0);
+    },
   }, inTx);
 
   // 团队运动三集合的「按赛事取子集」。

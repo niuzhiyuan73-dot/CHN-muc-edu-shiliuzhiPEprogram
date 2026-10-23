@@ -1,5 +1,5 @@
 /** 学校身份演示仓储。写事务排队，草稿提交/回滚，读写均复制对象。 */
-const { schoolScope } = require('../utils/school.js');
+const { schoolScope, SCHOOL_MEMBER_STATUS } = require('../utils/school.js');
 const { MEET_COLLECTIONS, meetScope } = require('../utils/meet-scope.js');
 const clone = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 const { memoryMatchPage } = require('./match-list-query');
@@ -166,12 +166,46 @@ function createSchoolMemoryRepo(seed = {}) {
             .filter(doc => owns(doc) && (!sinceIso || String(doc.matchTime || '') >= sinceIso));
         }
         // 按人反查：与云端 listByUser 同口径（缺 userId 时返回空数组，
-        // 不退化成整表读）。训练报名见 H-2，小组成员见 H-3。
-        if (key === 'trainingRegistrations' || key === 'associationGroupMembers') {
+        // 不退化成整表读）。训练报名见 H-2，小组成员见 H-3，评级见方案 A 第 2 步
+        // （个人主页要「我在这几个池里的评级」，不必读全范围）。
+        if (key === 'trainingRegistrations' || key === 'associationGroupMembers' || key === 'memberRatings') {
           result[key].listByUser = async userId => {
             if (inTx) throw new Error(`事务内不允许条件读取（${key}），请改用 getById`);
             if (typeof userId !== 'string' || !userId) return [];
             return (await repo[key].list()).filter(doc => owns(doc) && doc.userId === userId);
+          };
+        }
+        // 评级表的下推读（2026-10-23 方案 A 第 2 步）：与云端
+        // memberRatings.listTop / countRanked 同口径。
+        //
+        // 【为什么门槛是 matchCount > 0】榜单只展示上过场的人（buildRows 同口径）。
+        // 【为什么排序只到 elo + wins】名次由调用方用同一个比较器重算（胜率是派生
+        // 字段，不进索引）。这里保持与数据库排序一致，免得「取哪一批」在两端分叉。
+        if (key === 'memberRatings') {
+          const matchesRanked = ({ pool, gender = null, memberStatus = SCHOOL_MEMBER_STATUS.ACTIVE, minElo = null, missingProfile = false }) => doc =>
+            owns(doc)
+            && (!pool || doc.pool === pool)
+            && Number(doc.matchCount || 0) > 0
+            && (missingProfile
+              ? doc.memberStatus === undefined
+              : (!memberStatus || doc.memberStatus === memberStatus)
+                && (!gender || doc.gender === gender)
+                && (minElo === null || minElo === undefined || Number(doc.elo) > Number(minElo)));
+          result[key].listTop = async (options = {}) => {
+            if (inTx) throw new Error('事务内不允许条件读取（memberRatings），请改用 getById');
+            const limit = Math.max(1, Math.min(Number(options.limit) || 10, 100));
+            const hit = matchesRanked(options);
+            return (await repo[key].list())
+              .filter(hit)
+              .sort((a, b) => Number(b.elo) - Number(a.elo)
+                || Number(b.wins || 0) - Number(a.wins || 0)
+                || String(a._id).localeCompare(String(b._id)))
+              .slice(0, limit);
+          };
+          result[key].countRanked = async (options = {}) => {
+            if (inTx) throw new Error('事务内不允许条件读取（memberRatings），请改用 getById');
+            const hit = matchesRanked(options);
+            return (await repo[key].list()).filter(hit).length;
           };
         }
       }

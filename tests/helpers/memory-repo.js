@@ -42,6 +42,8 @@ function clone(doc) {
 const CMD = Symbol('db.command');
 const command = {
   gte: (value) => ({ [CMD]: 'gte', value }),
+  // 字段是否存在：用于数「回填前的历史文档」（没有 memberStatus 的那些）。
+  exists: (value) => ({ [CMD]: 'exists', value }),
   gt: (value) => ({ [CMD]: 'gt', value }),
   in: (value) => ({ [CMD]: 'in', value }),
   and: (value) => ({ [CMD]: 'and', value }),
@@ -73,6 +75,7 @@ function matchWhere(doc, where) {
     if (cond[CMD] === 'in') return Array.isArray(cond.value) && cond.value.includes(doc[field]);
     if (cond[CMD] === 'gte') return compare(doc[field], cond.value) >= 0;
     if (cond[CMD] === 'gt') return compare(doc[field], cond.value) > 0;
+    if (cond[CMD] === 'exists') return (doc[field] !== undefined) === Boolean(cond.value);
     return false;
   });
 }
@@ -380,6 +383,20 @@ function createMemoryRepo(seed = {}) {
         return list(key).filter((doc) => uniq.includes(doc._id)
           && Object.entries(scopeFields).every(([field, value]) => doc[field] === value));
       },
+      // 条件 + 排序 + 限量（与云端 io.top 同语义）：榜单取「按 elo 前 N」用。
+      top: (key, where, order, limit) => {
+        const rows = list(key).filter((doc) => matchWhere(doc, where));
+        rows.sort((a, b) => {
+          for (const rule of (order || [])) {
+            const diff = compare(a[rule.field], b[rule.field]);
+            if (diff !== 0) return rule.direction === 'desc' ? -diff : diff;
+          }
+          return 0;
+        });
+        return rows.slice(0, Math.max(1, Number(limit) || 1));
+      },
+      // 只回数字（与云端 io.count 同语义）。
+      count: (key, where) => list(key).filter((doc) => matchWhere(doc, where)).length,
     }, inTx);
 
     // 基础集合的写方法直接落在 target 上，不走 io.set，故按方法名套钩子。

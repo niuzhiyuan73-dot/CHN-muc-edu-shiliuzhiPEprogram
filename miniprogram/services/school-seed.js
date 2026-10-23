@@ -27,6 +27,10 @@ const { buildSchoolApplication } = require('./school-member.js');
 const { planExchangeDraw, planExchangeMatches } = require('./exchange-plan.js');
 // 演示数据的时间锚点：四个种子文件共用同一份，见 demo-clock.js
 const { DAY_MS, demoToday } = require('./demo-clock.js');
+// 旧版演示会员（u01–u24）：演示比赛的参赛者绝大多数是他们，性别要从这里取。
+// 【为什么必须取到】（2026-10-23 方案 A）评级文档现在冗余 gender / memberStatus，
+// 榜单与个人主页的排名靠它筛项目。取不到性别就会落成空串，那批人从榜上消失。
+const { MEMBER_SEED } = require('./seed.js');
 
 const iso = value => new Date(value).toISOString();
 
@@ -643,7 +647,13 @@ function demoSignupDocs(spec, now) {
  */
 function demoGenderOf(userId) {
   const account = DEMO_ACCOUNT_BY_ID.get(userId);
-  return account ? account.gender : undefined;
+  if (account) return account.gender;
+  // 旧版演示会员按编号对应 MEMBER_SEED 的下标（u01 → 第 1 条），
+  // 与 school-mock 的 attachLegacyMembers 同一套映射。
+  const matched = /^u(\d+)$/.exec(String(userId || ''));
+  if (!matched) return undefined;
+  const row = MEMBER_SEED[Number(matched[1]) - 1];
+  return row ? row.gender : undefined;
 }
 
 /**

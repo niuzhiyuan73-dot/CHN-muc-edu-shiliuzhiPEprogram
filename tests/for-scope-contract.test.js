@@ -81,6 +81,11 @@ test('受范围仓储的集合方法面就是约定的那一套（钉住契约�
     if (key === 'trainingRegistrations' || key === 'associationGroupMembers') {
       expected = [...expected, 'listByUser'];
     }
+    // 评级表（2026-10-23 方案 A 第 2 步）：榜单要「按 elo 前 N」、个人主页要
+    // 「我在同项目排第几」，三个方法把条件、排序、计数一起下推。
+    if (key === 'memberRatings') {
+      expected = [...expected, 'listTop', 'countRanked', 'listByUser'];
+    }
     // 名录页给每一行算权限标签：20 行 × 2 次点读 → 两条 listByIds（H-5）。
     if (key === 'schoolRoles' || key === 'memberships') {
       expected = [...expected, 'listByIds'];

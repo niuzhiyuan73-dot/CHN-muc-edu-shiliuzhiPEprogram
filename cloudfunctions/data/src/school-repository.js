@@ -1,5 +1,5 @@
 /** 两个适配器共享的学校仓储扩展。原单校接口保留，S2 逐一接入新接口。 */
-const { schoolScope } = require('../lib/utils/school.js');
+const { schoolScope, SCHOOL_MEMBER_STATUS } = require('../lib/utils/school.js');
 const { MEET_COLLECTIONS, meetScope } = require('../lib/utils/meet-scope.js');
 
 const SCHOOL_COLLECTIONS = ['schools', 'schoolAssociations', 'colleges', 'schoolMembers', 'schoolRoles', 'studentIdClaims',
@@ -169,12 +169,66 @@ function buildScoped(repo, io, inTx, options) {
   //
   // userId 缺失时**返回空数组**，不退化成整表读——调用方漏传参数不该变成
   // 一次全表扫描。
-  for (const key of ['trainingRegistrations', 'associationGroupMembers']) {
+  for (const key of ['trainingRegistrations', 'associationGroupMembers', 'memberRatings']) {
     if (!result[key]) continue;
     result[key].listByUser = (userId) => {
       if (inTx) throw new Error(`事务内不允许条件读取（${key}），请改用 getById`);
       if (typeof userId !== 'string' || !userId) return Promise.resolve([]);
       return io.query(key, { schoolId: scope.schoolId, association: scope.association, userId });
+    };
+  }
+
+  // ── 评级表的下推读（2026-10-23 方案 A 第 2 步）──
+  //
+  // 【要解决什么】榜单要「本池、本项目（性别）、在册、按 elo 前 10」；个人主页要
+  // 「我在同项目排第几」。这两件事原本都得把 8000 条评级（2000 人 × 4 池）读回
+  // 内存里算——因为排序键 `elo` 在评级表，而过滤键 `gender` / 在册状态在别的
+  // 集合里。方案 A 把这两个字段冗余进来之后，条件与排序可以一起下推。
+  //
+  // 【为什么门槛是 matchCount > 0】榜单只展示「上过场」的人（与 buildRows 同口径）。
+  // 不下推的话，取回的前 10 里可能一半是「建了档但一场没打」的会员，再被内存
+  // 过滤掉——那等于白读，也只能靠 limit 放大来补偿。
+  //
+  // 【排序只负责「取哪一批」】名次仍由调用方用同一个比较器重算（elo → 胜率 →
+  // 胜场 → 时间 → 编号）。数据库只按 elo 与胜场取前 N，避免把 `winRate` 这种
+  // 派生字段写进索引。
+  if (result.memberRatings) {
+    const rankedWhere = ({
+      pool, gender = null, memberStatus = SCHOOL_MEMBER_STATUS.ACTIVE, minElo = null,
+      missingProfile = false,
+    }) => {
+      const where = {
+        schoolId: scope.schoolId,
+        association: scope.association,
+        matchCount: io.cmd.gt(0),
+      };
+      // pool 传 null 表示不分池（回填监控要数全协会的残留文档）。
+      if (pool) where.pool = pool;
+      // 回填监控：数「没有 memberStatus 字段」的文档。这类文档是方案 A 上线前
+      // 建的档，按状态筛会被整体漏掉——榜单会静默少人，而不是报错。
+      if (missingProfile) {
+        where.memberStatus = io.cmd.exists(false);
+        return where;
+      }
+      // memberStatus 传空串/null 表示不按状态筛（回填监控的对照口径）。
+      if (memberStatus) where.memberStatus = memberStatus;
+      if (gender) where.gender = gender;
+      if (minElo !== null && minElo !== undefined) where.elo = io.cmd.gt(minElo);
+      return where;
+    };
+    result.memberRatings.listTop = (options = {}) => {
+      if (inTx) throw new Error('事务内不允许条件读取（memberRatings），请改用 getById');
+      const limit = Math.max(1, Math.min(Number(options.limit) || 10, 100));
+      return io.top('memberRatings', rankedWhere(options), [
+        { field: 'elo', direction: 'desc' },
+        { field: 'wins', direction: 'desc' },
+        { field: '_id', direction: 'asc' },
+      ], limit);
+    };
+    // 名次用两次计数算出来：比我高的人 + 1。不读文档，只有数字。
+    result.memberRatings.countRanked = (options = {}) => {
+      if (inTx) throw new Error('事务内不允许条件读取（memberRatings），请改用 getById');
+      return io.count('memberRatings', rankedWhere(options));
     };
   }
   if (!inTx) result.transaction = (fn) => repo.transaction((tx) => fn(surfaceOf(tx, scope)));
