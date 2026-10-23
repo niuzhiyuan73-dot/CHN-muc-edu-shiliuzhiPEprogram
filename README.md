@@ -3,8 +3,8 @@
 一个原生微信小程序（WXML / WXSS / JS，零框架），把校内**多个体育协会**的等级分、赛事、训练与校级活动装进同一套系统。
 
 - 当前进度：篮球五人制与实时计分已落地；足球 F0—F3 已完成，支持赛后报告与成绩；足球/篮球已有协会内“我的球队”累计统计页签
-- 自检：`npm test` → **2858 项用例通过 / 0 失败 / 0 超时**（157 个测试文件 / 约 123 秒）
-- 云端共享库：`npm run check:cloud-sync` → 86 个文件一致
+- 自检：`npm test` → **2989 项用例通过 / 0 失败 / 0 超时**（176 个测试文件 / 约 28 秒）
+- 云端共享库：`npm run check:cloud-sync` → 87 个文件一致
 - 数据源：默认**本地模拟**（`miniprogram/config.js` 的 `CLOUD_ENV_ID` 为空），填入环境 ID 即切云端，页面代码一行不改
 
 ---
@@ -93,13 +93,13 @@ services                 视图模型 + 数据源门面（MOCK / CLOUD 同一套
         │
 utils                    纯函数：计分、抽签、分组、榜单、积分、权限
         │
-        ├── tools/sync-cloud-lib.js ──逐字节镜像──▶ cloudfunctions/data/lib/（85 文件）
+        ├── tools/sync-cloud-lib.js ──逐字节镜像──▶ cloudfunctions/data/lib/（87 文件）
         │
 cloudfunctions/data      唯一云函数：协议 2 请求信封 + 仓储 + 事务
-        └── src/core      身份上下文、路由、四个领域的 action handler（共 187 个）
+        └── src/core      身份上下文、路由、四个领域的 action handler（共 200 个）
 ```
 
-**为什么只有一个云函数**：权限、身份解析、错误信封只写一份；云函数按个数部署与计费。当前 187 个 action 按领域分成四组：会员与身份 13、协会空间与个人赛/团队 101、跨校邀请赛 15、运动会 53。
+**为什么只有一个云函数**：权限、身份解析、错误信封只写一份；云函数按个数部署与计费。当前 200 个 action 按领域分成四组：会员与身份 13、协会空间与个人赛/团队 119、跨校邀请赛 15、运动会 53。
 
 **为什么有 `lib/` 镜像**：微信云函数按目录打包，`require` 不出目录。算法必须两端同一份实现，所以把纯模块复制进 `cloudfunctions/data/lib/`，并由 `tests/cloud-lib-sync.test.js` 逐字节守着。改了 `miniprogram/` 下的纯逻辑而忘了同步，测试立刻变红。
 
@@ -114,6 +114,8 @@ cloudfunctions/data      唯一云函数：协议 2 请求信封 + 仓储 + 事�
 | `packageTeam` | 球队、团队赛事、我的球队、实时计分、足球比赛 | 65 KB |
 | `packageCollege` | 石榴籽杯、学院赛报名 / 名单 / 对抗 / 名次 | 61 KB |
 | `packageMember` | 会员主页、审核、公告、资料、学校身份、跨校邀请赛 | 46 KB |
+
+> 体积是最近一次打包实测值，本地 `npm test` 覆盖不到；**增删页面后需重新打包核对**，不要按页数推算。
 
 主包 **939 KB（gzip）**，全量 1217 KB。约定：
 
@@ -139,13 +141,13 @@ cloudfunctions/data      唯一云函数：协议 2 请求信封 + 仓储 + 事�
 ## 六、目录
 
 ```
-miniprogram/            小程序源码（app.json 42 页：主包 5 + 分包 37）
+miniprogram/            小程序源码（app.json 43 页：主包 5 + 分包 38）
   pages/                主包页面：index / association / association-home / profile / login
   packageEvent/         分包：赛事与比赛录分（5 页）
   packageMeet/          分包：运动会（7 页）
   packageTeam/          分包：球队与实时计分（8 页）
   packageCollege/       分包：石榴籽杯学院赛（8 页）
-  packageMember/        分包：会员、公告、资料、学校身份（9 页）
+  packageMember/        分包：会员、公告、资料、学校身份（10 页）
   components/           面板组件：赛事、榜单、比赛、协会空间
   services/             视图模型与数据源
   utils/                纯函数
@@ -166,7 +168,13 @@ npm run test:py           # 导入工具的 Python 契约测试
 npm run sync:cloud        # 把纯逻辑镜像到 cloudfunctions/data/lib/
 npm run check:cloud-sync  # 只校验不写入（CI 用）
 node tools/acceptance-audit.cjs   # 验收探针
+node .workbuddy/skills/shilzi-doc-sync/scripts/doc-truth.js    # 文档真值：页面/action/集合/镜像
+node .workbuddy/skills/shilzi-doc-sync/scripts/doc-audit.js --cases=<npm test 的用例数>  # 文档数字校对
 ```
+
+**施工约定 skill**：`.workbuddy/skills/` 下四份守则（施工总则、页面、云函数 action、验收留痕）
+加一份文档同步器，随代码入库。改动前先读 `shilzi-construction-guard`；每批收尾跑
+`doc-audit` 并重建 docx，规则见各目录下的 `SKILL.md`。
 
 `npm test` 走 `tools/run-tests.js`，而不是裸的 `node --test`：单个测试文件超过 5 分钟
 会被杀掉并点名，运行期间每 15 秒打一行「正在跑谁」，慢文件在总结里单独列出。
