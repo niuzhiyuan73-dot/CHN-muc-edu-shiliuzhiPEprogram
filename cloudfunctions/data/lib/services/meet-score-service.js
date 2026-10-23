@@ -235,21 +235,31 @@ async function getMeetSessionScores(payload = {}, ctx) {
   const sessionKey = String(payload.sessionKey || '').trim();
   if (!sessionKey) return refused('请指定场次');
 
-  const [session, entries, scores, assignment, event, sessions, assignments] = await Promise.all([
-    ctx.repo.forMeet(scope).sportsMeetSessions.getById(sessionKey),
-    ctx.repo.forMeet(scope).sportsMeetEntries.list(),
-    ctx.repo.forMeet(scope).sportsMeetScores.list(),
-    ctx.repo.forMeet(scope).sportsMeetJudgeAssignments.getById(
+  // 【2026-10-23 H-9】报名与成绩原来读的是**一届全部**：一届运动会的报名是
+  // 「项目 × 学院 × 名额」，成绩还要再乘裁判数，上千条很常见，而一个场次只需要
+  // 十几条。改成按本项目 / 本场次下推，管理员与裁判的录分页少翻十几页。
+  //
+  // 场次与指派仍整表读：它们还要参与「我是不是这个项目的裁判」的判定，
+  // 量级是几十到几百条，先把最贵的两个集合收窄。
+  const meetRepo = ctx.repo.forMeet(scope);
+  const [session, assignment, event, sessions, assignments] = await Promise.all([
+    meetRepo.sportsMeetSessions.getById(sessionKey),
+    meetRepo.sportsMeetJudgeAssignments.getById(
       meetJudgeKey(ctx.meetId, sessionKey, ctx.actorId || '-'),
     ),
-    listAliveEvents(ctx.repo.forMeet(scope).sportsMeetEvents),
-    ctx.repo.forMeet(scope).sportsMeetSessions.list(),
-    ctx.repo.forMeet(scope).sportsMeetJudgeAssignments.list(),
+    listAliveEvents(meetRepo.sportsMeetEvents),
+    meetRepo.sportsMeetSessions.list(),
+    meetRepo.sportsMeetJudgeAssignments.list(),
   ]);
   if (!session || session.meetId !== ctx.meetId) return refused('场次不存在或不属于本届运动会');
   // 重抽之后旧场次被作废（voidedAt）：它不是「不存在」，但不能再录分——
   // 说清楚原因，别让裁判以为点错了场次。
   if (session.voidedAt) return refused('该场次已因重新抽签作废，请刷新后从任务列表进入新场次');
+  // 本项目的报名（预赛分组才收窄到本场）+ 本场次的成绩
+  const [entries, scores] = await Promise.all([
+    meetRepo.sportsMeetEntries.listByProject(session.eventKey),
+    meetRepo.sportsMeetScores.listBySession(sessionKey),
+  ]);
   const doc = event.find((row) => row._id === session.eventKey);
   // 胜负项目没有分数可录：让裁判看到「这场由谁判胜」，而不是把他带到录分框前再报错
   if (doc && doc.scoreType === MEET_SCORE_TYPE.VERSUS) {

@@ -52,12 +52,25 @@ test('运动会集合只进基础清单，绝不进协会受范围清单', () =>
   }
 });
 
+/**
+ * 运动会集合的标准方法面：五件套 + 按需的下推读。
+ * 每一项都必须是「两端同时有」——这是本测试后半段逐字比对的依据。
+ */
+function expectedMethodsOf(key) {
+  let expected = [...REQUIRED_METHODS];
+  // 录分页只要「本场次的报名与成绩」（2026-10-23 H-9）：一届的报名与成绩可上千条，
+  // 而一个场次十几条。报名按编号批读、成绩按 sessionKey 查。
+  if (key === 'sportsMeetEntries') expected = [...expected, 'listByProject'];
+  if (key === 'sportsMeetScores') expected = [...expected, 'listBySession'];
+  return expected.sort();
+}
+
 test('两端 forMeet 每个集合的方法面逐字相同', () => {
   const cloud = createMemoryRepo().forMeet(SCOPE);
   const mock = createSchoolMemoryRepo().forMeet(SCOPE);
   for (const key of MEET_COLLECTIONS) {
     assert.deepEqual(methodNames(mock[key]), methodNames(cloud[key]), `${key} 的方法面对不上`);
-    assert.deepEqual(methodNames(cloud[key]), REQUIRED_METHODS, `${key} 缺少标准五件套`);
+    assert.deepEqual(methodNames(cloud[key]), expectedMethodsOf(key), `${key} 的方法面变了，请同步本测试与另一端实现`);
   }
 });
 

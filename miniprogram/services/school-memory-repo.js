@@ -250,6 +250,22 @@ function createSchoolMemoryRepo(seed = {}) {
           insert: doc => write(doc._id, doc, 'insert'),
           update: (id, patch) => write(id, patch, 'update'),
         };
+        // 运动会录分页的两个下推（与云端 forMeet 同口径，2026-10-23 H-9）：
+        // 本场次的报名按编号批读、成绩按 sessionKey 取，不再读一届全部。
+        if (key === 'sportsMeetEntries') {
+          result[key].listByProject = async projectKey => {
+            if (inTx) throw new Error('事务内不允许条件读取（sportsMeetEntries），请改用 getById');
+            if (typeof projectKey !== 'string' || !projectKey) return [];
+            return (await repo[key].list()).filter(doc => owns(doc) && doc.eventKey === projectKey);
+          };
+        }
+        if (key === 'sportsMeetScores') {
+          result[key].listBySession = async sessionKey => {
+            if (inTx) throw new Error('事务内不允许条件读取（sportsMeetScores），请改用 getById');
+            if (typeof sessionKey !== 'string' || !sessionKey) return [];
+            return (await repo[key].list()).filter(doc => owns(doc) && doc.sessionKey === sessionKey);
+          };
+        }
       }
       if (!inTx) result.transaction = fn => repo.transaction(tx => fn(tx.forMeet(scope)));
       return result;

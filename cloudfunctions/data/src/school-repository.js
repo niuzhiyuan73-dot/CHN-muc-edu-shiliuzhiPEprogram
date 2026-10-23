@@ -123,6 +123,35 @@ function buildScoped(repo, io, inTx, options) {
       // **范围字段一起拼进查询**：`_id` 可能是客户端给的，归属校验不能只靠调用方。
       result[key].listByIds = (ids) => io.byIds(key, ids, scopeFields);
     }
+    // ── 运动会录分页：只取本场次的报名与成绩（2026-10-23 H-9）──
+    //
+    // 【要解决什么】`getMeetSessionScores` 原来读的是**一届全部**的
+    // `sportsMeetEntries` 与 `sportsMeetScores`。一届运动会的报名是「项目 × 学院
+    // × 名额」，成绩还要再乘裁判数，上千条很常见；而一个场次只需要十几条。
+    // 管理员/裁判录分页因此每次要翻十几页 RPC。
+    //
+    // 【为什么只下推这两处】`sportsMeetSessions` 与 `sportsMeetJudgeAssignments`
+    // 还要参与「我是不是这个项目的裁判」的权限判定，量级是几十到几百条，
+    // 本轮不动——先把最贵的两个集合收窄。
+    if (key === 'sportsMeetEntries') {
+      // 录分页列的是**本项目**的报名（预赛分组才收窄到本场），所以按 eventKey 查，
+      // 而不是按场次的 entryKeys 批读——直接决赛的场次本来就要全项目的人。
+      // 命名用 listByProject 而不是 listByEvent：运动会的 `sportsMeetEvents` 是
+      // 「比赛项目」，而协会侧的 listByEvent 指的是「一场赛事」。同名不同义会让
+      // 仓储契约扫描把它们混为一谈（协会侧的 listByEvent 顶层也有，运动会没有
+      // 顶层的等价值——它必须带 meetId 范围）。
+      result[key].listByProject = (projectKey) => {
+        if (typeof projectKey !== 'string' || !projectKey) return Promise.resolve([]);
+        return io.query(key, { ...expected, eventKey: projectKey });
+      };
+    }
+    if (key === 'sportsMeetScores') {
+      // sessionKey 在写入时落库（见 meet-score-service 的 doc 结构），可直接按它查。
+      result[key].listBySession = (sessionKey) => {
+        if (typeof sessionKey !== 'string' || !sessionKey) return Promise.resolve([]);
+        return io.query(key, { ...expected, sessionKey });
+      };
+    }
     // 名录页要给每一行算权限标签：20 行 × (校级角色 + 协会身份) = 40 次点读。
     // 两者都是「按主键点取」，主键由 userId 派生，正好可以整页批读（H-5）。
     if (key === 'schoolRoles' || key === 'memberships') {
