@@ -67,6 +67,11 @@ function expectedMethodsOf(key) {
     expected = [...expected, 'listBySession'];
   }
   if (key === 'sportsMeetJudgeAssignments') expected = [...expected, 'listByJudge'];
+  // 我的参赛页只要「我报了哪些项目」（2026-10-23 第三轮 X-9）：意向按 userId、
+  // 名单按 userIds（一行是「项目 × 学院」的名额占位，参赛者在数组里）。
+  if (key === 'sportsMeetInterests' || key === 'sportsMeetEntries') {
+    expected = [...expected, 'listByUser'];
+  }
   return expected.sort();
 }
 

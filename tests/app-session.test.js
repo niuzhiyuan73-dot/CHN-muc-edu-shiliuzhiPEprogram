@@ -151,6 +151,10 @@ beforeEach(() => {
   appSession.clear();
   schoolSession.reset();
   schoolMock.reset();
+  // 读请求节流器同样是模块级单例：本文件一连十几个用例各发 2~3 次请求，
+  // 累计会越过 6/秒的窗口，下文那次 getSchoolIdentitySession 就得等 1 秒——
+  // 而用例只 flush 一个 setImmediate 就断言。复位窗口，让每个用例从零开始。
+  require('../miniprogram/services/request-pace.js').pacer.reset();
 });
 
 /* ============================================================

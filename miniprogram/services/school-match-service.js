@@ -37,7 +37,7 @@ const {
 } = require('./association-space-permission.js');
 // 角色 / 名单的推导收在 school-actor，两套栈只有一份口径。
 const {
-  legacyRoleOf, buildDirectory, recordOptions, recordDirOf, EMPTY_RECORD_DIR,
+  legacyRoleOf, buildDirectory, recordOptions, recordDirOf, recordDirOfUsers, EMPTY_RECORD_DIR,
 } = require('./school-actor.js');
 const {
   schoolKey, schoolMemberKey, belongsToSchoolScope, schoolMatchKey, schoolLiveKey,
@@ -301,10 +301,24 @@ async function listSchoolMatches(payload = {}, ctx) {
     return ok(refused('比赛分页游标无效'));
   }
   if (cursor !== null && (!cursor || offset > 0)) return ok(refused('比赛分页游标无效'));
-  const [dir, page] = await Promise.all([
-    buildDirectory(ctx),
-    ctx.repo.forScope(ctx).matches.listPage({ filter: listFilter(payload), limit, offset, cursor }),
-  ]);
+  const page = await ctx.repo.forScope(ctx).matches.listPage({
+    filter: listFilter(payload), limit, offset, cursor,
+  });
+  // 【不再为一页比赛读全校名册】（2026-10-23 第三轮审查 X-3）
+  // 原实现每次翻页都 `buildDirectory`：2000 人的学校 = 20（名册）+ 20（账号）+ 1
+  // = 41 次 RPC，而首页六个协会各要一次，光目录就两百多次。
+  // 真正用到的只有「这页参赛者属于哪个学院」——学院关系只参与**学院负责人**
+  // 那一档的行级判定（管理员与参赛者本人在 canRecordScore 里更早返回），
+  // 所以非学院负责人直接给空目录，学院负责人按这页的人批读学籍。
+  const participants = [];
+  for (const doc of page.rows) {
+    for (const id of [...(doc.teamA || []), ...(doc.teamB || [])]) {
+      if (typeof id === 'string' && id) participants.push(id);
+    }
+  }
+  const dir = legacyRoleOf(ctx) === ROLE.STAFF
+    ? await recordDirOfUsers(ctx, participants)
+    : EMPTY_RECORD_DIR;
   const states = page.rows.length ? await ctx.repo.liveScores.listByIds(
     page.rows.map(doc => schoolLiveKey(doc._id, ctx))) : [];
   const byId = new Map(states.filter(state => belongsToSchoolScope(state, ctx)).map(state => [state._id, state]));
@@ -376,12 +390,18 @@ async function getSchoolMatchEntryContext(_payload, ctx) {
   if (!canReadAssociationSpace(ctx)) return ok({ ok: true, viewer, canRecord: false,
     members: [], pairInfo: null, seasonStart: null, message: viewer ? '当前账号没有本协会有效身份，暂时不能录入成绩' : '请先登录后再录入比赛成绩' });
   const [dir, season] = await Promise.all([buildDirectory(ctx), loadSeason(ctx)]);
-  // 只读本赛季的流水：名额口径本来就按 resetTime 过滤，把范围下推到查询，
-  // 别为了一个显示数字把历年台账翻一遍（P-2）。
-  const ledger = await ctx.repo.forScope(ctx).matches.listSince(sinceIsoOf(season));
+  // 只取「本赛季 + 含本人」的场次：名额口径本来就按 resetTime 过滤，而下面的
+  // seasonPairCounts 只对含本人的场次敏感——两件事一起下推，一个练了三年的协会
+  // 从 30 页 RPC 降到 1~2 页，输出逐字不变（2026-10-23 第三轮 X-7）。
+  const ledger = await ctx.repo.forScope(ctx).matches.listMineSince(ctx.actorId, sinceIsoOf(season));
   return ok({ ok: true, viewer, canRecord: canParticipateInAssociation(ctx),
+    // 【为什么不下发 realName】（2026-10-23 第三轮审查 X-6）
+    // 这里的门槛只是「本协会有效会员」（canParticipateInAssociation），而名单是
+    // **全校在册会员**：一旦带上真名，任何刚入会的人打开一次录分页就能拿到
+    // 「编号 ↔ 真实姓名」对照表（抓包即得）。选人只需要「认得是谁」，
+    // 昵称加首字足够；真名留给管理侧的名录/审核接口（按角色发放）。
     members: dir.members.filter(user => user.platformStatus === PLATFORM_STATUS.ACTIVE).map(user => ({
-      userId: user._id, nickName: user.nickName || '', realName: user.realName || '',
+      userId: user._id, nickName: user.nickName || '',
     })), seasonStart: season.resetTime || season.anchorTime || null,
     pairInfo: { counts: seasonPairCounts(ctx.actorId, ledger, { seasonStart: season.resetTime }), limit: RATED_PAIR_LIMIT }, message: '' });
 }

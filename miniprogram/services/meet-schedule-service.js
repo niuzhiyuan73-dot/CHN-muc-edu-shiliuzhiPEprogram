@@ -537,7 +537,10 @@ async function removeMeetJudge(payload = {}, ctx) {
   const submittedJudge = String(payload.judgeId || '').trim();
   const submittedSession = String(payload.sessionKey || '').trim();
   if (submittedJudge && submittedSession) {
-    const scores = await ctx.repo.forMeet(scopeOf(ctx)).sportsMeetScores.list();
+    // 【只读本场次的成绩】（2026-10-23 第三轮审查 X-10）
+    // 原来读的是**整届** sportsMeetScores：项目 × 场次 × 裁判数，一届数千条、
+    // 几十页 RPC，只为判断「这一场这一位裁判交没交」。仓储已有 listBySession。
+    const scores = await ctx.repo.forMeet(scopeOf(ctx)).sportsMeetScores.listBySession(submittedSession);
     const hasSubmitted = scores.some((doc) => doc.sessionKey === submittedSession
       && doc.judgeId === submittedJudge && doc.state === SCORE_SUBMITTED);
     if (!hasSubmitted) {

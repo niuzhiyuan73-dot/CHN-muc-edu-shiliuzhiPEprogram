@@ -326,3 +326,28 @@ test('账号未登录不能写：报名 / 发布都要先有登录身份', async
   assert.equal((await call(repo, 'registerTraining', { trainingId: t.trainingId }, { actor: '' })).ok, false);
   assert.equal((await call(repo, 'publishTraining', { requestId: 'r1', ...valid() }, { actor: '' })).ok, false);
 });
+
+test('报名名单按训练取，不读整个协会的报名台账（第三轮 X-8）', async () => {
+  const repo = fixture();
+  const t = await publish(repo, 'r1');
+  await call(repo, 'registerTraining', { trainingId: t.trainingId }, { actor: 'demo_muc_member' });
+
+  // 盯住「整表读」这个动作本身：trainingRegistrations 只增不减，
+  // 一个练了三年的协会是数千条 / 几十页 RPC，而这场训练只有一条报名。
+  let fullReads = 0;
+  const rawForScope = repo.forScope;
+  repo.forScope = (input) => {
+    const surface = rawForScope(input);
+    const original = surface.trainingRegistrations.list;
+    surface.trainingRegistrations.list = (...args) => { fullReads += 1; return original.apply(surface.trainingRegistrations, args); };
+    return surface;
+  };
+  try {
+    const roster = await call(repo, 'listTrainingRegistrations', { trainingId: t.trainingId });
+    assert.equal(roster.ok, true, roster.message);
+    assert.equal((roster.registrations || roster.members || []).length, 1, '内容仍要正确');
+  } finally {
+    repo.forScope = rawForScope;
+  }
+  assert.equal(fullReads, 0, `报名名单不该整表读（实际 ${fullReads} 次）`);
+});

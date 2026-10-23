@@ -312,6 +312,12 @@ function createMemoryRepo(seed = {}) {
       // list / listByEvent——写入与轮询都按编号定位，事务内外都够用。
       liveScores: {
         getById: (id) => read('liveScores', id),
+        // 轮询与比赛列表都要按一批编号读实时比分（云端是 `_.in` 一次批查）。
+        // 桩里缺这个方法时，业务一旦走到批读就 TypeError——本地绿、云端对，
+        // 属于最难查的那类差异（2026-10-23 第三轮 X-3 补）。
+        listByIds: (ids) => [...new Set((Array.isArray(ids) ? ids : [])
+          .filter(id => typeof id === 'string' && id))]
+          .map(id => target.liveScores.get(id)).filter(Boolean).map(clone),
         insert: async (doc) => {
           target.liveScores.set(doc._id, clone(doc));
         },

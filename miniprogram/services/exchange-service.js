@@ -2,7 +2,7 @@
 const { buildSchoolContext } = require('./school-context.js');
 const { canSchoolAction } = require('./school-permission.js');
 const { schoolKey, schoolAssociationKey, PLATFORM_ROLE, PLATFORM_STATUS, SCHOOL_MEMBER_STATUS } = require('../utils/school.js');
-const { planExchangeDraw, planExchangeMatches, placementsFromExchange } = require('./exchange-plan.js');
+const { planExchangeDraw, planExchangeMatches, changedExchangeMatches, placementsFromExchange } = require('./exchange-plan.js');
 const { formatOf, normalizeGroupCount, normalizeAdvancePerGroup } = require('./draw.js');
 const {
   EVENT_FORMAT, EVENT_FORMAT_LABEL, DEFAULT_EVENT_FORMAT,
@@ -564,6 +564,13 @@ async function submitExchangeScore(payload = {}, ctx) {
   const preview = { ...match, scoreA, scoreB, winner: scoreA > scoreB ? match.playerA : match.playerB, status: 'active' };
   const ledger = existing.map(row => row._id === match._id ? preview : row);
   const built = planExchangeMatches({ event: snapshot, draw: snapshot.draw, entrantsById: map, matches: ledger });
+  // 【只写「真的变了」的场次】（2026-10-23 第三轮审查 X-1）
+  // 原实现在事务里对**整张签表**逐场 getById，只为判断要不要补写。128 人单败
+  // 到第 2 轮就有 96 场，加上事件读、本场读写与审计即越过云端 100 次操作上限，
+  // 表现为「抽签与第一轮正常、第二轮起每场录分都报服务异常」。
+  // 台账在事务外已读到、事务内还有 revision 比对兜并发，因此差分可以提前算：
+  // 一次录分通常只影响「本场 + 下一轮那一条」。
+  const changed = changedExchangeMatches(ledger, built.matches);
   return ok(await ctx.repo.transaction(async tx => {
     const fresh = await freshContext(tx, ctx);
     const event = await tx.exchangeEvents.getById(payload.eventId);
@@ -579,7 +586,8 @@ async function submitExchangeScore(payload = {}, ctx) {
     await tx.exchangeMatches.set(scored._id, scored);
     // 把「此刻应当存在」的比赛补齐 / 刷新：新确定的对阵补进来；撤销后重录导致的
     // 换人（待确认 / 已撤销的下一轮）按新对阵刷新。已生效的比分不动。
-    for (const row of built.matches) {
+    // 遍历的是**差分**（changed），不是整张签表，见上方 X-1 的说明。
+    for (const row of changed) {
       const clash = await tx.exchangeMatches.getById(row._id);
       if (!clash) {
         await tx.exchangeMatches.set(row._id, { ...row, schoolId: event.schoolId, association: event.association });

@@ -629,6 +629,13 @@ async function publishMeetResults(payload = {}, ctx) {
   if (!meetReadable(ctx) || !ctx.meetId) return refused('请先登录');
   const eventKey = String(payload.eventKey || '').trim();
   if (!eventKey) return refused('请指定项目组别');
+  // 【判权必须在取数之前】（2026-10-23 第三轮审查 X-5）
+  // 下面要读六个「整届」集合（报名 / 成绩 / 场次 / 指派 / 发布 …），一届就是
+  // 上万条文档。原实现先读完这些再判权，等于让**任何登录账号**（不需要是管理员、
+  // 甚至不需要是本运动会成员）反复驱动最贵的一次读——配合「限流按次数不按成本」，
+  // 单个账号 3 次/秒 × 数十页 RPC 就能打空全校日配额。
+  // 判权只依赖上下文，先答「你有没有资格」，再谈「要读多少」。
+  if (!canPublishMeetResult(ctx)) return refused('只有校级管理员及以上或本届总裁判可以发布成绩');
 
   const scope = scopeOf(ctx);
   const event = await ctx.repo.forMeet(scope).sportsMeetEvents.getById(eventKey);
@@ -642,7 +649,6 @@ async function publishMeetResults(payload = {}, ctx) {
   ]);
   if (!isAlive(meet) || meet.schoolId !== ctx.schoolId) return refused('运动会不存在或已删除');
   if (!event || event.meetId !== ctx.meetId) return refused('项目组别不存在或不属于本届运动会');
-  if (!canPublishMeetResult(ctx)) return refused('只有校级管理员及以上或本届总裁判可以发布成绩');
 
   const ownSessions = sessions
     .filter((doc) => doc.eventKey === eventKey)
@@ -1068,9 +1074,13 @@ async function getPublishedResults(payload = {}, ctx) {
     if (row && row.schoolId === ctx.schoolId) collegeName.set(row.collegeId, row.name || row.collegeId);
   }
   const nickOf = new Map();
-  for (const userId of [...new Set(rows.flatMap((row) => (Array.isArray(row.userIds) ? row.userIds : [])))]) {
-    const user = await ctx.repo.users.getById(userId);
-    nickOf.set(userId, (user && user.nickName) || '未设置昵称');
+  // 【为什么要批读】（2026-10-23 第三轮审查 X-4）
+  // 原先是逐人 `users.getById`：一届成绩明细去重后 1500~2500 个编号，
+  // 就是 1500~2500 次**串行** RPC，必然撞超时，表现为「点开成绩单一直转圈」。
+  // `users.listByIds` 每 100 个一批，几十次往返即可。
+  const detailUserIds = [...new Set(rows.flatMap((row) => (Array.isArray(row.userIds) ? row.userIds : [])))];
+  for (const user of (detailUserIds.length ? await ctx.repo.users.listByIds(detailUserIds) : [])) {
+    nickOf.set(user._id, user.nickName || '未设置昵称');
   }
   const rowLabel = (row) => ({
     entryKey: row.entryKey,
@@ -1162,14 +1172,13 @@ async function listMeetPublishedResults(payload = {}, ctx) {
   for (const row of scopeRows) {
     if (row && row.schoolId === ctx.schoolId) collegeName.set(row.collegeId, row.name || row.collegeId);
   }
-  // 行里存了 userIds 快照，不需要再读报名名单；昵称按行里的用户解析一次
+  // 行里存了 userIds 快照，不需要再读报名名单；昵称按行里的用户解析一次。
+  // 与 getPublishedResults 同一口径：一次 `listByIds`（内部每 100 个一批），
+  // 不再按 20 个一组拿点读硬凑（2026-10-23 第三轮审查 X-4）。
   const nickOf = new Map();
   const userIds = [...new Set(selectedRows.flatMap((row) => (Array.isArray(row.userIds) ? row.userIds : [])))];
-  for (let i = 0; i < userIds.length; i += 20) {
-    await Promise.all(userIds.slice(i, i + 20).map(async userId => {
-      const user = await ctx.repo.users.getById(userId);
-      nickOf.set(userId, (user && user.nickName) || '未设置昵称');
-    }));
+  for (const user of (userIds.length ? await ctx.repo.users.listByIds(userIds) : [])) {
+    nickOf.set(user._id, user.nickName || '未设置昵称');
   }
   const labelOf = new Map(sessions.map((doc) => [doc._id, doc.roundLabel || doc.round]));
 

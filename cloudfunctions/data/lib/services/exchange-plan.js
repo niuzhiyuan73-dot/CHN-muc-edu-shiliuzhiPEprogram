@@ -299,6 +299,47 @@ function placementsFromExchange({ event, draw, matches } = {}) {
 }
 
 /**
+ * 从「投影出的整张签表」里挑出**真正需要落库的场次**。
+ *
+ * 【为什么需要它】（2026-10-23 第三轮审查 X-1）
+ * `planExchangeMatches({ full: true })` 交出的是「此刻应当存在的**全部**对阵」，
+ * 而调用方（录分、撤销）每次都在事务里逐场 `getById` 一遍，只为判断要不要补写。
+ * 签表越大，事务操作数线性增长：128 人单败在第 2 轮就有 96 场，
+ * 加上事件读、本场读写与审计，直接越过云端 100 次操作的上限——
+ * 表现为「抽签正常、第一轮正常，第二轮起每场录分都报服务异常」。
+ *
+ * 【为什么可以在事务外算差分】
+ * 入参 `current` 是调用方**已经读到的**最新台账（`exchangeMatches.listByEvent`），
+ * 且事务内还有一道 `event.revision / match.revision` 比对（变了就要求刷新重试）。
+ * 既然台账版本没变，那么「不需要改的场次」在事务里也不会需要改——不必逐场重读。
+ *
+ * 【返回什么】
+ *   · 台账里没有的编号 → 新对阵，要补写；
+ *   · 台账里已生效（status = active）→ 既成事实，不动；
+ *   · 对阵双方与状态都没变 → 不动；
+ *   · 其余（换人 / 状态回退）→ 要刷新。
+ *
+ * 正常情况下一次录分只影响「本场 + 下一轮那一条」，与签表总规模无关。
+ *
+ * @param {Array<Object>} current 当前台账（含本次待写入的那场，即已合并 preview 的列表）
+ * @param {Array<Object>} projected planExchangeMatches 产出的全量投影
+ * @returns {Array<Object>} 需要落库的投影行
+ */
+function changedExchangeMatches(current, projected) {
+  const byId = new Map((Array.isArray(current) ? current : [])
+    .filter((row) => row && row._id)
+    .map((row) => [row._id, row]));
+  return (Array.isArray(projected) ? projected : []).filter((row) => {
+    if (!row || !row._id) return false;
+    const old = byId.get(row._id);
+    if (!old) return true;
+    // 已生效的比分是既成事实（撤销有专门入口，且要求从后往前撤）
+    if (old.status === 'active') return false;
+    return old.playerA !== row.playerA || old.playerB !== row.playerB || old.status !== row.status;
+  });
+}
+
+/**
  * 撤销前的依赖自查：找出「已经排在这场比赛之后」的场次（返回真实记录编号）。
  *
  * 与普通赛事同一口径：撤掉前面一场，后面那几场还挂着已经作废的晋级者，
@@ -324,6 +365,7 @@ module.exports = {
   exchangeDraftOf,
   planExchangeDraw,
   planExchangeMatches,
+  changedExchangeMatches,
   placementsFromExchange,
   findExchangeDependents,
 };

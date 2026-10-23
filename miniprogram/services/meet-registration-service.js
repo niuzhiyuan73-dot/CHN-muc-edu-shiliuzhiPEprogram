@@ -350,10 +350,16 @@ async function getMyMeetParticipation(payload = {}, ctx) {
   if (!meetReadable(ctx) || !ctx.meetId || !ctx.actorId) return refused('请先登录');
 
   const scope = { schoolId: ctx.schoolId, meetId: ctx.meetId };
+  const scoped = ctx.repo.forMeet(scope);
+  // 按人下推（2026-10-23 第三轮 X-9）：一届的意向与名单是「项目 × 学院 × 名额」，
+  // 报名旺季数千条 = 30~50 页 RPC，而这一页只显示本人的那几条。
+  //
+  // 取回后**不再**按 userId 复筛：这一层若还留着过滤，原语写错（比如漏掉 meetId）
+  // 就会被它悄悄盖住，测试也就照不出来。
   const [interests, entries, events] = await Promise.all([
-    ctx.repo.forMeet(scope).sportsMeetInterests.list(),
-    ctx.repo.forMeet(scope).sportsMeetEntries.list(),
-    listAliveEvents(ctx.repo.forMeet(scope).sportsMeetEvents),
+    scoped.sportsMeetInterests.listByUser(ctx.actorId),
+    scoped.sportsMeetEntries.listByUser(ctx.actorId),
+    listAliveEvents(scoped.sportsMeetEvents),
   ]);
   const eventOf = new Map(events.map((doc) => [doc._id, doc]));
   const describe = (eventKey) => {
@@ -361,17 +367,14 @@ async function getMyMeetParticipation(payload = {}, ctx) {
     return event ? { name: event.name, group: event.group } : { name: '', group: '' };
   };
 
-  const mine = interests
-    .filter((doc) => doc.userId === ctx.actorId)
-    .map((doc) => ({
-      eventKey: doc.eventKey,
-      ...describe(doc.eventKey),
-      status: doc.status,
-      collegeId: doc.collegeId,
-    }));
+  const mine = interests.map((doc) => ({
+    eventKey: doc.eventKey,
+    ...describe(doc.eventKey),
+    status: doc.status,
+    collegeId: doc.collegeId,
+  }));
 
   const joined = entries
-    .filter((doc) => Array.isArray(doc.userIds) && doc.userIds.includes(ctx.actorId))
     .filter((doc) => doc.status !== MEET_ENTRY_STATUS.WITHDRAWN)
     .map((doc) => ({
       entryKey: doc._id,
@@ -486,6 +489,14 @@ async function submitMeetCollegeEntry(payload = {}, ctx) {
   if (userIds.length > MEET_ENTRY_MAX_MEMBERS) {
     return refused(`单条名单最多 ${MEET_ENTRY_MAX_MEMBERS} 人，当前 ${userIds.length} 人：请拆成多条提交，或让各学院分别报名`);
   }
+
+  // 【判权在取数之前】（2026-10-23 第三轮审查 X-5）
+  // 下面要按人做候选人快照（每人 3 次读，上限 20 人 ≈ 60 次），而「你是不是这个
+  // 学院的部长」只依赖上下文与一条学院部长授权记录。原来这道判断放在事务里，
+  // 等于任何登录账号都能先用 60 次读换一句「只有学院部长可以提交正式报名」。
+  // 事务内仍会用 fresh 再判一次——这里只是提前拦掉注定失败的请求。
+  const earlyCollege = await resolveCollege(ctx, payload);
+  if (!earlyCollege.ok) return refused(earlyCollege.message);
 
   // 事务外先解析项目组别，只为拿到 eventKey 去拼意向主键；事务内还会再读一次，
   // 那一遍才是权威的「是否已抽签」判据。

@@ -39,10 +39,18 @@ function isTempPath(path) {
   return /^(wxfile:\/\/|http:\/\/tmp\/|http:\/\/usr\/|https?:\/\/tmp\/)/.test(path);
 }
 
-/** 从临时路径里取扩展名；取不到就按微信头像默认的 jpeg 处理 */
+/**
+ * 头像允许的扩展名。白名单而不是「取到什么都用」——路径由调用方给，
+ * 任意扩展名会让云存储里出现 `avatars/xxx.html` 这类文件（2026-10-23 第三轮 X-15）。
+ * 微信 `chooseAvatar` 只产出这几种；其余一律按 jpeg 落盘，与「取不到扩展名」同一口径。
+ */
+const ALLOWED_EXT = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif']);
+
+/** 从临时路径里取扩展名；取不到或不在白名单就按微信头像默认的 jpeg 处理 */
 function extOf(path) {
   const matched = /\.([a-zA-Z0-9]+)(?:\?.*)?$/.exec(path);
-  return matched ? matched[1].toLowerCase() : 'jpeg';
+  const ext = matched ? matched[1].toLowerCase() : '';
+  return ALLOWED_EXT.has(ext) ? ext : 'jpeg';
 }
 
 /** 云存储路径。时间戳加随机串，避免同名互相覆盖 */

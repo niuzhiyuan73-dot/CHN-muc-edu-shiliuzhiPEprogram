@@ -44,9 +44,11 @@ const { loadSchoolHomeView } = require('../../services/school-home-view.js');
 const { resolveAuthState } = require('../../services/auth.js');
 const { resetBranding } = require('../../services/branding.js');
 const associationScope = require('../../services/association-scope.js');
+const { STORAGE_KEY } = require('../../utils/constants.js');
 
-/** 首屏缓存。只用来「先把内容画出来」，随后那次 refresh 一定会覆盖它 */
-const HOME_CACHE_KEY = 'home_view_cache';
+/** 首屏缓存。只用来「先把内容画出来」，随后那次 refresh 一定会覆盖它。
+ *  键放在 constants 里是因为登出也要清它（换账号后不能先画上一个人的首页）。 */
+const HOME_CACHE_KEY = STORAGE_KEY.HOME_VIEW;
 /** 缓存可用时长。超过就当没有：宁可白屏等一次，也不拿半天前的数据充数 */
 const HOME_CACHE_TTL = 5 * 60 * 1000;
 /** onShow 的去抖窗口（毫秒） */

@@ -75,19 +75,23 @@ test('受范围仓储的集合方法面就是约定的那一套（钉住契约�
       : REQUIRED_METHODS;
     // matches 额外一个 listSince：把「本赛季」下推成 matchTime >= 分界点，
     // 免得为了一次录分把历年台账翻一遍（2026-10-22 第二轮审查 P-2）。
-    if (key === 'matches') expected = [...expected, 'listSince', 'listPage'];
+    // 再加一个 listMineSince：本赛季 + 只含本人（第三轮 X-7）。
+    if (key === 'matches') expected = [...expected, 'listSince', 'listPage', 'listMineSince'];
     // 这两个额外有 listByUser：都是「只增不减 + 一个人只有几十条」的集合，
     // 调用方只关心一个人的那几条——训练报名（H-2）、小组归属（H-3）。
     if (key === 'trainingRegistrations' || key === 'associationGroupMembers') {
       expected = [...expected, 'listByUser'];
     }
+    // 训练报名还要「按训练取」（一场训练几十条，集合只增不减，第三轮 X-8）。
+    if (key === 'trainingRegistrations') expected = [...expected, 'listByTraining'];
     // 评级表（2026-10-23 方案 A 第 2 步）：榜单要「按 elo 前 N」、个人主页要
     // 「我在同项目排第几」，三个方法把条件、排序、计数一起下推。
     if (key === 'memberRatings') {
       expected = [...expected, 'listTop', 'countRanked', 'listByUser'];
     }
     // 名录页给每一行算权限标签：20 行 × 2 次点读 → 两条 listByIds（H-5）。
-    if (key === 'schoolRoles' || key === 'memberships') {
+    // schoolMembers 同理：比赛列表只要「这页参赛者属于哪个学院」（第三轮 X-3）。
+    if (key === 'schoolRoles' || key === 'memberships' || key === 'schoolMembers') {
       expected = [...expected, 'listByIds'];
     }
     if (key === 'schoolMembers') expected = [...expected, 'listDirectoryPage'];

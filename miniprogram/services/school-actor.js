@@ -252,6 +252,54 @@ async function recordDirOf(ctx, doc) {
 }
 
 /**
+ * 只取「这批人 + 操作者自己」的学院关系（2026-10-23 第三轮审查 X-3）。
+ *
+ * 【为什么要另开一条路】
+ * `buildDirectory` 读的是**全校**在册名单 + 这批人的账号：2000 人的学校是
+ * 40 次 RPC。比赛列表一页最多 100 场、参赛者两三百人，`matchSummary` 真正
+ * 需要的只是「这些编号分别属于哪个学院」以及操作者自己的学院名——
+ * 为一次翻页读全校名册，是当前全站最大的一笔固定开销（首页六个协会各一次）。
+ *
+ * 现在：学院目录 1 页（几十条）+ 这一页参赛者的学籍一次批读（每 100 个一批）。
+ * 与 `recordDirOf`（单场、按 2~4 个参赛者点读）同一口径，只是这里按批。
+ *
+ * 【返回值必须与 buildDirectory 的子集形状一致】
+ * `recordOptions` 只用到 `collegeIdOf` / `collegeNameById` / `actorCollege` /
+ * `collegeOf` 四个成员；这里照抄形状，调用方不必分支。
+ *
+ * @param {Object} ctx
+ * @param {Array<string>} userIds 本页涉及的会员编号（会去重、忽略空值）
+ * @returns {Promise<Object>} 与 recordOptions 兼容的目录
+ */
+async function recordDirOfUsers(ctx, userIds) {
+  const memberCollegeId = (ctx.schoolMember && ctx.schoolMember.collegeId) || '';
+  if (!memberCollegeId) return EMPTY_RECORD_DIR;
+
+  const ids = [...new Set((Array.isArray(userIds) ? userIds : [])
+    .filter(id => typeof id === 'string' && id))];
+  const scoped = ctx.repo.forScope(ctx);
+  const [colleges, rows] = await Promise.all([
+    scoped.colleges.list(),
+    ids.length ? scoped.schoolMembers.listByIds(ids.map(id => schoolMemberKey(id, ctx.schoolId))) : [],
+  ]);
+
+  const nameById = new Map(colleges.map(item => [item.collegeId, item.name]));
+  const collegeIdByUser = new Map();
+  for (const row of rows) {
+    if (row && row.userId && row.collegeId) collegeIdByUser.set(row.userId, row.collegeId);
+  }
+  // 操作者自己一定在表里（他的学院名要用于「同学院」判定，见 recordDirOf 的说明）
+  collegeIdByUser.set(ctx.actorId, memberCollegeId);
+
+  return {
+    actorCollege: nameById.get(memberCollegeId) || '',
+    collegeIdOf: userId => collegeIdByUser.get(userId) || '',
+    collegeNameById: id => nameById.get(id) || '',
+    collegeOf: userId => nameById.get(collegeIdByUser.get(userId)) || '',
+  };
+}
+
+/**
  * 只取「操作者自己的学院名」——一次点读，而不是全院目录（2026-10-23 H-4）。
  *
  * 【为什么够用】`legacyActorOf` 组装旧栈账号时，从目录里唯一取的就是
@@ -274,5 +322,5 @@ async function actorCollegeNameOf(ctx) {
 
 module.exports = {
   legacyRoleOf, buildDirectory, buildCollegeDirectory, recordOptions, legacyActorOf,
-  actorCollegeNameOf, recordDirOf, EMPTY_RECORD_DIR,
+  actorCollegeNameOf, recordDirOf, recordDirOfUsers, EMPTY_RECORD_DIR,
 };

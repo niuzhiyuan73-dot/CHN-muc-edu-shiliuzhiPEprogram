@@ -339,8 +339,10 @@ async function listTrainingRegistrations(payload = {}, ctx) {
   if (!isTrainingDoc(training) || !belongsToSchoolScope(training, ctx)) return ok(refused('训练不存在'));
 
   const canManage = canManageAssociationSpace(ctx);
-  const all = (await ctx.repo.forScope(ctx).trainingRegistrations.list())
-    .filter(row => row.trainingId === training._id);
+  // 【按训练取报名，而不是读整个协会的台账】（2026-10-23 第三轮审查 X-8）
+  // trainingRegistrations 只增不减：一个练了三年的协会是数千条 / 几十页 RPC，
+  // 而这里只要这一场训练的那几十条。见仓储的 listByTraining。
+  const all = await ctx.repo.forScope(ctx).trainingRegistrations.listByTraining(training._id);
   const registeredRows = all.filter(row => row.signupStatus === TRAINING_SIGNUP_STATUS.REGISTERED);
 
   // 普通会员只看有效报名名单（昵称 / 头像），不下发取消记录与任何隐私字段。
@@ -397,12 +399,14 @@ async function listTrainingRegistrations(payload = {}, ctx) {
   const collegeNameById = new Map(colleges.map(row => [row.collegeId, row.name]));
   const collegeName = id => collegeNameById.get(id) || '';
   // 同理：账号与学校身份各取一次建索引，页面每条再逐条 getById 是 N+1。
-  // 账号按当前页的人批量取，不读全平台 users（2026-10-21 审查 P0-1）。
+  // 账号按当前页的人批量取，不读全平台 users（2026-10-21 审查 P0-1）；
+  // 学籍也只取这一页的人（2026-10-23 第三轮 X-11 同型：为几十行读全校名册）。
   const userById = new Map(
     (await ctx.repo.users.listByIds(page.map(row => row.userId))).map(user => [user._id, user]),
   );
-  const memberById = new Map((await ctx.repo.forScope(ctx).schoolMembers.list())
-    .map(row => [row._id, row]));
+  const memberById = new Map((await ctx.repo.forScope(ctx).schoolMembers
+    .listByIds(page.map(row => schoolKey('sm', ctx.schoolId, row.userId))))
+    .filter(Boolean).map(row => [row._id, row]));
   for (const row of page) {
     const user = userById.get(row.userId);
     const member = memberById.get(schoolKey('sm', ctx.schoolId, row.userId));

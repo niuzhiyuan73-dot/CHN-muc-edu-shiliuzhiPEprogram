@@ -2,6 +2,7 @@
 const { schoolScope } = require('../utils/school.js');
 const { meetRequestScope } = require('../utils/meet-scope.js');
 const { guardWrite, isSchoolWriteAction } = require('../utils/write.js');
+const { pacer } = require('./request-pace.js');
 
 /**
  * 绑定范围 + 协议 2 的请求器；身份 / 协会空间 / 跨校邀请赛三个门面共用一份。
@@ -13,18 +14,26 @@ const { guardWrite, isSchoolWriteAction } = require('../utils/write.js');
  * 学校维度 11 个页面此前在真实环境下的表现。所以写动作套 guardWrite，把抛出
  * 收敛成与 mock 同形的 {ok:false,...}；读动作放行，读失败仍让页面自己 catch
  * （收敛成空数据会把故障伪装成「没有内容」）。口径与 utils/write.js 一致。
+ *
+ * 【读动作为什么先排队】（2026-10-23 第三轮审查 X-2）
+ * 服务端按「每账号每秒 8 次读」限流，而首页一次要发约 15 个读请求——
+ * 超出的部分被拒后，页面各自 catch 成「该协会没有内容」，首屏静默缺数据。
+ * 这里按 6/秒排队（低于阈值、留并发余量），把「被拒」换成「晚一点到」。
  */
 function requestFor(scope) {
   return (action, payload = {}) => {
+    const isWrite = isSchoolWriteAction(action);
     const run = async () => {
       if (typeof wx === 'undefined' || !wx.cloud) throw new Error('云开发尚未初始化');
+      // 写动作由用户逐个触发，远低于写阈值（3/秒），不排队以免「点下去没反应」
+      if (!isWrite) await pacer.take();
       const { result } = await wx.cloud.callFunction({ name: 'data', data: {
         protocolVersion: 2, ...scope, action, payload,
       } });
       if (!result || !result.ok) throw new Error(result && result.message || '学校接口请求失败');
       return result.data;
     };
-    return isSchoolWriteAction(action) ? guardWrite(run) : run();
+    return isWrite ? guardWrite(run) : run();
   };
 }
 

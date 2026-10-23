@@ -143,7 +143,8 @@ function createSchoolMemoryRepo(seed = {}) {
         // 批量点取（与云端 listByIds 同口径）：赛事列表标「我报名了没」、
         // 名录页给每一行算权限标签，都可以一页只发一次调用（2026-10-22 H-3／H-5）。
         // `owns` 校验是这条路径的安全底线：主键可能来自调用方。
-        if (EVENT_SCOPED.includes(key) || key === 'schoolRoles' || key === 'memberships') {
+        if (EVENT_SCOPED.includes(key) || key === 'schoolRoles' || key === 'memberships'
+          || key === 'schoolMembers') {
           result[key].listByIds = async ids => {
             if (inTx) throw new Error(`事务内不允许条件读取（${key}），请改用 getById`);
             const uniq = [...new Set((Array.isArray(ids) ? ids : [])
@@ -166,6 +167,16 @@ function createSchoolMemoryRepo(seed = {}) {
           };
           result[key].listSince = async sinceIso => (await repo[key].list())
             .filter(doc => owns(doc) && (!sinceIso || String(doc.matchTime || '') >= sinceIso));
+          // 「我的比赛（本赛季）」：与云端 listMineSince 同口径（2026-10-23 第三轮 X-7）。
+          // 云端是「teamA / teamB 两支等值查询 + 按 _id 去重」（数组字段不能一条查完）；
+          // 内存里一次过滤即等价——等值对数组字段就是「包含」。
+          result[key].listMineSince = async (userId, sinceIso) => {
+            if (inTx) throw new Error('事务内不允许条件读取（matches），请改用 getById');
+            if (typeof userId !== 'string' || !userId) return [];
+            return (await repo[key].list()).filter(doc => owns(doc)
+              && (!sinceIso || String(doc.matchTime || '') >= sinceIso)
+              && ((doc.teamA || []).includes(userId) || (doc.teamB || []).includes(userId)));
+          };
         }
         // 按人反查：与云端 listByUser 同口径（缺 userId 时返回空数组，
         // 不退化成整表读）。训练报名见 H-2，小组成员见 H-3，评级见方案 A 第 2 步
@@ -175,6 +186,14 @@ function createSchoolMemoryRepo(seed = {}) {
             if (inTx) throw new Error(`事务内不允许条件读取（${key}），请改用 getById`);
             if (typeof userId !== 'string' || !userId) return [];
             return (await repo[key].list()).filter(doc => owns(doc) && doc.userId === userId);
+          };
+        }
+        // 按训练取报名：与云端 listByTraining 同口径（缺 trainingId 返回空数组）。
+        if (key === 'trainingRegistrations') {
+          result[key].listByTraining = async trainingId => {
+            if (inTx) throw new Error('事务内不允许条件读取（trainingRegistrations），请改用 getById');
+            if (typeof trainingId !== 'string' || !trainingId) return [];
+            return (await repo[key].list()).filter(doc => owns(doc) && doc.trainingId === trainingId);
           };
         }
         // 评级表的下推读（2026-10-23 方案 A 第 2 步）：与云端
@@ -286,6 +305,20 @@ function createSchoolMemoryRepo(seed = {}) {
             if (inTx) throw new Error('事务内不允许条件读取（sportsMeetJudgeAssignments），请改用 getById');
             if (typeof judgeId !== 'string' || !judgeId) return [];
             return (await repo[key].list()).filter(doc => owns(doc) && doc.judgeId === judgeId);
+          };
+        }
+        // 按人反查（2026-10-23 第三轮 X-9）：与云端 forMeet 同口径。
+        // 意向按 `userId`、名单按 `userIds`（数组），缺参返回空数组不退化成整表读。
+        if (key === 'sportsMeetInterests' || key === 'sportsMeetEntries') {
+          const actorField = key === 'sportsMeetEntries' ? 'userIds' : 'userId';
+          result[key].listByUser = async userId => {
+            if (inTx) throw new Error(`事务内不允许条件读取（${key}），请改用 getById`);
+            if (typeof userId !== 'string' || !userId) return [];
+            return (await repo[key].list()).filter((doc) => {
+              if (!owns(doc)) return false;
+              const value = doc[actorField];
+              return Array.isArray(value) ? value.includes(userId) : value === userId;
+            });
           };
         }
       }

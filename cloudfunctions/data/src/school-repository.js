@@ -1,7 +1,7 @@
 /** 两个适配器共享的学校仓储扩展。原单校接口保留，S2 逐一接入新接口。 */
 const { schoolScope, SCHOOL_MEMBER_STATUS } = require('../lib/utils/school.js');
 const { MEET_COLLECTIONS, meetScope } = require('../lib/utils/meet-scope.js');
-const { attachTeamReads } = require('../lib/services/scoped-team-reads.js');
+const { attachTeamReads, unique } = require('../lib/services/scoped-team-reads.js');
 
 const SCHOOL_COLLECTIONS = ['schools', 'schoolAssociations', 'colleges', 'schoolMembers', 'schoolRoles', 'studentIdClaims',
   'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
@@ -165,7 +165,9 @@ function buildScoped(repo, io, inTx, options) {
     }
     // 名录页要给每一行算权限标签：20 行 × (校级角色 + 协会身份) = 40 次点读。
     // 两者都是「按主键点取」，主键由 userId 派生，正好可以整页批读（H-5）。
-    if (key === 'schoolRoles' || key === 'memberships') {
+    // schoolMembers 后来也用上同一条路（2026-10-23 第三轮 X-3）：比赛列表只需
+    // 「这一页参赛者属于哪个学院」，不必为此读全校名册。
+    if (key === 'schoolMembers' || key === 'schoolRoles' || key === 'memberships') {
       const scopeFields = key === 'memberships'
         ? { schoolId: scope.schoolId, association: scope.association }
         : { schoolId: scope.schoolId };
@@ -196,6 +198,30 @@ function buildScoped(repo, io, inTx, options) {
       if (typeof sinceIso === 'string' && sinceIso) where.matchTime = io.cmd.gte(sinceIso);
       return io.query('matches', where);
     };
+    // 「我的比赛（本赛季）」：只取含本人的场次。
+    //
+    // 【要解决什么】（2026-10-23 第三轮 X-7）录分页要算「我本赛季每对对手打了几场」，
+    // 原实现把整个赛季的台账读回来再筛——一个赛季 3000 场 = 30 页 RPC，越往后越慢。
+    // 而下游 `seasonPairCounts` 内部先过 `countedMatches`、再只保留含本人的场次，
+    // 所以把输入收窄到「含我的」**不改变输出**：这是缩范围，不是改算法。
+    //
+    // 【为什么分两支】`teamA` / `teamB` 是两个**数组**字段，一条等值查询表达不出
+    // 「我在任一侧」。两支各是一个纯等值前缀（等值对数组字段即「包含」），正好各自
+    // 命中索引清单 §2.3 的 `by_scope_team_a_match_time` / `..._team_b_match_time`。
+    // 同一手法在 `teamMatches.listByTeams`（scoped-team-reads.js）已有先例。
+    //
+    // 【为什么必须按 _id 去重】同一人同时出现在两队的脏数据会被合并成两条，名额
+    // 数字直接偏大——这里的去重是正确性要求，不是优化。
+    result.matches.listMineSince = (userId, sinceIso) => {
+      if (inTx) throw new Error('事务内不允许条件读取（matches），请改用 getById');
+      if (typeof userId !== 'string' || !userId) return Promise.resolve([]);
+      const where = { schoolId: scope.schoolId, association: scope.association };
+      if (typeof sinceIso === 'string' && sinceIso) where.matchTime = io.cmd.gte(sinceIso);
+      return Promise.all([
+        io.query('matches', { ...where, teamA: userId }),
+        io.query('matches', { ...where, teamB: userId }),
+      ]).then((rows) => unique(rows.flat()));
+    };
   }
 
   // 按人反查：这两个集合都是「只增不减 + 一个人只有几十条」，而调用方只需要
@@ -215,6 +241,41 @@ function buildScoped(repo, io, inTx, options) {
       if (inTx) throw new Error(`事务内不允许条件读取（${key}），请改用 getById`);
       if (typeof userId !== 'string' || !userId) return Promise.resolve([]);
       return io.query(key, { schoolId: scope.schoolId, association: scope.association, userId });
+    };
+  }
+
+  // 运动会的「按人反查」（2026-10-23 第三轮 X-9）。
+  //
+  // 【要解决什么】「我的参赛页」只要「我报了哪些项目、选上了没」，原实现把一届的
+  // 意向与名单全读回来再按 userId 筛。报名旺季一届意向数千条 = 30~50 页 RPC。
+  //
+  // 【为什么另起一条循环，而不是并进上面那条】运动会集合的归属是
+  // `{schoolId, meetId}`，**没有 association**；并进去会拼出一个带 undefined 的
+  // 条件，云端查不到任何文档（本地 filter 恰好也会空，两端一起静默变空）。
+  // 条件由 `expectedOf(key)` 给出，范围天然内置。
+  //
+  // 【名单为什么按 `userIds` 匹配】`sportsMeetEntries` 一行是一个「项目 × 学院」
+  // 的名额占位，参赛者是 `userIds` 数组；等值对数组字段即「包含」，与内存端
+  // `includes` 同口径。
+  for (const key of ['sportsMeetInterests', 'sportsMeetEntries']) {
+    if (!result[key]) continue;
+    const actorField = key === 'sportsMeetEntries' ? 'userIds' : 'userId';
+    result[key].listByUser = (userId) => {
+      if (inTx) throw new Error(`事务内不允许条件读取（${key}），请改用 getById`);
+      if (typeof userId !== 'string' || !userId) return Promise.resolve([]);
+      return io.query(key, { ...expectedOf(key), [actorField]: userId });
+    };
+  }
+
+  // 按训练取报名：一场训练的报名只有几十条，而集合是「只增不减」的。
+  // 原来详情页把整个协会的报名台账读回来再按 trainingId 过滤（2026-10-23 第三轮 X-8）。
+  if (result.trainingRegistrations) {
+    result.trainingRegistrations.listByTraining = (trainingId) => {
+      if (inTx) throw new Error('事务内不允许条件读取（trainingRegistrations），请改用 getById');
+      if (typeof trainingId !== 'string' || !trainingId) return Promise.resolve([]);
+      return io.query('trainingRegistrations', {
+        schoolId: scope.schoolId, association: scope.association, trainingId,
+      });
     };
   }
 

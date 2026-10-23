@@ -364,3 +364,28 @@ test('建组 → 删除 → 同一请求编号再建：真的重建，而不是�
   const creates = (await repo.auditLogs.list()).filter(row => row.action === 'createAssociationGroup');
   assert.equal(creates.length, 2, '两次建组各留一条审计，后一条没有覆盖前一条');
 });
+
+test('小组名单按人批读，不为几十人读全校名册（第三轮 X-11）', async () => {
+  const repo = fixture();
+  const group = await createGroup(repo, { memberIds: ['demo_muc_member', 'demo_muc_other'] });
+
+  // 2000 人的学校，schoolMembers.list() 一次就是 20 页；而小组只有两个人。
+  let rosterReads = 0;
+  const rawForScope = repo.forScope;
+  repo.forScope = (input) => {
+    const surface = rawForScope(input);
+    const original = surface.schoolMembers.list;
+    surface.schoolMembers.list = (...args) => { rosterReads += 1; return original.apply(surface.schoolMembers, args); };
+    return surface;
+  };
+  try {
+    const detail = await call(repo, 'getAssociationGroup', { groupId: group.groupId });
+    assert.equal(detail.ok, true, detail.message);
+    assert.equal(detail.members.length, 2, '成员仍要解析出来');
+    assert.ok(detail.members.every((row) => row.nickName && row.nickName !== '会员'),
+      '昵称/学院/权限标签不能因为改批读而丢');
+  } finally {
+    repo.forScope = rawForScope;
+  }
+  assert.equal(rosterReads, 0, `小组名单不该读全校名册（实际 ${rosterReads} 次）`);
+});

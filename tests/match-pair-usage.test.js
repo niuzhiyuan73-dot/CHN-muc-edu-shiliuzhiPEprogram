@@ -40,18 +40,24 @@ function fixture() {
   ['demo_muc_member', 'demo_muc_member_2'].forEach(add);
   const repo = createSchoolMemoryRepo(seed);
 
-  // 台账读取探针：分别记「整表读」与「按赛季下推」的次数
-  const reads = { list: 0, listSince: 0, sinceArg: [] };
+  // 台账读取探针：分别记「整表读」「按赛季下推」「按人下推」的次数
+  const reads = { list: 0, listSince: 0, listMineSince: 0, sinceArg: [], mineArg: [] };
   const rawForScope = repo.forScope.bind(repo);
   repo.forScope = (input) => {
     const surface = rawForScope(input);
     const rawList = surface.matches.list;
     const rawSince = surface.matches.listSince;
+    const rawMine = surface.matches.listMineSince;
     surface.matches.list = (...args) => { reads.list += 1; return rawList(...args); };
     surface.matches.listSince = (iso) => {
       reads.listSince += 1;
       reads.sinceArg.push(iso);
       return rawSince(iso);
+    };
+    surface.matches.listMineSince = (userId, iso) => {
+      reads.listMineSince += 1;
+      reads.mineArg.push({ userId, sinceIso: iso });
+      return rawMine(userId, iso);
     };
     return surface;
   };
@@ -66,13 +72,13 @@ async function call(repo, action, payload = {}, opts = {}) {
 
 /** 直接往台账塞一条已生效的日常约球（不经过计入名额的提交路径） */
 async function seedMatch(repo, { id, matchTime, status = MATCH_STATUS.PENDING,
-  teamA = ['demo_muc_member'], teamB = ['demo_muc_member_2'] }) {
+  teamA = ['demo_muc_member'], teamB = ['demo_muc_member_2'], extra = {} }) {
   const matchId = schoolMatchKey(schoolKey('m', 'demo_muc_member', id), SCOPE);
   await repo.matches.set(matchId, {
     _id: matchId, schoolId: SCOPE.schoolId, association: SCOPE.association,
     matchType: MATCH_TYPE.SINGLES, pool: 1, teamA, teamB,
     scoreA: [11], scoreB: [9], winner: 'A', gamePoints: 11, bestOf: 1,
-    matchTime, recorder: 'demo_muc_member', status, revision: 1,
+    matchTime, recorder: 'demo_muc_member', status, ...extra, revision: 1,
   });
   return matchId;
 }
@@ -114,12 +120,15 @@ test('计数文档缺失时回落到本赛季台账，且赛季分界点被下�
 
   reads.list = 0;
   reads.listSince = 0;
-  reads.sinceArg.length = 0;
+  reads.listMineSince = 0;
+  reads.mineArg.length = 0;
   const result = await call(repo, 'getSchoolMatchEntryContext', {});
   assert.equal(result.ok, true, result.message);
   assert.equal(reads.list, 0, '不该整表读台账');
-  assert.equal(reads.listSince, 1, '应当走一次「本赛季」下推查询');
-  assert.equal(reads.sinceArg[0], resetTime, '下推的应当是赛季分界点');
+  assert.equal(reads.listSince, 0, '整赛季读法已下线（第三轮 X-7）');
+  assert.equal(reads.listMineSince, 1, '应当走一次「本赛季 + 含本人」的下推查询');
+  assert.equal(reads.mineArg[0].sinceIso, resetTime, '下推的应当是赛季分界点');
+  assert.equal(reads.mineArg[0].userId, 'demo_muc_member', '按人下推的应当是操作者本人');
   // 只有重置之后那一场算本赛季
   assert.equal(result.pairInfo.counts.demo_muc_member_2, 1,
     '上赛季的场次不该计入本赛季交手次数');
@@ -186,4 +195,69 @@ test('并发录两场：两场都记上，计数不多不少', async () => {
   assert.equal(a.ok, true, a.message);
   assert.equal(b.ok, true, b.message);
   assert.equal((await repo.pairCounts.getById(id)).count, 2, '两场都要计进去，不能少记');
+});
+
+/* ---------------- X-7：台账只取「含本人」的场次（2026-10-23 第三轮） ---------------- */
+// `teamA` / `teamB` 是两个数组字段，一条等值查询表达不出「我在任一侧」，
+// 云端只能分两支查再合并去重。这组用例钉三件事：
+//   1. 别人的比赛不进结果（按人下推真的生效）；
+//   2. 同一人出现在两队时去重成一条（否则名额被算大）；
+//   3. 缩范围**不改口径**——与「整赛季台账 + 内存筛」的结果逐字相同。
+
+const { seasonPairCounts } = require('../miniprogram/services/rating-cap');
+const { scopeKey } = require('../miniprogram/utils/school');
+
+test('别人的比赛不进结果：只取「我在任一侧」的场次', async () => {
+  const { repo } = fixture();
+  const mineId = await seedMatch(repo, { id: 'mine', matchTime: at(-DAY) });
+  await seedMatch(repo, { id: 'other', matchTime: at(-DAY), teamA: ['u_x'], teamB: ['u_y'] });
+
+  const rows = await repo.forScope(SCOPE).matches.listMineSince('demo_muc_member', '');
+  assert.deepEqual(rows.map(row => row._id), [mineId], '只应取回含本人的那一场');
+});
+
+test('同一人同时出现在两队的脏数据只算一场（两支合并后按 _id 去重）', async () => {
+  const { repo } = fixture();
+  const id = await seedMatch(repo, {
+    id: 'both', matchTime: at(-DAY), teamA: ['demo_muc_member'], teamB: ['demo_muc_member'],
+  });
+
+  const rows = await repo.forScope(SCOPE).matches.listMineSince('demo_muc_member', '');
+  assert.equal(rows.length, 1, '两支各命中一次，必须去重成一条');
+  assert.equal(rows[0]._id, id);
+});
+
+test('缺 userId 时返回空数组，不退化成整表读', async () => {
+  const { repo, reads } = fixture();
+  await seedMatch(repo, { id: 'any', matchTime: at(-DAY) });
+
+  reads.list = 0;
+  assert.deepEqual(await repo.forScope(SCOPE).matches.listMineSince('', ''), []);
+  assert.equal(reads.list, 0, '漏传 userId 不该变成一次全表扫描');
+});
+
+test('缩范围不改口径：pairInfo 与「整赛季台账 + 内存筛」逐字相同', async () => {
+  const { repo } = fixture();
+  const resetTime = at(-2 * DAY);
+  await repo.seasons.set(scopeKey(SCOPE), {
+    _id: scopeKey(SCOPE), schoolId: SCOPE.schoolId, association: SCOPE.association,
+    anchorTime: at(-10 * DAY), resetTime, seasonNumber: 2, version: 1,
+  });
+
+  // 本赛季：含我一场、含我已撤销一场、含我但挂了赛事一场、别人的一场；
+  // 上赛季：含我一场
+  await seedMatch(repo, { id: 'live', matchTime: at(-DAY) });
+  await seedMatch(repo, { id: 'revoked', matchTime: at(-DAY + 60000), status: MATCH_STATUS.REVOKED });
+  await seedMatch(repo, { id: 'event', matchTime: at(-DAY + 120000), extra: { eventId: 'ev_1' } });
+  await seedMatch(repo, { id: 'other', matchTime: at(-DAY + 180000), teamA: ['u_x'], teamB: ['u_y'] });
+  await seedMatch(repo, { id: 'lastSeason', matchTime: at(-5 * DAY) });
+
+  const expected = seasonPairCounts('demo_muc_member', await repo.matches.list(),
+    { seasonStart: resetTime });
+  const result = await call(repo, 'getSchoolMatchEntryContext', {});
+  assert.equal(result.ok, true, result.message);
+  assert.deepEqual(result.pairInfo.counts, expected,
+    '按人下推只该缩输入，不该让任何一个数字变样');
+  assert.equal(result.pairInfo.counts.demo_muc_member_2, 1,
+    '撤销、挂赛事、上赛季的那三场都不该计入');
 });

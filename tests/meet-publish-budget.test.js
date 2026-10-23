@@ -310,3 +310,24 @@ test('明细索引缺失时读接口回落到发布快照（不显示空白）',
   assert.ok(view.data.items.every((item) => item.text !== '—'), '快照里也存了成绩值');
   assert.equal(view.data.items.filter((item) => item.rank === 1).length, 1);
 });
+
+test('读成绩单不再逐人点读账号（第三轮审查 X-4）', async () => {
+  const { repo, admin, eventKey } = await makeFinishedEvent();
+  await score.publishMeetResults({ eventKey }, admin);
+
+  // 只数「读账号」这一次动手：原来是每人一次 getById（12 人 12 次串行；
+  // 一届运动会去重后上千人，就是上千次，必然超时）。
+  let pointReads = 0;
+  const raw = repo.users.getById;
+  repo.users.getById = (...args) => { pointReads += 1; return raw.apply(repo.users, args); };
+  try {
+    const view = await score.getPublishedResults({ eventKey }, admin);
+    assert.equal(view.ok, true, view.message);
+    assert.equal(view.data.items.length, 12);
+    assert.ok(view.data.items.every((item) => item.memberText && item.memberText !== ''),
+      '昵称仍要解析出来，批读不能把内容弄丢');
+  } finally {
+    repo.users.getById = raw;
+  }
+  assert.equal(pointReads, 0, `成绩单不该逐人点读账号（实际 ${pointReads} 次）`);
+});

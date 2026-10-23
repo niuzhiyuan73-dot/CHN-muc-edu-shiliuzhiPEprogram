@@ -131,21 +131,31 @@ function groupSummary(group, joined) {
 /**
  * 成员名录 DTO：昵称 + 学院 + 权限标签，不含学号 / 手机号 / OpenID。
  *
- * 【为什么先把四个集合各 list 一次再查表】（2026-10-17 只读审计 C5）
- * 从前是「每个成员 4 次 getById」：50 人的组就是 200 次 RPC，云端数据库
- * QPS 配额只有 30，风群并发直接触发限流。改成四张表各读一次建 Map，
- * RPC 数从 4N 降到 4（与 buildDirectory / school-member-service 同一模式）。
+ * 【取数方式的两个阶段】
+ * 1. 2026-10-17 审计 C5：从前是「每个成员 4 次 getById」，50 人的组就是 200 次
+ *    RPC，云端 QPS 配额只有 30，风群并发直接触发限流。于是改成四张表各读一次
+ *    建 Map —— RPC 从 4N 降到 4，但那 4 次里有两次是**整表读**（全校名册 /
+ *    全校角色），学校到 2000 人就是 20 页以上。
+ * 2. 2026-10-23 第三轮 X-11：改成「学院目录读一页 + 其余三张表按这批人的
+ *    主键批读」。小组几十人就是几十个主键、一次 `_.in`，与学校规模无关。
  *
  * @param {Object} repo ctx.repo（读路径，不在事务里）
  * @param {Object} ctx
  * @param {Array<string>} userIds
  */
 async function describeMembers(repo, ctx, userIds) {
+  // 【为什么改成按这批人批读】（2026-10-23 第三轮审查 X-11）
+  // 原注释的取舍是「四张表各读一次，RPC 从 4N 降到 4」——那是 50 人规模下的
+  // 正确算法；到 2000 人的学校，schoolMembers 一次就是 20 页，而一个小组只有
+  // 几十人。现在：学院目录仍读一页（几十条，要拿编号→全名），其余三张表都按
+  // 「这批人的主键」批读（每 100 个一批），总量与小组人数成正比，与学校规模无关。
+  const ids = [...new Set((Array.isArray(userIds) ? userIds : [])
+    .filter(id => typeof id === 'string' && id))];
   const [colleges, members, roles, memberships] = await Promise.all([
     repo.forScope(ctx).colleges.list(),
-    repo.forScope(ctx).schoolMembers.list(),
-    repo.forScope(ctx).schoolRoles.list(),
-    repo.forScope(ctx).memberships.list(),
+    ids.length ? repo.forScope(ctx).schoolMembers.listByIds(ids.map(id => schoolMemberKey(id, ctx.schoolId))) : [],
+    ids.length ? repo.forScope(ctx).schoolRoles.listByIds(ids.map(id => schoolRoleKey(id, ctx.schoolId))) : [],
+    ids.length ? repo.forScope(ctx).memberships.listByIds(ids.map(id => schoolMembershipKey(id, ctx))) : [],
   ]);
   // 账号按「这批成员」批量取：users 是平台级集合，list() 会把别校账号读进来，
   // 且随平台总用户数增长（2026-10-21 审查 P0-1）。

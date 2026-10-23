@@ -14,6 +14,16 @@ const STAT_FIELDS = [
 ];
 const isRecording = operation => ['score', 'stat'].includes(operation.type);
 
+/**
+ * 本机未同步操作的排队上限（2026-10-23 第三轮 X-15）。
+ *
+ * 【为什么要有上限】判球是「先入队、再逐条上报」的：断网时点多少下就排多少条，
+ * 而每次 `render()` 都会把整条队列重放一遍（O(n²)），同时整队列写进本地存储。
+ * 弱网拖久了会同时变慢、变大，且没有任何提示。上限取 200：正常一场球 60~120 个
+ * 操作，超过这个量说明早就该联网了，继续堆只会让恢复更慢。
+ */
+const PENDING_MAX = 200;
+
 Page({
   data: { loading: true, error: '', notice: '', themeClass: '', teamAName: 'A 队', teamBName: 'B 队',
     live: null, pendingCount: 0, controlsPending: false, saving: false, failed: false, submitted: false, storageError: false, allowDraw: false,
@@ -234,6 +244,11 @@ Page({
     if (!this.confirmed || this.confirmed.submitted || this.data.failed) return;
     if (this.pending.some(op => !isRecording(op))) return;
     if (!isRecording(operation) && this.pending.length) return;
+    // 队列上限：不设的话断网时长直接决定队列长度与本地存储体积（见 PENDING_MAX）
+    if (this.pending.length >= PENDING_MAX) {
+      this.patch({ notice: `本机还有 ${this.pending.length} 条操作未同步，请先联网后再继续计分` });
+      return;
+    }
     if (isRecording(operation)) {
       try { applyBasketballOperation(this.data.live, operation); }
       catch (err) { this.patch({ notice: err.message }); return; }

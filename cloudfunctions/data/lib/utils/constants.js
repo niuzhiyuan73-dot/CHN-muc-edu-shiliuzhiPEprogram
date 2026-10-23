@@ -753,6 +753,9 @@ const COLLECTION = {
 const STORAGE_KEY = {
   USER_INFO: 'userInfo', // 登录后的用户信息
   SETTINGS: 'settings', // 本地设置项
+  // 首页快照：冷启动先画一屏用。**必须随登出清除**——同一台设备换微信账号后，
+  // 缓存里还留着上一位用户的「我报名了」等个人相关标记（2026-10-23 第三轮 X-14）。
+  HOME_VIEW: 'home_view_cache',
 };
 
 /**

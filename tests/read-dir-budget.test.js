@@ -108,3 +108,16 @@ describe('读接口不再为此读全院名册', () => {
     assert.equal(spy.count, 0, '管理员/参赛者本人不需要学院映射');
   });
 });
+
+test('比赛列表：一页比赛不读全校名册（2026-10-23 第三轮 X-3）', async () => {
+  const repo = fixture();
+  const spy = spyFullRoster(repo);
+
+  const res = (await call(repo, 'listSchoolMatches', { limit: 20 })).data;
+  assert.equal(res.ok, true, res.message);
+  assert.ok(res.matches.length > 0, '演示内容里应有比赛');
+  // 2000 人的学校，buildDirectory = 20（名册）+ 20（账号）+ 1 = 41 次 RPC；
+  // 而首页六个协会各调一次列表。改后只按「这一页参赛者」批读学籍。
+  assert.equal(spy.count, 0, '比赛列表不该为了一页比赛读全校名册');
+  assert.equal(res.matches[0].canRecord !== undefined, true, '行级权限旗标仍要下发');
+});

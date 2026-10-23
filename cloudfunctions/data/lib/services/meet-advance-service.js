@@ -723,6 +723,9 @@ async function setMeetMatchWinner(payload = {}, ctx) {
   if (!meetReadable(ctx) || !ctx.meetId) return refused('请先登录');
   const sessionKey = String(payload.sessionKey || '').trim();
   if (!sessionKey) return refused('请指定场次');
+  // 【判权在取数之前】（2026-10-23 第三轮审查 X-5）：下面要读整届场次与项目，
+  // 先答「你有没有资格」，别让未授权请求先花掉一次整表读。
+  if (!canPublishMeetResult(ctx)) return refused('只有校级管理员及以上或本届总裁判可以判定胜负');
   const scope = scopeOf(ctx);
 
   const [session, sessions, events] = await Promise.all([
@@ -731,7 +734,6 @@ async function setMeetMatchWinner(payload = {}, ctx) {
     listAliveEvents(ctx.repo.forMeet(scope).sportsMeetEvents),
   ]);
   if (!session || session.meetId !== ctx.meetId) return refused('场次不存在或不属于本届运动会');
-  if (!canPublishMeetResult(ctx)) return refused('只有校级管理员及以上或本届总裁判可以判定胜负');
   if (!session.entryKeys || !session.entryKeys.some(Boolean)) {
     return refused('该场次还没有对阵双方');
   }

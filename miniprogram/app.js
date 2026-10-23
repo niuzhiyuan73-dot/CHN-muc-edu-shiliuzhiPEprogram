@@ -455,6 +455,11 @@ App({
     this.globalData.userInfo = null;
     try {
       wx.removeStorageSync(STORAGE_KEY.USER_INFO);
+      // 【首页快照也要清】（2026-10-23 第三轮 X-14）
+      // 小程序存储按「小程序」而不是按微信账号隔离：同一台设备换号后，
+      // 首屏会先用上一位用户的快照画一屏（最长 5 分钟），里面的「我报名了」
+      // 等个人相关标记会张冠李戴。缓存键与 index.js 共用 STORAGE_KEY.HOME_VIEW。
+      wx.removeStorageSync(STORAGE_KEY.HOME_VIEW);
     } catch (err) {
       console.error('[app] 清除本地登录态失败', err);
     }
