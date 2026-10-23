@@ -69,21 +69,41 @@ const store = new Map();
 let ttlMs = readTtl();
 
 /**
- * 读 TTL：测试进程默认关闭。
+ * 运行在 Node 里吗（云函数 / 单元测试）。
  *
- * 【为什么测试要默认关】测试用同一个 openId 连打几十个请求（申请 → 审批 →
- * 再申请…），每步都期望读到上一步刚写的数据。缓存会让它们读到 5 秒前的快照，
- * 表现为**间歇性**断言失败——这种失败最难查。生产进程没有 `--test`，不受影响。
+ * 【为什么必须先判环境】（2026-10-23 真机崩溃）
+ * 这个模块被 `school-context.js` require，而后者在小程序端也会被加载——
+ * **小程序运行时没有 `process`**，直接写 `process.env` 会让整个页面在
+ * `require` 阶段就抛 `ReferenceError: process is not defined`，首页白屏。
+ * 本地测试全绿是因为测试跑在 Node 里，`process` 一直都在。
+ */
+function hasNodeProcess() {
+  return typeof process !== 'undefined' && Boolean(process) && Boolean(process.env);
+}
+
+/**
+ * 读 TTL。
+ *
+ * 三种环境：
+ *   · **小程序运行时**（没有 process）→ 0。缓存只服务云函数入口，小程序端
+ *     本来就不跑那条路径，关掉同时也杜绝了「读到 5 秒前权限」的可能；
+ *   · **单元测试**（`--test` / `NODE_TEST_CONTEXT`）→ 0。测试用同一个 openId
+ *     连打几十个请求（申请 → 审批 → 再申请…），每步都期望读到上一步刚写的
+ *     数据，缓存会让它读到 5 秒前的快照，表现为间歇性断言失败；
+ *   · **云函数** → 5 秒（`CONTEXT_CACHE_TTL_MS` 可覆盖，0 表示关闭）。
  *
  * 想验证缓存行为本身时，用 `__setTtlForTest(ms)` 显式打开。
  */
 function readTtl() {
-  const raw = process.env.CONTEXT_CACHE_TTL_MS;
+  if (!hasNodeProcess()) return 0;
+  const env = process.env;
+  const raw = env.CONTEXT_CACHE_TTL_MS;
   if (raw !== undefined && raw !== '') {
     const n = Number(raw);
     if (Number.isFinite(n) && n >= 0) return Math.floor(n);
   }
-  const testing = Boolean(process.env.NODE_TEST_CONTEXT) || process.argv.includes('--test');
+  const argv = Array.isArray(process.argv) ? process.argv : [];
+  const testing = Boolean(env.NODE_TEST_CONTEXT) || argv.includes('--test');
   return testing ? 0 : DEFAULT_TTL_MS;
 }
 
