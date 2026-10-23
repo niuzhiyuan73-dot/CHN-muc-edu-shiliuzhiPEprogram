@@ -21,8 +21,8 @@ const { MATCH_STATUS, ROLE } = require('../utils/constants.js');
 const { canRecordScore, fillScheduledMatch } = require('./match-record.js');
 const { legacyRoleOf, recordDirOf, EMPTY_RECORD_DIR } = require('./school-actor.js');
 const {
-  LIVE_STATUS, SIDE, createLive, applyRally,
-  undoRally: undoLiveRally, hasRally, isFinalized, liveScoreOf, toOfficialScores,
+  LIVE_STATUS, SIDE, RALLY_KEEP, createLive, applyRally,
+  undoRally: undoLiveRally, hasRally, isFinalized, liveScoreOf, toOfficialScores, foldedCount,
 } = require('./live-score.js');
 const {
   buildDirectory, recordOptions, isMatchDoc, matchSummary,
@@ -148,7 +148,14 @@ async function undoSchoolRally(payload = {}, ctx) {
     // 定稿之后正式比分已经写进比赛记录，此时再撤会让实时态与比赛记录各说各话。
     if (isFinalized(current)) return { error: '比赛已经定稿，不能再撤销判球', live: current };
     if (!current.rallies || current.rallies.length === 0) {
-      return { error: '没有可撤销的判球', live: current };
+      // 折叠之后「窗口为空」有两种含义，文案必须分开：否则裁判会以为一球都没判过。
+      // 早先那些球已经折进 folded 摘要，撤不回来（2026-10-23 第三轮 X-13）。
+      return {
+        error: foldedCount(current) > 0
+          ? `更早的判球已归档，现在只能撤销最近 ${RALLY_KEEP} 球`
+          : '没有可撤销的判球',
+        live: current,
+      };
     }
 
     const next = { ...undoLiveRally(current), updatedBy: ctx.actorId, updatedAt: ctx.now };

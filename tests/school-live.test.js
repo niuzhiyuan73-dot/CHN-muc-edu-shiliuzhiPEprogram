@@ -130,6 +130,32 @@ test('撤销：撤最后一球并回退进度；无球可撤被拒', async () =>
   assert.equal(undo.live.pointsA, 0);
 });
 
+test('折叠之后：更早的判球撤不回来，文案要说清（第三轮 X-13）', async () => {
+  const repo = fixture();
+  const matchId = await seedMatch(repo, { bestOf: 5 });
+  await call(repo, 'startSchoolLiveScore', { matchId });
+  // A、B 各两局 = 44 球，越过折叠阈值；2:2 仍在进行中
+  await rallies(repo, matchId, 'A', 11, 'f1');
+  await rallies(repo, matchId, 'B', 11, 'f2');
+  await rallies(repo, matchId, 'A', 11, 'f3');
+  await rallies(repo, matchId, 'B', 11, 'f4');
+
+  const before = await call(repo, 'startSchoolLiveScore', { matchId });
+  assert.ok(before.live.folded && before.live.folded.count > 0, '44 球应当已经折叠过');
+
+  let last;
+  for (let i = 0; i < 60; i += 1) {
+    last = await call(repo, 'undoSchoolRally', { matchId });
+    if (!last.ok) break;
+  }
+  assert.equal(last.ok, false, '撤到窗口底部应当停下');
+  assert.match(last.message, /已归档/,
+    '撤空窗口后要说「更早的判球已归档」，不能沿用「没有可撤销的判球」——那会让裁判以为一球都没判过');
+  const base = before.live.folded.base;
+  assert.equal(last.live.gamesA + last.live.gamesB, base.gamesA + base.gamesB,
+    '分数停在折叠水位，不是回到 0:0');
+});
+
 test('整场打完后不能再判球', async () => {
   const repo = fixture();
   const matchId = await seedMatch(repo);

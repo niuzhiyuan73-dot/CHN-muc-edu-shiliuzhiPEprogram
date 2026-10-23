@@ -37,6 +37,17 @@ function cloneLive(state) {
   if (!state) return null;
   const copy = { ...state };
   copy.rallies = (state.rallies || []).map((rally) => ({ ...rally }));
+  // 折叠摘要也是可增长结构（已折叠的局 / 盘 / 抢七），同样要逐层复制。
+  if (state.folded) {
+    const folded = state.folded;
+    copy.folded = {
+      ...folded,
+      base: folded.base ? { ...folded.base } : folded.base,
+      games: (folded.games || []).map((game) => ({ ...game })),
+      sets: (folded.sets || []).map((set) => ({ ...set })),
+      tiebreaks: (folded.tiebreaks || []).map((item) => ({ ...item })),
+    };
+  }
   if (Array.isArray(state.teamA)) copy.teamA = [...state.teamA];
   if (Array.isArray(state.teamB)) copy.teamB = [...state.teamB];
   return copy;
