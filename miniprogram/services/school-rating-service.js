@@ -41,8 +41,9 @@ const {
   initialRatingFor, calculateMatchRatings, DEFAULT_CONFIG,
 } = require('../utils/elo.js');
 const {
-  memberRatingKey, ratingSeqKey, belongsToSchoolScope, schoolScope,
+  memberRatingKey, ratingSeqKey, belongsToSchoolScope, schoolScope, SCHOOL_MEMBER_STATUS,
 } = require('../utils/school.js');
+const { allAssociations } = require('../utils/associations.js');
 const { isDoublesDiscipline } = require('./college-tie.js');
 
 /* ------------------------------------------------------------------ 纯函数 */
@@ -94,7 +95,10 @@ function assertValidRatingDoc(doc) {
  * @param {Date|string|number} [params.now]
  * @returns {Object} 可直接写入 member_ratings 的完整文档
  */
-function buildRatingDoc({ userId, pool, scope, startElo, startSource = 'gender', now = null }) {
+function buildRatingDoc({
+  userId, pool, scope, startElo, startSource = 'gender',
+  gender = '', memberStatus = SCHOOL_MEMBER_STATUS.ACTIVE, now = null,
+}) {
   if (!ALL_RATING_POOLS.includes(pool)) throw new Error(`未知的评级池：${pool}`);
   if (!userId || typeof userId !== 'string') throw new Error('评级建档缺少用户编号');
   const s = schoolScope(scope);
@@ -110,6 +114,27 @@ function buildRatingDoc({ userId, pool, scope, startElo, startSource = 'gender',
     startElo: start,
     // 初始化留痕：解释「这份评级的起点分是哪来的」，审计与核账用。
     startSource,
+    // ── 以下两个是**冗余字段**，权威值在 users.gender / school_members.status ──
+    //
+    // 【为什么要冗余】（2026-10-23 成员档案物化评估 方案 A）
+    // 榜单要按「项目（性别）」筛、要排除已退会的人，而这两个字段原本只存在
+    // 另外两个集合里。数据库不能跨集合 join，榜单只能把 8000 条评级全读回来
+    // 在内存里算（80 页 RPC）——冗余之后可以一条查询出前 10 名、一次计数出
+    // 我的名次（约 3 个 RPC）。
+    //
+    // 【怎么保持一致】两个字段各有**唯一**的维护者，不做双向同步：
+    //   · gender：结算与同步都写。结算路径本来就为算起点分点读了 users，
+    //     顺手把 gender 带进文档（零额外读）；改档另走
+    //     syncRatingProfileInTransaction。
+    //   · memberStatus：**只在会籍变更路径写**，结算路径一概不动它。理由：
+    //     结算含「补录旧比赛」，结算那一刻不代表此人当下在册，用它写状态会把
+    //     已转出的人改回 active。会籍的 2 处写入点（入会通过、转校通过）都调
+    //     syncRatingProfileInTransaction。
+    //   两者仍可能与权威值分叉（历史文档缺字段、直接改库、脚本中断），以
+    //   users.gender / school_members.status 为准重跑回填即可——回填是幂等的，
+    //   tools/backfill-rating-profile.js 用的就是这条口径。
+    gender: String(gender || ''),
+    memberStatus,
     matchCount: 0,
     wins: 0,
     losses: 0,
@@ -238,6 +263,8 @@ function materializeRatings({ userIds, pool, scope, existingByUser, startEloByUs
       userId, pool, scope,
       startElo: start,
       startSource: preset && preset.startSource ? preset.startSource : 'gender',
+      // 性别随建档一起冗余进来：调用方本来就为算起点分读过它，零额外读。
+      gender: preset && preset.gender,
       now,
     }));
   }
@@ -274,9 +301,12 @@ function playerSnapshot(player, userId, side, pool, winner, versionBefore) {
  * @param {number} params.seq 范围结算序号（已由调用方原子分配）
  * @param {Date|string|number} params.settledAt 服务端结算时间（客户端不可指定）
  * @param {Object} [params.config] 传给 elo.calculateMatchRatings 的配置覆盖
+ * @param {Map<string,{gender:string}>} [params.profileByUser] userId → 账号档案（刷新冗余 gender）
  * @returns {{settlement:Object, ratingDocs:Array<{userId, doc:Object}>}}
  */
-function computeSettlement({ match, eventLevel, ratingsByUser, seq, settledAt, config }) {
+function computeSettlement({
+  match, eventLevel, ratingsByUser, seq, settledAt, config, profileByUser,
+}) {
   const pool = match.pool;
   if (!ALL_RATING_POOLS.includes(pool)) throw new Error(`未知的评级池：${pool}`);
   const { teamA, teamB } = participantsOf(match);
@@ -333,6 +363,7 @@ function computeSettlement({ match, eventLevel, ratingsByUser, seq, settledAt, c
   const matchTimeIso = match.matchTime ? new Date(match.matchTime).toISOString() : null;
   const ratingDocs = players.map((p) => {
     const before = ratingsByUser.get(p.userId);
+    const profile = profileByUser && profileByUser.get(p.userId);
     const isWin = p.isWin === true;
     const isDraw = p.isWin === null;
     // lastMatchTime 表示实际发生时间的最大值：补录旧比赛不能把活跃时间倒退
@@ -354,6 +385,12 @@ function computeSettlement({ match, eventLevel, ratingsByUser, seq, settledAt, c
         lastLedgerId: match._id,
         version: (before.version || 0) + 1,
         algorithmVersion: ALGORITHM_VERSION,
+        // 冗余 gender 按账号**逐场刷新**：结算前已经点读过 users，这里是零成本。
+        // 只在调用方给了档案时才覆盖，纯函数单测（不给 profileByUser）保持原值。
+        // memberStatus 不在这里写——见 buildRatingDoc 里「怎么保持一致」。
+        ...(profile && profile.gender !== undefined
+          ? { gender: String(profile.gender || '') }
+          : {}),
       },
     };
   });
@@ -440,13 +477,17 @@ async function settleMatchInTransaction(tx, ctx, match, options = {}) {
   const userIds = [...new Set([...teamA, ...teamB])];
 
   // ── 点读参赛者档案：起点分（性别 + 管理员预设 initialElo，仅建档时生效）──
+  // 同一趟点读同时收集 gender，供「刷新评级冗余字段」用，不额外读账号。
   const startEloByUser = new Map();
+  const profileByUser = new Map();
   for (const userId of userIds) {
     const user = await tx.users.getById(userId);
+    const gender = (user && user.gender) || '';
     const preset = user && typeof user.initialElo === 'number' && Number.isFinite(user.initialElo)
-      ? { startElo: user.initialElo, startSource: 'preset' }
-      : { gender: user && user.gender, startSource: 'gender' };
+      ? { startElo: user.initialElo, startSource: 'preset', gender }
+      : { gender, startSource: 'gender' };
     startEloByUser.set(userId, preset);
+    profileByUser.set(userId, { gender });
   }
 
   // ── 点读全部评级；缺失的按固定起点在内存里建档（随本事务一并写入）──
@@ -476,13 +517,77 @@ async function settleMatchInTransaction(tx, ctx, match, options = {}) {
   // ── 纯函数算一次赛前快照与分差，写回评级 ──
   const eventLevel = resolveEventLevel(match, options.event || null);
   const { settlement, ratingDocs } = computeSettlement({
-    match, eventLevel, ratingsByUser, seq, settledAt: ctx.now, config: options.config,
+    match, eventLevel, ratingsByUser, seq, settledAt: ctx.now, config: options.config, profileByUser,
   });
   for (const { doc } of ratingDocs) {
     await tx.memberRatings.set(doc._id, doc);
   }
 
   return { rated: true, alreadySettled: false, settlement };
+}
+
+/* --------------------------------------------------------- 会籍 → 评级的同步 */
+
+/**
+ * 把会籍变更同步进评级表的两个冗余字段（2026-10-23 方案 A 的第 1 步）。
+ *
+ * 【为什么要有这一条】
+ * `member_ratings` 里的 `gender` / `memberStatus` 是**物化的副本**，权威值在
+ * `users.gender` / `school_members.status`。副本唯一的代价就是「变更时要跟上」，
+ * 不跟上的后果是榜单把已转出的人算进排名、或把项目筛错。所以会籍的每条写入
+ * 路径都要调一次这里。
+ *
+ * 【为什么不是一个一个池地算键】
+ * 评级的键是「学校 + 协会 + 用户 + 池」，一个人在同一所学校最多 6 协会 × 4 池
+ * = 24 条。调用方通常只知道「这个人在这所学校」，不知道他在哪几个协会有评级
+ * 文档，因此默认扫全部协会、只写**已经存在**的文档——缺失的池不补建档，因为
+ * 建档是结算的职责（惰性初始化，起点分要按当时的性别算）。
+ *
+ * 【事务预算】
+ * 最坏 24 读；只有字段真的变了才写（首次回填后通常 0 写）。转校是低频路径，
+ * 原校满配时约 48 个操作，加上转校自身的约 31 个仍在 100 以内。
+ *
+ * @param {Object} tx 事务内仓储
+ * @param {Object} params
+ * @param {string} params.userId
+ * @param {string} params.schoolId
+ * @param {string[]|null} [params.associations] 只同步这些协会；null = 全部协会
+ * @param {string} [params.gender] 不传则保留原值（只改状态时用）
+ * @param {string} params.memberStatus 目标在册状态
+ * @param {Date|string|number} [params.now]
+ * @returns {Promise<{scanned:number, updated:number, missing:number, changed:string[]}>}
+ */
+async function syncRatingProfileInTransaction(tx, {
+  userId, schoolId, associations = null, gender, memberStatus, now = null,
+}) {
+  if (!userId || typeof userId !== 'string') throw new Error('评级档案同步缺少用户编号');
+  if (!Object.values(SCHOOL_MEMBER_STATUS).includes(memberStatus)) {
+    throw new Error(`未知的在册状态：${String(memberStatus)}`);
+  }
+  const list = Array.isArray(associations) && associations.length
+    ? associations
+    : allAssociations().map(sport => sport.id);
+  const syncedAt = now === null || now === undefined ? null : new Date(now).toISOString();
+  const changed = [];
+  let scanned = 0;
+  let missing = 0;
+  for (const association of list) {
+    const scope = { schoolId, association };
+    for (const pool of ALL_RATING_POOLS) {
+      const id = memberRatingKey(userId, pool, scope);
+      scanned += 1;
+      // 顺序点读而非整表扫：转校/入会都是低频路径，且这里只关心这一个人。
+      const doc = await tx.memberRatings.getById(id);
+      if (!doc) { missing += 1; continue; }
+      const nextGender = gender === undefined ? (doc.gender || '') : String(gender || '');
+      if (doc.gender === nextGender && doc.memberStatus === memberStatus) continue;
+      await tx.memberRatings.set(id, {
+        ...doc, gender: nextGender, memberStatus, profileSyncedAt: syncedAt,
+      });
+      changed.push(id);
+    }
+  }
+  return { scanned, updated: changed.length, missing, changed };
 }
 
 module.exports = {
@@ -500,4 +605,5 @@ module.exports = {
   buildExcludedSettlement,
   // 事务读写
   settleMatchInTransaction,
+  syncRatingProfileInTransaction,
 };

@@ -8,6 +8,7 @@ const { buildSchoolApplication, buildSchoolAccount } = require('./school-member.
 const { buildProfilePatch } = require('./profile.js');
 const { allAssociations } = require('../utils/associations.js');
 const { detachUserFromTeams } = require('./team-service.js');
+const { syncRatingProfileInTransaction } = require('./school-rating-service.js');
 const {
   schoolMemberKey, schoolRoleKey, schoolMembershipKey, collegeKey,
   PLATFORM_ROLE, PLATFORM_STATUS, SCHOOL_MEMBER_STATUS, SCHOOL_ROLE,
@@ -140,6 +141,16 @@ function createSchoolHandlers({ claimKey }) {
       const next = { ...application, status: approved ? 'active' : 'rejected', reviewedBy: fresh.actorId,
         reviewedAt: fresh.now, reviewReason: reason, revision: application.revision + 1 };
       await tx.schoolMembers.set(id, next);
+      // 入会通过：评级表里的 gender / memberStatus 是物化副本（方案 A），
+      // 重入校的人可能还留着上一次的评级文档（status 停在 transferred/left），
+      // 这里一并恢复为 active，否则榜单仍会把他排除在外。
+      // 新会员通常一条评级都没有，24 次点读全是 missing——低频路径，可接受。
+      if (approved) {
+        await syncRatingProfileInTransaction(tx, {
+          userId: user._id, schoolId: fresh.schoolId,
+          gender: user.gender, memberStatus: SCHOOL_MEMBER_STATUS.ACTIVE, now: fresh.now,
+        });
+      }
       await tx.audit.append({ _id: `review_${id}_${next.revision}`, action: 'reviewSchoolMembership', schoolId: fresh.schoolId,
         actorId: fresh.actorId, userId: user._id, decision: payload.decision, reason,
         revision: next.revision, at: fresh.now });
@@ -298,6 +309,17 @@ function createSchoolHandlers({ claimKey }) {
         }
         await tx.users.set(user._id, { ...user, primarySchoolId: fresh.schoolId,
           schoolIdentityVersion: Number(user.schoolIdentityVersion || 0) + 1 });
+        // 评级副本跟着转出：本人在原校各协会的评级文档要标成 transferred，
+        // 否则原校榜单仍把转走的人算进排名（榜单按 memberStatus 过滤，方案 A）。
+        //
+        // 目标学校那一侧**不扫**：转校进来的人在新校还没有评级文档（惰性建档），
+        // 扫一遍要多 24 次读，而转校事务本身已约 31 个操作、满配时加原校这一侧
+        // 就到 79，再翻一倍就撞 100 的预算了。真有残留（转出后又转回），由回填
+        // 脚本按 school_members 的权威值纠正。
+        await syncRatingProfileInTransaction(tx, {
+          userId: user._id, schoolId: fromSchoolId,
+          gender: user.gender, memberStatus: SCHOOL_MEMBER_STATUS.TRANSFERRED, now: fresh.now,
+        });
         // 原学校备案：不需要它同意，但「谁在什么时候转走、停了哪些身份」要留痕
         await tx.audit.append({ _id: `transfer_out_${fromMemberKey}_${fromRevision}`,
           action: 'transferSchoolOut', schoolId: fromSchoolId, actorId: fresh.actorId,
