@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { fixture } = require('./helpers/football-fixture');
+const { fixture, SCOPE } = require('./helpers/football-fixture');
 const { schoolKey, schoolMemberKey } = require('../miniprogram/utils/school');
 const { normalizeFootballReport, normalizeResult, matchMinutes } = require('../miniprogram/utils/football-report');
 const { defaultRulesFor, normalizeFootballRules, STANDARD_PRESET_KEY } = require('../miniprogram/utils/football-rules');
@@ -291,4 +291,20 @@ test('F2 足球录入人候选包含无需额外角色行的普通会员；队�
   assert.equal((await f.write('recordTeamMatch', m, { report: data }, 'demo_muc_member')).ok, true);
   assert.equal((await f.call('drawTeamEvent', { eventId: f.eventId })).ok, false, '报告不能被重新抽签抹掉');
   assert.equal((await f.write('saveTeamMatchLineup', m, { side: 'A', lineup: data.sides.A }, cap)).ok, false);
+});
+
+test('云端协议：足球比赛没有待审核报告就发不出去（云库不会出现「已发布却无报告」）', async () => {
+  // 演示种子里曾经有过「status=published 但缺 footballPublished」的比赛（已修）。
+  // 那个缺陷在云端不会发生：足球的 publishTeamMatch 以「有待审核报告」为前置，
+  // 且只有这一条路径会写 footballPublished。这条用例把该前置钉住。
+  const f = await fixture({ cloud: true });
+  const match = (await f.matches())[0];
+  // 走 write 包装：mutate 要求 requestId + expectRevision（幂等与并发保护）
+  const blocked = await f.write('publishTeamMatch', match, { approve: true });
+  assert.equal(blocked.ok, false);
+  assert.match(blocked.message, /没有待审核的足球报告/);
+
+  const fresh = await f.repo.forScope(SCOPE).teamMatches.getById(match._id);
+  assert.notEqual(fresh.status, 'published', '不能绕过报告直接把比赛标成已发布');
+  assert.equal(fresh.footballPublished, undefined);
 });
