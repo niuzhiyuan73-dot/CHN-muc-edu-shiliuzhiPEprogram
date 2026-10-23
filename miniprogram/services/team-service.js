@@ -43,6 +43,22 @@ const refused = (message, extra = {}) => ({ ok: false, message, ...extra });
 const NAME_MIN = 2;
 const NAME_MAX = 20;
 const TEAM_LIST_LIMIT = 100;
+
+/**
+ * 一次最多挑几名队员进院队。
+ *
+ * 【为什么必须有上限】（2026-10-22 大用户量复查 H-8）
+ * `addCollegeTeamMembers` 在**一个事务**里按人点读 + 写入：每人 2 个操作
+ * （`teamMembers.getById` 判重 + `set` 落库），固定开销约 8 个（身份上下文 6、
+ * 球队 1、队头计数 1）。云端事务预算约 100（`cloud-repo.js` 的
+ * TX_OPERATION_BUDGET），所以 46 人左右就会抛「事务读写总操作预算不足：
+ * 请缩小本次处理范围」——纯开发者文案，学院负责人只会看到「服务异常」。
+ *
+ * 【为什么是 30】足球院队 11 人制满编 23 人，篮球 12~15 人，一次挑满整队都在
+ * 这个数以内（留了余量给「补招几个人」）。要更多人请分几次挑——**队伍总人数
+ * 不受这个限制**，这里限制的只是单次请求。
+ */
+const TEAM_ADD_BATCH_MAX = 30;
 const REQUEST_ID_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
 
 /** 是否为团队项目协会。个人赛协会不该被这套接口服务。 */
@@ -767,6 +783,10 @@ async function addCollegeTeamMembers(payload = {}, ctx) {
     ? [...new Set(payload.userIds.map(id => String(id || '').trim()).filter(Boolean))]
     : [];
   if (wanted.length === 0) return ok(refused('请选择要加入的队员'));
+  // 上限在进入事务前判：超限的请求不该先花掉一次身份解析和一整套候选人读取
+  if (wanted.length > TEAM_ADD_BATCH_MAX) {
+    return ok(refused(`一次最多添加 ${TEAM_ADD_BATCH_MAX} 名队员，请分几次挑`));
+  }
 
   const dir = await buildDirectory(ctx);
   const allowed = new Set((await collegeCandidates(ctx, team.collegeId, dir)).map(row => row.userId));
