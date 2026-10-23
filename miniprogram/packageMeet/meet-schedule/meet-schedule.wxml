@@ -3,7 +3,7 @@
   「分几组、分几枪」由报名人数与跑道数算出来，所以赛制要等报名截止后再定；
   派裁判不依赖赛制，反而常常是同一批人跨项目派，因此单独提到页面最上面。
 -->
-<view class="page-container">
+<view class="page-container {{themeClass}}">
 
   <view wx:if="{{notice}}" class="meet-notice">{{notice}}</view>
   <view wx:if="{{error}}" class="meet-error">{{error}}</view>

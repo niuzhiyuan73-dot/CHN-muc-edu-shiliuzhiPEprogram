@@ -99,16 +99,6 @@ page {
   align-items: center;
 }
 
-.btn {
-  margin: 0 0 0 1.6vw;
-  padding: 0 3vw;
-  height: 9vh;
-  line-height: 9vh;
-  font-size: 3.2vh;
-  border-radius: 4.5vh;
-  color: #ffffff;
-  background: #2a3542;
-}
 
 .btn::after {
   border: none;

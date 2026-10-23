@@ -23,8 +23,8 @@
    看漏了就会把演示口径当成正式规则 */
 .demo-notice {
   font-size: var(--font-xs);
-  color: #b45309;
-  background: #fef3c7;
+  color: var(--color-warning-text);
+  background: var(--color-warning-light);
   border-radius: var(--radius-sm);
   padding: var(--space-sm) var(--space-md);
   margin-bottom: var(--space-md);
@@ -69,8 +69,8 @@
 /* 置顶与状态都用暖/冷色分开，别让四种标记糊成一团 */
 .notice-pin {
   margin-left: var(--space-xs);
-  background: #fef3c7;
-  color: #b45309;
+  background: var(--color-warning-light);
+  color: var(--color-warning-text);
 }
 
 .notice-status {

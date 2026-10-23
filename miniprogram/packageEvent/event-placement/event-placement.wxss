@@ -22,8 +22,8 @@
   margin-top: var(--space-sm);
   padding: var(--space-sm) var(--space-md);
   font-size: var(--font-xs);
-  color: #b45309;
-  background: #fef3c7;
+  color: var(--color-warning-text);
+  background: var(--color-warning-light);
   border-radius: var(--radius-sm);
   line-height: 1.6;
 }
@@ -129,8 +129,8 @@
 
 .demo-notice {
   font-size: var(--font-xs);
-  color: #b45309;
-  background: #fef3c7;
+  color: var(--color-warning-text);
+  background: var(--color-warning-light);
   border-radius: var(--radius-sm);
   padding: var(--space-sm) var(--space-md);
   margin-bottom: var(--space-md);

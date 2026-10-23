@@ -12,8 +12,8 @@
   margin-bottom: var(--space-md);
   padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-md);
-  background: #fff4e5;
-  color: #9a5b00;
+  background: var(--color-warning-light);
+  color: var(--color-warning-text);
   font-size: var(--font-sm);
   line-height: 1.6;
 }

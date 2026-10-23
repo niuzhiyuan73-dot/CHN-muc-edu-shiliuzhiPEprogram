@@ -1,37 +1,37 @@
 .meet-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16rpx; }
-.meet-college { font-size: 26rpx; color: #333; font-weight: 500; }
-.meet-link { font-size: 24rpx; color: #b23a2e; }
+.meet-college { font-size: var(--font-sm); color: #333; font-weight: 500; }
+.meet-link { font-size: var(--font-caption); color: var(--color-primary); }
 .meet-row { padding: 20rpx 24rpx; margin-bottom: 12rpx; }
 .meet-row-head { display: flex; justify-content: space-between; align-items: center; }
-.meet-row-name { font-size: 28rpx; font-weight: 500; }
-.meet-row-meta { margin-top: 6rpx; font-size: 22rpx; color: #888; }
-.meet-row-tag { font-size: 22rpx; padding: 4rpx 14rpx; border-radius: 999rpx; background: #e8f5ec; color: #1f7a3d; }
+.meet-row-name { font-size: var(--font-body); font-weight: 500; }
+.meet-row-meta { margin-top: 6rpx; font-size: var(--font-xs); color: #888; }
+.meet-row-tag { font-size: var(--font-xs); padding: 4rpx 14rpx; border-radius: 999rpx; background: var(--color-success-light); color: var(--color-success-text); }
 .meet-row-tag.is-closed { background: #f2f2f2; color: #777; }
 .meet-pool { margin-top: 16rpx; padding-top: 16rpx; border-top: 1rpx solid #f0f0f0; }
-.meet-pool-hint { font-size: 22rpx; color: #888; margin-bottom: 12rpx; }
-.meet-pool-empty { font-size: 24rpx; color: #999; padding: 12rpx 0; }
+.meet-pool-hint { font-size: var(--font-xs); color: #888; margin-bottom: 12rpx; }
+.meet-pool-empty { font-size: var(--font-caption); color: #999; padding: 12rpx 0; }
 .meet-person { display: flex; align-items: center; gap: 12rpx; padding: 14rpx 18rpx; border-radius: 12rpx; background: #f7f8fa; margin-bottom: 10rpx; }
-.meet-person.is-checked { background: #fdece9; }
-.meet-person-name { flex: 1; font-size: 26rpx; }
-.meet-person-gender { font-size: 22rpx; color: #888; }
-.meet-person-check { width: 32rpx; text-align: center; color: #b23a2e; }
-.meet-section-title { margin: 24rpx 0 12rpx; font-size: 26rpx; font-weight: 600; color: #555; }
+.meet-person.is-checked { background: var(--color-danger-light); }
+.meet-person-name { flex: 1; font-size: var(--font-sm); }
+.meet-person-gender { font-size: var(--font-xs); color: #888; }
+.meet-person-check { width: 32rpx; text-align: center; color: var(--color-primary); }
+.meet-section-title { margin: 24rpx 0 12rpx; font-size: var(--font-sm); font-weight: 600; color: #555; }
 .meet-entry { display: flex; justify-content: space-between; align-items: center; padding: 18rpx 24rpx; margin-bottom: 10rpx; }
-.meet-entry-name { font-size: 26rpx; }
-.meet-entry-meta { margin-top: 6rpx; font-size: 22rpx; color: #888; }
-.meet-entry-op { font-size: 24rpx; color: #b23a2e; padding: 8rpx 16rpx; }
-.meet-notice { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: #e8f5ec; color: #1f7a3d; font-size: 24rpx; }
-.meet-error { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: #fdece9; color: #b23a2e; font-size: 24rpx; }
+.meet-entry-name { font-size: var(--font-sm); }
+.meet-entry-meta { margin-top: 6rpx; font-size: var(--font-xs); color: #888; }
+.meet-entry-op { font-size: var(--font-caption); color: var(--color-primary); padding: 8rpx 16rpx; }
+.meet-notice { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: var(--color-success-light); color: var(--color-success-text); font-size: var(--font-caption); }
+.meet-error { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: var(--color-danger-light); color: var(--color-primary); font-size: var(--font-caption); }
 
 /* 校管理员选择代报学院 */
-.meet-search { height: 72rpx; padding: 0 20rpx; border-radius: 12rpx; background: #f5f6f8; font-size: 26rpx; margin-bottom: 16rpx; }
+.meet-search { height: 72rpx; padding: 0 20rpx; border-radius: 12rpx; background: #f5f6f8; font-size: var(--font-sm); margin-bottom: 16rpx; }
 .meet-college-item { display: flex; justify-content: space-between; align-items: center; padding: 22rpx 24rpx; margin-bottom: 12rpx; }
-.meet-college-name { font-size: 28rpx; color: #222; }
-.meet-college-id { font-size: 22rpx; color: #999; }
+.meet-college-name { font-size: var(--font-body); color: #222; }
+.meet-college-id { font-size: var(--font-xs); color: #999; }
 
 /* 报名已截止 / 已提交等提示与轻按钮（本页样式作用域独立，需各自定义） */
-.meet-warn { margin-top: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: #fdf6e3; color: #8a5a00; font-size: 24rpx; }
+.meet-warn { margin-top: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: #fdf6e3; color: #8a5a00; font-size: var(--font-caption); }
 .meet-actions { display: flex; gap: 12rpx; margin-top: 14rpx; }
-.meet-btn { padding: 14rpx 24rpx; text-align: center; border-radius: 10rpx; background: #f2f3f5; font-size: 24rpx; color: #444; }
-.meet-btn.is-primary { background: #b23a2e; color: #fff; }
+.meet-btn { padding: 14rpx 24rpx; text-align: center; border-radius: 10rpx; background: #f2f3f5; font-size: var(--font-caption); color: #444; }
+.meet-btn.is-primary { background: var(--color-primary); color: #fff; }
 .meet-college-lead { display: flex; align-items: center; justify-content: space-between; }

@@ -96,8 +96,8 @@
   margin-top: var(--space-md);
   padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-sm);
-  background: #fef3c7;
-  color: #b45309;
+  background: var(--color-warning-light);
+  color: var(--color-warning-text);
   font-size: var(--font-sm);
   line-height: 1.5;
 }

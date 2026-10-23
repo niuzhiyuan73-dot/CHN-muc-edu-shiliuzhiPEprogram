@@ -14,7 +14,7 @@
   border-radius: 50%;
   background: var(--color-primary);
   color: #fff;
-  font-size: 52rpx;
+  font-size: var(--font-display);
   font-weight: 700;
   flex: none;
 }
@@ -25,14 +25,14 @@
 }
 
 .team-name {
-  font-size: 38rpx;
+  font-size: var(--font-lg);
   font-weight: 700;
   color: var(--color-text-primary);
 }
 
 .team-meta {
   margin-top: 6rpx;
-  font-size: 26rpx;
+  font-size: var(--font-sm);
   color: var(--color-text-secondary);
 }
 
@@ -43,36 +43,16 @@
   border-radius: 20rpx;
   background: var(--color-primary-light);
   color: var(--color-primary);
-  font-size: 22rpx;
+  font-size: var(--font-xs);
 }
 
 .actions {
   margin-bottom: var(--space-md);
 }
 
-.btn {
-  height: 80rpx;
-  line-height: 80rpx;
-  border-radius: var(--radius-md);
-  font-size: 30rpx;
-  text-align: center;
-  font-weight: 600;
-}
 
-.btn-primary {
-  background: var(--color-primary);
-  color: #fff;
-}
 
-.btn-ghost {
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
-}
 
-.btn-danger {
-  background: #FDECEA;
-  color: #B23A2E;
-}
 
 .notice {
   margin-bottom: var(--space-md);
@@ -80,35 +60,28 @@
   border-radius: var(--radius-md);
   background: var(--color-primary-light);
   color: var(--color-primary-dark);
-  font-size: 26rpx;
+  font-size: var(--font-sm);
   line-height: 1.6;
 }
 
 .notice-error {
-  background: #FDECEA;
-  color: #B23A2E;
+  background: var(--color-danger-light);
+  color: var(--color-danger-text);
 }
 
 .hint {
   padding: var(--space-xl) 0;
   text-align: center;
   color: var(--color-text-secondary);
-  font-size: 28rpx;
+  font-size: var(--font-body);
 }
 
 .hint-inline {
   padding: var(--space-sm) 0;
-  font-size: 26rpx;
+  font-size: var(--font-sm);
   color: var(--color-text-secondary);
 }
 
-.card {
-  margin-bottom: var(--space-md);
-  padding: var(--space-md);
-  border-radius: var(--radius-lg);
-  background: var(--color-surface);
-  box-shadow: var(--shadow-card);
-}
 
 .card-head {
   display: flex;
@@ -118,7 +91,7 @@
 }
 
 .card-title {
-  font-size: 30rpx;
+  font-size: var(--font-md);
   font-weight: 600;
 }
 
@@ -127,7 +100,7 @@
   border-radius: 20rpx;
   background: var(--color-primary-light);
   color: var(--color-primary);
-  font-size: 22rpx;
+  font-size: var(--font-xs);
 }
 
 .member-list {
@@ -148,13 +121,13 @@
 }
 
 .member-name {
-  font-size: 28rpx;
+  font-size: var(--font-body);
   color: var(--color-text-primary);
 }
 
 .member-meta {
   margin-top: 4rpx;
-  font-size: 22rpx;
+  font-size: var(--font-xs);
   color: var(--color-text-secondary);
 }
 
@@ -171,7 +144,7 @@
   border-radius: 28rpx;
   background: var(--color-bg-subtle, #F5F6F8);
   color: var(--color-text-secondary);
-  font-size: 24rpx;
+  font-size: var(--font-caption);
 }
 
 .mini-primary {
@@ -179,12 +152,6 @@
   color: #fff;
 }
 
-.tag {
-  margin-left: var(--space-xs);
-  padding: 2rpx 12rpx;
-  border-radius: 20rpx;
-  font-size: 20rpx;
-}
 
 .tag-captain {
   background: var(--color-primary);
@@ -192,7 +159,7 @@
 }
 
 .tag-pending {
-  background: #FFF4E5;
+  background: var(--color-warning-light);
   color: #B26A00;
 }
 
@@ -202,7 +169,7 @@
 
 .danger-text {
   margin-bottom: var(--space-sm);
-  font-size: 24rpx;
+  font-size: var(--font-caption);
   color: var(--color-text-secondary);
   line-height: 1.6;
 }
@@ -220,20 +187,20 @@
 }
 
 .record-value {
-  font-size: 34rpx;
+  font-size: var(--font-lg);
   font-weight: 700;
   color: var(--color-text-primary);
 }
 
 .record-label {
   margin-top: 2rpx;
-  font-size: 22rpx;
+  font-size: var(--font-xs);
   color: var(--color-text-secondary);
 }
 
 .record-sub {
   margin: var(--space-sm) 0 4rpx;
-  font-size: 24rpx;
+  font-size: var(--font-caption);
   font-weight: 600;
   color: var(--color-text-secondary);
 }
@@ -255,13 +222,13 @@
 }
 
 .record-name {
-  font-size: 27rpx;
+  font-size: var(--font-sm);
   color: var(--color-text-primary);
 }
 
 .record-meta {
   margin-top: 2rpx;
-  font-size: 23rpx;
+  font-size: var(--font-xs);
   color: var(--color-text-secondary);
 }
 
@@ -273,13 +240,13 @@
 }
 
 .record-score {
-  font-size: 27rpx;
+  font-size: var(--font-sm);
   font-weight: 600;
   color: var(--color-text-primary);
 }
 
 .record-status {
-  font-size: 23rpx;
+  font-size: var(--font-xs);
   color: var(--color-text-secondary);
 }
 
@@ -289,11 +256,35 @@
 }
 
 .tag-win {
-  background: #FDECEA;
-  color: #B23A2E;
+  background: var(--color-danger-light);
+  color: var(--color-primary);
 }
 
 .tag-loss {
   background: #EAF5EE;
   color: #2E7D54;
+}
+
+/* ---------- 从队伍列表页搬过来的共用零件 ----------
+   「搜本院会员」抽屉与「名次标签」在 team-list / team-event-list 里都定义了样式，
+   唯独这个页面漏了——输入框没有高度与底色，名次标签退化成裸文字。
+   小程序页面样式互不共享（页面 wxss 只作用于本页），所以这里补齐。 */
+.create-input {
+  height: 76rpx;
+  padding: 0 var(--space-md);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-subtle);
+  font-size: var(--font-body);
+}
+
+.create-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+}
+
+.tag-rank {
+  background: var(--color-primary-light);
+  color: var(--color-primary);
 }

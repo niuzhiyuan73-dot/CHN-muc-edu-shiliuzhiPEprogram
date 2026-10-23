@@ -28,8 +28,8 @@
    看漏了就会把演示口径当成正式规则 */
 .demo-notice {
   font-size: var(--font-xs);
-  color: #b45309;
-  background: #fef3c7;
+  color: var(--color-warning-text);
+  background: var(--color-warning-light);
   border-radius: var(--radius-sm);
   padding: var(--space-sm) var(--space-md);
   margin-bottom: var(--space-md);
@@ -64,8 +64,8 @@
 }
 
 .tag.is-pending {
-  background: #fef3c7;
-  color: #b45309;
+  background: var(--color-warning-light);
+  color: var(--color-warning-text);
 }
 
 .tag.is-active {

@@ -1,39 +1,39 @@
 .meet-head { padding: 24rpx; margin-bottom: 20rpx; }
-.meet-name { font-size: 34rpx; font-weight: 600; }
-.meet-status { display: inline-block; margin-top: 10rpx; padding: 4rpx 16rpx; border-radius: 999rpx; font-size: 22rpx; background: #eee; color: #555; }
-.meet-status-registration { background: #fdece9; color: #b23a2e; }
-.meet-status-running { background: #e8f5ec; color: #1f7a3d; }
-.meet-meta { margin-top: 8rpx; font-size: 24rpx; color: var(--color-text-secondary, #666); }
-.meet-section-title { margin: 24rpx 0 12rpx; font-size: 26rpx; font-weight: 600; color: var(--color-text-secondary, #555); }
-.meet-section-hint { margin: -6rpx 0 12rpx; font-size: 22rpx; color: #999; }
+.meet-name { font-size: var(--font-lg); font-weight: 600; }
+.meet-status { display: inline-block; margin-top: 10rpx; padding: 4rpx 16rpx; border-radius: 999rpx; font-size: var(--font-xs); background: #eee; color: #555; }
+.meet-status-registration { background: var(--color-danger-light); color: var(--color-primary); }
+.meet-status-running { background: var(--color-success-light); color: var(--color-success-text); }
+.meet-meta { margin-top: 8rpx; font-size: var(--font-caption); color: var(--color-text-secondary, #666); }
+.meet-section-title { margin: 24rpx 0 12rpx; font-size: var(--font-sm); font-weight: 600; color: var(--color-text-secondary, #555); }
+.meet-section-hint { margin: -6rpx 0 12rpx; font-size: var(--font-xs); color: #999; }
 .meet-event { display: flex; justify-content: space-between; align-items: center; padding: 20rpx 24rpx; margin-bottom: 12rpx; }
 /* 可点项目：给一个按压反馈，否则用户不知道这一行能点（WXSS 不支持 :active，用 hover-class） */
 .meet-event-pressed { background: #f7f7f7; }
-.meet-event-name { font-size: 28rpx; font-weight: 500; }
+.meet-event-name { font-size: var(--font-body); font-weight: 500; }
 .meet-event-tags { margin-top: 8rpx; display: flex; gap: 8rpx; flex-wrap: wrap; }
-.meet-tag { padding: 2rpx 12rpx; border-radius: 8rpx; font-size: 20rpx; background: var(--color-bg-subtle, #f5f6f8); color: #666; }
-.meet-event-side { text-align: right; font-size: 22rpx; color: #888; }
+.meet-tag { padding: 2rpx 12rpx; border-radius: 8rpx; font-size: var(--font-2xs); background: var(--color-bg-subtle, #f5f6f8); color: #666; }
+.meet-event-side { text-align: right; font-size: var(--font-xs); color: #888; }
 .meet-publish { padding: 20rpx 24rpx; }
 .meet-field { display: flex; align-items: center; justify-content: space-between; padding: 12rpx 0; }
-.meet-label { font-size: 26rpx; color: #555; }
-.meet-value { font-size: 26rpx; color: #222; }
-.meet-danger { color: #b23a2e; }
-.meet-notice { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: #e8f5ec; color: #1f7a3d; font-size: 24rpx; }
-.meet-error { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: #fdece9; color: #b23a2e; font-size: 24rpx; }
-.meet-hint { margin-top: 20rpx; font-size: 24rpx; color: #888; }
+.meet-label { font-size: var(--font-sm); color: #555; }
+.meet-value { font-size: var(--font-sm); color: #222; }
+.meet-danger { color: var(--color-primary); }
+.meet-notice { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: var(--color-success-light); color: var(--color-success-text); font-size: var(--font-caption); }
+.meet-error { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: var(--color-danger-light); color: var(--color-primary); font-size: var(--font-caption); }
+.meet-hint { margin-top: 20rpx; font-size: var(--font-caption); color: #888; }
 
 /* 报名按钮：意向态与可报名态用不同底色，避免「已报名」被看成可点 */
-.meet-event-state { margin-top: 8rpx; font-size: 22rpx; color: #1f7a3d; }
-.meet-event-btn { margin-top: 8rpx; padding: 8rpx 18rpx; border-radius: 999rpx; background: #b23a2e; color: #fff; font-size: 22rpx; text-align: center; }
+.meet-event-state { margin-top: 8rpx; font-size: var(--font-xs); color: var(--color-success-text); }
+.meet-event-btn { margin-top: 8rpx; padding: 8rpx 18rpx; border-radius: 999rpx; background: var(--color-primary); color: #fff; font-size: var(--font-xs); text-align: center; }
 .meet-event-btn.is-pending { background: #f2f2f2; color: #666; }
 .meet-review-ops { display: flex; gap: 12rpx; }
-.meet-review { padding: 8rpx 18rpx; border-radius: 999rpx; font-size: 22rpx; }
-.meet-review.is-ok { background: #e8f5ec; color: #1f7a3d; }
-.meet-review.is-no { background: #fdece9; color: #b23a2e; }
-.meet-college-link { margin: 20rpx 0 4rpx; text-align: center; font-size: 24rpx; color: #b23a2e; }
+.meet-review { padding: 8rpx 18rpx; border-radius: 999rpx; font-size: var(--font-xs); }
+.meet-review.is-ok { background: var(--color-success-light); color: var(--color-success-text); }
+.meet-review.is-no { background: var(--color-danger-light); color: var(--color-primary); }
+.meet-college-link { margin: 20rpx 0 4rpx; text-align: center; font-size: var(--font-caption); color: var(--color-primary); }
 
 /* 「已出成绩」标记：只给已发布的项目打，充当可点提示 */
-.meet-tag.is-result { background: #fdece9; color: #b23a2e; }
+.meet-tag.is-result { background: var(--color-danger-light); color: var(--color-primary); }
 
 /* 成绩弹层：一次只看一个项目（原先全部平铺在页面底部，项目一多要滚很久） */
 .meet-sheet-mask {
@@ -47,22 +47,22 @@
   padding-bottom: env(safe-area-inset-bottom);
 }
 .meet-sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 24rpx 24rpx 8rpx; }
-.meet-sheet-title { flex: 1; min-width: 0; font-size: 32rpx; font-weight: 600; }
-.meet-sheet-close { padding: 6rpx 0 6rpx 20rpx; font-size: 24rpx; color: #888; }
+.meet-sheet-title { flex: 1; min-width: 0; font-size: var(--font-md); font-weight: 600; }
+.meet-sheet-close { padding: 6rpx 0 6rpx 20rpx; font-size: var(--font-caption); color: #888; }
 /* scroll-view 必须有确定高度才会滚动（弹性布局里的 flex:1 在部分基础库不生效） */
 .meet-sheet-body { height: 62vh; padding: 0 24rpx 24rpx; box-sizing: border-box; }
 .meet-sheet-round { padding-top: 16rpx; }
-.meet-sheet-round-title { font-size: 24rpx; font-weight: 500; color: #b23a2e; }
+.meet-sheet-round-title { font-size: var(--font-caption); font-weight: 500; color: var(--color-primary); }
 .meet-sheet-row { display: flex; justify-content: space-between; align-items: flex-start; padding: 16rpx 0; border-bottom: 1rpx solid #f2f2f2; }
 .meet-sheet-row-main { flex: 1; min-width: 0; padding-right: 16rpx; }
-.meet-sheet-row-name { font-size: 26rpx; color: #222; }
-.meet-sheet-row-meta { margin-top: 4rpx; font-size: 22rpx; color: #999; word-break: break-all; }
+.meet-sheet-row-name { font-size: var(--font-sm); color: #222; }
+.meet-sheet-row-meta { margin-top: 4rpx; font-size: var(--font-xs); color: #999; word-break: break-all; }
 .meet-sheet-row-side { flex-shrink: 0; text-align: right; }
-.meet-sheet-row-text { font-size: 28rpx; font-weight: 600; color: #222; }
-.meet-sheet-row-points { margin-top: 4rpx; font-size: 22rpx; color: #888; }
+.meet-sheet-row-text { font-size: var(--font-body); font-weight: 600; color: #222; }
+.meet-sheet-row-points { margin-top: 4rpx; font-size: var(--font-xs); color: #888; }
 
 /* 补报窗口的日期/时间选择：两段并排，点哪段开哪个 picker */
 .meet-time { display: flex; align-items: center; gap: 12rpx; }
-.meet-time-part { padding: 8rpx 16rpx; border-radius: 8rpx; background: #f5f6f8; font-size: 26rpx; color: #222; }
+.meet-time-part { padding: 8rpx 16rpx; border-radius: 8rpx; background: #f5f6f8; font-size: var(--font-sm); color: #222; }
 /* 「报名已截止」这种结论性提示要比普通 meta 重 */
-.meet-meta-strong { color: #b23a2e; font-weight: 600; }
+.meet-meta-strong { color: var(--color-primary); font-weight: 600; }

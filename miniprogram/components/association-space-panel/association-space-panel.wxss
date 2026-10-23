@@ -209,7 +209,7 @@
   margin-bottom: var(--space-md);
   padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-md);
-  background: #fdecea;
+  background: var(--color-danger-light);
   color: var(--color-danger);
   font-size: var(--font-sm);
   line-height: 1.5;

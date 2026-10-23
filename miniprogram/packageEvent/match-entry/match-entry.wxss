@@ -404,7 +404,7 @@
 .live-entry-arrow {
   flex-shrink: 0;
   margin-left: var(--space-sm);
-  font-size: 44rpx;
+  font-size: var(--font-xl);
   line-height: 1;
   color: rgba(255, 255, 255, 0.9);
 }

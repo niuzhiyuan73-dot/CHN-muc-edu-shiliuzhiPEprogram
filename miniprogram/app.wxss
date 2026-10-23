@@ -25,10 +25,19 @@ page {
   --color-border: #e5e7eb;
   --color-divider: #f0f1f3;
 
-  /* ---------- 语义色 ---------- */
+  /* ---------- 语义色 ----------
+     每个语义色配一对「浅底 / 深字」：徽章与提示条用浅底 + 深字，
+     浅底上直接用主色字会糊（对比度不足）。原先各页面自己写了 5 套绿、
+     2 套黄，这里各收敛成一套。 */
   --color-success: #16a34a;
+  --color-success-light: #e8f5ec;
+  --color-success-text: #1f7a3d;
   --color-danger: #e5484d;
+  --color-danger-light: #fdece9;
+  --color-danger-text: #b23a2e;
   --color-warning: #f59e0b;
+  --color-warning-light: #fef3c7;
+  --color-warning-text: #b45309;
 
   /* ---------- 排行榜奖牌色 ---------- */
   --color-gold: #d4af37;
@@ -52,10 +61,46 @@ page {
   --radius-md: 16rpx;
   --radius-lg: 24rpx;
 
-  /* ---------- 字号 ---------- */
+  /* ---------- 阴影 ----------
+     卡片阴影原先在 .card 里硬编码、另有 8 处引用 --shadow-card 却没有定义，
+     于是「卡片没有阴影」是个静默失败。统一在这里给出。 */
+  --shadow-card: 0 4rpx 16rpx rgba(31, 35, 41, 0.07);
+  --shadow-float: 0 8rpx 24rpx rgba(0, 0, 0, 0.18);
+
+  /* ---------- 历史命名别名 ----------
+     早期页面用的是 surface / text-primary / brand-color 这套命名，与上面这套
+     并存。这里把两边接上，而不是去改十几个文件：改文件会漏，漏一处就是
+     「背景透明、阴影消失、标题色靠继承」这类静默失效。
+     **别名必须写成 var(原变量)**，否则换肤时别名不会跟着变。 */
+  --color-surface: var(--color-card);
+  --color-bg-subtle: #f8f9fa;
+  --color-text-primary: var(--color-text);
+  --text-primary: var(--color-text);
+  --text-secondary: var(--color-text-secondary);
+  --bg-muted: #f8f9fa;
+  --border-color: var(--color-border);
+  --brand-color: var(--color-primary);
+  --brand-soft: var(--color-primary-light);
+  --brand-dark: var(--color-primary-dark);
+
+  /* ---------- 正文字色阶 ----------
+     页面里散落着 #222 / #555 / #888 / #999 等灰阶。这里给它们名字，
+     先做到「同一档灰只有一个值」，再谈统一收敛。 */
+  --color-text-strong: #222;
+  --color-text-body: #555;
+  --color-text-muted: #888;
+  --color-text-faint: #999;
+
+  /* ---------- 字号 ----------
+     10 档，覆盖 19–56rpx 的全部实际用法。级数不是越少越好——级数太少，
+     页面就会自己造中间档（原先 24rpx 出现 71 次、28rpx 30 次，都在这张表之外），
+     那才是失控的来源。原则是「每个用到的尺寸都有名字，且只有一个名字」。 */
+  --font-2xs: 20rpx;      /* 徽章、脚注、极紧凑标签 */
   --font-xs: 22rpx;
+  --font-caption: 24rpx;  /* 说明性小字：卡片副标题、表头、提示 */
   --font-sm: 26rpx;
-  --font-md: 30rpx;
+  --font-body: 28rpx;     /* 紧凑正文：列表行主文案 */
+  --font-md: 30rpx;       /* 正文基准（page 默认） */
   --font-lg: 36rpx;
   --font-xl: 44rpx;
   /* 展示型大数字（排名、荣誉统计等）：与正文拉开明显大小对比，让数据一眼可读 */
@@ -82,7 +127,7 @@ page {
   border-radius: var(--radius-md);
   padding: var(--space-lg);
   margin-bottom: var(--space-md);
-  box-shadow: 0 4rpx 16rpx rgba(31, 35, 41, 0.07);
+  box-shadow: var(--shadow-card);
 }
 
 .card-title {
@@ -197,6 +242,15 @@ page {
   width: 100%;
 }
 
+/* 次按钮：低权重动作（返回、取消、加载更多、结束赛事前的二次确认）。
+   这条原先只在 packageTeam/team-detail 的页面样式里定义，而 packageMeet 有
+   5 个页面在用 `.btn btn-ghost`——页面样式不跨页生效，那些按钮此前是**裸
+   button**（没有背景、没有内边距，只有浏览器默认样式）。统一收到全局。 */
+.btn-ghost {
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+}
+
 /* ==================== 分池切换 ==================== */
 /* 「我的」页与排行榜页都要切项目（男单 / 女单 / 双打），
    样式放全局，两个页面共用一份，不各写一遍。 */
@@ -207,7 +261,7 @@ page {
   border-radius: var(--radius-md);
   padding: var(--space-xs);
   margin-bottom: var(--space-md);
-  box-shadow: 0 4rpx 16rpx rgba(31, 35, 41, 0.07);
+  box-shadow: var(--shadow-card);
 }
 
 .pool-tab {

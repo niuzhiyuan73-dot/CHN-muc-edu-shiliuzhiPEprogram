@@ -102,7 +102,7 @@
 /* 报名者名字下方的等级分与积分，比状态行再小一号，不喧宾夺主 */
 .signup-stat {
   margin-left: var(--space-xs);
-  font-size: 20rpx;
+  font-size: var(--font-2xs);
   color: var(--color-text-tertiary);
 }
 
@@ -343,8 +343,8 @@
 
 .demo-notice {
   font-size: var(--font-xs);
-  color: #b45309;
-  background: #fef3c7;
+  color: var(--color-warning-text);
+  background: var(--color-warning-light);
   border-radius: var(--radius-sm);
   padding: var(--space-sm) var(--space-md);
   margin-bottom: var(--space-md);
@@ -527,8 +527,8 @@
 .bracket-referee-notice {
   margin-top: 4rpx;
   font-size: var(--font-xs);
-  color: #b45309;
-  background: #fef3c7;
+  color: var(--color-warning-text);
+  background: var(--color-warning-light);
   border-radius: var(--radius-sm);
   padding: var(--space-xs) var(--space-sm);
   line-height: 1.5;

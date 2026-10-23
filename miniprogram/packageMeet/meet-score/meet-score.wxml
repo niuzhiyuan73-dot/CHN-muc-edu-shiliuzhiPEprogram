@@ -2,7 +2,7 @@
   录分与成绩发布：裁判看「我的任务」逐条录分；管理员看汇总预览并发布。
   无成绩由管理员在预览时勾选，发布时作为 void 传，不写 0。
 -->
-<view class="page-container">
+<view class="page-container {{themeClass}}">
 
   <view wx:if="{{notice}}" class="meet-notice">{{notice}}</view>
   <view wx:if="{{error}}" class="meet-error">{{error}}</view>

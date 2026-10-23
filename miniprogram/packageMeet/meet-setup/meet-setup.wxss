@@ -1,51 +1,51 @@
 .meet-form { padding: 20rpx 24rpx; margin-bottom: 20rpx; }
 .meet-field { display: flex; align-items: center; justify-content: space-between; padding: 16rpx 0; border-bottom: 1rpx solid var(--color-divider, #f0f0f0); }
 .meet-field:last-child { border-bottom: none; }
-.meet-label { font-size: 26rpx; color: #555; width: 120rpx; }
-.meet-input { flex: 1; text-align: right; font-size: 26rpx; }
-.meet-value { font-size: 26rpx; color: #222; }
+.meet-label { font-size: var(--font-sm); color: #555; width: 120rpx; }
+.meet-input { flex: 1; text-align: right; font-size: var(--font-sm); }
+.meet-value { font-size: var(--font-sm); color: #222; }
 .meet-toolbar { margin-bottom: 16rpx; }
-.meet-search { height: 72rpx; padding: 0 20rpx; border-radius: 12rpx; background: var(--color-bg-subtle, #f5f6f8); font-size: 26rpx; }
+.meet-search { height: 72rpx; padding: 0 20rpx; border-radius: 12rpx; background: var(--color-bg-subtle, #f5f6f8); font-size: var(--font-sm); }
 .meet-cats { white-space: nowrap; margin-bottom: 16rpx; }
-.meet-cat { display: inline-block; padding: 10rpx 22rpx; margin-right: 12rpx; border-radius: 999rpx; background: var(--color-bg-subtle, #f5f6f8); font-size: 24rpx; color: #555; }
-.meet-cat.is-active { background: #b23a2e; color: #fff; }
+.meet-cat { display: inline-block; padding: 10rpx 22rpx; margin-right: 12rpx; border-radius: 999rpx; background: var(--color-bg-subtle, #f5f6f8); font-size: var(--font-caption); color: #555; }
+.meet-cat.is-active { background: var(--color-primary); color: #fff; }
 .meet-tpl { padding: 20rpx 24rpx; margin-bottom: 12rpx; }
 .meet-tpl-head { display: flex; justify-content: space-between; align-items: center; }
-.meet-tpl-name { font-size: 28rpx; font-weight: 500; }
-.meet-tpl-cat { font-size: 20rpx; color: #999; }
+.meet-tpl-name { font-size: var(--font-body); font-weight: 500; }
+.meet-tpl-cat { font-size: var(--font-2xs); color: #999; }
 .meet-tpl-groups { margin-top: 12rpx; display: flex; gap: 12rpx; align-items: center; flex-wrap: wrap; }
-.meet-group { padding: 6rpx 20rpx; border-radius: 999rpx; border: 1rpx solid #ddd; font-size: 22rpx; color: #555; }
-.meet-group.is-picked { background: #b23a2e; border-color: #b23a2e; color: #fff; }
-.meet-tpl-note { font-size: 20rpx; color: #999; }
-.meet-section-title { margin: 24rpx 0 12rpx; font-size: 26rpx; font-weight: 600; color: #555; }
+.meet-group { padding: 6rpx 20rpx; border-radius: 999rpx; border: 1rpx solid #ddd; font-size: var(--font-xs); color: #555; }
+.meet-group.is-picked { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
+.meet-tpl-note { font-size: var(--font-2xs); color: #999; }
+.meet-section-title { margin: 24rpx 0 12rpx; font-size: var(--font-sm); font-weight: 600; color: #555; }
 .meet-pick { padding: 18rpx 24rpx; margin-bottom: 12rpx; }
-.meet-pick-name { font-size: 26rpx; font-weight: 500; }
-.meet-pick-meta { margin-top: 6rpx; font-size: 22rpx; color: #888; display: flex; gap: 16rpx; }
+.meet-pick-name { font-size: var(--font-sm); font-weight: 500; }
+.meet-pick-meta { margin-top: 6rpx; font-size: var(--font-xs); color: #888; display: flex; gap: 16rpx; }
 .meet-pick-ops { margin-top: 12rpx; display: flex; align-items: center; gap: 10rpx; }
-.meet-step { width: 52rpx; height: 52rpx; line-height: 52rpx; text-align: center; border-radius: 10rpx; background: var(--color-bg-subtle, #f5f6f8); font-size: 28rpx; color: #333; }
-.meet-step-value { min-width: 48rpx; text-align: center; font-size: 24rpx; }
-.meet-notice { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: #e8f5ec; color: #1f7a3d; font-size: 24rpx; }
-.meet-error { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: #fdece9; color: #b23a2e; font-size: 24rpx; }
+.meet-step { width: 52rpx; height: 52rpx; line-height: 52rpx; text-align: center; border-radius: 10rpx; background: var(--color-bg-subtle, #f5f6f8); font-size: var(--font-body); color: #333; }
+.meet-step-value { min-width: 48rpx; text-align: center; font-size: var(--font-caption); }
+.meet-notice { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: var(--color-success-light); color: var(--color-success-text); font-size: var(--font-caption); }
+.meet-error { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: var(--color-danger-light); color: var(--color-primary); font-size: var(--font-caption); }
 
 /* 赛制 / 轮次切换 */
 .meet-pick-opts { margin-top: 12rpx; display: flex; align-items: center; gap: 12rpx; flex-wrap: wrap; }
-.meet-chip { padding: 6rpx 20rpx; border-radius: 999rpx; border: 1rpx solid #ddd; font-size: 22rpx; color: #555; }
-.meet-chip.is-on { background: #b23a2e; border-color: #b23a2e; color: #fff; }
+.meet-chip { padding: 6rpx 20rpx; border-radius: 999rpx; border: 1rpx solid #ddd; font-size: var(--font-xs); color: #555; }
+.meet-chip.is-on { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
 .meet-advance { display: flex; align-items: center; gap: 8rpx; }
-.meet-advance-label { font-size: 22rpx; color: #888; }
+.meet-advance-label { font-size: var(--font-xs); color: #888; }
 
 /* 已选项目的编辑行 */
-.meet-pick-saving { margin-left: 10rpx; font-size: 20rpx; color: #999; }
-.meet-pick-failed { margin-left: 10rpx; font-size: 20rpx; color: #b23a2e; }
-.meet-pick-error { margin-top: 6rpx; font-size: 20rpx; color: #b23a2e; }
+.meet-pick-saving { margin-left: 10rpx; font-size: var(--font-2xs); color: #999; }
+.meet-pick-failed { margin-left: 10rpx; font-size: var(--font-2xs); color: var(--color-primary); }
+.meet-pick-error { margin-top: 6rpx; font-size: var(--font-2xs); color: var(--color-primary); }
 .meet-form-row { display: flex; align-items: center; gap: 12rpx; margin-top: 14rpx; flex-wrap: wrap; }
-.meet-form-label { width: 130rpx; font-size: 24rpx; color: #555; }
-.meet-form-unit { font-size: 22rpx; color: #888; }
-.meet-form-fixed { font-size: 24rpx; color: #333; }
-.meet-num { width: 120rpx; height: 60rpx; padding: 0 14rpx; border-radius: 10rpx; background: #f5f6f8; font-size: 26rpx; text-align: center; }
+.meet-form-label { width: 130rpx; font-size: var(--font-caption); color: #555; }
+.meet-form-unit { font-size: var(--font-xs); color: #888; }
+.meet-form-fixed { font-size: var(--font-caption); color: #333; }
+.meet-num { width: 120rpx; height: 60rpx; padding: 0 14rpx; border-radius: 10rpx; background: #f5f6f8; font-size: var(--font-sm); text-align: center; }
 .meet-seg { display: flex; border-radius: 12rpx; overflow: hidden; border: 1rpx solid #e2e4e8; }
-.meet-seg-item { padding: 10rpx 22rpx; font-size: 24rpx; color: #555; background: #fff; }
+.meet-seg-item { padding: 10rpx 22rpx; font-size: var(--font-caption); color: #555; background: #fff; }
 .meet-seg-item + .meet-seg-item { border-left: 1rpx solid #e2e4e8; }
-.meet-seg-item.is-on { background: #b23a2e; color: #fff; border-color: #b23a2e; }
+.meet-seg-item.is-on { background: var(--color-primary); color: #fff; border-color: var(--color-primary); }
 
-.meet-form-hint { font-size: 22rpx; color: #999; }
+.meet-form-hint { font-size: var(--font-xs); color: #999; }

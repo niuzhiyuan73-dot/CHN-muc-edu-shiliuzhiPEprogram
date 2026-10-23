@@ -1,29 +1,29 @@
 .meet-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16rpx; }
-.meet-title { font-size: 32rpx; font-weight: 600; }
-.meet-link { font-size: 24rpx; color: #b23a2e; }
-.meet-section-title { margin: 24rpx 0 12rpx; font-size: 26rpx; font-weight: 600; color: #555; }
+.meet-title { font-size: var(--font-md); font-weight: 600; }
+.meet-link { font-size: var(--font-caption); color: var(--color-primary); }
+.meet-section-title { margin: 24rpx 0 12rpx; font-size: var(--font-sm); font-weight: 600; color: #555; }
 
 /* 总榜表格：四列等宽，表头浅灰 */
 .meet-table { padding: 8rpx 0; }
 .meet-tr { display: flex; align-items: center; padding: 18rpx 24rpx; }
 .meet-tr + .meet-tr { border-top: 1rpx solid #f4f4f4; }
-.meet-th { background: #fafbfc; color: #888; font-size: 22rpx; padding: 14rpx 24rpx; }
-.meet-rank { width: 90rpx; font-size: 26rpx; color: #333; font-weight: 600; }
-.meet-college { flex: 1; font-size: 26rpx; color: #222; }
-.meet-total { width: 100rpx; text-align: right; font-size: 28rpx; font-weight: 600; color: #b23a2e; }
-.meet-medal { width: 170rpx; text-align: right; font-size: 22rpx; color: #888; }
+.meet-th { background: #fafbfc; color: #888; font-size: var(--font-xs); padding: 14rpx 24rpx; }
+.meet-rank { width: 90rpx; font-size: var(--font-sm); color: #333; font-weight: 600; }
+.meet-college { flex: 1; font-size: var(--font-sm); color: #222; }
+.meet-total { width: 100rpx; text-align: right; font-size: var(--font-body); font-weight: 600; color: var(--color-primary); }
+.meet-medal { width: 170rpx; text-align: right; font-size: var(--font-xs); color: #888; }
 
 /* 荣誉汇总 */
 .meet-summary { display: flex; padding: 24rpx; margin-bottom: 12rpx; }
 .meet-summary-item { flex: 1; text-align: center; }
-.meet-summary-num { display: block; font-size: 36rpx; font-weight: 600; color: #b23a2e; }
-.meet-summary-label { font-size: 22rpx; color: #888; }
+.meet-summary-num { display: block; font-size: var(--font-lg); font-weight: 600; color: var(--color-primary); }
+.meet-summary-label { font-size: var(--font-xs); color: #888; }
 
 /* 单条荣誉 */
 .meet-honor { display: flex; justify-content: space-between; align-items: center; padding: 20rpx 24rpx; margin-bottom: 12rpx; }
-.meet-honor-name { font-size: 27rpx; font-weight: 500; }
-.meet-honor-meta { margin-top: 6rpx; font-size: 22rpx; color: #999; }
-.meet-honor-rank { padding: 6rpx 16rpx; border-radius: 999rpx; font-size: 22rpx; background: #f2f2f2; color: #777; }
+.meet-honor-name { font-size: var(--font-sm); font-weight: 500; }
+.meet-honor-meta { margin-top: 6rpx; font-size: var(--font-xs); color: #999; }
+.meet-honor-rank { padding: 6rpx 16rpx; border-radius: 999rpx; font-size: var(--font-xs); background: #f2f2f2; color: #777; }
 .meet-honor-rank.rank-1 { background: #fdf3d8; color: #9a6b00; }
 .meet-honor-rank.rank-2 { background: #eef1f4; color: #5b6b7a; }
 .meet-honor-rank.rank-3 { background: #f8ece2; color: #8a5a2b; }

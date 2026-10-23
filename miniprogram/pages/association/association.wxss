@@ -8,8 +8,8 @@
   margin-bottom: var(--space-md);
   padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-md);
-  background: #fff4e5;
-  color: #9a5b00;
+  background: var(--color-warning-light);
+  color: var(--color-warning-text);
   font-size: var(--font-sm);
   line-height: 1.6;
 }
@@ -98,7 +98,7 @@
   width: 136rpx;
   height: 136rpx;
   border-radius: 36rpx;
-  font-size: 56rpx;
+  font-size: var(--font-display);
 }
 
 .assoc-grid--three .assoc-item-name {
@@ -140,7 +140,7 @@
 .assoc-grid--four .assoc-item-current {
   top: var(--space-xs);
   right: var(--space-xs);
-  font-size: 20rpx;
+  font-size: var(--font-2xs);
   padding: 0 10rpx;
 }
 

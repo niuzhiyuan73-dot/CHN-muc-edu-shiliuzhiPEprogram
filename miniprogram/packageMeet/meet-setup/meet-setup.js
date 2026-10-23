@@ -23,6 +23,7 @@
  */
 
 const meet = require('../../services/meet.js');
+const { currentThemeClass } = require('../../services/branding.js');
 const { updateMeetPage } = require('../../utils/meet-ui.js');
 const session = require('../../services/school-session.js');
 const { meetEventKey } = require('../../utils/meet-scope.js');
@@ -59,6 +60,8 @@ function defaultLimit(template) {
 
 Page({
   data: {
+    // 协会主题类：挂到页面根节点，子节点的 var(--color-primary) 会跟着换色
+    themeClass: '',
     loading: true,
     error: '',
     notice: '',
@@ -88,6 +91,7 @@ Page({
   },
 
   onLoad(options = {}) {
+    this.setData({ themeClass: currentThemeClass() });
     this.unloaded = false;
     const meetId = String(options.meetId || '');
     // 带 step=1 进入 = 改草稿基本信息（详情页「编辑基本信息」）：仍从第一步开始，

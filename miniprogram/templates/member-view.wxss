@@ -51,7 +51,7 @@
 
 /* 没有头像时用昵称首字代替，比放一个灰色占位图友好 */
 .member-avatar text {
-  font-size: 40rpx;
+  font-size: var(--font-xl);
 }
 
 .member-avatar-img {

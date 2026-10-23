@@ -11,13 +11,13 @@
 }
 
 .panel-title {
-  font-size: 28rpx;
+  font-size: var(--font-body);
   font-weight: 600;
   color: var(--color-text-primary);
 }
 
 .panel-action {
-  font-size: 24rpx;
+  font-size: var(--font-caption);
   color: var(--color-primary);
 }
 
@@ -25,7 +25,7 @@
   padding: var(--space-lg) var(--space-md);
   border-radius: var(--radius-lg);
   background: var(--color-surface);
-  font-size: 26rpx;
+  font-size: var(--font-sm);
   line-height: 1.6;
   color: var(--color-text-secondary);
   text-align: center;
@@ -34,7 +34,7 @@
 .panel-more {
   margin-top: var(--space-sm);
   padding: var(--space-sm) 0;
-  font-size: 24rpx;
+  font-size: var(--font-caption);
   color: var(--color-primary);
   text-align: center;
 }
@@ -61,14 +61,14 @@
 }
 
 .event-name {
-  font-size: 30rpx;
+  font-size: var(--font-md);
   font-weight: 600;
   color: var(--color-text-primary);
 }
 
 .event-meta {
   margin-top: 6rpx;
-  font-size: 23rpx;
+  font-size: var(--font-xs);
   color: var(--color-text-secondary);
   line-height: 1.5;
 }
@@ -83,7 +83,7 @@
 .status {
   padding: 4rpx 14rpx;
   border-radius: 20rpx;
-  font-size: 21rpx;
+  font-size: var(--font-2xs);
   background: #F0F1F3;
   color: var(--color-text-secondary);
 }
@@ -95,16 +95,16 @@
 
 .status-running,
 .status-locked {
-  background: #FFF4E5;
+  background: var(--color-warning-light);
   color: #B26A00;
 }
 
 .status-finished {
-  background: #E8F5E9;
+  background: var(--color-success-light);
   color: #2E7D32;
 }
 
 .event-arrow {
-  font-size: 34rpx;
+  font-size: var(--font-lg);
   color: var(--color-text-secondary);
 }

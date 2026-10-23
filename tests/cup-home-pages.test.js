@@ -152,8 +152,11 @@ test('项目栏：一屏三个、其余左滑，选中项自动滚进可视区',
   assert.ok(/scroll-x/.test(wxml) && /scroll-into-view="\{\{projectAnchor\}\}"/.test(wxml),
     '项目栏缺少横向滑动或选中项定位');
 
-  // 选中态必须有实色，否则「当前是哪个项目」只能靠位置猜
-  assert.ok(/\.cup-project\.is-active\s*\{[^}]*background:\s*#b23a2e/.test(wxss), '选中项目没有明显底色');
+  // 选中态必须有实色，否则「当前是哪个项目」只能靠位置猜。
+  // 2026-10-23 起主色改由 var(--color-primary) 提供（换肤要跟着变），
+  // 所以这里同时接受字面量与变量两种写法。
+  assert.ok(/\.cup-project\.is-active\s*\{[^}]*background:\s*(#b23a2e|var\(--color-primary\))/i.test(wxss),
+    '选中项目没有明显底色');
 
   const page = loadPage('cup-home');
   assert.equal(page.anchorOf('bk'), 'proj-bk', '滚动锚点要按项目 id 给出节点 id');

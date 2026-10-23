@@ -1,11 +1,11 @@
 .school-page .card { margin-bottom: 24rpx; }
-.hint { color: #666; font-size: 26rpx; line-height: 1.7; margin-top: 12rpx; }
-.selection { padding: 24rpx 0; font-size: 30rpx; display: flex; justify-content: space-between; }
-.selection text { color: #777; font-size: 26rpx; }
+.hint { color: #666; font-size: var(--font-sm); line-height: 1.7; margin-top: 12rpx; }
+.selection { padding: 24rpx 0; font-size: var(--font-md); display: flex; justify-content: space-between; }
+.selection text { color: #777; font-size: var(--font-sm); }
 .identity-input { background: #f5f6f8; padding: 20rpx; margin: 16rpx 0 24rpx; border-radius: 12rpx; }
 .error-box { color: #a12622; }
 .application { border-top: 1rpx solid #eee; margin-top: 24rpx; padding-top: 24rpx; }
-.applicant-name { font-size: 30rpx; font-weight: 600; }
+.applicant-name { font-size: var(--font-md); font-weight: 600; }
 .actions { display: flex; gap: 20rpx; }
 .actions button { flex: 1; margin: 0; }
 .member-row { display: flex; align-items: center; justify-content: space-between;
@@ -14,4 +14,4 @@
 .member-meta { margin-top: 6rpx; }
 /* 转校申请标签：审核列表里一眼看出这条不是普通入会，而是从别校转来 */
 .transfer-tag { margin-left: 12rpx; padding: 2rpx 12rpx; border-radius: 8rpx;
-  background: #fbf3e0; color: #a1841f; font-size: 22rpx; font-weight: 400; }
+  background: #fbf3e0; color: #a1841f; font-size: var(--font-xs); font-weight: 400; }

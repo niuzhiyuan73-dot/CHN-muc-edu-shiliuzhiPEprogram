@@ -91,7 +91,7 @@
 
 .score-readonly-text {
   display: block;
-  font-size: 48rpx;
+  font-size: var(--font-display);
   font-weight: 600;
 }
 
@@ -136,8 +136,8 @@
   margin: 0 var(--space-sm) var(--space-md);
   padding: var(--space-sm) var(--space-md);
   border-radius: 12rpx;
-  background: #fef3c7;
-  color: #b45309;
+  background: var(--color-warning-light);
+  color: var(--color-warning-text);
   font-size: var(--font-xs);
   line-height: 1.5;
 }
@@ -208,8 +208,8 @@
   margin-top: var(--space-sm);
   padding: var(--space-xs) var(--space-sm);
   border-radius: var(--radius-sm);
-  background: #fef3c7;
-  color: #b45309;
+  background: var(--color-warning-light);
+  color: var(--color-warning-text);
   font-size: var(--font-xs);
   line-height: 1.5;
 }
@@ -248,7 +248,7 @@
 .live-entry-arrow {
   flex-shrink: 0;
   margin-left: var(--space-sm);
-  font-size: 44rpx;
+  font-size: var(--font-xl);
   line-height: 1;
   color: rgba(255, 255, 255, 0.9);
 }

@@ -2,7 +2,7 @@
   运动会详情：基本信息 + 项目清单 + 按角色可见的动作。
   草稿期才出现「继续配置 / 发布报名 / 删除草稿」——发布后改规则会影响已提交的报名。
 -->
-<view class="page-container">
+<view class="page-container {{themeClass}}">
 
   <view wx:if="{{loading}}" class="loading">正在加载…</view>
 

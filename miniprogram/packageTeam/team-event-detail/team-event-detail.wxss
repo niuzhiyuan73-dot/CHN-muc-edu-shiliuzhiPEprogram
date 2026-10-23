@@ -4,7 +4,7 @@
 }
 
 .head-name {
-  font-size: 40rpx;
+  font-size: var(--font-xl);
   font-weight: 700;
   color: var(--color-text, #1f2329);
 }
@@ -17,13 +17,13 @@
 }
 
 .head-count {
-  font-size: 24rpx;
+  font-size: var(--font-caption);
   color: var(--color-text-secondary);
 }
 
 .head-rules {
   margin-top: var(--space-xs);
-  font-size: 24rpx;
+  font-size: var(--font-caption);
   line-height: 1.6;
   color: var(--color-text-secondary);
 }
@@ -31,7 +31,7 @@
 .status {
   padding: 4rpx 14rpx;
   border-radius: 20rpx;
-  font-size: 21rpx;
+  font-size: var(--font-2xs);
   background: #F0F1F3;
   color: var(--color-text-secondary);
 }
@@ -43,12 +43,12 @@
 
 .status-running,
 .status-locked {
-  background: #FFF4E5;
+  background: var(--color-warning-light);
   color: #B26A00;
 }
 
 .status-finished {
-  background: #E8F5E9;
+  background: var(--color-success-light);
   color: #2E7D32;
 }
 
@@ -58,13 +58,13 @@
   border-radius: var(--radius-md);
   background: var(--color-primary-light);
   color: var(--color-primary-dark);
-  font-size: 26rpx;
+  font-size: var(--font-sm);
   line-height: 1.6;
 }
 
 .notice-error {
-  background: #FDECEA;
-  color: #B23A2E;
+  background: var(--color-danger-light);
+  color: var(--color-danger-text);
 }
 
 .action-bar {
@@ -74,20 +74,9 @@
   margin-bottom: var(--space-md);
 }
 
-.btn {
-  padding: 0 var(--space-lg);
-  height: 72rpx;
-  line-height: 72rpx;
-  border-radius: var(--radius-md);
-  font-size: 27rpx;
-  text-align: center;
-  font-weight: 600;
-}
 
-.btn-primary {
-  background: var(--color-primary);
-  color: #fff;
-}
+
+
 
 .btn-ghost {
   background: var(--color-card, #ffffff);
@@ -99,16 +88,10 @@
   opacity: 0.6;
 }
 
-.card {
-  margin-bottom: var(--space-md);
-  padding: var(--space-md);
-  border-radius: var(--radius-lg);
-  background: var(--color-card, #ffffff);
-  box-shadow: var(--shadow-card, 0 2rpx 12rpx rgba(0, 0, 0, 0.04));
-}
+
 
 .card-title {
-  font-size: 30rpx;
+  font-size: var(--font-md);
   font-weight: 600;
   margin-bottom: var(--space-sm);
 }
@@ -117,12 +100,12 @@
   padding: var(--space-xl) 0;
   text-align: center;
   color: var(--color-text-secondary);
-  font-size: 28rpx;
+  font-size: var(--font-body);
 }
 
 .hint-inline {
   padding: var(--space-sm) 0;
-  font-size: 26rpx;
+  font-size: var(--font-sm);
   color: var(--color-text-secondary);
 }
 
@@ -149,13 +132,13 @@
 }
 
 .row-name {
-  font-size: 28rpx;
+  font-size: var(--font-body);
   color: var(--color-text, #1f2329);
 }
 
 .row-meta {
   margin-top: 4rpx;
-  font-size: 22rpx;
+  font-size: var(--font-xs);
   color: var(--color-text-secondary);
 }
 
@@ -173,7 +156,7 @@
   border-radius: 28rpx;
   background: var(--color-bg-subtle, #F5F6F8);
   color: var(--color-text-secondary);
-  font-size: 24rpx;
+  font-size: var(--font-caption);
 }
 
 .mini-primary {
@@ -181,12 +164,7 @@
   color: #fff;
 }
 
-.tag {
-  margin-left: var(--space-xs);
-  padding: 2rpx 12rpx;
-  border-radius: 20rpx;
-  font-size: 20rpx;
-}
+
 
 .tag-rank {
   background: var(--color-primary-light);
@@ -194,7 +172,7 @@
 }
 
 .tag-ot {
-  background: #FFF4E5;
+  background: var(--color-warning-light);
   color: #B26A00;
   margin-left: var(--space-xs);
 }
@@ -210,7 +188,7 @@
 }
 
 .round-label {
-  font-size: 25rpx;
+  font-size: var(--font-caption);
   font-weight: 600;
   color: var(--color-text-secondary);
   margin-bottom: var(--space-xs);
@@ -224,7 +202,7 @@
   padding: 10rpx var(--space-md);
   border-radius: var(--radius-md);
   background: var(--color-bg-subtle, #F5F6F8);
-  font-size: 27rpx;
+  font-size: var(--font-sm);
   color: var(--color-text, #1f2329);
   text-align: right;
 }
@@ -246,7 +224,7 @@
 
 .side {
   flex: 1;
-  font-size: 28rpx;
+  font-size: var(--font-body);
   color: var(--color-text-secondary);
   text-align: left;
 }
@@ -264,14 +242,14 @@
   flex: none;
   min-width: 120rpx;
   text-align: center;
-  font-size: 30rpx;
+  font-size: var(--font-md);
   font-weight: 700;
   color: var(--color-text, #1f2329);
 }
 
 .match-meta {
   margin-top: 4rpx;
-  font-size: 22rpx;
+  font-size: var(--font-xs);
   color: var(--color-text-secondary);
   display: flex;
   align-items: center;
@@ -288,7 +266,7 @@
   display: flex;
   align-items: center;
   padding: var(--space-xs) 0;
-  font-size: 24rpx;
+  font-size: var(--font-caption);
 }
 
 .table-head {
@@ -313,7 +291,7 @@
 
 .rank-no {
   width: 56rpx;
-  font-size: 30rpx;
+  font-size: var(--font-md);
   font-weight: 700;
   color: var(--color-primary);
 }
@@ -346,7 +324,7 @@
 }
 
 .sheet-title {
-  font-size: 30rpx;
+  font-size: var(--font-md);
   font-weight: 600;
   text-align: center;
   margin-bottom: var(--space-lg);
@@ -363,14 +341,14 @@
   width: 180rpx;
   height: 120rpx;
   text-align: center;
-  font-size: 48rpx;
+  font-size: var(--font-display);
   font-weight: 700;
   border-radius: var(--radius-md);
   background: var(--color-bg-subtle, #F5F6F8);
 }
 
 .score-colon {
-  font-size: 40rpx;
+  font-size: var(--font-xl);
   color: var(--color-text-secondary);
 }
 
@@ -379,13 +357,13 @@
   align-items: center;
   justify-content: space-between;
   margin-top: var(--space-lg);
-  font-size: 27rpx;
+  font-size: var(--font-sm);
   color: var(--color-text-secondary);
 }
 
 .sheet-note {
   margin-top: var(--space-md);
-  font-size: 23rpx;
+  font-size: var(--font-xs);
   line-height: 1.6;
   color: var(--color-text-secondary);
 }
@@ -422,13 +400,13 @@
   padding: 10rpx var(--space-md);
   border-radius: var(--radius-md);
   background: var(--color-bg-subtle, #F5F6F8);
-  font-size: 27rpx;
+  font-size: var(--font-sm);
   color: var(--color-text, #1f2329);
 }
 
 .forfeit-note {
   margin-top: var(--space-sm);
-  font-size: 23rpx;
+  font-size: var(--font-xs);
   line-height: 1.6;
   color: #B26A00;
 }
@@ -451,7 +429,7 @@
 }
 
 .stats-team-name {
-  font-size: 26rpx;
+  font-size: var(--font-sm);
   font-weight: 600;
   color: var(--color-primary);
   margin-bottom: var(--space-xs);
@@ -465,7 +443,7 @@
 }
 
 .stats-head {
-  font-size: 22rpx;
+  font-size: var(--font-xs);
   color: var(--color-text-secondary);
   border-bottom: 1rpx solid var(--color-border);
 }
@@ -477,14 +455,14 @@
 .stats-col-name {
   flex: 1;
   min-width: 0;
-  font-size: 26rpx;
+  font-size: var(--font-sm);
   color: var(--color-text, #1f2329);
 }
 
 .stats-col {
   width: 80rpx;
   text-align: center;
-  font-size: 19rpx;
+  font-size: var(--font-2xs);
   color: var(--color-text-secondary);
   flex: none;
 }
@@ -494,7 +472,7 @@
   height: 56rpx;
   margin-left: 8rpx;
   text-align: center;
-  font-size: 22rpx;
+  font-size: var(--font-xs);
   border-radius: var(--radius-sm, 8rpx);
   background: var(--color-bg-subtle, #F5F6F8);
 }
@@ -502,7 +480,7 @@
 .stats-mode {
   margin-bottom: var(--space-sm);
   text-align: center;
-  font-size: 23rpx;
+  font-size: var(--font-xs);
   color: var(--color-text-secondary);
 }
 
@@ -514,7 +492,7 @@
 /* 选人浮层（报名 / 出场）：一行一个人，勾选在左、号码在右 */
 .sheet-sub {
   margin-bottom: var(--space-md);
-  font-size: 24rpx;
+  font-size: var(--font-caption);
   color: var(--color-text-secondary);
   text-align: center;
 }
@@ -535,7 +513,7 @@
   border: 1rpx solid var(--color-border);
   text-align: center;
   line-height: 40rpx;
-  font-size: 26rpx;
+  font-size: var(--font-sm);
   color: transparent;
 }
 
@@ -548,7 +526,7 @@
 .pick-name {
   flex: 1;
   min-width: 0;
-  font-size: 27rpx;
+  font-size: var(--font-sm);
   color: var(--color-text, #1f2329);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -559,7 +537,7 @@
   width: 140rpx;
   flex: none;
   text-align: right;
-  font-size: 27rpx;
+  font-size: var(--font-sm);
   color: var(--color-text, #1f2329);
 }
 
@@ -567,7 +545,7 @@
   width: 120rpx;
   flex: none;
   text-align: right;
-  font-size: 26rpx;
+  font-size: var(--font-sm);
   color: var(--color-text-secondary);
 }
 
@@ -582,7 +560,7 @@
   padding: 12rpx 0;
   border-radius: var(--radius-md);
   background: var(--color-bg-subtle, #F5F6F8);
-  font-size: 25rpx;
+  font-size: var(--font-caption);
   text-align: center;
   color: var(--color-text-secondary);
 }

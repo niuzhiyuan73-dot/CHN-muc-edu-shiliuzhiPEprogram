@@ -24,8 +24,8 @@
 
 /* 置顶用暖色，扫一眼就能和普通公告分开 */
 .notice-pin {
-  background: #fef3c7;
-  color: #b45309;
+  background: var(--color-warning-light);
+  color: var(--color-warning-text);
 }
 
 /* 发布时间推到最右边 */

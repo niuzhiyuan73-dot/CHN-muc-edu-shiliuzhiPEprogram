@@ -5,7 +5,7 @@
 }
 
 .cup-title {
-  font-size: 46rpx;
+  font-size: var(--font-xl);
   font-weight: 600;
   letter-spacing: 2rpx;
   color: #1f2329;
@@ -13,7 +13,7 @@
 
 .cup-subtitle {
   margin-top: 10rpx;
-  font-size: 26rpx;
+  font-size: var(--font-sm);
   color: #6b7280;
 }
 
@@ -44,7 +44,7 @@
   border-radius: 16rpx;
   background: #ffffff;
   color: #5a606b;
-  font-size: 28rpx;
+  font-size: var(--font-body);
   line-height: 1;
 }
 
@@ -53,15 +53,15 @@
 }
 
 .cup-project.is-active {
-  border-color: #b23a2e;
-  background: #b23a2e;
+  border-color: var(--color-primary);
+  background: var(--color-primary);
   color: #ffffff;
   font-weight: 600;
 }
 
 .cup-project-glyph {
   margin-right: 8rpx;
-  font-size: 26rpx;
+  font-size: var(--font-sm);
   opacity: 0.7;
 }
 
@@ -86,7 +86,7 @@
 .cup-search-icon {
   flex: none;
   margin-right: 12rpx;
-  font-size: 26rpx;
+  font-size: var(--font-sm);
   opacity: 0.55;
 }
 
@@ -95,7 +95,7 @@
   min-width: 0;
   height: 76rpx;
   color: #1f2329;
-  font-size: 28rpx;
+  font-size: var(--font-body);
 }
 
 .cup-search-placeholder {
@@ -108,7 +108,7 @@
   height: 48rpx;
   margin-left: 8rpx;
   color: #9aa0a6;
-  font-size: 24rpx;
+  font-size: var(--font-caption);
   line-height: 48rpx;
   text-align: center;
 }
@@ -127,13 +127,13 @@
   background: #ffffff;
   border: 2rpx solid #e6e8ec;
   color: #4b5563;
-  font-size: 26rpx;
+  font-size: var(--font-sm);
 }
 
 .cup-total {
   margin-left: auto;
   color: #9aa0a6;
-  font-size: 24rpx;
+  font-size: var(--font-caption);
 }
 
 .cup-create {
@@ -150,7 +150,7 @@
   align-items: center;
   padding: 0 8rpx 14rpx;
   color: #303540;
-  font-size: 28rpx;
+  font-size: var(--font-body);
   font-weight: 600;
 }
 
@@ -160,7 +160,7 @@
   border-radius: 999rpx;
   background: #eceef2;
   color: #6b7280;
-  font-size: 22rpx;
+  font-size: var(--font-xs);
   font-weight: 400;
   line-height: 34rpx;
 }
@@ -191,7 +191,7 @@
   margin-right: 10rpx;
   overflow: hidden;
   color: #1f2329;
-  font-size: 30rpx;
+  font-size: var(--font-md);
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -200,7 +200,7 @@
 .cup-row-meta {
   margin-top: 8rpx;
   color: #7b818b;
-  font-size: 24rpx;
+  font-size: var(--font-caption);
 }
 
 .cup-row-side {
@@ -214,19 +214,19 @@
   padding: 8rpx 18rpx;
   border-radius: 999rpx;
   background: #fdeceb;
-  color: #b23a2e;
-  font-size: 24rpx;
+  color: var(--color-primary);
+  font-size: var(--font-caption);
 }
 
 .cup-row-arrow {
   color: #c1c5cc;
-  font-size: 34rpx;
+  font-size: var(--font-lg);
   line-height: 1;
 }
 
 .cup-more {
   padding: 24rpx;
   color: #8a8f99;
-  font-size: 26rpx;
+  font-size: var(--font-sm);
   text-align: center;
 }

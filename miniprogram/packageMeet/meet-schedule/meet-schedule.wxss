@@ -1,62 +1,62 @@
 .meet-row { padding: 20rpx 24rpx; margin-bottom: 12rpx; }
 .meet-row-head { display: flex; justify-content: space-between; align-items: center; }
-.meet-row-name { font-size: 28rpx; font-weight: 500; }
-.meet-row-meta { margin-top: 6rpx; font-size: 22rpx; color: #888; }
-.meet-row-tag { font-size: 22rpx; padding: 4rpx 14rpx; border-radius: 999rpx; background: #f2f2f2; color: #777; }
-.meet-row-tag.is-ok { background: #e8f5ec; color: #1f7a3d; }
+.meet-row-name { font-size: var(--font-body); font-weight: 500; }
+.meet-row-meta { margin-top: 6rpx; font-size: var(--font-xs); color: #888; }
+.meet-row-tag { font-size: var(--font-xs); padding: 4rpx 14rpx; border-radius: 999rpx; background: #f2f2f2; color: #777; }
+.meet-row-tag.is-ok { background: var(--color-success-light); color: var(--color-success-text); }
 .meet-editor { margin-top: 16rpx; padding-top: 16rpx; border-top: 1rpx solid #f0f0f0; }
 .meet-field { display: flex; align-items: center; justify-content: space-between; padding: 12rpx 0; }
-.meet-label { font-size: 26rpx; color: #555; width: 100rpx; }
-.meet-input { flex: 1; text-align: right; font-size: 26rpx; }
+.meet-label { font-size: var(--font-sm); color: #555; width: 100rpx; }
+.meet-input { flex: 1; text-align: right; font-size: var(--font-sm); }
 .meet-judges { margin-top: 16rpx; }
-.meet-judges-title { font-size: 24rpx; color: #666; margin-bottom: 10rpx; }
-.meet-judge { display: flex; justify-content: space-between; padding: 10rpx 16rpx; background: #f7f8fa; border-radius: 10rpx; margin-bottom: 8rpx; font-size: 24rpx; }
-.meet-judge-remove { color: #b23a2e; }
-.meet-judge-add { padding: 14rpx 16rpx; border: 1rpx dashed #ddd; border-radius: 10rpx; font-size: 24rpx; color: #666; text-align: center; margin: 10rpx 0; }
-.meet-notice { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: #e8f5ec; color: #1f7a3d; font-size: 24rpx; }
-.meet-error { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: #fdece9; color: #b23a2e; font-size: 24rpx; }
-.meet-college-link { margin: 20rpx 0 4rpx; text-align: center; font-size: 24rpx; color: #b23a2e; }
+.meet-judges-title { font-size: var(--font-caption); color: #666; margin-bottom: 10rpx; }
+.meet-judge { display: flex; justify-content: space-between; padding: 10rpx 16rpx; background: #f7f8fa; border-radius: 10rpx; margin-bottom: 8rpx; font-size: var(--font-caption); }
+.meet-judge-remove { color: var(--color-primary); }
+.meet-judge-add { padding: 14rpx 16rpx; border: 1rpx dashed #ddd; border-radius: 10rpx; font-size: var(--font-caption); color: #666; text-align: center; margin: 10rpx 0; }
+.meet-notice { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: var(--color-success-light); color: var(--color-success-text); font-size: var(--font-caption); }
+.meet-error { margin-bottom: 16rpx; padding: 12rpx 20rpx; border-radius: 12rpx; background: var(--color-danger-light); color: var(--color-primary); font-size: var(--font-caption); }
+.meet-college-link { margin: 20rpx 0 4rpx; text-align: center; font-size: var(--font-caption); color: var(--color-primary); }
 
 /* 场次切换：预赛各组与决赛 */
 .meet-rounds { white-space: nowrap; margin-bottom: 12rpx; }
-.meet-round { display: inline-block; padding: 8rpx 20rpx; margin-right: 12rpx; border-radius: 999rpx; background: #f2f3f5; font-size: 22rpx; color: #555; }
-.meet-round.is-active { background: #b23a2e; color: #fff; }
-.meet-hint { font-size: 22rpx; color: #888; margin-bottom: 10rpx; }
+.meet-round { display: inline-block; padding: 8rpx 20rpx; margin-right: 12rpx; border-radius: 999rpx; background: #f2f3f5; font-size: var(--font-xs); color: #555; }
+.meet-round.is-active { background: var(--color-primary); color: #fff; }
+.meet-hint { font-size: var(--font-xs); color: #888; margin-bottom: 10rpx; }
 
 /* 时间选择：日期 + 时分 */
 .meet-time { display: flex; gap: 12rpx; }
-.meet-time-part { padding: 8rpx 20rpx; border-radius: 10rpx; background: #f5f6f8; font-size: 24rpx; color: #333; }
-.meet-search { height: 66rpx; padding: 0 20rpx; border-radius: 10rpx; background: #f5f6f8; font-size: 24rpx; margin: 10rpx 0; }
+.meet-time-part { padding: 8rpx 20rpx; border-radius: 10rpx; background: #f5f6f8; font-size: var(--font-caption); color: #333; }
+.meet-search { height: 66rpx; padding: 0 20rpx; border-radius: 10rpx; background: #f5f6f8; font-size: var(--font-caption); margin: 10rpx 0; }
 
 /* 赛制与编排按钮 */
 .meet-actions { display: flex; gap: 12rpx; margin-top: 14rpx; }
-.meet-btn { flex: 1; padding: 14rpx 0; text-align: center; border-radius: 10rpx; background: #f2f3f5; font-size: 24rpx; color: #444; }
-.meet-btn.is-primary { background: #b23a2e; color: #fff; }
+.meet-btn { flex: 1; padding: 14rpx 0; text-align: center; border-radius: 10rpx; background: #f2f3f5; font-size: var(--font-caption); color: #444; }
+.meet-btn.is-primary { background: var(--color-primary); color: #fff; }
 
 /* 赛制编辑行 */
 .meet-form-row { display: flex; align-items: center; gap: 12rpx; margin-top: 14rpx; flex-wrap: wrap; }
-.meet-form-label { width: 130rpx; font-size: 24rpx; color: #555; }
-.meet-form-unit { font-size: 22rpx; color: #888; }
-.meet-num { width: 120rpx; height: 60rpx; padding: 0 14rpx; border-radius: 10rpx; background: #f5f6f8; font-size: 26rpx; text-align: center; }
+.meet-form-label { width: 130rpx; font-size: var(--font-caption); color: #555; }
+.meet-form-unit { font-size: var(--font-xs); color: #888; }
+.meet-num { width: 120rpx; height: 60rpx; padding: 0 14rpx; border-radius: 10rpx; background: #f5f6f8; font-size: var(--font-sm); text-align: center; }
 .meet-seg { display: flex; border-radius: 12rpx; overflow: hidden; border: 1rpx solid #e2e4e8; }
-.meet-seg-item { padding: 10rpx 20rpx; font-size: 23rpx; color: #555; background: #fff; }
+.meet-seg-item { padding: 10rpx 20rpx; font-size: var(--font-xs); color: #555; background: #fff; }
 .meet-seg-item + .meet-seg-item { border-left: 1rpx solid #e2e4e8; }
-.meet-seg-item.is-on { background: #b23a2e; color: #fff; border-color: #b23a2e; }
+.meet-seg-item.is-on { background: var(--color-primary); color: #fff; border-color: var(--color-primary); }
 
 /* 裁判候选人：搜索后直接点人 */
 .meet-judge-list { max-height: 420rpx; margin-bottom: 12rpx; }
 .meet-judge-pick { display: flex; align-items: center; gap: 12rpx; padding: 14rpx 16rpx; border-radius: 10rpx; background: #f7f8fa; margin-bottom: 8rpx; }
-.meet-judge-name { flex: 1; font-size: 25rpx; color: #222; }
-.meet-judge-college { font-size: 21rpx; color: #999; }
-.meet-judge-add-btn { padding: 6rpx 16rpx; border-radius: 999rpx; background: #b23a2e; color: #fff; font-size: 21rpx; }
+.meet-judge-name { flex: 1; font-size: var(--font-caption); color: #222; }
+.meet-judge-college { font-size: var(--font-2xs); color: #999; }
+.meet-judge-add-btn { padding: 6rpx 16rpx; border-radius: 999rpx; background: var(--color-primary); color: #fff; font-size: var(--font-2xs); }
 
 /* 单场项目：不提供分组，按钮位置给出说明而不是留空 */
 .meet-btn.is-disabled { background: #f7f7f7; color: #aaa; }
 
 /* 批量指派面板 */
 .meet-chips { display: flex; flex-wrap: wrap; gap: 10rpx; margin-bottom: 16rpx; }
-.meet-chip { padding: 8rpx 20rpx; border-radius: 999rpx; border: 1rpx solid #e2e4e8; background: #fff; font-size: 23rpx; color: #555; }
-.meet-chip.is-on { background: #b23a2e; border-color: #b23a2e; color: #fff; }
+.meet-chip { padding: 8rpx 20rpx; border-radius: 999rpx; border: 1rpx solid #e2e4e8; background: #fff; font-size: var(--font-xs); color: #555; }
+.meet-chip.is-on { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
 
 /* 派裁判面板：项目与人两块都做成滚动区，人数/场次一多也不会把页面拉成几十屏 */
 .meet-assign-scroll { height: 460rpx; padding: 8rpx 12rpx; margin-bottom: 16rpx; border-radius: 12rpx; background: #fafbfc; box-sizing: border-box; }
@@ -64,14 +64,14 @@
 .meet-assign-event:last-child { border-bottom: none; }
 .meet-assign-event-head { display: flex; align-items: flex-start; gap: 12rpx; }
 .meet-assign-check { width: 32rpx; height: 32rpx; margin-top: 6rpx; border: 2rpx solid #cfd3d9; border-radius: 8rpx; background: #fff; flex: none; }
-.meet-assign-check.is-on { background: #b23a2e; border-color: #b23a2e; }
-.meet-assign-check.is-half { background: #f3d7d3; border-color: #b23a2e; }
+.meet-assign-check.is-on { background: var(--color-primary); border-color: var(--color-primary); }
+.meet-assign-check.is-half { background: #f3d7d3; border-color: var(--color-primary); }
 .meet-assign-event-main { flex: 1; }
-.meet-assign-event-name { font-size: 25rpx; color: #222; }
-.meet-assign-event-meta { margin-top: 2rpx; font-size: 21rpx; color: #999; }
+.meet-assign-event-name { font-size: var(--font-caption); color: #222; }
+.meet-assign-event-meta { margin-top: 2rpx; font-size: var(--font-2xs); color: #999; }
 .meet-assign-sessions { margin: 8rpx 0 4rpx 44rpx; }
-.meet-chip-count { margin-left: 8rpx; padding: 0 8rpx; border-radius: 999rpx; background: rgba(255, 255, 255, 0.28); font-size: 19rpx; }
-.meet-chip-note { margin-left: 6rpx; font-size: 19rpx; opacity: 0.85; }
-.meet-chip-x { margin-left: 8rpx; font-size: 24rpx; }
+.meet-chip-count { margin-left: 8rpx; padding: 0 8rpx; border-radius: 999rpx; background: rgba(255, 255, 255, 0.28); font-size: var(--font-2xs); }
+.meet-chip-note { margin-left: 6rpx; font-size: var(--font-2xs); opacity: 0.85; }
+.meet-chip-x { margin-left: 8rpx; font-size: var(--font-caption); }
 .meet-judge-main { flex: 1; display: flex; flex-direction: column; }
 .meet-judge-main .meet-judge-name { flex: none; }
