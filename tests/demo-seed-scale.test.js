@@ -6,7 +6,8 @@
  * 免得以后加数据时悄悄少一届、少几场，或者把杯赛挂到不存在的学院上。
  *
  *   1. 球拍四项目：赛事 9 / 6 / 3 / 3，流水 42 / 24 / 18 / 18（基线 ×3，网球从 0 补齐）
- *   2. 团队两项目：赛事各 6 届；篮球 12 场（×3），足球 4 场（≥3×，只有两支 11 人队）
+ *   2. 团队两项目：赛事各 6 届；篮球 12 场（×3），足球 6 场
+ *      （足球学院赛 11 人制只放得下两支院队，两届各 1 场决赛，不再是 4 场）
  *   3. 石榴籽杯：每个项目 ≥2 届已结束；进行中的恰好两个项目（匹克球、篮球）
  *   4. 引用完整：名单 / 大场 / 对阵不许指向不存在的学院或院队
  * ============================================================
@@ -16,7 +17,7 @@ const assert = require('node:assert/strict');
 
 const { createSchoolDemoContent } = require('../miniprogram/services/school-seed.js');
 const {
-  COLLEGE_EVENT_STATUS, TEAM_EVENT_STATUS, TEAM_TYPE, CUP_MODE, TIE_STATUS,
+  COLLEGE_EVENT_STATUS, TEAM_EVENT_STATUS, TEAM_TYPE, TEAM_MATCH_STATUS, CUP_MODE, TIE_STATUS,
 } = require('../miniprogram/utils/constants.js');
 
 const content = createSchoolDemoContent();
@@ -112,14 +113,18 @@ test('石榴籽杯：团队杯赛的院队、报名与对阵互相自洽', () =>
   const cupTeams = new Map(content.teams
     .filter(row => row.type === TEAM_TYPE.COLLEGE)
     .map(row => [row._id, row]));
-  assert.ok(cupTeams.size >= 8, '篮球与足球各四支院队');
+  // 篮球 5 人制：4 支院队；足球 11 人制：2 支院队（首发就要 11 人，4 队 × 11 = 44 人
+  // 种子池撑不住——硬凑只会造出「5 人院队打 11 人制」这种连报告都发不出的数据）
+  assert.equal(cupTeams.size, 6, '篮球四支院队 + 足球两支院队');
 
   for (const event of content.teamEvents.filter(row => row.cupMode === CUP_MODE.COLLEGE)) {
+    const football = event.association === 'fb';
     const entries = content.teamEventEntries.filter(row => row.eventId === event._id);
-    assert.ok(entries.length >= 4, `${event.name} 报名不足四院`);
+    assert.ok(entries.length >= (football ? 2 : 4), `${event.name} 报名院队不足`);
     for (const entry of entries) {
       assert.ok(cupTeams.has(entry.teamId), `报名指向不存在的院队：${entry.teamId}`);
-      assert.ok(entry.roster.length >= 5, '院队报名名单至少要凑够上场人数');
+      assert.ok(entry.roster.length >= (football ? 11 : 5),
+        football ? '足球报名名单要凑够 11 人首发' : '院队报名名单至少要凑够上场人数');
     }
     const entered = new Set(entries.map(row => row.teamId));
     for (const match of content.teamMatches.filter(row => row.eventId === event._id)) {
@@ -128,7 +133,29 @@ test('石榴籽杯：团队杯赛的院队、报名与对阵互相自洽', () =>
     }
     if (event.status === TEAM_EVENT_STATUS.FINISHED) {
       assert.equal(event.placements.length, entries.length, `${event.name} 名次未覆盖全部院队`);
+      // 名次必须有比赛支撑：拿名次的队伍至少出现在一场比赛里
+      const played = new Set();
+      for (const match of content.teamMatches.filter(row => row.eventId === event._id)) {
+        played.add(match.teamA); played.add(match.teamB);
+      }
+      for (const placement of event.placements) {
+        assert.ok(played.has(placement.teamId),
+          `${event.name}：${placement.teamName} 一场没打却排第 ${placement.rank}`);
+      }
     }
+  }
+});
+
+test('足球演示：已发布的比赛必须带赛后报告，否则统计与比分都会丢失', () => {
+  // 报告是比分与个人统计的唯一真相源：缺了它，比赛详情显示「—」、
+  // 出场与战绩全为 0，而赛事上的名次照旧——就是「没打却有亚军」的由来。
+  const published = content.teamMatches.filter(row => row.association === 'fb'
+    && row.status === TEAM_MATCH_STATUS.PUBLISHED);
+  assert.ok(published.length >= 4, '足球演示应有若干场已发布比赛');
+  for (const match of published) {
+    assert.ok(match.footballPublished, `足球比赛 ${match._id} 已发布却没有赛后报告`);
+    assert.equal(match.footballPublished.result.scoreA, match.scoreA);
+    assert.equal(match.footballPublished.result.scoreB, match.scoreB);
   }
 });
 

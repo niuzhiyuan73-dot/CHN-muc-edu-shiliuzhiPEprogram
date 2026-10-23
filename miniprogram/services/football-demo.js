@@ -125,11 +125,54 @@ function createFootballDemoContent() {
     submittedBy: spec.ids[0], submittedAt: ISO, reviewedBy: 'demo_muc_admin', reviewedAt: ISO,
     lockedAt: ISO, placement: null, updatedAt: ISO, simulated: true,
   }));
-  const playedMatch = (eventId, round, stage, slot, scoreA, scoreB, matchTime) => ({
+  /**
+   * 一份「已发布」的赛后报告快照。
+   *
+   * 【为什么每场都必须有】统计端只认 `status === 'published' && footballPublished`
+   * 的比赛（见 football-match-service 的 publicMatches）。扩容时补的那几场当初
+   * 只写了 scoreA/scoreB，结果就是：赛事写着「已完赛」、名次也在，但
+   *   · 比赛详情的比分显示「—」（footballMatchView 是从报告里取比分的）；
+   *   · 出场数与球队战绩全为 0（没有报告的比赛进不了统计）；
+   *   · 「我的球队」里出现「1 场出场 / 4 项荣誉」这种看起来自相矛盾的组合。
+   * 报告是比分与个人统计的唯一真相源，演示数据也必须给全。
+   *
+   * 详细版（乌龙、助攻、黄牌）只在首场演示里出现；这里按比分把进球分给前几位
+   * 首发，其余统计填 0 并标 full —— 形状合法，页面读得出数据。
+   */
+  const publishedReportOf = (scoreA, scoreB, format) => {
+    const goalsBy = { A: scoreA, B: scoreB };
+    const rosterOf = index => specs[index].ids.map((userId, no) => ({ userId, name: nameOf(userId), no: no + 1 }));
+    const sides = {};
+    for (const [i, key] of ['A', 'B'].entries()) {
+      sides[key] = {
+        players: specs[i].ids.map((userId, index) => ({
+          userId, starter: index < 11, appeared: index < 11, goalkeeper: index === 0,
+          ...Object.fromEntries(Object.keys(FIELDS).map(field => [field, null])),
+          goals: index < goalsBy[key] ? 1 : 0,
+          ownGoals: 0, assists: 0, yellowCards: 0, secondYellow: 0, directRed: 0,
+        })),
+        coverage: Object.fromEntries(Object.keys(FIELDS).map(field => [field, field === 'fouls' ? 'none' : 'full'])),
+        substitutions: { status: 'full', regulationCount: 0, regulationOpportunities: 0, halfTimeCount: 0,
+          extraTimeCount: 0, extraTimeOpportunities: 0, extraBreakCount: 0, incomingIds: [] },
+      };
+    }
+    const goalEvents = [];
+    for (let n = 0; n < scoreA; n += 1) goalEvents.push({ side: 'A', type: 'normal', scorerId: specs[0].ids[n] });
+    for (let n = 0; n < scoreB; n += 1) goalEvents.push({ side: 'B', type: 'normal', scorerId: specs[1].ids[n] });
+    const out = normalizeFootballReport(
+      { result: { regulationScore: { A: scoreA, B: scoreB } }, sides, goalEvents },
+      { rules, format, rosters: { A: rosterOf(0), B: rosterOf(1) } },
+    );
+    if (!out.ok) throw new Error(`足球演示报告不合法：${out.message}`);
+    return out.value;
+  };
+  const playedMatch = (eventId, round, stage, slot, scoreA, scoreB, matchTime, format = 'round_robin') => ({
     _id: `x_${eventId}_r${round}_${stage}_${slot}`,
     ...SCOPE, eventId, sportFormat: 'football11', rules,
     teamA: specs[0].teamId, teamB: specs[1].teamId, round, stage, slot,
     status: 'published', scoreA, scoreB, winner: scoreA > scoreB ? 'A' : 'B', forfeit: null, overtime: false,
+    // 没有这两个字段，「已发布」就是一句空话（见上面的说明）
+    footballPublished: publishedReportOf(scoreA, scoreB, format), footballPublishedRevision: 2, footballDraft: null,
     revision: 2, recordedBy: 'demo_muc_admin', publishedBy: 'demo_muc_admin', publishedAt: ISO,
     matchTime, durationMinutes: 105, location: '校足球场', createdAt: ISO, updatedAt: ISO, simulated: true,
   });
@@ -161,7 +204,7 @@ function createFootballDemoContent() {
     finishedAt: ISO, revision: 3,
   }));
   extraEntries.push(...lockedEntriesOf(cupId));
-  extraMatches.push(playedMatch(cupId, 1, 'main', 0, 1, 3, demoIso(-29)));
+  extraMatches.push(playedMatch(cupId, 1, 'main', 0, 1, 3, demoIso(-29), 'single_elim'));
 
   // 3. 报名中：两支都还在等审核，与既有「报名中」那届的审核态错开
   const winterId = schoolKey('tev', SCOPE.schoolId, SCOPE.association, 'winter-friendly');

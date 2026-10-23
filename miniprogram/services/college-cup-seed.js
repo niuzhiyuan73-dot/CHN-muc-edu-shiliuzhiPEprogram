@@ -37,6 +37,7 @@ const {
 } = require('../utils/constants.js');
 const { normalizeBasketballRules } = require('../utils/basketball-rules.js');
 const { normalizeFootballRules, DEFAULT_PRESET_KEY } = require('../utils/football-rules.js');
+const { normalizeFootballReport, FIELDS } = require('../utils/football-report.js');
 // 届次的年份与「进行中」那一届的时间线都跟着锚点滚，见 demo-clock.js
 const { demoIso, demoAt, demoYear } = require('./demo-clock.js');
 
@@ -319,19 +320,28 @@ function racketCup({ association, sportName, year, colleges, disciplines, ongoin
   return { event, entries, ties };
 }
 
-/** 团队项目的一届学院赛：4 支院队 + 单败淘汰 */
+/** 团队项目的一届学院赛：篮球 4 院淘汰赛，足球 2 院单场决赛（见下方说明） */
 function teamCup({ association, sportName, year, ongoing = false }) {
   const scope = scopeOf(association);
   const eventId = schoolKey('tev', SCHOOL_ID, association, `cup-${year}`);
-  const colleges = FOUR_COLLEGES.slice();
   const football = association === 'fb';
+  // 【足球为什么只有 2 支院队】足球是 11 人制：首发 11 人、最低 7 人上场。
+  // 4 队 × 11 = 44 人，种子池（24 名会员）撑不住；硬按 5 人一队造，就会得到
+  // 「5 人院队打 11 人制杯赛还能拿名次」——连一份合法的赛后报告都发不出来
+  // （normalizeFootballReport 要求首发 11 人），统计端只能整场丢弃，
+  // 界面上就表现成「一场没打却有名次」。
+  // 所以足球缩到 2 支院队 × 11 人打一场决赛，规模小但每一环都能自洽。
+  // 篮球 5 人制仍保留 4 院单败淘汰的完整形状。
+  const colleges = football ? FOUR_COLLEGES.slice(0, 2) : FOUR_COLLEGES.slice();
+  const rosterSize = football ? 11 : 5;
   const rules = football ? normalizeFootballRules({ presetKey: DEFAULT_PRESET_KEY }) : normalizeBasketballRules({ presetKey: 'fiba-4x10' });
   const tl = timelineOf(year, ongoing);
 
-  // 院队：系统预置的学院代表队。演示里每队 5 人（24 名种子会员够 4 队），
-  // 真实规则的人数下限由赛事 rules 决定，这里只求界面读得出「几院几人」。
-  const pool = ['u01', 'u02', 'u03', 'u04', 'u05', 'u06', 'u07', 'u08', 'u09', 'u10',
-    'u11', 'u12', 'u13', 'u14', 'u15', 'u16', 'u17', 'u18', 'u19', 'u20'];
+  // 院队：系统预置的学院代表队。足球每队 11 人（能踢 11 人制），篮球每队 5 人。
+  const pool = football
+    ? Array.from({ length: 22 }, (_, index) => `u${String(index + 1).padStart(2, '0')}`)
+    : ['u01', 'u02', 'u03', 'u04', 'u05', 'u06', 'u07', 'u08', 'u09', 'u10',
+      'u11', 'u12', 'u13', 'u14', 'u15', 'u16', 'u17', 'u18', 'u19', 'u20'];
   const nameOf = (userId) => {
     const index = Number(String(userId).slice(1)) - 1;
     const member = MEMBER_SEED[index];
@@ -345,7 +355,7 @@ function teamCup({ association, sportName, year, ongoing = false }) {
   const teamIdFor = college => collegeTeamKey(collegeIdOf(college) || college, scope);
   colleges.forEach((college, index) => {
     const teamId = teamIdFor(college);
-    const roster = pool.slice(index * 5, index * 5 + 5);
+    const roster = pool.slice(index * rosterSize, index * rosterSize + rosterSize);
     teams.push({
       _id: teamId,
       schoolId: SCHOOL_ID,
@@ -396,10 +406,40 @@ function teamCup({ association, sportName, year, ongoing = false }) {
     });
   });
 
-  // 单败：半决赛两场 → 决赛 + 季军赛
+  // 单败：篮球「半决赛两场 → 决赛 + 季军赛」，足球「一场决赛」
   const roundRobin = false;
+  const rosterOf = college => (entries.find(row => row.teamId === teamIdFor(college)) || {}).roster || [];
+  /**
+   * 足球赛的赛后报告快照。
+   *
+   * 【为什么必须有】统计端只认 `status === 'published' && footballPublished`
+   * 的比赛；缺报告的比赛连比分都显示不出来（详情页从报告里取比分），
+   * 出场与战绩一律为 0 —— 这就会造出「没打却有亚军」的假象。
+   */
+  const footballReportOf = (home, away, scoreA, scoreB) => {
+    const sidesOf = (college, goals) => ({
+      players: rosterOf(college).map((player, index) => ({
+        userId: player.userId, starter: true, appeared: true, goalkeeper: index === 0,
+        ...Object.fromEntries(Object.keys(FIELDS).map(field => [field, null])),
+        goals: index < goals ? 1 : 0,
+        ownGoals: 0, assists: 0, yellowCards: 0, secondYellow: 0, directRed: 0,
+      })),
+      coverage: Object.fromEntries(Object.keys(FIELDS).map(field => [field, field === 'fouls' ? 'none' : 'full'])),
+      substitutions: { status: 'full', regulationCount: 0, regulationOpportunities: 0, halfTimeCount: 0,
+        extraTimeCount: 0, extraTimeOpportunities: 0, extraBreakCount: 0, incomingIds: [] },
+    });
+    const goalEvents = [];
+    for (let n = 0; n < scoreA; n += 1) goalEvents.push({ side: 'A', type: 'normal', scorerId: rosterOf(home)[n].userId });
+    for (let n = 0; n < scoreB; n += 1) goalEvents.push({ side: 'B', type: 'normal', scorerId: rosterOf(away)[n].userId });
+    const out = normalizeFootballReport(
+      { result: { regulationScore: { A: scoreA, B: scoreB } }, sides: { A: sidesOf(home, scoreA), B: sidesOf(away, scoreB) }, goalEvents },
+      { rules, format: 'single_elim', rosters: { A: rosterOf(home), B: rosterOf(away) } },
+    );
+    if (!out.ok) throw new Error(`学院赛足球报告不合法：${out.message}`);
+    return out.value;
+  };
   const matches = [];
-  const pushMatch = (round, stage, slot, scoreA, scoreB, status) => {
+  const pushMatch = (round, stage, slot, home, away, scoreA, scoreB, status) => {
     matches.push({
       _id: `x_${eventId}_r${round}_${stage}_${slot}`,
       schoolId: SCHOOL_ID,
@@ -407,8 +447,10 @@ function teamCup({ association, sportName, year, ongoing = false }) {
       eventId,
       sportFormat: football ? 'football11' : undefined,
       rules,
-      teamA: teamIdFor(colleges[0]),
-      teamB: teamIdFor(colleges[1]),
+      // 对阵必须按签位传进来。原先写死 colleges[0] / colleges[1]，结果一届
+      // 「4 院单败」的 4 场全是同两队，另外两院一场没打却排 3、4 名。
+      teamA: teamIdFor(home),
+      teamB: teamIdFor(away),
       round,
       stage,
       slot,
@@ -418,6 +460,10 @@ function teamCup({ association, sportName, year, ongoing = false }) {
       winner: scoreA > scoreB ? 'A' : 'B',
       forfeit: null,
       overtime: false,
+      ...(football ? {
+        footballPublished: footballReportOf(home, away, scoreA, scoreB),
+        footballPublishedRevision: 2, footballDraft: null,
+      } : {}),
       revision: 2,
       recordedBy: ADMIN_ID,
       publishedBy: ADMIN_ID,
@@ -428,14 +474,26 @@ function teamCup({ association, sportName, year, ongoing = false }) {
       updatedAt: ISO,
     });
   };
-  pushMatch(1, BRACKET_STAGE.MAIN, 0, football ? 2 : 78, football ? 1 : 71, TEAM_MATCH_STATUS.PUBLISHED);
-  pushMatch(1, BRACKET_STAGE.MAIN, 1, football ? 0 : 66, football ? 1 : 74, TEAM_MATCH_STATUS.PUBLISHED);
-  if (!ongoing) {
-    pushMatch(2, BRACKET_STAGE.BRONZE, 0, football ? 1 : 81, football ? 2 : 69, TEAM_MATCH_STATUS.PUBLISHED);
-    pushMatch(2, BRACKET_STAGE.MAIN, 0, football ? 3 : 85, football ? 2 : 79, TEAM_MATCH_STATUS.PUBLISHED);
+  if (football) {
+    // 2 院单场决胜：c0 2:1 c1
+    if (!ongoing) pushMatch(1, BRACKET_STAGE.MAIN, 0, colleges[0], colleges[1], 2, 1, TEAM_MATCH_STATUS.PUBLISHED);
+  } else {
+    // 4 院单败：半决赛（c0 v c1、c2 v c3）→ 决赛（c0 v c3）+ 季军赛（c1 v c2）
+    pushMatch(1, BRACKET_STAGE.MAIN, 0, colleges[0], colleges[1], 78, 71, TEAM_MATCH_STATUS.PUBLISHED);
+    pushMatch(1, BRACKET_STAGE.MAIN, 1, colleges[2], colleges[3], 66, 74, TEAM_MATCH_STATUS.PUBLISHED);
+    if (!ongoing) {
+      pushMatch(2, BRACKET_STAGE.BRONZE, 0, colleges[1], colleges[2], 81, 69, TEAM_MATCH_STATUS.PUBLISHED);
+      pushMatch(2, BRACKET_STAGE.MAIN, 0, colleges[0], colleges[3], 85, 79, TEAM_MATCH_STATUS.PUBLISHED);
+    }
   }
 
-  const placements = ongoing ? [] : colleges.map((college, index) => ({
+  // 名次由上面的结果推出，不再按学院顺序硬排：
+  //   足球 —— c0 2:1 胜 → c0 冠军、c1 亚军
+  //   篮球 —— c0 决赛胜 c3；c3 亚军；季军赛 c1 胜 c2 → c1 季军、c2 第四
+  const ranked = football
+    ? [colleges[0], colleges[1]]
+    : [colleges[0], colleges[3], colleges[1], colleges[2]];
+  const placements = ongoing ? [] : ranked.map((college, index) => ({
     teamId: teamIdFor(college),
     teamName: `${college}代表队`,
     rank: index + 1,
@@ -459,7 +517,7 @@ function teamCup({ association, sportName, year, ongoing = false }) {
     startTime: tl.startTime,
     location: '学校体育馆',
     lockedCount: colleges.length,
-    draw: { size: colleges.length, roundCount: 2, slots: colleges.map(college => teamIdFor(college)) },
+    draw: { size: colleges.length, roundCount: football ? 1 : 2, slots: colleges.map(college => teamIdFor(college)) },
     placements,
     revision: ongoing ? 3 : 5,
     createdBy: ADMIN_ID,

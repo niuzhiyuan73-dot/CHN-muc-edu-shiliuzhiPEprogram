@@ -264,8 +264,13 @@ test('F2/F3 足球默认演示有公开统计，出场覆盖与替补纪律分�
   const schoolMock = require('../miniprogram/services/school-mock'); schoolMock.reset(); schoolMock.setDemoActor('u12');
   const client = schoolMock.forAssociationSpace({ schoolId: 'muc', association: 'fb' });
   const profile = await client.getMyTeamProfile({});
-  assert.equal(profile.ok, true); assert.equal(profile.totals.games, 0);
-  assert.equal(profile.totals.lineupRecordedMatches, 1); assert.equal(profile.totals.yellowCards, 1);
+  assert.equal(profile.ok, true);
+  // 演示数据现在每场都有赛后报告（2026-10-23 修：原先扩容的几场只写了比分，
+  // 报告缺失让统计端整场丢弃）。u12 是管理学院院队的首位首发，两届学院赛决赛
+  // 都记录了出场；而春季联赛两场他是替补未登场，只吃到 1 张黄牌，出场不增加
+  // ——「替补受牌不算出场」的口径仍然成立。
+  assert.equal(profile.totals.games, 2);
+  assert.equal(profile.totals.lineupRecordedMatches, 6); assert.equal(profile.totals.yellowCards, 1);
   const f = await fixture(); const m = (await f.matches())[0]; await f.publish(m, await f.report(m));
   const unknown = await f.call('getMyTeamProfile', {}, 'f0');
   assert.equal(unknown.totals.eligibleMatchCount, 1); assert.equal(unknown.totals.lineupRecordedMatches, 0);
