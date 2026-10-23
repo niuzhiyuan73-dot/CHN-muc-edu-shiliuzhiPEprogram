@@ -118,6 +118,10 @@ function buildScoped(repo, io, inTx, options) {
         ? { schoolId: scope.schoolId }
         : { schoolId: scope.schoolId, association: scope.association };
       result[key].listByEvent = (eventId) => io.query(key, { ...scopeFields, eventId });
+      // 按一批 _id 取（一次 `_.in`，1 个 RTT）。赛事列表要标「我报名了没」：
+      // 原来一页 20 条就是 20 次点读，按页批读后是 1 次（2026-10-22 H-3）。
+      // 调用方仍须逐条判归属——编号可能来自客户端。
+      result[key].listByIds = (ids) => io.byIds(key, ids);
     }
   }
   // 本赛季的比赛：把 `matchTime >= sinceIso` 下推到查询。
@@ -146,21 +150,23 @@ function buildScoped(repo, io, inTx, options) {
     };
   }
 
-  // 某个会员的训练报名（个人主页算训练积分用）。
+  // 按人反查：这两个集合都是「只增不减 + 一个人只有几十条」，而调用方只需要
+  // 这一个人的那几条。
   //
-  // 【为什么按人查】（2026-10-22 大用户量复查 H-2）
-  // 训练报名是只增不减的集合：3000 条 / 3000 人是 30 页 RPC，而个人主页只需要
-  // 这个人的几十条。原来靠「读全范围再按 userId 筛」，读量随办学年限线性增长。
+  // 【训练报名】（2026-10-22 H-2）个人主页算训练积分：3000 条 / 3000 人是
+  // 30 页 RPC，原来靠「读全范围再按 userId 筛」。
+  // 【小组成员】（同轮 H-3）赛事详情要算「我在不在指定小组才能报名」：
+  // 原来把整个协会的小组成员行（6 协会 × 若干组 × 数十人）读回来，只为找出
+  // 自己加入的那几行。
   //
   // userId 缺失时**返回空数组**，不退化成整表读——调用方漏传参数不该变成
   // 一次全表扫描。
-  if (result.trainingRegistrations) {
-    result.trainingRegistrations.listByUser = (userId) => {
-      if (inTx) throw new Error('事务内不允许条件读取（trainingRegistrations），请改用 getById');
+  for (const key of ['trainingRegistrations', 'associationGroupMembers']) {
+    if (!result[key]) continue;
+    result[key].listByUser = (userId) => {
+      if (inTx) throw new Error(`事务内不允许条件读取（${key}），请改用 getById`);
       if (typeof userId !== 'string' || !userId) return Promise.resolve([]);
-      return io.query('trainingRegistrations', {
-        schoolId: scope.schoolId, association: scope.association, userId,
-      });
+      return io.query(key, { schoolId: scope.schoolId, association: scope.association, userId });
     };
   }
   if (!inTx) result.transaction = (fn) => repo.transaction((tx) => fn(surfaceOf(tx, scope)));

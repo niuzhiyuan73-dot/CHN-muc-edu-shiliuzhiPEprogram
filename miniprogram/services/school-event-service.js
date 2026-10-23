@@ -341,9 +341,14 @@ async function listSchoolEvents(payload = {}, ctx) {
   const offset = Number.isInteger(payload.offset) && payload.offset >= 0 ? payload.offset : 0;
   const page = sorted.slice(offset, offset + limit);
   const scoped = ctx.repo.forScope(ctx);
-  const mine = await Promise.all(page.map(doc => myId
-    ? scoped.eventSignups.getById(schoolEventSignupKey(doc._id, myId, ctx))
-    : null));
+  // 「我报名了没」按**页**批读：一页 20 条原来是 20 次点读（2026-10-22 H-3）。
+  // 编号由 (赛事, 我) 派生，不是客户端给的，但仍按 _id 取回来对一遍，
+  // 免得派生规则将来变了、拿错文档还当成「已报名」。
+  const signupKeys = myId ? page.map(doc => schoolEventSignupKey(doc._id, myId, ctx)) : [];
+  const signupById = new Map((signupKeys.length
+    ? await scoped.eventSignups.listByIds(signupKeys)
+    : []).map(doc => [doc._id, doc]));
+  const mine = signupKeys.map(key => signupById.get(key) || null);
   return ok({
     ok: true, canManage,
     hasMore: sorted.length > offset + page.length,
@@ -401,9 +406,11 @@ async function getSchoolEvent(payload = {}, ctx) {
   const full = Number(doc.quota) > 0 && occupied >= Number(doc.quota);
   const genderLimit = singleGenderOf(doc.discipline);
   const genderOk = !genderLimit || (ctx.actor && ctx.actor.gender === genderLimit);
-  // 小组限制（B6）：详情页也要算出「能不能报、为什么不能报」，与写入端同一把尺子
+  // 小组限制（B6）：详情页也要算出「能不能报、为什么不能报」，与写入端同一把尺子。
+  // 只查**我加入的组**：原来把整个协会的小组成员行读回来再筛自己那几行，
+  // 读量随「组数 × 人数」增长（2026-10-22 H-3）。
   const groupRows = ctx.actorId
-    ? await ctx.repo.forScope(ctx).associationGroupMembers.list() : [];
+    ? await ctx.repo.forScope(ctx).associationGroupMembers.listByUser(ctx.actorId) : [];
   const myGroupIds = groupRows
     .filter((row) => row.userId === ctx.actorId && row.status === GROUP_MEMBER_STATUS.ACTIVE)
     .map((row) => row.groupId);

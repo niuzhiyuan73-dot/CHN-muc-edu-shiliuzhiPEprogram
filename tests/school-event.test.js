@@ -575,16 +575,24 @@ test('赛事列表不查询报名集合，仍显示汇总人数及本人报名�
     assert.equal(r.ok, true, r.message);
   }
 
-  // 禁止集合查询，并记录点读，确保不会换成逐场拉全体名单。
+  // 禁止集合查询，并记录批读，确保不会换成逐场拉全体名单。
+  // 2026-10-22 H-3：本人报名状态从「逐行点读」改成「按页一次 listByIds」，
+  // 守卫意图不变——一次调用只带当前页的那些编号。
   const originalForScope = repo.forScope;
-  const reads = [];
+  const batched = [];
+  let batchCalls = 0;
   repo.forScope = input => {
     const scoped = originalForScope(input);
     scoped.eventSignups = {
       ...scoped.eventSignups,
       list: () => { throw new Error('列表页不应读取 eventSignups 全表'); },
       listByEvent: () => { throw new Error('列表页不应查询单场报名名单'); },
-      getById: id => { reads.push(id); return originalForScope(input).eventSignups.getById(id); },
+      getById: () => { throw new Error('列表页不应逐行点读报名记录'); },
+      listByIds: ids => {
+        batchCalls += 1;
+        batched.push(...ids);
+        return originalForScope(input).eventSignups.listByIds(ids);
+      },
     };
     return scoped;
   };
@@ -601,10 +609,11 @@ test('赛事列表不查询报名集合，仍显示汇总人数及本人报名�
   assert.ok(row, '刚发布的赛事应当在列表里');
   assert.equal(row.signupCount, 2, '人数应来自赛事主记录的计数器');
   assert.equal(row.mySignup.status, SIGNUP_STATUS.SIGNED);
-  assert.equal(reads.length, listed.events.length, '只点读当前页本人的报名记录');
+  assert.equal(batchCalls, 1, '一页只发一次批读，不按行点读');
+  assert.equal(batched.length, listed.events.length, '只取当前页本人的报名记录');
 });
 
-test('赛事列表仅点读翻页后的本人报名，取消和未报名状态不丢失', async () => {
+test('赛事列表只批读翻页后那几条本人报名，取消和未报名状态不丢失', async () => {
   const repo = fixture();
   const eventIds = [];
   for (let i = 0; i < 4; i += 1) {
@@ -617,10 +626,13 @@ test('赛事列表仅点读翻页后的本人报名，取消和未报名状态�
   const reads = [];
   repo.forScope = input => {
     const scoped = originalForScope(input);
-    const getById = scoped.eventSignups.getById;
-    scoped.eventSignups.getById = id => { reads.push(id); return getById(id); };
+    scoped.eventSignups.getById = () => { throw new Error('列表不能逐行点读报名记录'); };
     scoped.eventSignups.list = scoped.eventSignups.listByEvent = () => {
       throw new Error('列表不能查询报名集合');
+    };
+    scoped.eventSignups.listByIds = ids => {
+      reads.push(...ids);
+      return originalForScope(input).eventSignups.listByIds(ids);
     };
     return scoped;
   };
@@ -634,4 +646,39 @@ test('赛事列表仅点读翻页后的本人报名，取消和未报名状态�
   assert.equal(byId.get(eventIds[1]).mySignup.status, SIGNUP_STATUS.CANCELED);
   assert.equal(byId.get(eventIds[1]).signupCount, 0);
   assert.equal(byId.get(eventIds[3]).mySignup, null);
+});
+
+/**
+ * 赛事详情只查「我加入的小组」（2026-10-22 大用户量复查 H-3）
+ * ============================================================
+ * 「本次赛事仅限指定小组成员报名」这个判断，原来是把**整个协会的小组成员行**
+ * 读回来再筛自己那几行。它在「组数 × 每组人数」上线性增长：6 个协会、每组几十
+ * 人时是数百行（4 页 RPC），而真正用得上的只是自己加入的那一两条。
+ */
+test('赛事详情只查我加入的小组，不整表读成员关系', async () => {
+  const repo = fixture();
+  const created = await call(repo, 'publishSchoolEvent', valid({ requestId: 'detail_group_scope' }));
+  assert.equal(created.ok, true, created.message);
+
+  const originalForScope = repo.forScope;
+  const asked = [];
+  repo.forScope = input => {
+    const scoped = originalForScope(input);
+    scoped.associationGroupMembers = {
+      ...scoped.associationGroupMembers,
+      list: () => { throw new Error('详情页不应整表读小组成员'); },
+      listByUser: userId => {
+        asked.push(userId);
+        return originalForScope(input).associationGroupMembers.listByUser(userId);
+      },
+    };
+    return scoped;
+  };
+  try {
+    const detail = await call(repo, 'getSchoolEvent', { eventId: created.event.eventId });
+    assert.equal(detail.ok, true, detail.message);
+  } finally {
+    repo.forScope = originalForScope;
+  }
+  assert.deepEqual(asked, ['demo_muc_admin'], '只按当前登录人查他加入的组');
 });

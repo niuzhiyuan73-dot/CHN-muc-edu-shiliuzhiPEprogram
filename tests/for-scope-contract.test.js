@@ -38,6 +38,8 @@ const REQUIRED_METHODS = ['getById', 'insert', 'list', 'set', 'update'];
 // 团队运动的报名 / 比赛 / 统计三个集合同在 2026-10-21 并入（P1-5）。
 const EVENT_SCOPED = ['matches', 'eventSignups', 'collegeEntries', 'ties', 'lineups',
   'teamEventEntries', 'teamMatches', 'teamMatchStats'];
+// 这些集合另外都提供 listByIds：按一批编号取（赛事列表标「我报名了没」、
+// 按页批读替掉逐行点读）。2026-10-22 H-3。
 
 const collectionKeys = surface =>
   Object.keys(surface).filter(key => !RESULT_LEVEL.includes(key)).sort();
@@ -69,14 +71,16 @@ test('受范围仓储的集合方法面就是约定的那一套（钉住契约�
   const cloud = createMemoryRepo().forScope(SCOPE);
   for (const key of Object.keys(cloud).filter(k => !RESULT_LEVEL.includes(k))) {
     let expected = EVENT_SCOPED.includes(key)
-      ? [...REQUIRED_METHODS, 'listByEvent']
+      ? [...REQUIRED_METHODS, 'listByEvent', 'listByIds']
       : REQUIRED_METHODS;
     // matches 额外一个 listSince：把「本赛季」下推成 matchTime >= 分界点，
     // 免得为了一次录分把历年台账翻一遍（2026-10-22 第二轮审查 P-2）。
     if (key === 'matches') expected = [...expected, 'listSince', 'listPage'];
-    // trainingRegistrations 额外一个 listByUser：个人主页算训练积分只读这个人的
-    // 几十条，不必为一个人翻完只增不减的 3000 条报名（2026-10-22 H-2）。
-    if (key === 'trainingRegistrations') expected = [...expected, 'listByUser'];
+    // 这两个额外有 listByUser：都是「只增不减 + 一个人只有几十条」的集合，
+    // 调用方只关心一个人的那几条——训练报名（H-2）、小组归属（H-3）。
+    if (key === 'trainingRegistrations' || key === 'associationGroupMembers') {
+      expected = [...expected, 'listByUser'];
+    }
     assert.deepEqual(methodNames(cloud[key]), expected.sort(),
       `${key} 的方法面变了，请同步本测试与另一端实现`);
   }

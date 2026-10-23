@@ -543,6 +543,27 @@ function buildCollections(scope, inTx, cmd) {
       if (inTx) throw new Error(`事务内不允许条件读取（${key}），请改用 getById`);
       return readWhere(scope, COLLECTIONS[key], where, cmd);
     },
+    /**
+     * 按一批 _id 取文档（`_.in`，每次 PAGE_SIZE 个）。
+     *
+     * 【为什么不能走 query】（2026-10-22 H-3）
+     * `readWhere` 用 `_id > lastId` 做游标，一页装不下时会拼出「既有 `_id: in(...)`
+     * 又有 `_id: gt(...)`」的条件——`cursorCond` 已改成直接抛错。批读本来就知道
+     * 自己只有这几十个编号，按 PAGE_SIZE 切片即可，不需要游标。
+     */
+    byIds: async (key, ids) => {
+      if (inTx) throw new Error(`事务内不允许条件读取（${key}），请改用 getById`);
+      const uniq = [...new Set((Array.isArray(ids) ? ids : [])
+        .filter((id) => typeof id === 'string' && id))];
+      if (uniq.length === 0) return [];
+      const out = [];
+      for (let i = 0; i < uniq.length; i += PAGE_SIZE) {
+        const chunk = uniq.slice(i, i + PAGE_SIZE);
+        const res = await col(key).where({ _id: cmd.in(chunk) }).get();
+        for (const doc of (res && res.data) || []) out.push(doc);
+      }
+      return out;
+    },
   }, inTx);
 
   // 团队运动三集合的「按赛事取子集」。

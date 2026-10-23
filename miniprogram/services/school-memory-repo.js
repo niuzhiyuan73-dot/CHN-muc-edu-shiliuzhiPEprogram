@@ -137,6 +137,19 @@ function createSchoolMemoryRepo(seed = {}) {
         if (EVENT_SCOPED.includes(key)) {
           result[key].listByEvent = async eventId => (await repo[key].list())
             .filter(doc => owns(doc) && doc.eventId === eventId);
+          // 批量点取（与云端 listByIds 同口径）：赛事列表标「我报名了没」时
+          // 一页只发一次调用，而不是每行一次（2026-10-22 H-3）。
+          result[key].listByIds = async ids => {
+            if (inTx) throw new Error(`事务内不允许条件读取（${key}），请改用 getById`);
+            const uniq = [...new Set((Array.isArray(ids) ? ids : [])
+              .filter(id => typeof id === 'string' && id))];
+            const out = [];
+            for (const id of uniq) {
+              const doc = await repo[key].getById(id);
+              if (owns(doc)) out.push(doc);
+            }
+            return out;
+          };
         }
         // 本赛季的比赛（`matchTime >= sinceIso`）：与云端 listSince 同口径。
         // 模拟端在内存里按 ISO 串比较——与云端字符串范围比较等价。
@@ -149,11 +162,11 @@ function createSchoolMemoryRepo(seed = {}) {
           result[key].listSince = async sinceIso => (await repo[key].list())
             .filter(doc => owns(doc) && (!sinceIso || String(doc.matchTime || '') >= sinceIso));
         }
-        // 某个会员的训练报名：与云端 listByUser 同口径（缺 userId 时返回空数组，
-        // 不退化成整表读）。
-        if (key === 'trainingRegistrations') {
+        // 按人反查：与云端 listByUser 同口径（缺 userId 时返回空数组，
+        // 不退化成整表读）。训练报名见 H-2，小组成员见 H-3。
+        if (key === 'trainingRegistrations' || key === 'associationGroupMembers') {
           result[key].listByUser = async userId => {
-            if (inTx) throw new Error('事务内不允许条件读取（trainingRegistrations），请改用 getById');
+            if (inTx) throw new Error(`事务内不允许条件读取（${key}），请改用 getById`);
             if (typeof userId !== 'string' || !userId) return [];
             return (await repo[key].list()).filter(doc => owns(doc) && doc.userId === userId);
           };
