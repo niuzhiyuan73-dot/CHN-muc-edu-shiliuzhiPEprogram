@@ -20,7 +20,12 @@ function teamProfileView(profile) {
   });
   return { ...profile, isFootball,
     teams: profile.teams || [], events: profile.events || [], honors: profile.honors || [],
-    totals: { ...totals, appearanceGames: isFootball ? totals.games || 0 : totals.appearanceGames || 0 },
+    // 出场只有一个口径：服务端给的 appearanceGames。
+    // 足球 = 赛后报告里逐场标了「实际出场」的场次；篮球 = 单场名单 ∪ 个人统计。
+    // 足球原先退回 totals.games，值其实相同（aggregate 的 games 也只累加
+    // appeared 行），但那是**另算一遍**的口径——两边一旦有一处改动就会分叉。
+    // 现在统一由服务端给，view 只负责兜底旧接口。
+    totals: { ...totals, appearanceGames: totals.appearanceGames ?? totals.games ?? 0 },
     statCells: cellsOf(totals),
     statEvents: (profile.statEvents || []).map(row => ({ ...row, statCells: cellsOf(row) })),
   };

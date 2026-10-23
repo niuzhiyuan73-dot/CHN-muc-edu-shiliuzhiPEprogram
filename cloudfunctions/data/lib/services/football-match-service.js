@@ -20,17 +20,29 @@ const canEdit = (ctx, match) => canManageAssociationSpace(ctx) || match.recorder
 const placementText = n => ({ 1: '冠军', 2: '亚军', 3: '季军' }[n] || (n ? `第 ${n} 名` : ''));
 const recordText = r => `${r.wins} 胜 ${r.draws} 平 ${r.losses} 负 · 点球 ${r.shootoutWins} 胜 ${r.shootoutLosses} 负`;
 const publicMatches = matches => matches.filter(m => m.status === 'published' && m.footballPublished);
-function appearanceCoverage(matches, entries, userId) {
-  let eligibleMatchCount = 0; let lineupRecordedMatches = 0;
+/**
+ * 出场覆盖：球队打了多少场、其中多少场有本人出场记录。
+ *
+ * 【足球为什么只认报告里的 appeared】篮球没有「实际出场」字段，只能拿单场名单
+ * 兜底；足球的赛后报告逐人标了「实际出场」，能区分「名单里有、实际没上」
+ * （替补未登场、受伤未用）。用名单兜底会把坐板凳的人算成出场，所以这里
+ * 只有一个证据：报告里 `appeared === true`。
+ *
+ * `appearedMatches` 就是界面上的「已记录出场」——它与「参赛经历」里的赛事数
+ * 不是一回事：一个赛事有多场比赛，报名即计入荣誉，出场要逐场有报告才算。
+ */function appearanceCoverage(matches, entries, userId) {
+  let eligibleMatchCount = 0; let lineupRecordedMatches = 0; let appearedMatches = 0;
   for (const match of publicMatches(matches)) {
     const entry = entries.find(e => e.eventId === match.eventId && [match.teamA, match.teamB].includes(e.teamId)
       && e.status === 'locked' && e.roster?.some(p => p.userId === userId));
     if (!entry) continue;
     eligibleMatchCount += 1;
     const side = entry.teamId === match.teamA ? 'A' : 'B';
-    if (match.footballPublished.sides[side].players.length) lineupRecordedMatches += 1;
+    const sideReport = match.footballPublished.sides[side];
+    if (sideReport.players.length) lineupRecordedMatches += 1;
+    if (sideReport.players.some(p => p.userId === userId && p.appeared)) appearedMatches += 1;
   }
-  return { eligibleMatchCount, lineupRecordedMatches };
+  return { eligibleMatchCount, lineupRecordedMatches, appearedMatches };
 }
 
 function footballMatchView(match, editor) {
@@ -327,12 +339,18 @@ async function getMyTeamProfile(payload, ctx) {
   const eventRows = eligible.map(entry => {
     const event = events.find(e => e._id === entry.eventId); if (!event || event.status === 'draft') return null;
     const rank = event.status === 'finished' ? event.placements?.find(p => p.teamId === entry.teamId)?.rank : null;
+    const eventMatches = matches.filter(m => m.eventId === event._id);
     return { eventId: event._id, name: event.name, teamId: entry.teamId,
       teamName: teams.find(t => t._id === entry.teamId)?.name || entry.teamId,
       statusLabel: TEAM_EVENT_STATUS_LABEL[event.status], placement: rank, placementText: placementText(rank),
-      membershipLabel: '报名成员', ...teamRecord(matches.filter(m => m.eventId === event._id), entry.teamId) };
+      membershipLabel: '报名成员', ...teamRecord(eventMatches, entry.teamId),
+      // 本项赛事的「球队打了几场 / 我出场几场」。与顶部「已记录出场」同一口径，
+      // 让「报名了 4 项赛事、出场只有 1 场」能在同一行里对上账——
+      // 赛事数与场次数本来就不是一个单位（见 appearanceCoverage 的说明）。
+      ...appearanceCoverage(eventMatches, [entry], id) };
   }).filter(Boolean);
   const totals = aggregate(matches, id)[0] || { games: 0, goalsText: '—', assistsText: '—', yellowCardsText: '—', dismissalsText: '—' };
+  const appearance = appearanceCoverage(matches, entries, id);
   const statEvents = eventRows.map(e => ({ eventId: e.eventId, name: e.name,
     ...(aggregate(matches.filter(m => m.eventId === e.eventId), id)[0] || { games: 0, goalsText: '—', assistsText: '—', yellowCardsText: '—', dismissalsText: '—' }),
     ...appearanceCoverage(matches.filter(m => m.eventId === e.eventId), entries, id) }));
@@ -346,7 +364,11 @@ async function getMyTeamProfile(payload, ctx) {
         recordText: teamRecord(matches, team._id).recordText };
     }).filter(Boolean).sort((a, b) => Number(b.current) - Number(a.current)), events: eventRows,
     honors: eventRows.filter(e => e.placement && e.placement <= 3).map(e => ({ ...e, eventName: e.name })),
-    statEvents, totals: { ...totals, ...appearanceCoverage(matches, entries, id),
+    statEvents, totals: { ...totals, ...appearance,
+      // 顶部「已记录出场」的唯一来源：报告里逐场标了「实际出场」的场次数。
+      // 与 aggregate 的 games 同值（games 也只累加 appeared 行），这里显式给一个
+      // 名字，是为了让「出场」的口径只有一处，不必让每个调用方去猜 games 的含义。
+      appearanceGames: appearance.appearedMatches,
       recordText: '按已发布报告记录出场；团队荣誉归属报名成员' } });
 }
 

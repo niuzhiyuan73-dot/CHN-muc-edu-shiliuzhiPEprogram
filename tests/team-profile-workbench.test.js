@@ -114,6 +114,10 @@ for (const cloud of [false, true]) test(`篮球累计${cloud ? '云端协议2' :
   // 出场取「定过名单」与「本人这一场有统计」两处证据的并集：第二场没定名单但录了分，
   // 那个人确实上过场；第三场还停在待审核（未发布），一分都不算。
   assert.equal(result.totals.appearanceGames, 2); assert.equal(result.totals.statOnlyAppearanceGames, 1);
+  // 参赛经历每一行也要带同一份出场口径：赛事数（events.length）与场次数
+  // （appearanceGames）单位不同，逐行给出才能把账对上。
+  assert.equal(result.events[0].eligibleMatchCount, 2);
+  assert.equal(result.events[0].appearedMatches, 2);
   assert.equal((await read()).totals.points, 5);
 });
 

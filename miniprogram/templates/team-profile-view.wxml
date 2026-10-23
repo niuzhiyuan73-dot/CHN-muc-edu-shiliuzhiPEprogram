@@ -21,12 +21,13 @@
     </view>
     <view class="card">
       <view class="card-title">参赛经历</view><view wx:if="{{profile.events.length === 0}}" class="hint-inline">还没有代表球队报名过赛事。</view>
-      <view wx:for="{{profile.events}}" wx:key="eventId" class="row" data-eventid="{{item.eventId}}" bindtap="onOpenEvent"><view class="row-main"><view class="row-title">{{item.name}}<text wx:if="{{item.placementText}}" class="tag tag-medal">{{item.placementText}}</text></view><view class="row-meta">{{item.teamName}} · {{item.recordText}}</view></view><view class="row-side"><view class="status">{{item.statusLabel}}</view><view class="arrow">›</view></view></view>
+      <view wx:for="{{profile.events}}" wx:key="eventId" class="row" data-eventid="{{item.eventId}}" bindtap="onOpenEvent"><view class="row-main"><view class="row-title">{{item.name}}<text wx:if="{{item.placementText}}" class="tag tag-medal">{{item.placementText}}</text></view><view class="row-meta">{{item.teamName}} · {{item.recordText}}</view><view class="row-meta">本人出场 {{item.appearedMatches || 0}} / {{item.eligibleMatchCount || 0}} 场</view></view><view class="row-side"><view class="status">{{item.statusLabel}}</view><view class="arrow">›</view></view></view>
     </view>
     <view class="card">
       <view class="card-title">{{profile.isFootball ? '足球' : '篮球'}}跨赛事累计</view>
       <view class="hint-inline">只算已发布版本；「—」是未记录。每项场均仅按该项有记录的场次计算。</view>
-      <view class="hint-inline">球队已发布 {{profile.totals.eligibleMatchCount || 0}} 场，其中 {{profile.totals.appearanceGames || 0}} 场有本人出场记录（出场名单或个人统计）；两处都没有的场次不推定出场。</view>
+      <view class="hint-inline">球队已发布 {{profile.totals.eligibleMatchCount || 0}} 场，其中 {{profile.totals.appearanceGames || 0}} 场有本人出场记录（{{profile.isFootball ? '赛后报告标为实际上场' : '出场名单或个人统计'}}）；没有证据的场次不推定出场。</view>
+      <view class="hint-inline">「已记录出场」数的是比赛场次，「参赛经历」数的是赛事：报名一项赛事即计入荣誉归属，出场要逐场有记录，两者单位不同。</view>
       <view class="total-grid"><view wx:for="{{profile.statCells}}" wx:key="field" class="total-cell"><view class="total-label">{{item.label}}</view><view class="total-value">{{item.totalText}}</view><view class="row-meta">场均 {{item.perGameText}}</view><view class="row-meta">已记录 {{item.recordedMatches}} 场</view></view></view>
       <view wx:if="{{profile.isFootball}}" class="hint-inline">点球大战不计进球；替补受牌不增加出场；第二黄和直接红牌分别记录，罚下不重复累计。</view>
     </view>

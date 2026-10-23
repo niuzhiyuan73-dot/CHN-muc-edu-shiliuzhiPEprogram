@@ -2972,6 +2972,9 @@ async function getMyTeamProfile(payload = {}, ctx) {
   let appearanceGames = 0;
   let lineupRecordedMatches = 0;
   let statOnlyAppearanceGames = 0;
+  // 按赛事累计同一份出场口径：参赛经历里每一行都要显示「本项赛事出场几场」，
+  // 否则「报名了 3 项赛事、顶部只记 1 场出场」看起来就是数字对不上。
+  const appearanceByEvent = new Map();
   for (const match of eligibleMatches) {
     const entry = playedEntries.find(row => row.eventId === match.eventId && [match.teamA, match.teamB].includes(row.teamId));
     if (!entry) continue;
@@ -2979,9 +2982,16 @@ async function getMyTeamProfile(payload = {}, ctx) {
     const inLineup = lineup.includes(targetId);
     const hasStat = statMatchIds.has(match._id);
     if (lineup.length) lineupRecordedMatches += 1;
-    if (inLineup || hasStat) appearanceGames += 1;
+    const appeared = inLineup || hasStat;
+    if (appeared) appearanceGames += 1;
     if (!inLineup && hasStat) statOnlyAppearanceGames += 1;
+    const perEvent = appearanceByEvent.get(match.eventId) || { eligibleMatchCount: 0, appearedMatches: 0 };
+    perEvent.eligibleMatchCount += 1;
+    if (appeared) perEvent.appearedMatches += 1;
+    appearanceByEvent.set(match.eventId, perEvent);
   }
+  const noAppearance = { eligibleMatchCount: 0, appearedMatches: 0 };
+  for (const row of eventRows) Object.assign(row, appearanceByEvent.get(row.eventId) || noAppearance);
 
   return ok({
     ok: true,
