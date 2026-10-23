@@ -26,7 +26,7 @@
 
 const { canReadAssociationSpace } = require('./association-space-permission.js');
 const { legacyActorOf, legacyRoleOf, buildDirectory } = require('./school-actor.js');
-const { permissionOf, permissionLabelOf } = require('./school-permission.js');
+const { permissionOf, permissionLabelOf, canSchoolAction } = require('./school-permission.js');
 const { displayRating } = require('./school-rating-service.js');
 const { aggregatePoints, collectEventPointFacts, mountEventPointDeltas } = require('./school-points-service.js');
 const { buildTrainingPointFacts } = require('./training-points.js');
@@ -831,7 +831,8 @@ async function getSchoolMemberProfile(payload = {}, ctx) {
       gender: member.gender || '',
       collegeId: (memberDoc && memberDoc.collegeId) || '',
       college: collegeName((memberDoc && memberDoc.collegeId) || ''),
-      studentId: (memberDoc && memberDoc.studentId) || '',
+      ...(userId === ctx.actorId || canSchoolAction(ctx, 'reviewMembers', ctx)
+        ? { studentId: (memberDoc && memberDoc.studentId) || '' } : {}),
       points: Number(member.points || 0),
       permissionLabel: permissionLabelOf(role, membership),
       // 权限档位的机器可读值（schoolAdmin / associationLeader / collegeLeader / 空）：

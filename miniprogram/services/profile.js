@@ -46,12 +46,23 @@ const IMMUTABLE_FIELDS = [
 
 /** 昵称长度上限。够长了，再长头像旁边的位置也放不下 */
 const NICKNAME_MAX = 12;
+const AVATAR_URL_MAX = 2048;
+
+/** 云文件 ID 与 HTTPS 头像；兼容本地 mock 的微信临时文件地址。 */
+function validAvatarUrl(value) {
+  return value === '' || (value.length <= AVATAR_URL_MAX && !/[\s\u0000-\u001f\u007f]/.test(value)
+    && /^(cloud:\/\/[^/]+\/.+|https:\/\/[^/?#]+(?:[/?#].*)?|wxfile:\/\/.+|https?:\/\/(?:tmp|usr)\/.+)$/.test(value));
+}
 
 /**
  * 逐字段的校验规则。顺序即「第一条错误」的取舍顺序。
  * 只校验「本次打算改」的字段——只换头像时不该被昵称规则拦住。
  */
 const PROFILE_EDIT_RULES = [
+  {
+    field: 'avatarUrl', label: '头像', test: validAvatarUrl,
+    message: `头像地址无效或超过 ${AVATAR_URL_MAX} 个字符`,
+  },
   {
     field: 'nickName',
     label: '昵称',
@@ -140,6 +151,7 @@ function resolveNameDisplay(user) {
 }
 
 module.exports = {
+  AVATAR_URL_MAX, validAvatarUrl,
   EDITABLE_FIELDS,
   IMMUTABLE_FIELDS,
   NICKNAME_MAX,

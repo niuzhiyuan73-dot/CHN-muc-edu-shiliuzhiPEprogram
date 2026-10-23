@@ -56,6 +56,7 @@ const buckets = new Map();
 
 /** 清理阈值：活跃账号超过这个数时才扫描一次过期桶，避免每请求都遍历。 */
 const SWEEP_THRESHOLD = 20000;
+let lastSweepSec = -1;
 
 function disabled() {
   return process.env.RATE_LIMIT === 'off' || process.env.NODE_ENV === 'test';
@@ -68,7 +69,8 @@ function kindOf(action) {
 
 /** 桶太多时清掉上一秒之前的（正常情况下 key 数 ≈ 活跃用户数，扫不了几次）。 */
 function sweep(nowSec) {
-  if (buckets.size < SWEEP_THRESHOLD) return;
+  if (lastSweepSec === nowSec) return;
+  lastSweepSec = nowSec;
   for (const [key, bucket] of buckets) {
     if (bucket.sec !== nowSec) buckets.delete(key);
   }
@@ -94,6 +96,11 @@ function guardRate(openId, action, nowMs = Date.now()) {
 
   let bucket = buckets.get(key);
   if (!bucket || bucket.sec !== nowSec) {
+    sweep(nowSec);
+    // 全部是本窗口的有效桶时拒绝新增身份，不淘汰仍有效的桶，避免额度重置。
+    if (!bucket && buckets.size >= SWEEP_THRESHOLD) {
+      return { message: '服务繁忙，请稍后再试', kind, limit };
+    }
     bucket = { sec: nowSec, read: 0, write: 0 };
     buckets.set(key, bucket);
   }
@@ -113,6 +120,7 @@ function guardRate(openId, action, nowMs = Date.now()) {
 /** 仅供测试：清空计数，避免用例之间互相影响。 */
 function resetRateLimit() {
   buckets.clear();
+  lastSweepSec = -1;
 }
 
 module.exports = { guardRate, resetRateLimit, LIMITS, ANON_LIMITS, kindOf };

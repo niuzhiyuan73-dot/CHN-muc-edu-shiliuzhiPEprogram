@@ -11,6 +11,8 @@ const {
   SCHOOL_MEMBER_STATUS, schoolMemberKey, schoolAccountKey, PLATFORM_STATUS, PLATFORM_ROLE,
 } = require('../utils/school.js');
 const { PROFILE_RULES } = require('./auth.js');
+const { validateProfilePatch, NICKNAME_MAX } = require('./profile.js');
+const { accountDirectoryFields } = require('./account-directory.js');
 
 /** 平台账号上仍成立的实名字段：真名与性别。规则直接取自旧栈 auth.PROFILE_RULES。 */
 const ACCOUNT_RULES = PROFILE_RULES.filter((rule) => ['realName', 'gender'].includes(rule.field));
@@ -38,10 +40,14 @@ function validateSchoolAccount(form = {}) {
   for (const rule of ACCOUNT_RULES) {
     if (!rule.test(profile[rule.field])) errors[rule.field] = rule.message;
   }
+  const display = validateProfilePatch({
+    ...(profile.nickName ? { nickName: profile.nickName } : {}), avatarUrl: profile.avatarUrl,
+  });
+  Object.assign(errors, display.errors);
   const firstFailed = ACCOUNT_RULES.find((rule) => errors[rule.field]);
   return {
-    valid: !firstFailed, errors,
-    firstError: firstFailed ? firstFailed.message : '', profile,
+    valid: !firstFailed && display.valid, errors,
+    firstError: firstFailed ? firstFailed.message : display.firstError, profile,
   };
 }
 
@@ -77,10 +83,11 @@ function buildSchoolAccount({ openId, profile, now = new Date() } = {}) {
     account: {
       _id: schoolAccountKey(normalizedOpenId),
       openId: normalizedOpenId,
-      nickName: p.nickName || p.realName,
+      nickName: p.nickName || p.realName.slice(0, NICKNAME_MAX),
       avatarUrl: p.avatarUrl,
       realName: p.realName,
       gender: p.gender,
+      ...accountDirectoryFields({ ...p, nickName: p.nickName || p.realName.slice(0, NICKNAME_MAX) }),
       platformStatus: PLATFORM_STATUS.ACTIVE,
       platformRole: PLATFORM_ROLE.MEMBER,
       joinDate: date.toISOString(),

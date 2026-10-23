@@ -22,6 +22,7 @@
 
 const { COLLECTIONS } = require('../repository.js');
 const { attachSchoolRepository } = require('../school-repository.js');
+const { readMemberPage } = require('./member-page.js');
 const { matchListWhere } = require('../../lib/services/match-list-query.js');
 const { MATCH_STATUS } = require('../../lib/utils/constants.js');
 
@@ -533,6 +534,10 @@ function buildCollections(scope, inTx, cmd) {
     // 范围条件要能构造操作符（gte / in 等），故把 db.command 一并交给学校仓储
     // 扩展，供 listByEvent 之外的范围查询使用。
     cmd,
+    memberPage: (schoolScope, options) => {
+      if (inTx) throw new Error('事务内不允许查询会员目录');
+      return readMemberPage(scope, cmd, schoolScope, options);
+    },
     matchPage: (schoolScope, options) => {
       if (inTx) throw new Error('事务内不允许条件读取（matches），请改用 getById');
       return readMatchPage(scope, schoolScope, options);

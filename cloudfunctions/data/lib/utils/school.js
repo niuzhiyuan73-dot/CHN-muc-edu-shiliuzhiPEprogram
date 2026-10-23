@@ -1,5 +1,6 @@
 /** S0/S1 学校模型。严格范围不兼容缺省学校；历史回填由迁移工具处理。 */
 const { isKnownAssociation } = require('./associations.js');
+const { sha256 } = require('./sha256.js');
 
 const SCHOOL_STATUS = Object.freeze({ ACTIVE: 'active', DISABLED: 'disabled' });
 const SCHOOL_MEMBER_STATUS = Object.freeze({
@@ -210,7 +211,13 @@ const schoolAnnouncementKey = (announcementId, scope) => {
 };
 // 平台账号：_id 由微信 OpenID 派生，同一微信身份恒一条账号，重复注册走同一键。
 // 账号级、不含学校/协会——换学校不改账号，学号与学院另由学校身份（schoolMember）登记。
-const schoolAccountKey = (openId) => schoolKey('acc', openId);
+const schoolAccountKey = (openId) => {
+  if (typeof openId !== 'string' || !openId || openId.length > MAX_KEY_PART_LENGTH) {
+    throw new Error('账号身份无效或过长');
+  }
+  // 160-bit SHA-256 prefix: stable for retries, no reversible OpenID in public IDs.
+  return schoolKey('acc', sha256(openId).slice(0, 40));
+};
 function belongsToSchoolScope(doc, scope) {
   const s = schoolScope(scope);
   return Boolean(doc && doc.schoolId === s.schoolId && doc.association === s.association);

@@ -29,7 +29,7 @@ const { canManageAssociationSpace, canParticipateInAssociation, canReadAssociati
 const { buildDirectory } = require('./school-actor.js');
 const { buildSchoolContext } = require('./school-context.js');
 const { canSchoolAction } = require('./school-permission.js');
-const { teamKey, teamMemberKey, collegeTeamKey } = require('../utils/school.js');
+const { teamKey, teamMemberKey, collegeTeamKey, schoolMemberKey, schoolKey } = require('../utils/school.js');
 const {
   TEAM_STATUS, TEAM_STATUS_LABEL, TEAM_TYPE, TEAM_TYPE_LABEL,
   TEAM_MEMBER_STATUS, TEAM_MEMBER_STATUS_LABEL,
@@ -529,7 +529,7 @@ async function reviewTeamMember(payload = {}, ctx) {
     });
     if (approve) {
       await tx.teams.set(team._id, {
-        ...team, memberCount: (Number(team.memberCount) || 0) + 1,
+        ...team, memberCount: (Number(team.memberCount) || 0) + 1, revision: Number(team.revision || 1) + 1,
         updatedAt: now,
       });
     }
@@ -564,7 +564,7 @@ async function leaveTeam(payload = {}, ctx) {
     const now = fresh.now;
     await tx.teamMembers.set(key, { ...row, status: TEAM_MEMBER_STATUS.LEFT, leftAt: now, updatedAt: now });
     await tx.teams.set(team._id, {
-      ...team, memberCount: Math.max(0, (Number(team.memberCount) || 1) - 1), updatedAt: now,
+      ...team, memberCount: Math.max(0, (Number(team.memberCount) || 1) - 1), revision: Number(team.revision || 1) + 1, updatedAt: now,
     });
     return { ok: true, message: '' };
   });
@@ -820,7 +820,7 @@ async function addCollegeTeamMembers(payload = {}, ctx) {
     }
     if (added > 0) {
       await tx.teams.set(current._id, {
-        ...current, memberCount: (Number(current.memberCount) || 0) + added, updatedAt: now,
+        ...current, memberCount: (Number(current.memberCount) || 0) + added, revision: Number(current.revision || 1) + 1, updatedAt: now,
       });
     }
     return { ok: true, added, message: '' };
@@ -855,7 +855,7 @@ async function removeCollegeTeamMember(payload = {}, ctx) {
     const now = fresh.now;
     await tx.teamMembers.set(key, { ...row, status: TEAM_MEMBER_STATUS.LEFT, leftAt: now, updatedAt: now });
     await tx.teams.set(team._id, {
-      ...team, memberCount: Math.max(0, (Number(team.memberCount) || 1) - 1), updatedAt: now,
+      ...team, memberCount: Math.max(0, (Number(team.memberCount) || 1) - 1), revision: Number(team.revision || 1) + 1, updatedAt: now,
     });
     return { ok: true, message: '' };
   });
@@ -885,8 +885,8 @@ function teamAssociationIds() {
  *
  * 【为什么不在调用方的事务里做】
  * 内存与云端仓储都不允许事务内整表查询。所以先在外面把要改的行读出来，
- * 再开一个只做 `set` 的事务。代价是「读」与「写」之间有一个极小的窗口，
- * 校园规模下可以接受（这期间有人刚好入队，会被下一次清理带走）。
+ * 再按球队开启事务。事务内重读成员与学校身份，名单变化时重新取候选，
+ * 不把事务外的旧快照写回。每批最多检查 20 个候选，控制事务操作预算。
  *
  * @param {Object} repo 未绑定范围的仓储（ctx.repo）
  * @param {Object} params
@@ -899,55 +899,93 @@ function teamAssociationIds() {
 async function detachUserFromTeams(repo, { schoolId, userId, now, actorId } = {}) {
   const summary = { detached: 0, captainMoved: 0, archived: 0 };
   if (!repo || !schoolId || !userId) return summary;
-
   for (const association of teamAssociationIds()) {
     const scoped = repo.forScope({ schoolId, association });
-    const rows = await scoped.teamMembers.list();
-    const mine = rows.filter(row => row.userId === userId && row.status === TEAM_MEMBER_STATUS.ACTIVE);
-    if (mine.length === 0) continue;
-
-    const teams = await scoped.teams.list();
-    const patches = [];
+    const mine = (await scoped.teamMembers.listByUser(userId)).filter(row => row.status === TEAM_MEMBER_STATUS.ACTIVE);
     for (const row of mine) {
-      const team = teams.find(item => item._id === row.teamId);
-      patches.push({ kind: 'member', doc: { ...row, status: TEAM_MEMBER_STATUS.LEFT, leftAt: now, updatedAt: now } });
-      if (!team || team.captainId !== userId) continue;
-
-      const others = rows
-        .filter(item => item.teamId === team._id
-          && item.userId !== userId
-          && item.status === TEAM_MEMBER_STATUS.ACTIVE)
-        .sort((a, b) => String(a.joinedAt || '').localeCompare(String(b.joinedAt || ''))
-          || String(a.userId).localeCompare(String(b.userId)));
-
-      if (others.length > 0) {
-        const next = others[0];
-        patches.push({ kind: 'team', doc: {
-          ...team, captainId: next.userId, updatedBy: actorId, updatedAt: now,
-        } });
-        patches.push({ kind: 'member', doc: { ...next, role: 'captain', updatedAt: now } });
-        summary.captainMoved += 1;
-      } else {
-        patches.push({ kind: 'team', doc: {
-          ...team, status: TEAM_STATUS.ARCHIVED, archivedAt: now, archivedReason: 'captain-left', updatedBy: actorId, updatedAt: now,
-        } });
-        summary.archived += 1;
+      let completed = false;
+      for (let attempt = 0; attempt < 3 && !completed; attempt++) {
+        const snapshot = await scoped.teams.getById(row.teamId);
+        if (!snapshot) {
+          const detached = await repo.transaction(async root => {
+            const tx = root.forScope({ schoolId, association });
+            if (await tx.teams.getById(row.teamId)) return null;
+            const current = await tx.teamMembers.getById(row._id);
+            if (!current || current.status !== TEAM_MEMBER_STATUS.ACTIVE) return 0;
+            await tx.teamMembers.set(current._id, { ...current, status: TEAM_MEMBER_STATUS.LEFT, leftAt: now, updatedAt: now });
+            return 1;
+          });
+          if (detached === null) continue;
+          summary.detached += detached;
+          completed = true;
+          break;
+        }
+        const stamp = team => JSON.stringify([team.revision, team.captainId, team.memberCount, team.updatedAt, team.status]);
+        const candidates = (await scoped.teamMembers.listByTeams([row.teamId]))
+          .filter(item => item.userId !== userId && item.status === TEAM_MEMBER_STATUS.ACTIVE)
+          .sort((a, b) => String(a.joinedAt || '').localeCompare(String(b.joinedAt || ''))
+            || String(a.userId).localeCompare(String(b.userId)));
+        // Each transaction checks at most 20 candidates (3 point reads each), below 100 operations.
+        for (let offset = 0; offset < Math.max(1, candidates.length); offset += 20) {
+          const batch = candidates.slice(offset, offset + 20);
+          const last = offset + 20 >= candidates.length;
+          const result = await repo.transaction(async root => {
+            const tx = root.forScope({ schoolId, association });
+            const team = await tx.teams.getById(row.teamId);
+            const current = await tx.teamMembers.getById(row._id);
+            if (!team || !current) return { done: true };
+            if (stamp(team) !== stamp(snapshot)) return { retry: true };
+            const active = current.status === TEAM_MEMBER_STATUS.ACTIVE;
+            if (!active && team.captainId !== userId) return { done: true };
+            let next = null;
+            if (team.captainId === userId) {
+              for (const candidate of batch) {
+                const member = await tx.teamMembers.getById(candidate._id);
+                if (!member || member.status !== TEAM_MEMBER_STATUS.ACTIVE || member.teamId !== team._id) continue;
+                const [account, schoolMember] = await Promise.all([
+                  root.users.getById(member.userId), root.schoolMembers.getById(schoolMemberKey(member.userId, schoolId)),
+                ]);
+                if (account && account.platformStatus === 'active' && account.primarySchoolId === schoolId
+                    && schoolMember && schoolMember.userId === member.userId && schoolMember.schoolId === schoolId
+                    && schoolMember.status === 'active') { next = member; break; }
+              }
+              if (!next && !last) return { scanNext: true };
+            }
+            if (active) await tx.teamMembers.set(current._id, {
+              ...current, status: TEAM_MEMBER_STATUS.LEFT, leftAt: now, updatedAt: now,
+            });
+            const patch = { ...team, revision: Number(team.revision || 1) + 1,
+              memberCount: Math.max(0, Number(team.memberCount || 0) - Number(active)),
+              updatedBy: actorId, updatedAt: now };
+            let moved = 0, archived = 0;
+            if (team.captainId === userId) {
+              if (next) {
+                patch.captainId = next.userId;
+                await tx.teamMembers.set(next._id, { ...next, role: 'captain', updatedAt: now });
+                moved = 1;
+              } else {
+                Object.assign(patch, { status: TEAM_STATUS.ARCHIVED, captainId: '', archivedAt: now, archivedReason: 'captain-left' });
+                archived = 1;
+              }
+            }
+            await tx.teams.set(team._id, patch);
+            await root.audit.append({ _id: schoolKey('team-detach', team._id, userId, String(now || '')),
+              action: 'detachUserFromTeams', schoolId, association, userId, actorId,
+              teamId: team._id, detached: Number(active), captainMoved: moved, archived, at: now });
+            return { done: true, detached: Number(active), moved, archived };
+          });
+          if (result.retry) break;
+          if (result.done) {
+            summary.detached += result.detached || 0;
+            summary.captainMoved += result.moved || 0;
+            summary.archived += result.archived || 0;
+            completed = true;
+            break;
+          }
+        }
       }
+      if (!completed) throw new Error('球队名单正在变化，请重试球队清理');
     }
-
-    await repo.transaction(async (tx) => {
-      const target = tx.forScope({ schoolId, association });
-      for (const patch of patches) {
-        if (patch.kind === 'team') await target.teams.set(patch.doc._id, patch.doc);
-        else await target.teamMembers.set(patch.doc._id, patch.doc);
-      }
-    });
-    summary.detached += mine.length;
-    repo.audit.append({
-      _id: `team_detach_${schoolId}_${userId}_${association}`,
-      action: 'detachUserFromTeams', schoolId, association, userId, actorId,
-      detached: mine.length, at: now,
-    }).catch(() => undefined);
   }
   return summary;
 }

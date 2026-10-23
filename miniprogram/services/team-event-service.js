@@ -19,6 +19,7 @@ const { canManageAssociationSpace, canReadAssociationSpace } = require('./associ
 const { collegeMemberCandidates, resolveCollegeTeam } = require('./team-service.js');
 const { createBasketballLive, applyBasketballOperation, basketballLiveView, BASKETBALL_STAT_LIMITS } = require('../utils/basketball-live.js');
 const { buildDirectory } = require('./school-actor.js');
+const { loadTeamProfileData, indexMatches } = require('./team-profile-data.js');
 const { buildSchoolContext } = require('./school-context.js');
 const { canSchoolAction } = require('./school-permission.js');
 const { schoolKey, schoolMemberKey, schoolMembershipKey, teamMemberKey, collegeTeamKey, PLATFORM_STATUS } = require('../utils/school.js');
@@ -2793,23 +2794,19 @@ async function getMyTeamProfile(payload = {}, ctx) {
     return ok(refused('只能查看自己的团队成绩'));
   }
 
-  const repo = ctx.repo.forScope(ctx);
-  const [teamsRaw, members, entries, events, matches, statDocs, dir] = await Promise.all([
-    repo.teams.list(), repo.teamMembers.list(), repo.teamEventEntries.list(),
-    repo.teamEvents.list(), repo.teamMatches.list(), repo.teamMatchStats.list(),
-    buildDirectory(ctx),
-  ]);
+  const { teams: teamsRaw, members, entries, events, matches, statDocs, user } = await loadTeamProfileData(ctx, targetId);
   const teams = teamsRaw.filter(team => inScope(team, ctx));
   const teamById = new Map(teams.map(team => [team._id, team]));
   const eventById = new Map(events.map(event => [event._id, event]));
-
-  const nameOf = (userId) => {
-    const user = (dir.members || []).find(item => item._id === userId);
-    return (user && (user.nickName || user.realName)) || userId;
-  };
-  const memberCountOf = teamId => members.filter(
-    row => row.teamId === teamId && row.status === TEAM_MEMBER_STATUS.ACTIVE
-  ).length;
+  const matchById = new Map(matches.map(match => [match._id, match]));
+  const matchesByTeam = indexMatches(matches, 'team');
+  const matchesByEvent = indexMatches(matches, 'eventId');
+  const countByTeam = new Map();
+  for (const row of members) if (row.status === TEAM_MEMBER_STATUS.ACTIVE) {
+    countByTeam.set(row.teamId, (countByTeam.get(row.teamId) || 0) + 1);
+  }
+  const nameOf = () => (user && (user.nickName || user.realName)) || targetId;
+  const memberCountOf = teamId => countByTeam.get(teamId) || 0;
 
   /* 我的球队：当前在队 + 已离队的历史（离队的不抹掉，只标状态） */
   const myMemberships = members.filter(row => row.userId === targetId && teamById.has(row.teamId));
@@ -2817,7 +2814,7 @@ async function getMyTeamProfile(payload = {}, ctx) {
     .map((row) => {
       const team = teamById.get(row.teamId);
       const record = teamRecordOf(
-        matches.filter(match => match.teamA === team._id || match.teamB === team._id),
+        (matchesByTeam.get(team._id) || []),
         team._id
       );
       return {
@@ -2848,7 +2845,7 @@ async function getMyTeamProfile(payload = {}, ctx) {
       if (!event || event.status === TEAM_EVENT_STATUS.DRAFT) return null;
       const team = teamById.get(entry.teamId);
       const record = teamRecordOf(
-        matches.filter(match => match.eventId === event._id),
+        (matchesByEvent.get(event._id) || []),
         entry.teamId
       );
       const rank = placementOf(event, entry.teamId, entry);
@@ -2903,7 +2900,7 @@ async function getMyTeamProfile(payload = {}, ctx) {
     const mine = rows.filter(row => row && row.userId === targetId);
     if (mine.length === 0) continue;
 
-    const eventId = doc.eventId || (matches.find(match => match._id === doc.matchId) || {}).eventId;
+    const eventId = doc.eventId || (matchById.get(doc.matchId) || {}).eventId;
     if (!byEvent.has(eventId)) byEvent.set(eventId, emptyStatAcc());
     const buckets = [total, byEvent.get(eventId)];
     for (const bucket of buckets) {
@@ -2937,7 +2934,7 @@ async function getMyTeamProfile(payload = {}, ctx) {
   for (const entry of playedEntries) {
     const event = eventById.get(entry.eventId);
     if (!event || event.status === TEAM_EVENT_STATUS.DRAFT) continue;
-    const record = teamRecordOf(matches.filter(match => match.eventId === event._id), entry.teamId);
+    const record = teamRecordOf((matchesByEvent.get(event._id) || []), entry.teamId);
     teamTotals.games += record.games;
     teamTotals.wins += record.wins;
     teamTotals.losses += record.losses;

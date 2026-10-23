@@ -3,6 +3,8 @@ const { schoolScope, SCHOOL_MEMBER_STATUS } = require('../utils/school.js');
 const { MEET_COLLECTIONS, meetScope } = require('../utils/meet-scope.js');
 const clone = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 const { memoryMatchPage } = require('./match-list-query');
+const { attachTeamReads, fieldValues } = require('./scoped-team-reads.js');
+const { memoryDirectoryPage } = require('./account-directory.js');
 /**
  * 带 eventId 的「从属集合」：按赛事取子集用 listByEvent（条件查询 + 索引），
  * 不整表读完再内存过滤。顶层与 forScope 两处都要提供，方法面与云端
@@ -209,6 +211,19 @@ function createSchoolMemoryRepo(seed = {}) {
           };
         }
       }
+      attachTeamReads(result, {
+        inTx, command: { in: values => ({ values }) },
+        query: async (key, where) => [...getState()[key].values()]
+          .filter(doc => Object.entries(where).every(([field, value]) =>
+            fieldValues(doc, field).some(item => value && value.values ? value.values.includes(item) : item === value)))
+          .map(clone),
+        byIds: async (key, ids, fields) => [...new Set(ids)].map(id => getState()[key].get(id))
+          .filter(doc => doc && Object.entries(fields).every(([field, value]) => doc[field] === value)).map(clone),
+      });
+      result.schoolMembers.listDirectoryPage = async options => {
+        if (inTx) throw new Error('事务内不允许查询会员目录');
+        return memoryDirectoryPage([...getState().schoolMembers.values()], [...getState().users.values()], scope, options);
+      };
       if (!inTx) result.transaction = fn => repo.transaction(tx => fn(tx.forScope(scope)));
       return result;
     };

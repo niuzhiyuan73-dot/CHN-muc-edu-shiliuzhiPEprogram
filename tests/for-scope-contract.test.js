@@ -90,6 +90,12 @@ test('受范围仓储的集合方法面就是约定的那一套（钉住契约�
     if (key === 'schoolRoles' || key === 'memberships') {
       expected = [...expected, 'listByIds'];
     }
+    if (key === 'schoolMembers') expected = [...expected, 'listDirectoryPage'];
+    if (key === 'teams' || key === 'teamEvents') expected = [...expected, 'listByIds'];
+    if (key === 'teamMembers') expected = [...expected, 'listByUser', 'listByTeams'];
+    if (key === 'teamEventEntries') expected = [...expected, 'listForUser'];
+    if (key === 'teamMatches') expected = [...expected, 'listByEvents', 'listByTeams', 'listForPlayer'];
+    if (key === 'teamMatchStats') expected = [...expected, 'listForUser'];
     assert.deepEqual(methodNames(cloud[key]), expected.sort(),
       `${key} 的方法面变了，请同步本测试与另一端实现`);
   }

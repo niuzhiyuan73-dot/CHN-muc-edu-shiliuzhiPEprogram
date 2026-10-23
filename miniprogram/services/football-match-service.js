@@ -1,3 +1,4 @@
+const { loadTeamProfileData, indexMatches } = require('./team-profile-data');
 /** 足球赛后录分与成绩。复用团队 action，按运动分派；所有写入在事务内重判权限。 */
 const { canReadAssociationSpace, canManageAssociationSpace } = require('./association-space-permission');
 const { buildSchoolContext } = require('./school-context');
@@ -333,13 +334,13 @@ async function getMyTeamProfile(payload, ctx) {
   if (!canRead(ctx)) return ok(refused('账号或本校身份已失效'));
   const id = payload.userId || ctx.actorId;
   if (id !== ctx.actorId && !canManageAssociationSpace(ctx)) return ok(refused('只能查看自己的团队成绩'));
-  const repo = ctx.repo.forScope(ctx);
-  const [members, teams, entries, events, matches] = await Promise.all([repo.teamMembers.list(), repo.teams.list(), repo.teamEventEntries.list(), repo.teamEvents.list(), repo.teamMatches.list()]);
+  const { members, teams, entries, events, matches, user } = await loadTeamProfileData(ctx, id, { football: true });
+  const matchesByEvent = indexMatches(matches, 'eventId');
   const eligible = entries.filter(e => e.status === 'locked' && e.roster?.some(p => p.userId === id));
   const eventRows = eligible.map(entry => {
     const event = events.find(e => e._id === entry.eventId); if (!event || event.status === 'draft') return null;
     const rank = event.status === 'finished' ? event.placements?.find(p => p.teamId === entry.teamId)?.rank : null;
-    const eventMatches = matches.filter(m => m.eventId === event._id);
+    const eventMatches = (matchesByEvent.get(event._id) || []);
     return { eventId: event._id, name: event.name, teamId: entry.teamId,
       teamName: teams.find(t => t._id === entry.teamId)?.name || entry.teamId,
       statusLabel: TEAM_EVENT_STATUS_LABEL[event.status], placement: rank, placementText: placementText(rank),
@@ -352,9 +353,8 @@ async function getMyTeamProfile(payload, ctx) {
   const totals = aggregate(matches, id)[0] || { games: 0, goalsText: '—', assistsText: '—', yellowCardsText: '—', dismissalsText: '—' };
   const appearance = appearanceCoverage(matches, entries, id);
   const statEvents = eventRows.map(e => ({ eventId: e.eventId, name: e.name,
-    ...(aggregate(matches.filter(m => m.eventId === e.eventId), id)[0] || { games: 0, goalsText: '—', assistsText: '—', yellowCardsText: '—', dismissalsText: '—' }),
-    ...appearanceCoverage(matches.filter(m => m.eventId === e.eventId), entries, id) }));
-  const user = await ctx.repo.users.getById(id);
+    ...(aggregate((matchesByEvent.get(e.eventId) || []), id)[0] || { games: 0, goalsText: '—', assistsText: '—', yellowCardsText: '—', dismissalsText: '—' }),
+    ...appearanceCoverage((matchesByEvent.get(e.eventId) || []), entries, id) }));
   return ok({ ok: true, sportFormat: 'football11', name: user?.realName || user?.nickName || id,
     teams: members.filter(m => m.userId === id).map(m => {
       const team = teams.find(t => t._id === m.teamId); if (!team) return null;

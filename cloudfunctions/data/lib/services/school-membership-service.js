@@ -6,6 +6,7 @@ const {
 } = require('./school-permission.js');
 const { buildSchoolApplication, buildSchoolAccount } = require('./school-member.js');
 const { buildProfilePatch } = require('./profile.js');
+const { accountDirectoryFields } = require('./account-directory.js');
 const { allAssociations } = require('../utils/associations.js');
 const { detachUserFromTeams } = require('./team-service.js');
 const { syncRatingProfileInTransaction } = require('./school-rating-service.js');
@@ -655,6 +656,7 @@ function createSchoolHandlers({ claimKey }) {
         return { ok: false, account: null, message: '找不到你的账号' };
       }
       const next = { ...current, ...built.patch };
+      Object.assign(next, accountDirectoryFields(next));
       await tx.users.set(ctx.actorId, next);
       // 只回必要的展示字段，不下发 openId 等账号隐私。
       return { ok: true, account: { userId: next._id, nickName: next.nickName || '',

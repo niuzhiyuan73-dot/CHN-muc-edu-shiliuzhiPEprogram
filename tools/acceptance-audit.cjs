@@ -75,7 +75,7 @@ probe('F4', '平台禁用选手不能被直接传 ID 录入新比赛', async () 
   return { pass: !result.ok, visibleInPicker: context.members.some(row => row.userId === member), submitAllowed: result.ok };
 });
 
-probe('F5', '个人赛已有下游决赛时不能直接撤销半决赛', async () => {
+probe('F5', '已下线的撤销接口不能改变已生效半决赛及下游决赛', async () => {
   const repo = fixture();
   const event = required(await call(repo, 'publishSchoolEvent', { requestId: 'bracket', title: '验收四人淘汰赛',
     matchType: MATCH_TYPE.SINGLES, level: 3, format: 'single_elim', bronzeMode: 'tied', seedMode: 'elo', seedCount: 4,
@@ -93,7 +93,12 @@ probe('F5', '个人赛已有下游决赛时不能直接撤销半决赛', async (
   }
   const downstream = required(await call(repo, 'listSchoolMatches', { eventId: event.eventId })).matches.filter(m => !firstRound.some(f => f.matchId === m.matchId));
   assert.ok(downstream.length > 0, '确认半决赛后应生成下游');
-  const result = await call(repo, 'revokeSchoolMatch', { matchId: firstRound[0].matchId, reason: '验收：半决赛比分错误' });
+  const before = await repo.matches.list();
+  const { handleSchoolRequest } = require('../cloudfunctions/data/src/core/school-request');
+  const result = await handleSchoolRequest({ protocolVersion: 2, ...scope, action: 'revokeSchoolMatch',
+    payload: { matchId: firstRound[0].matchId, reason: '验收：半决赛比分错误' } },
+    { repo, openId: 'mock_openid_muc_admin', now });
+  assert.deepEqual(await repo.matches.list(), before, '被拒绝的旧接口不能改比赛或下游签表');
   const final = await repo.matches.getById(downstream[0].matchId);
   return { pass: !result.ok, revokeAllowed: result.ok, downstreamCount: downstream.length,
     downstreamStillPending: final.status === MATCH_STATUS.PENDING, downstreamTeams: [final.teamA, final.teamB] };

@@ -11,7 +11,7 @@
  * ============================================================
  */
 
-const { searchMemberPage } = require('./association-member.js');
+const { normalizeKeyword } = require('./association-member.js');
 const { canReadAssociationSpace } = require('./association-space-permission.js');
 const { permissionLabelOf } = require('./school-permission.js');
 const {
@@ -31,32 +31,16 @@ async function listAssociationMembers(payload = {}, ctx) {
   const limit = Number.isInteger(payload.limit) && payload.limit > 0
     ? Math.min(payload.limit, MAX_LIMIT) : DEFAULT_LIMIT;
 
-  const scoped = ctx.repo.forScope(ctx);
-  const [rows, colleges] = await Promise.all([
-    scoped.schoolMembers.list(),
-    scoped.colleges.list(),
-  ]);
-  // 学院名走 Map（原先 find 在循环里，O(成员 × 学院)，2026-10-21 审查 P2-7）。
-  const collegeNameById = new Map(colleges.map(row => [row.collegeId, row.name]));
-  const collegeName = id => collegeNameById.get(id) || '';
-
-  // 账号按这批在册成员的编号批量取：users 是平台级集合，list() 会把别校账号
-  // 一起读进来，读量随平台总用户数增长（2026-10-21 审查 P0-1）。
-  const userById = new Map(
-    (await ctx.repo.users.listByIds(rows.map(row => row.userId))).map(user => [user._id, user]),
-  );
-
-  const base = [];
-  for (const row of rows) {
-    if (row.status !== SCHOOL_MEMBER_STATUS.ACTIVE) continue;
-    const user = userById.get(row.userId);
-    if (!user || user.platformStatus !== PLATFORM_STATUS.ACTIVE || user.primarySchoolId !== ctx.schoolId) continue;
-    base.push({ userId: row.userId, nickName: user.nickName || '',
-      realName: user.realName || '', avatarUrl: user.avatarUrl || '',
-      collegeId: row.collegeId || '', collegeName: collegeName(row.collegeId) });
+  const keyword = normalizeKeyword(payload.keyword);
+  if (keyword.length > 80 || (typeof payload.cursor === 'string' && payload.cursor.length > 1000)) {
+    return ok({ ok: false, members: [], nextCursor: '', hasMore: false, message: '搜索关键词或游标过长' });
   }
-
-  const page = searchMemberPage(base, { keyword: payload.keyword, cursor: payload.cursor, limit });
+  const scoped = ctx.repo.forScope(ctx);
+  const [page, colleges] = await Promise.all([
+    scoped.schoolMembers.listDirectoryPage({ keyword, cursor: payload.cursor, limit }), scoped.colleges.list(),
+  ]);
+  const collegeNameById = new Map(colleges.map(row => [row.collegeId, row.name]));
+  page.members = page.members.map(member => ({ ...member, collegeName: collegeNameById.get(member.collegeId) || '' }));
   // 权限标签只为当前这一页补算。原来每行 2 次点读（校级角色 + 协会身份），
   // 一页 20 条就是 40 次 RPC——主键都由 userId 派生，正好整页批读各 1 次
   // （2026-10-22 H-5）。

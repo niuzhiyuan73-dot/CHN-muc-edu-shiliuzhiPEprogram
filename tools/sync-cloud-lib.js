@@ -54,6 +54,7 @@ const MANIFEST = [
   'utils/team-sport-rules.js',
   'utils/team-standings.js',
   'utils/school.js',
+  'utils/sha256.js',
   // 运动会范围与确定性主键：云端仓储的 forMeet 与本地模拟端读同一份，
   // 免得两边对「什么算同一届」判断不一致。
   'utils/meet-scope.js',
@@ -76,6 +77,9 @@ const MANIFEST = [
   'services/training-points.js',
   'services/school-permission.js',
   'services/school-member.js',
+  'services/account-directory.js',
+  'services/scoped-team-reads.js',
+  'services/team-profile-data.js',
   // 身份业务编排依赖注入仓储，不直接引用 wx、Node 或云 SDK。
   'services/school-context.js',
   // 身份上下文缓存（H-10）：上下文在云端每请求都要建，缓存必须与 buildSchoolContext

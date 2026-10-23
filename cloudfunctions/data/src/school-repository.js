@@ -1,6 +1,7 @@
 /** 两个适配器共享的学校仓储扩展。原单校接口保留，S2 逐一接入新接口。 */
 const { schoolScope, SCHOOL_MEMBER_STATUS } = require('../lib/utils/school.js');
 const { MEET_COLLECTIONS, meetScope } = require('../lib/utils/meet-scope.js');
+const { attachTeamReads } = require('../lib/services/scoped-team-reads.js');
 
 const SCHOOL_COLLECTIONS = ['schools', 'schoolAssociations', 'colleges', 'schoolMembers', 'schoolRoles', 'studentIdClaims',
   'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
@@ -271,6 +272,11 @@ function buildScoped(repo, io, inTx, options) {
     };
   }
   if (!inTx) result.transaction = (fn) => repo.transaction((tx) => fn(surfaceOf(tx, scope)));
+  attachTeamReads(result, { inTx, query: io.query, byIds: io.byIds, command: io.cmd });
+  if (result.schoolMembers) result.schoolMembers.listDirectoryPage = options => {
+    if (inTx) throw new Error('事务内不允许查询会员目录');
+    return io.memberPage(scope, options);
+  };
   return result;}
 
 function attachSchoolRepository(repo, io, inTx) {

@@ -9,6 +9,7 @@ const { COLLECTIONS } = require('../cloudfunctions/data/src/repository');
 const { handleSchoolRequest } = require('../cloudfunctions/data/src/core/school-request');
 const { createSchoolDemoSeed } = require('../miniprogram/services/school-seed');
 const { schoolKey, schoolMemberKey, schoolMembershipKey } = require('../miniprogram/utils/school');
+const { fieldValues } = require('../miniprogram/services/scoped-team-reads');
 const scope = { schoolId: 'muc', association: 'bk' };
 const clone = value => value == null ? value : JSON.parse(JSON.stringify(value));
 
@@ -30,9 +31,9 @@ function matchRow(row, where) {
     return where[CMD] === 'and' ? where.value.every(part => matchRow(row, part)) : false;
   }
   return Object.entries(where).every(([field, cond]) => {
-    if (!isCmd(cond)) return row[field] === cond;
+    if (!isCmd(cond)) return fieldValues(row, field).includes(cond);
     if (cond[CMD] === 'and') return cond.value.every(part => matchRow(row, part));
-    if (cond[CMD] === 'in') return Array.isArray(cond.value) && cond.value.includes(row[field]);
+    if (cond[CMD] === 'in') return Array.isArray(cond.value) && fieldValues(row, field).some(value => cond.value.includes(value));
     if (cond[CMD] === 'gt') return String(row[field] ?? '') > String(cond.value ?? '');
     if (cond[CMD] === 'gte') return String(row[field] ?? '') >= String(cond.value ?? '');
     return false;

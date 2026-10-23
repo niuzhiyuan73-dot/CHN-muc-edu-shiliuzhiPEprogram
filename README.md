@@ -3,8 +3,8 @@
 一个原生微信小程序（WXML / WXSS / JS，零框架），把校内**多个体育协会**的等级分、赛事、训练与校级活动装进同一套系统。
 
 - 当前进度：篮球五人制与实时计分已落地；足球 F0—F3 已完成，支持赛后报告与成绩；足球/篮球已有协会内“我的球队”累计统计页签
-- 自检：`npm test` → **2989 项用例通过 / 0 失败 / 0 超时**（176 个测试文件 / 约 28 秒）
-- 云端共享库：`npm run check:cloud-sync` → 87 个文件一致
+- 自检：`npm test` → **3008 项用例通过 / 0 失败 / 0 超时**（178 个测试文件 / 约 30 秒）
+- 云端共享库：`npm run check:cloud-sync` → 91 个文件一致
 - 数据源：默认**本地模拟**（`miniprogram/config.js` 的 `CLOUD_ENV_ID` 为空），填入环境 ID 即切云端，页面代码一行不改
 
 ---
@@ -93,7 +93,7 @@ services                 视图模型 + 数据源门面（MOCK / CLOUD 同一套
         │
 utils                    纯函数：计分、抽签、分组、榜单、积分、权限
         │
-        ├── tools/sync-cloud-lib.js ──逐字节镜像──▶ cloudfunctions/data/lib/（87 文件）
+        ├── tools/sync-cloud-lib.js ──逐字节镜像──▶ cloudfunctions/data/lib/（91 文件）
         │
 cloudfunctions/data      唯一云函数：协议 2 请求信封 + 仓储 + 事务
         └── src/core      身份上下文、路由、四个领域的 action handler（共 200 个）
@@ -174,12 +174,11 @@ node .workbuddy/skills/shilzi-doc-sync/scripts/doc-audit.js --cases=<npm test �
 
 **施工约定 skill**：`.workbuddy/skills/` 下四份守则（施工总则、页面、云函数 action、验收留痕）
 加一份文档同步器，随代码入库。改动前先读 `shilzi-construction-guard`；每批收尾跑
-`doc-audit` 并重建 docx，规则见各目录下的 `SKILL.md`。
+`doc-audit` 并按影响面重建 docx；只读审查、页面组件维护、已有接口和技能指令维护也按意图加载，入口见 `AGENTS.md`。
 
-`npm test` 走 `tools/run-tests.js`，而不是裸的 `node --test`：单个测试文件超过 5 分钟
+`npm test` 走 `tools/run-tests.js`，而不是裸的 `node --test`：单个测试文件超过默认 8 分钟
 会被杀掉并点名，运行期间每 15 秒打一行「正在跑谁」，慢文件在总结里单独列出。
-`tests/page.test.js` 一个文件就要约 170 秒（292 条页面装配用例），慢是正常的，
-但不该让整套测试因此「长时间没有输出」。
+`tests/page.test.js` 的耗时随机器变化，运行器会持续报告进度和实际耗时，避免整套测试长时间没有输出。
 
 ```bash
 node tools/run-tests.js --filter page      # 只跑文件名含 page 的
@@ -202,6 +201,8 @@ python tools/md-to-docx.py docs/交接说明.md 交接说明.docx
 2. **建集合**：按 [云开发控制台操作指南](docs/云开发控制台操作指南.md) 第三节建 52 个集合，权限全部设为「所有用户不可读写」。
 3. **部署云函数**：`npm run sync:cloud` → 开发者工具右键 `cloudfunctions/data` →「上传并部署：云端安装依赖」→ 创建第一个校级管理员。
 
+> **本批有存量账号迁移要求**：先按[安全与性能实施方案](docs/安全与性能优化-实施方案.md)备份迁移并补齐目录字段，按[索引清单](docs/数据库索引清单.md)第 2.4 节建新索引，再部署。
+
 > **改完代码一定要重新部署 `data`**。云函数不随小程序编译更新，漏部署的典型症状是新增接口报「该操作尚未支持学校范围」。
 
 ## 九、文档地图
@@ -215,6 +216,7 @@ python tools/md-to-docx.py docs/交接说明.md 交接说明.docx
 | [交接说明](docs/交接说明.md) | 项目定位、架构、分层约定、验证方式 |
 | [AI 接手与后续施工指南](docs/AI接手与后续施工指南.md) | 施工队列、不可破坏的约定 |
 | [施工切片账本](docs/施工切片账本.md) | 进度与每批验收记录索引 |
+| [安全与性能优化实施方案](docs/安全与性能优化-实施方案.md) | 七项问题的修复顺序、兼容迁移与发布要求 |
 | [网球计分-需求与实施方案](docs/网球计分-需求与实施方案.md) | 网球三层计分的设计与落地 |
 | [石榴籽杯-需求确认与实施方案](docs/石榴籽杯-需求确认与实施方案.md) | 学院团体赛口径 |
 | [运动会栏目-发布准备](docs/运动会栏目-发布准备.md) | 运动会上线检查项 |
