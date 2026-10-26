@@ -44,6 +44,41 @@ async function touchEvent(tx, eventKey) {
   if (doc) await tx.sportsMeetEvents.set(eventKey, { ...doc, revision: Number(doc.revision || 0) + 1 });
 }
 
+/**
+ * 届次「赛程版本」：项目组别与场次的任何变化都递增它。
+ *
+ * 【为什么不逐条比对，以及它和 event.revision 的分工】（2026-10-26 只读审查 P1-2）
+ * 发布赛程原先在事务内逐条重读**全届**项目与场次做快照比对：
+ * 48 个项目组别 × (1 项目 + 1 场次) = 96 次读，加上身份复核与运动会读就已 101 次，
+ * 越过云端 100 次事务预算——不是「慢」，是**必然发布失败**，而且规模越大越早触发。
+ * `event.revision` 是**单项目**粒度（录分、裁判、报名都会碰它），发布要判的是
+ * **赛程面**（时间、场地、轮次、分组、参赛人），所以需要届次级的一个版本戳：
+ * 事务内只读一份运动会文档就能等价校验。
+ *
+ * **维护约定**：凡改动`赛程面`的写路径都要调 `touchScheduleRevision`——
+ * 项目组别的新建/改赛制/删除，场次的时间、场地、轮次、分组与参赛人变更、抽签与重抽。
+ * 只管成绩或裁判名单的写路径不必调（它们不影响「时间与场地是否配齐」的判定）。
+ */
+function scheduleRevisionOf(meet) {
+  return Number((meet && meet.scheduleRevision) || 0);
+}
+
+/** 递增届次赛程版本（点读 + 写回，共 2 次操作）。必须在同一事务内、写完赛程数据之后调用。 */
+async function touchScheduleRevision(tx, meetId) {
+  if (!meetId) return 0;
+  const meet = await tx.sportsMeets.getById(meetId);
+  if (!meet) return 0;
+  const next = scheduleRevisionOf(meet) + 1;
+  await tx.sportsMeets.set(meetId, { ...meet, scheduleRevision: next });
+  return next;
+}
+
+/** 事务内的赛程版本是否仍是事务外读到的那个（1 次读）。 */
+async function unchangedScheduleRevision(tx, meetId, expected) {
+  const current = await tx.sportsMeets.getById(meetId);
+  return Boolean(current) && scheduleRevisionOf(current) === Number(expected || 0);
+}
+
 function liveMeet(ctx) {
   return Boolean(ctx.meet && ctx.meet.schoolId === ctx.schoolId && ctx.meet.status !== 'deleted');
 }
@@ -80,4 +115,7 @@ function publishedRowsOf(publication, rows) {
   }));
 }
 
-module.exports = { unchanged, unchangedEvent, touchEvent, liveMeet, publishedRowsOf };
+module.exports = {
+  unchanged, unchangedEvent, touchEvent, liveMeet, publishedRowsOf,
+  scheduleRevisionOf, touchScheduleRevision, unchangedScheduleRevision,
+};

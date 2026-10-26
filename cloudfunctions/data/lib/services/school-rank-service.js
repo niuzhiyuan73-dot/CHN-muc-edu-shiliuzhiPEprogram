@@ -45,7 +45,7 @@ const {
 } = require('../utils/constants.js');
 const {
   scopeKey, belongsToSchoolScope, SCHOOL_MEMBER_STATUS, PLATFORM_STATUS,
-  schoolMemberKey, schoolRoleKey, schoolMembershipKey,
+  schoolMemberKey, schoolRoleKey, schoolMembershipKey, memberRatingKey,
 } = require('../utils/school.js');
 
 const ok = data => ({ ok: true, data });
@@ -158,15 +158,22 @@ async function replayMembersOf(ctx) {
   const users = await ctx.repo.users.listByIds(rows.map(row => row.userId));
   const userById = new Map(users.map(user => [user._id, user]));
   return rows
-    .filter(row => row.status === SCHOOL_MEMBER_STATUS.ACTIVE)
-    .map(row => {
-      const user = userById.get(row.userId);
-      if (!user) return null;
-      if (user.platformStatus !== PLATFORM_STATUS.ACTIVE) return null;
-      if (user.primarySchoolId !== ctx.schoolId) return null;
-      return { ...user, status: USER_STATUS.ACTIVE };
-    })
+    .map(row => viewMemberOf(row, userById.get(row.userId), ctx.schoolId))
     .filter(Boolean);
+}
+
+/**
+ * 一条学籍行 + 一份账号 → 榜单口径的会员行；不合格返回 null。
+ *
+ * 抽出来是为了让「整范围装载」与「按编号装载」用同一把尺子：曾经三处各写一份
+ * 过滤条件，改一处漏两处就会出现「榜上有他、按人取却取不到」。
+ */
+function viewMemberOf(row, user, schoolId) {
+  if (!row || row.status !== SCHOOL_MEMBER_STATUS.ACTIVE) return null;
+  if (!user) return null;
+  if (user.platformStatus !== PLATFORM_STATUS.ACTIVE) return null;
+  if (user.primarySchoolId !== schoolId) return null;
+  return { ...user, status: USER_STATUS.ACTIVE };
 }
 
 /**
@@ -628,29 +635,103 @@ async function getSchoolMemberStats(payload = {}, ctx) {
   if (!canReadAssociationSpace(ctx)) return ok({ ok: false, members: [], message: '没有读取本协会成绩的权限' });
   const wanted = new Set((Array.isArray(payload.userIds) ? payload.userIds : [])
     .filter(id => typeof id === 'string' && id));
+  // 只要评级计数（启动时选默认协会用）：不算赛季积分，也不读赛事/训练/训练报名。
+  // 没有指定人时这个开关没有意义（全量列表本来就要算积分），直接拒绝，别让它变成
+  // 「静默返回一堆没有 points 的行」。
+  const ratingsOnly = payload.ratingsOnly === true;
+  if (ratingsOnly && wanted.size === 0) {
+    return ok({ ok: false, members: [], message: '按人读取评级时必须指定会员编号' });
+  }
+
+  // 【指定人就按编号点读，不要整表读】（2026-10-26 只读审查 P2-6）
+  // 原实现先 loadScopeView 把全范围名册、账号、评级、赛事、训练、训练报名整表
+  // 读回来，最后才按 userIds 过滤——查一个人也读全校一千多条。
+  // 现在：学籍与评级按确定性主键批读，训练报名按人下推，积分只在需要时才算。
+  if (wanted.size > 0) {
+    return ok({ ok: true, members: await statsOfMembers(ctx, [...wanted], { ratingsOnly }), message: '' });
+  }
 
   // 成绩同榜单：评级已落库，不需要读比赛流水。
   const { members } = await loadScopeView(ctx, { needMatches: false });
-  const rows = members
-    .filter(member => wanted.size === 0 || wanted.has(member._id))
+  return ok({ ok: true, members: members.map(member => memberStatsRow(member)), message: '' });
+}
+
+/** 一个会员行的对外形状（评级四池 + 赛季积分）。全量与按编号两条路共用。 */
+function memberStatsRow(member) {
+  return {
+    userId: member._id,
+    nickName: member.nickName || '',
+    realName: member.realName || '',
+    avatarUrl: member.avatarUrl || '',
+    points: Number(member.points || 0),
+    ratings: ALL_RATING_POOLS.reduce((acc, pool) => {
+      const rating = getPoolRating(member, pool);
+      acc[pool] = {
+        elo: Number(rating.elo),
+        matchCount: Number(rating.matchCount || 0),
+        wins: Number(rating.wins || 0),
+        losses: Number(rating.losses || 0),
+      };
+      return acc;
+    }, {}),
+  };
+}
+
+/**
+ * 指定这几个人的评级与（可选）赛季积分。
+ *
+ * 读取量只与「人数 × 池数」有关，与全校会员数无关：
+ *   · 学籍：`schoolMembers.listByIds` 按确定性主键批读（1 次）
+ *   · 账号：`users.listByIds`（1 次，平台级集合不整表读）
+ *   · 评级：按 `memberRatingKey` 逐池批读（1 次，人数 × 池数条）
+ *   · 积分：仅在需要时才算，训练报名按人下推（每人 1 次）
+ *
+ * @param {Object} ctx
+ * @param {string[]} userIds
+ * @param {{ratingsOnly:boolean}} options
+ * @returns {Promise<Array<Object>>}
+ */
+async function statsOfMembers(ctx, userIds, { ratingsOnly }) {
+  const scope = ctx.repo.forScope(ctx);
+  const ratingKeys = userIds.flatMap(userId => ALL_RATING_POOLS.map(pool => memberRatingKey(userId, pool, ctx)));
+  const [memberRows, users, ratingDocs] = await Promise.all([
+    scope.schoolMembers.listByIds(userIds.map(userId => schoolMemberKey(userId, ctx.schoolId))),
+    ctx.repo.users.listByIds(userIds),
+    scope.memberRatings.listByIds(ratingKeys),
+  ]);
+  const userById = new Map(users.map(user => [user._id, user]));
+  const ratingByKey = new Map(ratingDocs.map(doc => [`${doc.userId}|${doc.pool}`, doc]));
+
+  const members = (Array.isArray(memberRows) ? memberRows : [])
+    .map(row => viewMemberOf(row, userById.get(row.userId), ctx.schoolId))
+    .filter(Boolean)
     .map(member => ({
-      userId: member._id,
-      nickName: member.nickName || '',
-      realName: member.realName || '',
-      avatarUrl: member.avatarUrl || '',
-      points: Number(member.points || 0),
+      ...member,
       ratings: ALL_RATING_POOLS.reduce((acc, pool) => {
-        const rating = getPoolRating(member, pool);
-        acc[pool] = {
-          elo: Number(rating.elo),
-          matchCount: Number(rating.matchCount || 0),
-          wins: Number(rating.wins || 0),
-          losses: Number(rating.losses || 0),
-        };
+        acc[pool] = ratingByKey.get(`${member._id}|${pool}`) || displayRating(member, pool);
         return acc;
       }, {}),
     }));
-  return ok({ ok: true, members: rows, message: '' });
+
+  if (ratingsOnly || members.length === 0) return members.map(member => memberStatsRow(member));
+
+  const [season, events, trainings, registrations] = await Promise.all([
+    loadSeason(ctx),
+    scope.events.list(),
+    scope.associationTrainings.list(),
+    // 只增不减的集合：按人下推，只回这几个人自己的签到记录
+    Promise.all(userIds.map(userId => scope.trainingRegistrations.listByUser(userId)))
+      .then(rows => rows.flat()),
+  ]);
+  const pointsByUser = aggregatePoints({
+    events,
+    trainings,
+    trainingRegistrations: registrations,
+    resetTime: season.resetTime,
+    members: members.map(member => ({ userId: member._id })),
+  });
+  for (const member of members) member.points = pointsByUser.get(member._id) || 0;
+  return members.map(member => memberStatsRow(member));
 }
 
 /**

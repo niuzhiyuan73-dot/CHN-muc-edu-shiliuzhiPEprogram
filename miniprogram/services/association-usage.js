@@ -49,7 +49,11 @@ async function matchCountsByAssociation(userId) {
   for (const assoc of activeAssociations()) {
     try {
       const client = space.forScope({ schoolId, association: assoc.id });
-      const result = await client.getSchoolMemberStats({ userIds: [userId] });
+      // 【只取评级计数，不算积分】（2026-10-26 只读审查 P2-6）
+      // 启动时逐个协会问「我打了多少场」，原先把每个协会的整校积分都算一遍：
+      // 会籍、账号、评级、赛事、训练、训练报名全部整表读，串行 8 个协会就是
+      // 8 倍。ratingsOnly 只点读本人这几条评级（人数 × 池数），与全校规模无关。
+      const result = await client.getSchoolMemberStats({ userIds: [userId], ratingsOnly: true });
       const row = result && result.ok !== false && Array.isArray(result.members)
         ? result.members.find(member => member.userId === userId)
         : null;

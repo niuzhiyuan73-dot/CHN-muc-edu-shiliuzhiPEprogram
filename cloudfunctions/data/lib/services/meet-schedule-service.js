@@ -28,7 +28,9 @@ const { MEET_SCORE_TYPE, getTemplate, HEAT_MODE } = require('./meet-event-catalo
 const { buildMeetContext, freshMeetContext } = require('./meet-context.js');
 const { meetReadable, canManageMeet, isChiefJudge } = require('./meet-permission.js');
 
-const { touchEvent, liveMeet, unchanged } = require('./meet-consistency.js');
+const {
+  touchEvent, liveMeet, scheduleRevisionOf, unchangedScheduleRevision,
+} = require('./meet-consistency.js');
 
 const ok = (data) => ({ ok: true, data });
 const refused = (message, extra = {}) => ({ ok: false, message, ...extra });
@@ -176,6 +178,10 @@ async function saveMeetSession(payload = {}, ctx) {
     };
     await touchEvent(tx, eventKey);
     await tx.sportsMeetSessions.set(key, doc);
+    // 时间/场地属于「赛程面」，递增届次赛程版本；复用上面已读到的 meet，只多一次写。
+    await tx.sportsMeets.set(fresh.meetId, {
+      ...meet, scheduleRevision: scheduleRevisionOf(meet) + 1,
+    });
     return ok({ session: sessionSummary(doc) });
   });
 }
@@ -191,15 +197,23 @@ async function saveMeetSession(payload = {}, ctx) {
  * 预赛还有一条前置：分组必须已经抽签（每个预赛场次都有参赛人）。没抽签就发布，
  * 首页会显示一排「预赛第 N 组 · 0 人」的空场次。
  *
- * 校验在事务外读一次（事务内不能查询），事务内只重读运动会状态再落库。
+ * 校验在事务外读一次（事务内不能查询），事务内只重读运动会状态与**赛程版本**再落库。
  * 赛程发布不是名额类操作，不存在「并发超卖」，这里接受一次读快照。
+ *
+ * 【为什么事务内不再逐条重读项目与场次】（2026-10-26 只读审查 P1-2）
+ * 原先事务内对全届项目 + 全届场次做快照比对，操作数随规模线性增长：
+ * 48 个项目组别各 1 个场次就是 96 次读，加身份复核与运动会读后 101 次，
+ * 直接越过云端 100 次事务预算——规模越大越必然失败。现在改为比对届次级的
+ * `scheduleRevision`（见 `meet-consistency.touchScheduleRevision`）：1 次读，
+ * 与项目数、场次数无关；项目与场次的任何变化都会递增它，并发校验强度不降。
  */
 async function publishMeetSchedule(payload = {}, ctx) {
   if (!meetReadable(ctx) || !ctx.meetId) return refused('请先登录');
 
-  const [events, sessions] = await Promise.all([
+  const [events, sessions, snapshotMeet] = await Promise.all([
     listAliveEvents(ctx.repo.forMeet(scopeOf(ctx)).sportsMeetEvents),
     listSessions(ctx.repo, ctx),
+    ctx.repo.sportsMeets.getById(ctx.meetId),
   ]);
   if (events.length === 0) return refused('本届还没有项目，无法发布赛程');
 
@@ -244,12 +258,14 @@ async function publishMeetSchedule(payload = {}, ctx) {
     if (!isAliveMeet(meet) || meet.schoolId !== fresh.schoolId) return refused('运动会不存在或已删除');
     if (meet.status === MEET_STATUS.DRAFT) return refused('请先发布报名，再发布赛程');
     if (meet.status === MEET_STATUS.FINISHED) return refused('运动会已结束，不能重新发布赛程');
-    if (!await unchanged(tx, 'sportsMeetEvents', events) || !await unchanged(tx, 'sportsMeetSessions', sessions)) return refused('赛程已变化，请刷新后重试');
+    if (!await unchangedScheduleRevision(tx, fresh.meetId, scheduleRevisionOf(snapshotMeet))) return refused('赛程已变化，请刷新后重试');
 
     const now = toIso(fresh.now);
     const next = {
       ...meet, status: meet.status === MEET_STATUS.RUNNING ? MEET_STATUS.RUNNING : MEET_STATUS.SCHEDULED, schedulePublishedAt: now, updatedAt: now,
       version: (meet.version || 1) + 1,
+      // 发布本身也占一版：两次并发发布只有一个能落地，后到的必须刷新重试。
+      scheduleRevision: scheduleRevisionOf(meet) + 1,
     };
     await tx.sportsMeets.set(fresh.meetId, next);
     return ok({ meet: { meetId: fresh.meetId, status: next.status } });

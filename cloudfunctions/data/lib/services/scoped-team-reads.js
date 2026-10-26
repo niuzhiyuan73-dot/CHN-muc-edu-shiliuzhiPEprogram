@@ -30,6 +30,9 @@ function attachTeamReads(surface, { inTx, query, byIds, command }) {
   surface.teamMembers.listByUser = id => select('teamMembers', 'userId', [id]);
   surface.teamMembers.listByTeams = ids => select('teamMembers', 'teamId', ids);
   surface.teamEventEntries.listForUser = id => select('teamEventEntries', 'roster.userId', [id]);
+  // 报名按球队取（2026-10-26 只读审查 P2-7）：单队战绩要先知道「这支队报名了哪几届」，
+  // 原先是把本协会**历年**全部报名读回来再按 teamId 过滤。
+  surface.teamEventEntries.listByTeam = id => select('teamEventEntries', 'teamId', [id]);
   surface.teamMatches.listByEvents = ids => select('teamMatches', 'eventId', ids);
   surface.teamMatches.listByTeams = async ids => unique((await Promise.all([
     select('teamMatches', 'teamA', ids), select('teamMatches', 'teamB', ids),

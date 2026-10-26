@@ -14,6 +14,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { createMemoryRepo } = require('./helpers/memory-repo');
 const { createSchoolDemoSeed } = require('../miniprogram/services/school-seed');
+const { schoolMemberKey } = require('../miniprogram/utils/school');
 const { handleSchoolRequest } = require('../cloudfunctions/data/src/core/school-request');
 const handlers = require('../cloudfunctions/data/src/core/school-exchange-handlers');
 
@@ -43,6 +44,43 @@ async function readyFour(repo) {
   const locked = await call(repo, 'lockExchangeRoster', { eventId: id });
   assert.equal(locked.ok, true, locked.message);
   return id;
+}
+
+for (const referee of [false, true]) {
+  for (const invalidation of ['account', 'membership', 'transfer', 'duringTransaction']) {
+    test(`云端录分拒绝失效${referee ? '裁判' : '选手'}：${invalidation}`, async () => {
+      const repo = fixture();
+      const eventId = await readyFour(repo);
+      assert.equal((await call(repo, 'drawExchangeEvent', { eventId, seedValue: 11 })).ok, true);
+      const match = (await repo.exchangeMatches.listByEvent(eventId))
+        .find(row => [row.playerA, row.playerB].includes('demo_muc_member'));
+      assert.ok(match);
+      if (referee) assert.equal((await call(repo, 'assignExchangeReferee', {
+        eventId, matchId: match._id, refereeId: 'demo_muc_member',
+      })).ok, true);
+      const invalidate = async () => {
+        const user = await repo.users.getById('demo_muc_member');
+        if (invalidation === 'membership') {
+          const id = schoolMemberKey(user._id, 'muc');
+          await repo.schoolMembers.set(id, { ...await repo.schoolMembers.getById(id), status: 'disabled' });
+        } else {
+          await repo.users.set(user._id, { ...user, ...(invalidation === 'transfer'
+            ? { primarySchoolId: 'buaa' } : { platformStatus: 'disabled' }) });
+        }
+      };
+      if (invalidation === 'duringTransaction') {
+        const transaction = repo.transaction.bind(repo);
+        repo.transaction = async fn => { await invalidate(); return transaction(fn); };
+      } else await invalidate();
+      const before = await repo.exchangeMatches.getById(match._id);
+      const result = await call(repo, 'submitExchangeScore', {
+        eventId, matchId: match._id, scoreA: 11, scoreB: 5,
+      }, 'mock_openid_muc_member');
+      assert.equal(result.ok, false);
+      assert.match(result.message, /权限/);
+      assert.deepEqual(await repo.exchangeMatches.getById(match._id), before, '拒绝后比分及版本均不变');
+    });
+  }
 }
 
 test('邀请赛动作已在协议 2 注册，且服务端实现来自共享库镜像', async () => {

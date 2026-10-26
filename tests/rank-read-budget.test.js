@@ -185,3 +185,70 @@ describe('榜单读量：条件下推', () => {
       '两条路径给出的前 10 必须一致');
   });
 });
+
+describe('选手成绩读端：按编号下推（2026-10-26 只读审查 P2-6）', () => {
+  /** 数「点读学籍 / 评级」与「整表读」各发生几次。 */
+  function spyCollections(repo) {
+    const counter = { memberPoint: 0, memberList: 0, ratingPoint: 0, eventList: 0, trainingList: 0, registrationList: 0 };
+    const wrap = (target, method, key) => {
+      const original = target[method];
+      if (typeof original !== 'function') return;
+      target[method] = (...args) => { counter[key] += 1; return original.apply(target, args); };
+    };
+    wrap(repo.schoolMembers, 'getById', 'memberPoint');
+    wrap(repo.schoolMembers, 'list', 'memberList');
+    wrap(repo.memberRatings, 'getById', 'ratingPoint');
+    wrap(repo.events, 'list', 'eventList');
+    wrap(repo.associationTrainings, 'list', 'trainingList');
+    wrap(repo.trainingRegistrations, 'list', 'registrationList');
+    return counter;
+  }
+
+  const statsOf = async (repo, payload) => {
+    const ctx = await buildSchoolContext({ repo, actorId: 'm55', scope: SCOPE, now: NOW });
+    // 上下文构建本身要读一次本人的学籍/账号，那不是被计量的取数，装好之后再开始数
+    const counter = spyCollections(repo);
+    const data = (await rank.getSchoolMemberStats(payload, ctx)).data;
+    return { data, counter };
+  };
+
+  test('查一个人不再整表读名册与评级', async () => {
+    const repo = fixture();
+    const { data, counter } = await statsOf(repo, { userIds: ['m01'] });
+
+    assert.equal(data.ok, true, data.message);
+    assert.equal(data.members.length, 1);
+    assert.equal(data.members[0].userId, 'm01');
+    assert.equal(counter.memberList, 0, '不能整表读学籍——那是「查一个人读全校」的根源');
+    assert.ok(counter.memberPoint <= 1, `学籍点读 ${counter.memberPoint} 次，应只读这一个人`);
+    // 一个人 4 个评级池，最多 4 次点读
+    assert.ok(counter.ratingPoint <= 4, `评级点读 ${counter.ratingPoint} 次，应只读这个人的池`);
+  });
+
+  test('ratingsOnly 只取评级计数：不读赛事、训练、训练报名', async () => {
+    const repo = fixture();
+    const { data, counter } = await statsOf(repo, { userIds: ['m01'], ratingsOnly: true });
+
+    assert.equal(data.ok, true, data.message);
+    assert.equal(data.members.length, 1);
+    assert.equal(data.members[0].ratings.singles.matchCount, 3, '场次来自评级表');
+    assert.equal(counter.eventList, 0, '选默认协会不需要赛事流水');
+    assert.equal(counter.trainingList, 0);
+    assert.equal(counter.registrationList, 0);
+    assert.equal(data.members[0].points, 0, '不算积分时给 0，不假装算过');
+  });
+
+  test('ratingsOnly 未指定会员时明确拒绝，不返回一堆没有 points 的行', async () => {
+    const repo = fixture();
+    const { data } = await statsOf(repo, { ratingsOnly: true });
+    assert.equal(data.ok, false);
+    assert.match(data.message, /会员编号/);
+  });
+
+  test('外校账号与已转出的会员按编号也取不到（隔离在取数层）', async () => {
+    const repo = fixture();
+    const { data } = await statsOf(repo, { userIds: ['m01', 'not_exists'] });
+    assert.equal(data.ok, true);
+    assert.deepEqual(data.members.map(row => row.userId), ['m01']);
+  });
+});

@@ -87,7 +87,9 @@ test('受范围仓储的集合方法面就是约定的那一套（钉住契约�
     // 评级表（2026-10-23 方案 A 第 2 步）：榜单要「按 elo 前 N」、个人主页要
     // 「我在同项目排第几」，三个方法把条件、排序、计数一起下推。
     if (key === 'memberRatings') {
-      expected = [...expected, 'listTop', 'countRanked', 'listByUser'];
+      // listByIds（2026-10-26 只读审查 P2-6）：按「学校 + 协会 + 人 + 池」的
+      // 确定性主键批读，替掉「查一个人也整表读全校评级」。
+      expected = [...expected, 'listTop', 'countRanked', 'listByUser', 'listByIds'];
     }
     // 名录页给每一行算权限标签：20 行 × 2 次点读 → 两条 listByIds（H-5）。
     // schoolMembers 同理：比赛列表只要「这页参赛者属于哪个学院」（第三轮 X-3）。
@@ -101,7 +103,11 @@ test('受范围仓储的集合方法面就是约定的那一套（钉住契约�
     }
     if (key === 'teams' || key === 'teamEvents') expected = [...expected, 'listByIds'];
     if (key === 'teamMembers') expected = [...expected, 'listByUser', 'listByTeams'];
-    if (key === 'teamEventEntries') expected = [...expected, 'listForUser'];
+    if (key === 'teamEventEntries') {
+      // listByTeam（2026-10-26 只读审查 P2-7）：单队战绩按球队取报名，
+      // 不再把本协会历年全部报名读回来再按 teamId 过滤。
+      expected = [...expected, 'listForUser', 'listByTeam'];
+    }
     if (key === 'teamMatches') expected = [...expected, 'listByEvents', 'listByTeams', 'listForPlayer'];
     if (key === 'teamMatchStats') expected = [...expected, 'listForUser'];
     assert.deepEqual(methodNames(cloud[key]), expected.sort(),

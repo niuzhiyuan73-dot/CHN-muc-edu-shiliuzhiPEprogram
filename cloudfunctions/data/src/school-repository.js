@@ -71,6 +71,33 @@ function buildScoped(repo, io, inTx, options) {
   const { keys, scope, expectedOf, surfaceOf, mismatchMessage } = options;
   const result = { scope };
 
+  /**
+   * 按 `_id` 升序读最多 `size` 条，可用 `afterId` 续读。
+   *
+   * 【为什么要自己循环】（2026-10-26 只读审查 P2-9）
+   * 云端 `io.top` 单次最多回 100 条（适配器的 PAGE_SIZE 截断），而分页接口靠
+   * 「多取 1 条」判 `hasMore`：调用方要 100/200 条时，101/201 被静默截成 100，
+   * 于是 `hasMore` 恒为 false，页面以为「没有下一页」——待审申请提示、跨校赛
+   * 裁判候选名单这类列表会被悄悄截断，且本地内存仓储不截断，测试看不出来。
+   * 这里用游标自己续读，页大小上限与 hasMore 判定都不再依赖单次 RPC 的容量。
+   */
+  const READ_PAGE_SIZE = 100;
+  const readUpTo = async (key, where, size, afterId) => {
+    const out = [];
+    let cursor = typeof afterId === 'string' ? afterId : '';
+    while (out.length < size) {
+      const want = Math.min(size - out.length, READ_PAGE_SIZE);
+      const cond = { ...where };
+      if (cursor) cond._id = io.cmd.gt(cursor);
+      const rows = await io.top(key, cond, [{ field: '_id', direction: 'asc' }], want);
+      if (!rows || rows.length === 0) break;
+      out.push(...rows);
+      cursor = rows[rows.length - 1]._id;
+      if (rows.length < want) break;
+    }
+    return out;
+  };
+
   for (const key of keys) {
     const expected = expectedOf(key);
     const owns = (doc) => doc && Object.keys(expected).every((field) => doc[field] === expected[field]);
@@ -179,8 +206,12 @@ function buildScoped(repo, io, inTx, options) {
     // 两者都是「按主键点取」，主键由 userId 派生，正好可以整页批读（H-5）。
     // schoolMembers 后来也用上同一条路（2026-10-23 第三轮 X-3）：比赛列表只需
     // 「这一页参赛者属于哪个学院」，不必为此读全校名册。
-    if (key === 'schoolMembers' || key === 'schoolRoles' || key === 'memberships') {
-      const scopeFields = key === 'memberships'
+    if (key === 'schoolMembers' || key === 'schoolRoles' || key === 'memberships'
+      || key === 'memberRatings') {
+      // memberRatings（2026-10-26 只读审查 P2-6）：`getSchoolMemberStats` 指定
+      // userIds 时按「学校 + 协会 + 人 + 池」的确定性主键批读，不再整表读全范围
+      // 评级。它是协会级集合，范围字段要带 association。
+      const scopeFields = key === 'memberships' || key === 'memberRatings'
         ? { schoolId: scope.schoolId, association: scope.association }
         : { schoolId: scope.schoolId };
       result[key].listByIds = (ids) => io.byIds(key, ids, scopeFields);
@@ -203,10 +234,10 @@ function buildScoped(repo, io, inTx, options) {
         if (inTx) throw new Error('事务内不允许条件读取（schoolMembers），请改用 getById');
         if (typeof status !== 'string' || !status) return { rows: [], hasMore: false };
         const limit = Math.max(1, Math.min(Number(options.limit) || 50, 200));
-        const where = { schoolId: scope.schoolId, status };
         const afterId = typeof options.afterId === 'string' ? options.afterId : '';
-        if (afterId) where._id = io.cmd.gt(afterId);
-        const rows = await io.top('schoolMembers', where, [{ field: '_id', direction: 'asc' }], limit + 1);
+        // 读 limit + 1 条判 hasMore；超过单次读取上限时由 readUpTo 续读
+        // （见 readUpTo 的说明：截断会让 hasMore 恒为 false）。
+        const rows = await readUpTo('schoolMembers', { schoolId: scope.schoolId, status }, limit + 1, afterId);
         return { rows: rows.slice(0, limit), hasMore: rows.length > limit };
       };
       result[key].countByStatus = (status) => {

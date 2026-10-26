@@ -40,7 +40,7 @@ const {
 const { freshMeetContext } = require('./meet-context.js');
 const { meetReadable, canManageMeet, canPublishMeetResult, isChiefJudge } = require('./meet-permission.js');
 
-const { unchanged, liveMeet, publishedRowsOf } = require('./meet-consistency.js');
+const { unchanged, liveMeet, publishedRowsOf, touchScheduleRevision } = require('./meet-consistency.js');
 
 const ok = (data) => ({ ok: true, data });
 const refused = (message, extra = {}) => ({ ok: false, message, ...extra });
@@ -238,6 +238,8 @@ async function drawMeetHeats(payload = {}, ctx) {
       heatDraw: { seed, heatCount, heatMode, heatCapacity, at: now },
       updatedAt: now,
     });
+    // 抽签改了场次分组（参赛人），属于赛程面变更：递增届次赛程版本
+    await touchScheduleRevision(tx, fresh.meetId);
     return ok({
       eventKey,
       seed,
@@ -363,6 +365,8 @@ async function advanceMeetEvent(payload = {}, ctx) {
       },
       updatedAt: now,
     });
+    // 晋级改了决赛场次的参赛人，属于赛程面变更
+    await touchScheduleRevision(tx, fresh.meetId);
     return ok({
       eventKey,
       entryKeys: advancedKeys,
@@ -698,6 +702,8 @@ async function drawMeetBracket(payload = {}, ctx) {
       },
       updatedAt: now,
     });
+    // 编排新建/重排了整轮场次，属于赛程面变更
+    await touchScheduleRevision(tx, fresh.meetId);
     return ok({
       eventKey,
       format,
@@ -829,6 +835,8 @@ async function setMeetMatchWinner(payload = {}, ctx) {
       ...(expandedSize ? {bracket:{...currentEvent.bracket, size:expandedSize, totalRounds}} : {}),
       championEntryKey: champion, updatedAt: now,
     });
+    // 后续轮次的参赛人随胜负重排，属于赛程面变更
+    await touchScheduleRevision(tx, fresh.meetId);
     return ok({
       sessionKey: sessionKey,
       winnerEntryKey: winner,
@@ -1002,6 +1010,8 @@ async function resetMeetDraw(payload = {}, ctx) {
       revision: Number(currentEvent.revision || 0) + 1,
       updatedAt: now,
     });
+    // 重排清了时间、场地与分组，属于赛程面变更
+    await touchScheduleRevision(tx, fresh.meetId);
     return ok({ eventKey, clearedSessions: own.length });
   });
 }

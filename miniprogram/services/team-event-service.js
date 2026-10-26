@@ -620,19 +620,34 @@ async function createTeamEvent(payload = {}, ctx) {
   // 只决定「只接受学院代表队报名」与页面文案。
   const cupMode = payload.cupMode === CUP_MODE.COLLEGE ? CUP_MODE.COLLEGE : '';
 
-  const now = ctx.now;
-  await ctx.repo.forScope(ctx).teamEvents.set(eventId, {
-    _id: eventId, schoolId: ctx.schoolId, association: ctx.association,
-    name, format, rules, sportFormat: strategy.sportFormat, bronzeMode, statPolicy, status: TEAM_EVENT_STATUS.REGISTRATION,
-    cupMode,
-    entryMin: rules.eventRosterMin === undefined ? rules.rosterMin : rules.eventRosterMin,
-    entryMax: rules.eventRosterMax === undefined ? rules.rosterMax : rules.eventRosterMax,
-    // 赛程的时间与地点在建赛时给一次，之后每场可单独改
-    startTime: String(payload.startTime || '') || null,
-    location: String(payload.location || '').trim(),
-    revision: 1, requestId: token, createdBy: ctx.actorId, createdAt: now, updatedAt: now,
+  // 【权限与幂等都要在事务内再判一次】（2026-10-26 只读审查 P2-5）
+  // 入口鉴权之后还要读规则、查重名、算主键，中间隔着好几次异步读；原先写完
+  // 就直接落库，仓储内部的事务也只校验记录归属、不重判操作者。于是「查重名的
+  // 那一刻被撤掉协会负责人」这类情况，请求仍然会把赛事建出来。
+  // 现在把最终写入放进业务事务：重读身份、重读赛事主键（并发同请求幂等返回，
+  // 不覆盖先写的那条），再落库。
+  const created = await ctx.repo.transaction(async (root) => {
+    const fresh = await freshContext(root, ctx);
+    if (!canReadAssociationSpace(fresh)) return refused('账号或本校身份已失效');
+    if (!canManageAssociationSpace(fresh)) return refused('当前已无赛事管理权限');
+    const tx = root.forScope(fresh);
+    const current = await tx.teamEvents.getById(eventId);
+    if (inScope(current, fresh)) return { ok: true, eventId, message: '' };
+    const at = fresh.now;
+    await tx.teamEvents.set(eventId, {
+      _id: eventId, schoolId: fresh.schoolId, association: fresh.association,
+      name, format, rules, sportFormat: strategy.sportFormat, bronzeMode, statPolicy, status: TEAM_EVENT_STATUS.REGISTRATION,
+      cupMode,
+      entryMin: rules.eventRosterMin === undefined ? rules.rosterMin : rules.eventRosterMin,
+      entryMax: rules.eventRosterMax === undefined ? rules.rosterMax : rules.eventRosterMax,
+      // 赛程的时间与地点在建赛时给一次，之后每场可单独改
+      startTime: String(payload.startTime || '') || null,
+      location: String(payload.location || '').trim(),
+      revision: 1, requestId: token, createdBy: fresh.actorId, createdAt: at, updatedAt: at,
+    });
+    return { ok: true, eventId, message: '' };
   });
-  return ok({ ok: true, eventId, message: '' });
+  return ok(created);
 }
 
 /**
@@ -1378,10 +1393,13 @@ const statDocKey = (matchId, teamId) => schoolKey('tms', matchId, teamId);
  */
 function snapshotOf(doc) {
   if (!doc) return null;
+  const mode = doc.mode === STAT_MODE.DETAILED ? STAT_MODE.DETAILED : STAT_MODE.BASIC;
   return {
-    mode: doc.mode === STAT_MODE.DETAILED ? STAT_MODE.DETAILED : STAT_MODE.BASIC,
-    rows: Array.isArray(doc.rows) ? doc.rows : [],
-    players: Array.isArray(doc.players) ? doc.players : [],
+    mode,
+    // 发布快照落库前先去重：历史脏数据一旦被审核通过，快照里也必须是审核人看到的
+    // 那一份，不能把重复行原样带进榜单累计（见 statRowKey / uniqueRows）。
+    rows: uniqueRows(Array.isArray(doc.rows) ? doc.rows : [], STAT_MODE.DETAILED),
+    players: uniqueRows(Array.isArray(doc.players) ? doc.players : [], STAT_MODE.BASIC),
     integrity: doc.integrity || TEAM_STAT_INTEGRITY.NONE,
     revision: Number(doc.revision) || 0,
     publishedAt: doc.publishedAt || null,
@@ -2267,6 +2285,39 @@ function parseStat(raw, max) {
   return { ok: true, value: n };
 }
 
+/**
+ * 统计记录的唯一键：详细模式「一人一节一条」，基础模式「一人一条」。
+ *
+ * 【为什么需要它】（2026-10-26 只读审查 P2-3）
+ * 保存时没有校验唯一性，审核面板用 `find()` 只显示**第一条**，而榜单对同一批
+ * 记录**全部累加**：队长提交同一球员两条「10 助攻」，保存不报错、审核面板显示 10、
+ * 审核通过后榜单显示 20。数字对不上，责任还落在审核人身上。
+ * 现在保存侧直接拒绝重复（见 saveTeamMatchStats），读取侧再用下表兜住历史脏数据。
+ */
+function statRowKey(row, mode) {
+  return mode === STAT_MODE.DETAILED ? `${row.userId}#${Number(row.period)}` : String(row.userId);
+}
+
+/**
+ * 去重：同一唯一键只保留**第一条**。
+ *
+ * 保留第一条而不是求和，是为了与审核面板的历史口径一致——审核人当时看到的就是
+ * 第一条，通过之后榜单必须显示同一个数，而不是「审核 10 分、榜单 20 分」。
+ * 新数据不会再产生重复（保存侧已拒绝），这里只兜历史记录。
+ */
+function uniqueRows(rows, mode) {
+  const seen = new Set();
+  const out = [];
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!row || !row.userId) continue;
+    const key = statRowKey(row, mode);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
+  }
+  return out;
+}
+
 /** 由各行算出合计；某个指标一行都没填 → null（不是 0） */
 function totalsOf(rows) {
   const out = {};
@@ -2354,9 +2405,11 @@ async function getTeamMatchStats(payload = {}, ctx) {
       : fullRoster;
     const doc = stats.find(row => row.teamId === teamId) || null;
     const effective = effectiveStatOf(doc, { editor });
-    const rows = (effective && effective.rows) || [];
-    const savedPlayers = (effective && effective.players) || [];
     const mode = effective ? effective.mode : STAT_MODE.BASIC;
+    // 历史数据可能残留同一人的重复行（旧版保存侧没有唯一性校验）：
+    // 一律先按唯一键去重，保证「审核面板看到的」与「榜单累加的」是同一份记录。
+    const rows = uniqueRows((effective && effective.rows) || [], STAT_MODE.DETAILED);
+    const savedPlayers = uniqueRows((effective && effective.players) || [], STAT_MODE.BASIC);
     // 详细模式的合计由各行算出（按人）；基础模式直接取存好的合计
     const perPlayer = mode === STAT_MODE.DETAILED ? totalsByPlayer(rows) : new Map();
     return {
@@ -2478,9 +2531,15 @@ async function saveTeamMatchStats(payload = {}, ctx) {
       });
     }
 
+    // 条目数不可能超过「本场名单 × 节数」：超过即是构造的请求，先挡在解析之前。
+    const rosterTotal = sides.reduce((sum, side) => sum + side.roster.size, 0);
+
     if (mode === STAT_MODE.DETAILED) {
       const incoming = Array.isArray(payload.rows) ? payload.rows : [];
       if (incoming.length === 0) return refused('没有可保存的统计');
+      if (incoming.length > rosterTotal * periods) return refused('统计条目超出本场名单范围');
+      // 一人一节只能有一条（见 statRowKey）。重复会让审核面板与榜单对不上，直接拒绝。
+      const seen = new Set();
       for (const row of incoming) {
         const side = sides.find(item => item.roster.has(row && row.userId));
         if (!side) return refused('统计里有人不在本场名单中');
@@ -2497,12 +2556,19 @@ async function saveTeamMatchStats(payload = {}, ctx) {
           if (parsed.value !== null) any = true;
         }
         // 整行都是空的等于没录这个人这一节，直接丢掉，不要存一排 null
-        if (any) side.rows.push(cleaned);
+        if (!any) continue;
+        const key = `${side.teamId}#${statRowKey(cleaned, mode)}`;
+        if (seen.has(key)) return refused(`同一球员的第 ${period} 节统计重复，请检查后重新提交`);
+        seen.add(key);
+        side.rows.push(cleaned);
       }
       if (sides.every(side => side.rows.length === 0)) return refused('没有可保存的统计');
     } else {
       const incoming = Array.isArray(payload.players) ? payload.players : [];
       if (incoming.length === 0) return refused('没有可保存的统计');
+      if (incoming.length > rosterTotal) return refused('统计条目超出本场名单范围');
+      // 一人一条（见 statRowKey）：重复行会让合计被算两遍
+      const seen = new Set();
       for (const row of incoming) {
         const side = sides.find(item => item.roster.has(row && row.userId));
         if (!side) return refused('统计里有人不在本场名单中');
@@ -2514,7 +2580,11 @@ async function saveTeamMatchStats(payload = {}, ctx) {
           cleaned[field] = parsed.value;
           if (parsed.value !== null) any = true;
         }
-        if (any) side.players.push(cleaned);
+        if (!any) continue;
+        const key = `${side.teamId}#${statRowKey(cleaned, mode)}`;
+        if (seen.has(key)) return refused('同一球员的统计重复，请检查后重新提交');
+        seen.add(key);
+        side.players.push(cleaned);
       }
       if (sides.every(side => side.players.length === 0)) return refused('没有可保存的统计');
     }
@@ -2632,8 +2702,8 @@ async function getTeamEventPlayerStats(payload = {}, ctx) {
     const snapshot = doc.published;
     if (!snapshot || snapshot.integrity === TEAM_STAT_INTEGRITY.NONE) continue;
     const rows = snapshot.mode === STAT_MODE.DETAILED
-      ? snapshot.rows
-      : (snapshot.players || []).map(player => ({ userId: player.userId, ...player }));
+      ? uniqueRows(snapshot.rows, STAT_MODE.DETAILED)
+      : uniqueRows((snapshot.players || []).map(player => ({ userId: player.userId, ...player })), STAT_MODE.BASIC);
     for (const row of rows) {
       if (!row || !row.userId) continue;
       if (!byPlayer.has(row.userId)) {

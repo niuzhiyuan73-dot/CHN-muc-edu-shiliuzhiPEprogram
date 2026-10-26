@@ -308,19 +308,42 @@ async function getTeamRecord(payload, ctx) {
   if (!canRead(ctx)) return ok(refused('账号或本校身份已失效'));
   const repo = ctx.repo.forScope(ctx); const team = await repo.teams.getById(payload.teamId);
   if (!scoped(team, ctx)) return ok(refused('球队不存在，或不在本协会'));
-  const [events, entries, matches, teams] = await Promise.all([repo.teamEvents.list(), repo.teamEventEntries.list(), repo.teamMatches.list(), repo.teams.list()]);
-  const seasons = entries.filter(e => e.teamId === team._id && e.status === 'locked').map(entry => {
-    const event = events.find(e => e._id === entry.eventId); if (!event || event.status === 'draft') return null;
+  // 【只读这支队自己的那几十条】（2026-10-26 只读审查 P2-7）
+  // 原来把赛事、报名、比赛、球队四个集合**整表**读回本协会全部历史再内存过滤：
+  // 一届 8 队单循环是 28 场，办三年就上千条，而页面只要这支队那几十场；
+  // 而且每一届又对全量比赛 filter 一遍，成本随历史线性涨、跟这支队无关。
+  // 现在：报名与比赛按球队下推（比赛按双方球队字段各查一次去重），
+  // 关联赛事与对手球队按编号批读，比赛先建 eventId 索引再按赛事分组。
+  const [entries, teamMatches] = await Promise.all([
+    repo.teamEventEntries.listByTeam(team._id),
+    repo.teamMatches.listByTeams([team._id]),
+  ]);
+  const lockedEntries = entries.filter(e => e.teamId === team._id && e.status === 'locked');
+  const eventIds = [...new Set([
+    ...lockedEntries.map(e => e.eventId),
+    ...teamMatches.map(m => m.eventId),
+  ])];
+  const opponentIds = [...new Set([team._id, ...teamMatches.flatMap(m => [m.teamA, m.teamB])])];
+  const [eventDocs, teamDocs] = await Promise.all([
+    repo.teamEvents.listByIds(eventIds),
+    repo.teams.listByIds(opponentIds),
+  ]);
+  const eventById = new Map(eventDocs.map(e => [e._id, e]));
+  const teamById = new Map(teamDocs.map(t => [t._id, t]));
+  const matchesByEvent = indexMatches(teamMatches, 'eventId');
+  const seasons = lockedEntries.map(entry => {
+    const event = eventById.get(entry.eventId); if (!event || event.status === 'draft') return null;
     const rank = event.status === 'finished' ? event.placements?.find(p => p.teamId === team._id)?.rank : null;
     return { eventId: event._id, name: event.name, statusLabel: TEAM_EVENT_STATUS_LABEL[event.status],
-      placement: rank, placementText: placementText(rank), ...teamRecord(matches.filter(m => m.eventId === event._id), team._id) };
+      placement: rank, placementText: placementText(rank), ...teamRecord(matchesByEvent.get(event._id) || [], team._id) };
   }).filter(Boolean);
-  const recent = publicMatches(matches).filter(m => [m.teamA, m.teamB].includes(team._id))
+  const recent = publicMatches(teamMatches).filter(m => [m.teamA, m.teamB].includes(team._id))
     .sort((a, b) => String(b.matchTime || b.publishedAt || '').localeCompare(String(a.matchTime || a.publishedAt || '')))
     .slice(0, 10).map(m => {
     const a = m.teamA === team._id; const mine = a ? m.scoreA : m.scoreB; const other = a ? m.scoreB : m.scoreA;
-    return { matchId: m._id, opponentName: teams.find(t => t._id === (a ? m.teamB : m.teamA))?.name || '',
-      eventName: events.find(e => e._id === m.eventId)?.name || '',
+    const opponent = teamById.get(a ? m.teamB : m.teamA);
+    return { matchId: m._id, opponentName: opponent ? opponent.name : '',
+      eventName: (eventById.get(m.eventId) || {}).name || '',
       matchTimeText: m.matchTime ? new Date(Date.parse(m.matchTime) + 8 * 3600000).toISOString().slice(5, 16).replace('T', ' ') : '',
       scoreText: a ? scoreText(m.footballPublished.result) : scoreText({ ...m.footballPublished.result,
         scoreA: m.scoreB, scoreB: m.scoreA, shootoutScore: m.footballPublished.result.shootoutScore
@@ -328,7 +351,7 @@ async function getTeamRecord(payload, ctx) {
       resultLabel: mine === other ? '平' : mine > other ? '胜' : '负' };
   });
   return ok({ ok: true, sportFormat: 'football11', team: { teamId: team._id, name: team.name, statusLabel: TEAM_STATUS_LABEL[team.status] },
-    overall: teamRecord(matches, team._id), seasons, recent });
+    overall: teamRecord(teamMatches, team._id), seasons, recent });
 }
 
 async function getMyTeamProfile(payload, ctx) {

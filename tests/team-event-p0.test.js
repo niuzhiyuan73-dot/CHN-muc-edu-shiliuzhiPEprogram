@@ -145,6 +145,40 @@ test('并发 —— 比赛返回体带版本号，页面才有东西可传', asy
   assert.equal(panel.match.revision, 2, '统计面板上的比赛也要带版本号');
 });
 
+test('权限竞态 —— 查重名期间被撤掉协会负责人，赛事不能建成', async () => {
+  const repo = fixtureFor(2, 5);
+  // 入口鉴权发生在请求开始时；创建流程中间还要读规则、查重名，跨了好几次异步读。
+  // 这里在「查重名」那一次列表读之后撤掉负责人身份，等价于另一位管理员同时撤权。
+  const rawList = repo.teamEvents.list.bind(repo.teamEvents);
+  repo.teamEvents.list = async (...args) => {
+    const rows = await rawList(...args);
+    const key = schoolMembershipKey('u_leader', SCOPE);
+    await repo.memberships.set(key, { ...(await repo.memberships.get(key)), status: 'revoked' });
+    return rows;
+  };
+
+  const created = await call(repo, 'createTeamEvent', { name: '权限竞态赛事', requestId: 'req_race' });
+  assert.equal(created.ok, false, '权限在事务内必须重判，不能按入口那一刻的旧身份放行');
+  assert.match(created.message, /权限/);
+  const rows = (await repo.teamEvents.list()).filter(row => row.name === '权限竞态赛事');
+  assert.equal(rows.length, 0, '拒绝时一条都不能落库');
+});
+
+test('幂等 —— 同一请求编号并发创建只落一条，不覆盖先写的那条', async () => {
+  const repo = fixtureFor(2, 5);
+  const first = await call(repo, 'createTeamEvent', { name: '并发建赛', requestId: 'req_same' });
+  assert.equal(first.ok, true, first.message);
+
+  // 事务内重读主键：同 actorId + requestId 落同一个事件键，已存在即幂等返回
+  const again = await call(repo, 'createTeamEvent', { name: '并发建赛', requestId: 'req_same' });
+  assert.equal(again.ok, true, again.message);
+  assert.equal(again.eventId, first.eventId);
+  const rows = (await repo.teamEvents.list()).filter(row => row._id === first.eventId);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].createdBy, 'u_leader');
+});
+
+
 /* ============================================================
  * 二、统计准确性：按节合计按人算
  * ============================================================ */
@@ -204,8 +238,130 @@ test('按节统计 —— 同一个人跨两节的分数只累到自己头上', 
 });
 
 /* ============================================================
- * 三、未记录 ≠ 0
+ * 二之二、统计行唯一性（2026-10-26 只读审查 P2-3）
+ *
+ * 重复行是「数字对不上」的源头：审核面板用 find() 只显示第一条，榜单却把
+ * 同一批记录全部累加。结果队长提交同一球员两条「10 助攻」时，审核看到 10、
+ * 通过后榜单显示 20——错在保存侧没拦住，却记在审核人头上。
  * ============================================================ */
+
+test('按节统计 —— 同一球员同一节提交两条，保存直接拒绝', async () => {
+  const repo = fixtureFor(2, 5);
+  const { match } = await lockedEvent(repo, { statPolicy: 'detailed' });
+  await call(repo, 'recordTeamMatch', { matchId: match.matchId, scoreA: 20, scoreB: 9 });
+  const panel = await call(repo, 'getTeamMatchStats', { matchId: match.matchId });
+  const p0 = panel.sides.find(item => item.teamId === match.teamA).players[0];
+
+  const saved = await call(repo, 'saveTeamMatchStats', {
+    matchId: match.matchId,
+    mode: 'detailed',
+    rows: [
+      { period: 1, userId: p0.userId, assists: 10 },
+      { period: 1, userId: p0.userId, assists: 10 },
+    ],
+  });
+  assert.equal(saved.ok, false, '重复行必须拒绝，不能静默存两条');
+  assert.match(saved.message, /重复/);
+
+  // 拒绝后一条都不能落库（不能「先存了第一条再报错」）
+  const reread = await call(repo, 'getTeamMatchStats', { matchId: match.matchId });
+  const rows = reread.sides.find(item => item.teamId === match.teamA).rows;
+  assert.equal((rows || []).length, 0, '拒绝时整笔不写');
+});
+
+test('按节统计 —— 同一球员不同节仍然允许（一人一节一条才是唯一约束）', async () => {
+  const repo = fixtureFor(2, 5);
+  const { match } = await lockedEvent(repo, { statPolicy: 'detailed' });
+  await call(repo, 'recordTeamMatch', { matchId: match.matchId, scoreA: 20, scoreB: 9 });
+  const panel = await call(repo, 'getTeamMatchStats', { matchId: match.matchId });
+  const p0 = panel.sides.find(item => item.teamId === match.teamA).players[0];
+
+  const saved = await call(repo, 'saveTeamMatchStats', {
+    matchId: match.matchId,
+    mode: 'detailed',
+    rows: [
+      { period: 1, userId: p0.userId, points: 6 },
+      { period: 2, userId: p0.userId, points: 4 },
+    ],
+  });
+  assert.equal(saved.ok, true, saved.message);
+  const reread = await call(repo, 'getTeamMatchStats', { matchId: match.matchId });
+  const rows = reread.sides.find(item => item.teamId === match.teamA).rows;
+  assert.equal(rows.filter(row => row.userId === p0.userId).length, 2, '两节各一条，合法');
+});
+
+test('基础统计 —— 同一球员提交两条，保存直接拒绝', async () => {
+  const repo = fixtureFor(2, 5);
+  const { match } = await lockedEvent(repo);
+  await call(repo, 'recordTeamMatch', { matchId: match.matchId, scoreA: 20, scoreB: 9 });
+  const panel = await call(repo, 'getTeamMatchStats', { matchId: match.matchId });
+  const p0 = panel.sides.find(item => item.teamId === match.teamA).players[0];
+
+  const saved = await call(repo, 'saveTeamMatchStats', {
+    matchId: match.matchId,
+    mode: 'basic',
+    players: [
+      { userId: p0.userId, assists: 10 },
+      { userId: p0.userId, assists: 10 },
+    ],
+  });
+  assert.equal(saved.ok, false, '重复行必须拒绝');
+  assert.match(saved.message, /重复/);
+});
+
+test('基础统计 —— 条目数超过本场名单时拒绝（不解析无上限的数组）', async () => {
+  const repo = fixtureFor(2, 5);
+  const { match } = await lockedEvent(repo);
+  await call(repo, 'recordTeamMatch', { matchId: match.matchId, scoreA: 20, scoreB: 9 });
+  const panel = await call(repo, 'getTeamMatchStats', { matchId: match.matchId });
+  const rosterSize = panel.sides.reduce((sum, side) => sum + side.players.length, 0);
+
+  const players = Array.from({ length: rosterSize + 1 }, (_, i) => ({
+    userId: `ghost_${i}`, assists: 1,
+  }));
+  const saved = await call(repo, 'saveTeamMatchStats', {
+    matchId: match.matchId, mode: 'basic', players,
+  });
+  assert.equal(saved.ok, false);
+  assert.match(saved.message, /超出本场名单/);
+});
+
+test('历史脏数据（重复行已落库）—— 审核面板与球员榜显示同一个数', async () => {
+  const repo = fixtureFor(2, 5);
+  const { eventId, match } = await lockedEvent(repo);
+  await call(repo, 'recordTeamMatch', { matchId: match.matchId, scoreA: 20, scoreB: 9 });
+  const panel = await call(repo, 'getTeamMatchStats', { matchId: match.matchId });
+  const p0 = panel.sides.find(item => item.teamId === match.teamA).players[0];
+  await call(repo, 'saveTeamMatchStats', {
+    matchId: match.matchId,
+    mode: 'basic',
+    players: [{ userId: p0.userId, assists: 10 }],
+  });
+
+  // 模拟旧版本写下的脏数据：绕过保存校验，直接往统计文档里塞第二行
+  const docKey = (await repo.teamMatchStats.list()).find(
+    row => row.matchId === match.matchId && row.teamId === match.teamA,
+  )._id;
+  const doc = await repo.teamMatchStats.getById(docKey);
+  await repo.teamMatchStats.set(docKey, {
+    ...doc, players: [{ userId: p0.userId, assists: 10 }, { userId: p0.userId, assists: 10 }],
+  });
+
+  // 审核面板：只显示第一条
+  const review = await call(repo, 'getTeamMatchStats', { matchId: match.matchId });
+  const shown = review.sides.find(item => item.teamId === match.teamA)
+    .players.find(row => row.userId === p0.userId);
+  assert.equal(shown.assists, 10);
+
+  // 审核通过后榜单：必须是同一个 10，不是 20
+  await call(repo, 'publishTeamMatch', { matchId: match.matchId, approve: true });
+  const board = await call(repo, 'getTeamEventPlayerStats', { eventId });
+  const row = board.players.find(item => item.userId === p0.userId);
+  assert.ok(row, '该球员应出现在榜上');
+  assert.equal(row.assists, 10, '榜单必须与审核面板一致，不能把重复行累加两次');
+});
+
+
 
 test('球员榜 —— 只录得分时，篮板与助攻是未记录而不是 0', async () => {
   const repo = fixtureFor(2, 5);

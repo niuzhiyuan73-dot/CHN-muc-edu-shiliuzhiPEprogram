@@ -626,7 +626,15 @@ function buildCollections(scope, inTx, cmd) {
      */
     top: async (key, where, order, limit) => {
       if (inTx) throw new Error(`事务内不允许条件读取（${key}），请改用 getById`);
-      const size = Math.max(1, Math.min(Number(limit) || 1, PAGE_SIZE));
+      const size = Math.max(1, Number(limit) || 1);
+      // 【超限必须报错，不能静默截断】（2026-10-26 只读审查 P2-9）
+      // 这里原先 `Math.min(size, PAGE_SIZE)`：分页接口按「多取 1 条」判 hasMore，
+      // 要 101 条时被截成 100，`hasMore` 于是恒为 false——页面以为没有下一页，
+      // 列表静默少数据，而本地内存仓储不截断，测试全绿也看不出来。
+      // 需要更多就按 `_id` 游标自己续读（见 school-repository 的 readUpTo）。
+      if (size > PAGE_SIZE) {
+        throw new Error(`单次最多读取 ${PAGE_SIZE} 条（本次请求 ${size} 条），请按 _id 游标分批读取`);
+      }
       let query = col(key).where(where);
       for (const rule of (order || [])) query = query.orderBy(rule.field, rule.direction);
       const res = await query.limit(size).get();

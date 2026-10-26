@@ -73,21 +73,33 @@ Page({
    */
   onLoad(query = {}) {
     this.eventId = query.eventId || '';
+    // 在途请求的失效标志与请求序号（见 refresh）：离开页面后迟到的响应
+    // 不许再 setData，更不许重新起一条轮询。
+    this.destroyed = false;
+    this.visible = true;
+    this.refreshSeq = 0;
     return this.refresh();
   },
 
   /** 从排阵页 / 审核页返回时刷新一次，刚交的排阵与刚通过的名单才在页面上 */
   onShow() {
+    this.visible = true;
     if (!this.loaded) return undefined;
     return this.refresh();
   },
 
   /** 离开本页就停表，不再空转；回到前台时 onShow 会重新订阅 */
   onHide() {
+    this.visible = false;
     if (this.liveHandle) this.liveHandle.pause();
   },
 
   onUnload() {
+    // 【销毁必须让在途请求失效】（2026-10-26 只读审查 P2-8）
+    // 原先只清理已有订阅：刷新请求还在路上，回来后照样 setData 并调
+    // syncLiveWatch —— 订阅是单例，它会把**当前页面**的轮询顶掉。
+    this.destroyed = true;
+    this.visible = false;
     if (this.liveHandle) {
       this.liveHandle();
       this.liveHandle = null;
@@ -130,14 +142,21 @@ Page({
    * @returns {Promise<void>}
    */
   async refresh() {
+    // 请求序号：只有最后一次发起的刷新可以回写（2026-10-26 P2-8）
+    const seq = (this.refreshSeq || 0) + 1;
+    this.refreshSeq = seq;
+    const stale = () => this.destroyed || seq !== this.refreshSeq;
+
     const scope = this.currentScope();
     this.scope = scope;
     const actorId = await this.currentActorId();
+    if (stale()) return;
 
     try {
       const view = await loadCollegeEventDetailView(this.eventId, {
         schoolId: scope.schoolId, association: scope.association, actorId,
       });
+      if (stale()) return;
       // 采纳装载器探测出的真实编号再用于写与跳转：query 在微信开发者工具 / 真机里
       // 是原样透传的（未解码），继续拿路由原值抽签 / 开赛会被服务端答
       // 「学院赛不存在」（见 utils/route-query.js）。解析只做一次，跳转只编码一次。
@@ -156,6 +175,7 @@ Page({
       // 首屏若已有正在计分的小场（读接口已带上 live），才挂轮询取增量
       this.syncLiveWatch();
     } catch (err) {
+      if (stale()) return;
       console.error('[college-event-detail] 加载失败', err);
       this.loaded = true;
       this.setData({ loading: false, error: '学院赛详情页加载失败，请返回重试', themeClass: currentThemeClass() });
@@ -185,8 +205,15 @@ Page({
    */
   syncLiveWatch() {
     if (this.liveHandle) this.liveHandle();
+    // 只有「活着且可见」的页面才允许起轮询：订阅是单例，已销毁的旧页面
+    // 起表会把当前页面的表顶掉（2026-10-26 P2-8）。
+    if (this.destroyed || this.visible === false) {
+      this.liveHandle = null;
+      return;
+    }
     const scope = this.scope || this.currentScope();
     this.liveHandle = watchLiveScores(this.liveIds(), (views) => {
+      if (this.destroyed) return;
       this.setData({ 'view.ties': applyLiveTies(this.data.view.ties || [], views) });
     }, {
       // 取数换成学校维度：旧栈门面按旧台账取数，与学校维度的比赛不是同一份数据

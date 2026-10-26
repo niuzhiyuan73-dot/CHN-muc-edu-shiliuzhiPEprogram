@@ -47,8 +47,12 @@ function database(seed = {}) {
           limit: (next) => query(where, offset, next),
           get: async () => {
             queries.push({ name, where, offset, limit });
+            // 云开发单次查询最多返回 100 条（本仓 PAGE_SIZE 同值）。桩必须照这个
+            // 上限截断，否则「按 limit+1 判 hasMore 被静默截断」这类问题在本地
+            // 永远复现不出来（2026-10-26 只读审查 P2-9 就是这么漏掉的）。
+            const cap = Math.min(limit, 100);
             const data = [...table.values()].filter(doc => matchDoc(doc, where))
-              .sort((a, b) => a._id.localeCompare(b._id)).slice(offset, offset + limit);
+              .sort((a, b) => a._id.localeCompare(b._id)).slice(offset, offset + cap);
             return { data };
           },
           // 聚合计数（schoolMembers.countByStatus 用）：云端是数据库侧统计，
@@ -154,3 +158,36 @@ test('cloud scoped write checks existing ownership inside transaction and rollba
   assert.equal((await a.events.getById('a')).value, 1);
   await assert.rejects(a.transaction(tx => tx.events.list()), /事务内/);
 });
+
+/* ============================================================
+ * 分页契约：页大小边界（2026-10-26 只读审查 P2-9）
+ *
+ * 上层用「读 limit + 1 条」判 hasMore，而云适配器单次最多回 100 条。
+ * 要 100 / 200 条时 101 / 201 被截成 100，`hasMore` 于是恒为 false ——
+ * 待审申请提示、跨校赛裁判候选名单会被静默截断。
+ * 现在由仓储按 `_id` 游标自己续读，且 `top` 超限直接报错而不是悄悄少给。
+ * ============================================================ */
+
+test('分页契约：页大小 99 / 100 / 200 都能正确判断还有没有下一页', async () => {
+  const total = 205;
+  const rows = Array.from({ length: total }, (_, i) => ({
+    _id: `sm:muc:u${String(i).padStart(4, '0')}`,
+    schoolId: 'muc', userId: `u${String(i).padStart(4, '0')}`, status: 'active',
+  }));
+  const scoped = createRepo(database({ school_members: rows })).forScope({ schoolId: 'muc', association: 'pkb' });
+
+  for (const limit of [99, 100, 200]) {
+    const page = await scoped.schoolMembers.listByStatus('active', { limit });
+    assert.equal(page.rows.length, limit, `limit=${limit} 应回满 ${limit} 条`);
+    assert.equal(page.hasMore, true, `limit=${limit} 时还剩 ${total - limit} 条，必须说还有下一页`);
+    const ids = page.rows.map(row => row.userId);
+    assert.equal(new Set(ids).size, ids.length, '续读不能重复取同一条');
+  }
+
+  // 最后一页：取到末尾时必须说「没有下一页」
+  const first = await scoped.schoolMembers.listByStatus('active', { limit: 200 });
+  const rest = await scoped.schoolMembers.listByStatus('active', { limit: 200, afterId: first.rows[199]._id });
+  assert.equal(rest.rows.length, total - 200);
+  assert.equal(rest.hasMore, false);
+});
+

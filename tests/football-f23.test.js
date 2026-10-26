@@ -308,3 +308,21 @@ test('云端协议：足球比赛没有待审核报告就发不出去（云库�
   assert.notEqual(fresh.status, 'published', '不能绕过报告直接把比赛标成已发布');
   assert.equal(fresh.footballPublished, undefined);
 });
+
+test('F2 单队战绩只读本队那几十条，不再整表读全协会历史（2026-10-26 只读审查 P2-7）', async () => {
+  const f = await fixture({ count: 4 });
+  const matches = await f.matches();
+  const teamId = matches[0].teamA;
+
+  const wholeTable = [];
+  for (const key of ['teamEvents', 'teamEventEntries', 'teamMatches', 'teams']) {
+    const original = f.repo[key].list;
+    f.repo[key].list = (...args) => { wholeTable.push(key); return original.apply(f.repo[key], args); };
+  }
+  // 用例各自建仓储，探针不需要还原：本用例之后不会再读这个 repo
+  const record = await f.call('getTeamRecord', { teamId });
+  assert.equal(record.ok, true, record.message);
+  assert.equal(record.overall.games, 0, '还没发布比分，战绩应为 0 而不是报错');
+  assert.deepEqual(wholeTable, [],
+    `单队战绩不该整表读这些集合：${wholeTable.join('、')}`);
+});

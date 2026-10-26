@@ -5,7 +5,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { createMemoryRepo } = require('./helpers/memory-repo');
 const { createSchoolDemoSeed } = require('../miniprogram/services/school-seed');
-const { schoolMemberKey, schoolRoleKey } = require('../miniprogram/utils/school');
+const { schoolMemberKey, schoolRoleKey, schoolAssociationKey, collegeKey } = require('../miniprogram/utils/school');
 const { handleSchoolRequest } = require('../cloudfunctions/data/src/core/school-request');
 
 function fixture() {
@@ -363,7 +363,74 @@ test('转校：驳回 / 撤回都留在原校；重复申请幂等；学号被�
   assert.equal((await repo.users.getById('new1')).primarySchoolId, 'muc');
 });
 
-test('identity session discloses the actor own permission tier and college-manage ability', async () => {
+test('转校：同时开出的两份申请，第二份必须判为陈旧并作废（不留两份有效会籍）', async () => {
+  // 演示种子只有民大与北航两所，这里补第三所目标学校，用于「A→B、A→C 同时申请」
+  const seed = createSchoolDemoSeed();
+  seed.users.push(
+    { _id: 'new1', openId: 'new1', platformStatus: 'active', platformRole: 'member' },
+    { _id: 'admin_3', openId: 'mock_openid_buaa2_admin', platformStatus: 'active', platformRole: 'member', primarySchoolId: 'buaa2' },
+  );
+  seed.schools.push({ _id: 'buaa2', schoolId: 'buaa2', name: '第二目标学校', shortName: '二校', status: 'active', configVersion: 1 });
+  seed.schoolAssociations.push({
+    _id: schoolAssociationKey({ schoolId: 'buaa2', association: 'pkb' }),
+    schoolId: 'buaa2', association: 'pkb', name: '第二目标学校匹克球协会', status: 'active',
+  });
+  seed.colleges.push({
+    _id: collegeKey('buaa2', 'c01'), schoolId: 'buaa2', collegeId: 'c01', name: '二校学院', status: 'active',
+  });
+  seed.schoolMembers.push({
+    _id: schoolMemberKey('admin_3', 'buaa2'), schoolId: 'buaa2', userId: 'admin_3',
+    collegeId: 'c01', studentId: 'A3001', status: 'active',
+  });
+  seed.schoolRoles.push({
+    _id: schoolRoleKey('admin_3', 'buaa2'), schoolId: 'buaa2', userId: 'admin_3', role: 'admin', status: 'active',
+  });
+  const repo = createMemoryRepo(seed);
+  await join(repo, 'new1', 'muc', 'MUC001');
+
+  // 同时开 A→B 与 A→C 两份转校申请（目标学校不同，各自一条待审身份行）
+  const toB = (await request(repo, 'applySchoolTransfer',
+    { collegeId: 'c01', studentId: 'BUAA001' }, 'new1', 'buaa')).data;
+  assert.equal(toB.ok, true, toB.message);
+  const toC = (await request(repo, 'applySchoolTransfer',
+    { collegeId: 'c01', studentId: 'BUAA2_001' }, 'new1', 'buaa2')).data;
+  assert.equal(toC.ok, true, toC.message);
+
+  // 先批 B：归属切到 B
+  const approvedB = (await request(repo, 'reviewSchoolTransfer',
+    { userId: 'new1', decision: 'approve', revision: toB.account.revision },
+    'mock_openid_buaa_admin', 'buaa')).data;
+  assert.equal(approvedB.ok, true, approvedB.message);
+  assert.equal((await repo.users.getById('new1')).primarySchoolId, 'buaa');
+
+  // 再批 C：申请里写的是「从 muc 转来」，但本人已归属 buaa —— 必须拒绝
+  const approvedC = (await request(repo, 'reviewSchoolTransfer',
+    { userId: 'new1', decision: 'approve', revision: toC.account.revision },
+    'mock_openid_buaa2_admin', 'buaa2')).data;
+  assert.equal(approvedC.ok, false, '陈旧申请不能被批，否则会留下两份有效会籍');
+  assert.match(approvedC.message, /所属学校已变化/);
+  assert.equal((await repo.users.getById('new1')).primarySchoolId, 'buaa', '归属不能被第二份申请改走');
+
+  // C 侧没有留下有效身份；那条申请已被作废（不再挂在待办里点了就报错）
+  const atC = await repo.schoolMembers.getById(schoolMemberKey('new1', 'buaa2'));
+  assert.equal(atC.status, 'rejected');
+  assert.match(atC.reviewReason, /作废/);
+
+  // 原校身份仍是一次性的 transferred，没有被第二份申请重新处理
+  const atA = await repo.schoolMembers.getById(schoolMemberKey('new1', 'muc'));
+  assert.equal(atA.status, 'transferred');
+  // B 侧只有一条有效会籍，没有被 C 的申请叠加出第二份
+  const atB = await repo.schoolMembers.getById(schoolMemberKey('new1', 'buaa'));
+  assert.equal(atB.status, 'active');
+
+  // 重新提交（来源已变成 buaa）就能正常审批
+  const retry = (await request(repo, 'applySchoolTransfer',
+    { collegeId: 'c01', studentId: 'BUAA2_002' }, 'new1', 'buaa2')).data;
+  assert.equal(retry.ok, true, retry.message);
+  assert.equal(retry.account.transferFrom, 'buaa', '新申请记的是当前归属学校');
+});
+
+test('身份 session discloses the actor own permission tier and college-manage ability', async () => {
   const repo = fixture();
   const session = (openId, schoolId = 'muc') =>
     request(repo, 'getSchoolIdentitySession', {}, openId, schoolId).then(res => res.data);

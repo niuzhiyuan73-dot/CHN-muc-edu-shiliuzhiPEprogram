@@ -144,7 +144,7 @@ function createSchoolMemoryRepo(seed = {}) {
         // 名录页给每一行算权限标签，都可以一页只发一次调用（2026-10-22 H-3／H-5）。
         // `owns` 校验是这条路径的安全底线：主键可能来自调用方。
         if (EVENT_SCOPED.includes(key) || key === 'schoolRoles' || key === 'memberships'
-          || key === 'schoolMembers') {
+          || key === 'schoolMembers' || key === 'memberRatings') {
           result[key].listByIds = async ids => {
             if (inTx) throw new Error(`事务内不允许条件读取（${key}），请改用 getById`);
             const uniq = [...new Set((Array.isArray(ids) ? ids : [])

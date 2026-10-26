@@ -77,10 +77,14 @@ const managesParticipant = (event, ctx) => Boolean(eventMatches(event, ctx) && m
 // 比分确认：管理员或双方校管理员；设了裁判则限裁判；未设裁判才轮到比赛双方。
 const canScoreMatch = (event, match, ctx) => {
   if (!event || !match || event.eventScope !== 'inter_school' || event.ratingPolicy !== 'unrated' ||
-      event.association !== ctx.association) return false;
+      event.association !== ctx.association || !ctx.actor ||
+      ctx.actor.platformStatus !== PLATFORM_STATUS.ACTIVE) return false;
   if (isPlatformAdmin(ctx) || managesParticipant(event, ctx)) return true;
+  // 锁定名册不代表账号与学籍永远有效；录分与事务复核都必须使用当前身份。
+  if (!eventMatches(event, ctx) || event.invitations[ctx.schoolId] !== 'accepted' || !participates(ctx)) return false;
   if (match.referee) return ctx.actorId === match.referee;
-  return Boolean(ctx.actorId) && (ctx.actorId === match.playerA || ctx.actorId === match.playerB);
+  return (ctx.actorId === match.playerA && ctx.schoolId === match.schoolA)
+    || (ctx.actorId === match.playerB && ctx.schoolId === match.schoolB);
 };
 const summary = event => ({
   _id: event._id, schoolId: event.schoolId, association: event.association,

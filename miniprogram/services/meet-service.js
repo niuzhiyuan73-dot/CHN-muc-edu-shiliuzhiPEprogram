@@ -1,5 +1,5 @@
 const { parseMeetTime } = require('./meet-time.js');
-const { unchanged } = require('./meet-consistency.js');
+const { unchanged, scheduleRevisionOf, touchScheduleRevision } = require('./meet-consistency.js');
 /**
  * 运动会：草稿、项目运行时配置与报名发布（B4）
  * ============================================================
@@ -350,6 +350,10 @@ async function setMeetEventProcedure(payload = {}, ctx) {
       updatedAt: now,
     };
     await tx.sportsMeetEvents.set(eventKey, next);
+    // 赛制（轮次/分组/晋级）改了，发布赛程的「配齐」判定随之变化：递增届次赛程版本
+    await tx.sportsMeets.set(fresh.meetId, {
+      ...meet, scheduleRevision: scheduleRevisionOf(meet) + 1,
+    });
     return ok({ event: eventSummary(next) });
   });
 }
@@ -385,6 +389,8 @@ async function removeMeetEvent(payload = {}, ctx) {
     const count = Math.max(0, Number(meet.eventCount || 0) - 1);
     await tx.sportsMeets.set(fresh.meetId, {
       ...meet, eventCount: count, updatedAt: now, version: (meet.version || 1) + 1,
+      // 项目组别减少会改变「赛程是否配齐」的判定，递增届次赛程版本
+      scheduleRevision: scheduleRevisionOf(meet) + 1,
     });
     return ok({ eventKey, removed: true, eventCount: count });
   });
@@ -644,6 +650,8 @@ async function configureMeetEvent(payload = {}, ctx) {
     const count = Number(meet.eventCount || 0) + (existing ? 0 : 1);
     await tx.sportsMeets.set(fresh.meetId, {
       ...meet, eventCount: count, updatedAt: now, version: (meet.version || 1) + 1,
+      // 新增/改性项目组别会改变赛程需求，递增届次赛程版本
+      scheduleRevision: scheduleRevisionOf(meet) + 1,
     });
     // 摘要必须带上主键：调用方（页面「继续配置」回填、演示种子）都靠它指回
     // 这条项目组别。doc 是本地对象、没有 _id，直接喂给 eventSummary 会得到

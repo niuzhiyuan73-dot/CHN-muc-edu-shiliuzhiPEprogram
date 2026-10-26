@@ -235,10 +235,22 @@ function createSchoolHandlers({ claimKey }) {
           college, studentId: payload.studentId, now: fresh.now });
       } catch (err) { return refused(err.message); }
       application.transferFrom = fromSchoolId;
-      // 幂等：同一目标学校、同一学院学号的待审转校申请重复提交返回同一条
+      // 申请时的身份版本：审批时用它判「这份申请是不是已经过期」。
+      // 每次归属变更（入会通过、转校通过）都会把账号的 schoolIdentityVersion +1，
+      // 所以版本对不上就说明申请人已经在校际之间移动过，这份申请不再可信。
+      application.identityVersion = Number(fresh.actor.schoolIdentityVersion || 0);
+      // 幂等：同一目标学校、同一学院学号的待审转校申请重复提交返回同一条。
+      // 但「申请时的身份版本」要刷成本次的值，否则身份变过之后这份申请会永远审不过
+      // （审批按旧版本判陈旧），形成「重提也没用」的死结。
       if (previous && previous.status === SCHOOL_MEMBER_STATUS.PENDING && previous.transferFrom &&
           previous.collegeId === application.collegeId && previous.studentId === application.studentId) {
-        return { ok: true, account: previous, message: '' };
+        if (Number(previous.identityVersion) === application.identityVersion) {
+          return { ok: true, account: previous, message: '' };
+        }
+        const refreshed = { ...previous, identityVersion: application.identityVersion,
+          revision: Number(previous.revision || 0) + 1 };
+        await tx.schoolMembers.set(refreshed._id, refreshed);
+        return { ok: true, account: refreshed, message: '' };
       }
       application.revision = Number((previous && previous.revision) || 0) + 1;
       await tx.schoolMembers.set(application._id, application);
@@ -293,6 +305,28 @@ function createSchoolHandlers({ claimKey }) {
       if (approved) {
         const fromSchoolId = application.transferFrom;
         if (fromSchoolId === fresh.schoolId) return refused('申请人已经属于本校');
+        // 【陈旧申请必须挡住】（2026-10-26 只读审查 P2-4）
+        // 审批只信申请里记的 transferFrom，不看本人现在归属哪所学校。
+        // 于是同时开出 A→B、A→C 两份申请后依次获批，会把**两份**有效会籍同时留下：
+        // B 侧那条从不会被清理，账号却指向 C，后续想再转回 B 还会被「已是本校会员」挡下。
+        // 这里要求「当前主学校 = 申请来源」，并比对申请时记下的身份版本。
+        if (user.primarySchoolId !== fromSchoolId) {
+          // 作废它，而不是让它一直挂在待办里、每次点开都报错。
+          const voided = { ...application, status: SCHOOL_MEMBER_STATUS.REJECTED,
+            reviewedBy: fresh.actorId, reviewedAt: fresh.now,
+            reviewReason: '申请人所属学校已变化，本申请已作废，请重新提交',
+            revision: Number(application.revision || 0) + 1 };
+          await tx.schoolMembers.set(id, voided);
+          await tx.audit.append({ _id: `transfer_stale_${id}_${voided.revision}`,
+            action: 'voidStaleSchoolTransfer', schoolId: fresh.schoolId, actorId: fresh.actorId,
+            userId: user._id, fromSchoolId, currentSchoolId: user.primarySchoolId || '',
+            revision: voided.revision, at: fresh.now });
+          return refused('申请人所属学校已变化，该申请已作废，请让申请人重新提交');
+        }
+        if (Number.isInteger(application.identityVersion) &&
+            Number(user.schoolIdentityVersion || 0) !== application.identityVersion) {
+          return refused('申请人的学校身份已变化，请让申请人重新提交转校申请');
+        }
         // 目标学校这一侧：学号占用与学院复核，与首次入会同一把尺子
         if (priorMembers.some(row => row.userId !== user._id && row.studentId === application.studentId &&
             [SCHOOL_MEMBER_STATUS.ACTIVE, SCHOOL_MEMBER_STATUS.LEFT, SCHOOL_MEMBER_STATUS.DISABLED].includes(row.status))) {
