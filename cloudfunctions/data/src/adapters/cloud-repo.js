@@ -43,23 +43,55 @@ async function readMatchPage(scope, schoolScope, options) {
   const pendingFilter = { ...filter, status: MATCH_STATUS.PENDING };
   const pendingPromise = count(matchListWhere(schoolScope, pendingFilter));
   const totalPromise = filter.status === MATCH_STATUS.PENDING ? pendingPromise : count(where);
-  const remainingPromise = cursor ? count(pageWhere) : totalPromise;
   const pagePromise = limit === 0 ? Promise.resolve([]) : (async () => {
     // 兼容任意非负 offset；超出结果集直接返回，避免把巨大的 skip 传给数据库。
     if (!cursor && offset > 0 && offset >= await totalPromise) return [];
     let query = collection().match(pageWhere).sort({ matchTime: -1, _id: -1 });
     // offset 兼容既有调用；持续翻页优先传游标，避免深 skip 扫描和插入漂移。
     if (!cursor && offset) query = query.skip(offset);
-    return rowsOf(await query.limit(limit).end());
+    // 多取一条判 hasMore（2026-10-26 第四轮审查 P-8）：原来靠再一次 `count(游标条件)`
+    // 回答「还有没有下一页」，那是本接口的第三个聚合计数，且同样随台账线性增长。
+    // 「多取 1 条」是分页的标准做法，一页的边界本来就由这一条决定。
+    return rowsOf(await query.limit(limit + 1).end());
   })();
-  const [rows, total, pendingCount, remaining] = await Promise.all([
-    pagePromise, totalPromise, pendingPromise, remainingPromise,
-  ]);
-  return { rows, total, pendingCount, hasMore: remaining > (cursor ? 0 : offset) + rows.length };
+  const [fetched, total, pendingCount] = await Promise.all([pagePromise, totalPromise, pendingPromise]);
+  const rows = fetched.slice(0, limit);
+  // limit=0 是「只要计数」的调用（首页数量），此时没有「多取的那条」可判，
+  // 退回用总数判断，行为与改造前一致。
+  const hasMore = limit === 0 ? total > offset : fetched.length > limit;
+  return { rows, total, pendingCount, hasMore };
 }
 
 /** 单次整表读超过这个条数就告警：云端每翻一页是一次 RPC，深翻页同时放大耗时与读配额 */
 const DEEP_READ_WARN = 500;
+
+/**
+ * 单次整表读的硬上限（2026-10-26 第四轮审查 P-9）。
+ *
+ * 【为什么必须有】`readAll` / `readWhere` 的循环没有终点条件，只有「取不满一页
+ * 就停」。一旦某个集合真的涨到几万条，一次请求会连续翻几百页 RPC——**失败方式
+ * 是整体超时**（云函数默认 3 秒），而调用方只会看到「服务异常，请稍后再试」，
+ * 排查时连是哪条查询都看不出来。
+ *
+ * 这里给一个显式的天花板：越过就抛一句能指导修改的错误，让它在开发阶段就暴露，
+ * 而不是在生产上偶发超时。数值取一万——远高于本项目任何「应当整表读」的集合
+ * （名册、赛后报告之类都已改成分页/下推），只拦真正失控的调用。
+ * 可用环境变量 `MAX_READ_ROWS` 收紧（例如压测时设 500 快速找残留）。
+ */
+const MAX_READ_ROWS = Math.max(1, Number(process.env.MAX_READ_ROWS) > 0
+  ? Math.floor(Number(process.env.MAX_READ_ROWS)) : 10000);
+
+/**
+ * 整表读越界的统一报错。
+ *
+ * 文案要点名「改用哪个方法」：这条错误几乎总是因为有人写了 `list()` 再内存过滤，
+ * 只报「超限」的话，接手的人还得自己翻仓储接口。能下推的读法就那么几个。
+ */
+function tooManyRows(name, where) {
+  const cond = where && Object.keys(where).length ? `（条件 ${JSON.stringify(where)}）` : '';
+  return new Error(`单次读取 ${name}${cond} 超过 ${MAX_READ_ROWS} 条上限：`
+    + '请改用带条件的仓储方法缩小范围（listByEvent / listByUser / listByStatus / listPage / listTop），不要整表读后在应用层过滤');
+}
 
 /** 官方事务上限 100 个读写操作；环境变量只允许收紧，不能放大云端上限。 */
 const TX_OPERATION_BUDGET = Math.min(100, Number(process.env.TX_OPERATION_BUDGET) > 0
@@ -193,6 +225,8 @@ async function readAll(scope, name, cmd) {
       .get();
     const batch = (res && res.data) || [];
     for (const doc of batch) out.push(doc);
+    // 硬上限：越过就响亮地失败，而不是继续翻页直到云函数超时（见 MAX_READ_ROWS）。
+    if (out.length > MAX_READ_ROWS) throw tooManyRows(name, null);
     if (batch.length < PAGE_SIZE) break;
     lastId = batch[batch.length - 1]._id;
   }
@@ -270,6 +304,8 @@ async function readWhere(scope, name, where, cmd) {
       .get();
     const batch = (res && res.data) || [];
     for (const doc of batch) out.push(doc);
+    // 同上：带条件读也不是无限量的（条件命中十万条时同样是超时）
+    if (out.length > MAX_READ_ROWS) throw tooManyRows(name, where);
     if (batch.length < PAGE_SIZE) break;
     lastId = batch[batch.length - 1]._id;
   }

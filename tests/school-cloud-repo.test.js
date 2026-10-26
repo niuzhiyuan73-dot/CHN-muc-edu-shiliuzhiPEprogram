@@ -51,6 +51,12 @@ function database(seed = {}) {
               .sort((a, b) => a._id.localeCompare(b._id)).slice(offset, offset + limit);
             return { data };
           },
+          // 聚合计数（schoolMembers.countByStatus 用）：云端是数据库侧统计，
+          // 不读文档；桩里按同一 where 数一遍即可。
+          count: async () => {
+            queries.push({ name, where, aggregate: 'count' });
+            return { total: [...table.values()].filter(doc => matchDoc(doc, where)).length };
+          },
         });
         return {
           ...query(),
@@ -103,6 +109,34 @@ test('cloud school identity query uses school without artificially filtering by 
   const repo = createRepo(db).forScope({ schoolId: 'muc', association: 'tt' });
   assert.deepEqual((await repo.schoolMembers.list()).map(r => r._id), ['a']);
   assert.deepEqual(db.queries[0].where, { schoolId: 'muc' });
+});
+
+test('名册按状态分页并在数据库侧计数，游标只读本校名册', async () => {
+  const db = database({ school_members: [
+    { _id: 'sm:muc:u1', schoolId: 'muc', association: 'pkb', userId: 'u1', status: 'active', studentId: 'S1' },
+    { _id: 'sm:muc:u2', schoolId: 'muc', association: 'pkb', userId: 'u2', status: 'active', studentId: 'S2' },
+    { _id: 'sm:muc:u3', schoolId: 'muc', association: 'pkb', userId: 'u3', status: 'active', studentId: 'S3' },
+    { _id: 'sm:muc:p1', schoolId: 'muc', association: 'pkb', userId: 'p1', status: 'pending', studentId: 'S4' },
+    // 同一学号在别校存在：判重只能看本校
+    { _id: 'sm:buaa:u9', schoolId: 'buaa', association: 'pkb', userId: 'u9', status: 'active', studentId: 'S1' },
+  ] });
+  const scoped = createRepo(db).forScope({ schoolId: 'muc', association: 'pkb' });
+
+  const first = await scoped.schoolMembers.listByStatus('active', { limit: 2 });
+  assert.deepEqual(first.rows.map(row => row.userId), ['u1', 'u2']);
+  assert.equal(first.hasMore, true, '多取一条判还有下一页');
+
+  const next = await scoped.schoolMembers.listByStatus('active', { limit: 2, afterId: 'sm:muc:u2' });
+  assert.deepEqual(next.rows.map(row => row.userId), ['u3'], '游标之后接着取，不重复不跳过');
+  assert.equal(next.hasMore, false);
+
+  assert.equal(await scoped.schoolMembers.countByStatus('active'), 3, '别校同名行不计入');
+  assert.deepEqual((await scoped.schoolMembers.listByStatus('pending')).rows.map(row => row.userId), ['p1'],
+    '待审只按状态取，不再整校读回内存过滤');
+  assert.deepEqual((await scoped.schoolMembers.listByStudentId('S1')).map(row => row._id), ['sm:muc:u1'],
+    '学号判重只回本校那一条');
+  // 每条查询都带范围条件：游标不能把归属校验挤掉
+  assert.ok(db.queries.every(q => q.where.schoolId === 'muc'));
 });
 
 test('cloud scoped write checks existing ownership inside transaction and rollback preserves data', async () => {

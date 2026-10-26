@@ -393,10 +393,11 @@ async function listCollegeLineups(payload = {}, ctx) {
   const actor = legacyActorOf(ctx, dir);
   const members = memberMapOf(dir);
 
-  let rows = await ctx.repo.forScope(ctx).lineups.list();
-  if (typeof payload.eventId === 'string' && payload.eventId) {
-    rows = rows.filter(row => row.eventId === payload.eventId);
-  }
+  // 带 eventId 时下推到查询（索引见 docs/数据库索引清单.md 的 lineups）；
+  // 只带 tieId 时没有对应索引，只能取回赛后内存筛——调用方优先传 eventId。
+  let rows = typeof payload.eventId === 'string' && payload.eventId
+    ? await ctx.repo.forScope(ctx).lineups.listByEvent(payload.eventId)
+    : await ctx.repo.forScope(ctx).lineups.list();
   if (typeof payload.tieId === 'string' && payload.tieId) {
     rows = rows.filter(row => row.tieId === payload.tieId);
   }
@@ -767,7 +768,8 @@ async function startCollegeTie(payload = {}, ctx) {
   }
 
   // 排阵在事务外一次取全（事务内不允许整表查询）；小场草稿按排阵铺出。
-  const lineups = (await ctx.repo.forScope(ctx).lineups.list()).filter(row => row.eventId === tie.eventId);
+  // 按赛事下推（2026-10-26 第四轮审查 P-11）：原来读全协会所有学院的排阵再筛本届。
+  const lineups = await ctx.repo.forScope(ctx).lineups.listByEvent(tie.eventId);
   const built = buildLegMatchDrafts({ event, tie, lineups, now: ctx.now, association: ctx.association });
   if (!built.ok) return ok(refused(built.message));
 

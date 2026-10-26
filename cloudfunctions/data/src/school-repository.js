@@ -173,6 +173,43 @@ function buildScoped(repo, io, inTx, options) {
         : { schoolId: scope.schoolId };
       result[key].listByIds = (ids) => io.byIds(key, ids, scopeFields);
     }
+    // ── 名册分页与按状态/学号取（2026-10-26 第四轮审查 P-2 / P-3 / P-7）──
+    //
+    // 【要解决什么】`getSchoolMembers` 原来 `list()` 整校名册后过滤在册，一次性
+    // 把所有行下发给客户端；`getSchoolApplications` 为了几条待审申请同样整校读；
+    // 入会审批为了判「学号是否已被占用」再整校读一遍。三处都是 O(会员数)，
+    // 而真正需要的分别是「一页 50 条」「几条 pending」「这个学号那 1 条」。
+    //
+    // 【为什么用 _id 当游标】名册主键 `sm:<schoolId>:<userId>`，同一校内按 _id
+    // 升序等价于按 userId 升序（与原来 members.sort(userId) 同序），所以游标不
+    // 改变展示顺序；换成 skip 分页则会随页码线性变慢并在写入时漂移（同 cursorCond）。
+    //
+    // 【为什么多取一条】`hasMore` 用「多取 1 条」判断，不为一个问题再发一次 count；
+    // 总数另给 `countByStatus`（聚合计数，不读文档），只在首屏要一次。
+    if (key === 'schoolMembers') {
+      result[key].listByStatus = async (status, options = {}) => {
+        if (inTx) throw new Error('事务内不允许条件读取（schoolMembers），请改用 getById');
+        if (typeof status !== 'string' || !status) return { rows: [], hasMore: false };
+        const limit = Math.max(1, Math.min(Number(options.limit) || 50, 200));
+        const where = { schoolId: scope.schoolId, status };
+        const afterId = typeof options.afterId === 'string' ? options.afterId : '';
+        if (afterId) where._id = io.cmd.gt(afterId);
+        const rows = await io.top('schoolMembers', where, [{ field: '_id', direction: 'asc' }], limit + 1);
+        return { rows: rows.slice(0, limit), hasMore: rows.length > limit };
+      };
+      result[key].countByStatus = (status) => {
+        if (inTx) throw new Error('事务内不允许条件读取（schoolMembers），请改用 getById');
+        return io.count('schoolMembers', { schoolId: scope.schoolId, status: String(status || '') });
+      };
+      // 学号判重：审批时只需「这个学号在本校有没有有效身份」。
+      // 学号不在主键里，只能按字段查 —— 索引见 docs/数据库索引清单.md
+      // （`schoolMembers`: schoolId + studentId）。
+      result[key].listByStudentId = (studentId) => {
+        if (inTx) throw new Error('事务内不允许条件读取（schoolMembers），请改用 getById');
+        if (typeof studentId !== 'string' || !studentId) return Promise.resolve([]);
+        return io.query('schoolMembers', { schoolId: scope.schoolId, studentId });
+      };
+    }
   }
   // 本赛季的比赛：把 `matchTime >= sinceIso` 下推到查询。
   //

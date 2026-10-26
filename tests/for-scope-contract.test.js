@@ -94,7 +94,11 @@ test('受范围仓储的集合方法面就是约定的那一套（钉住契约�
     if (key === 'schoolRoles' || key === 'memberships' || key === 'schoolMembers') {
       expected = [...expected, 'listByIds'];
     }
-    if (key === 'schoolMembers') expected = [...expected, 'listDirectoryPage'];
+    if (key === 'schoolMembers') {
+      // listByStatus / countByStatus / listByStudentId（2026-10-26 第四轮审查 P-2/P-3/P-7）：
+      // 名册分页、待审计数、学号判重的下推读，替掉「整校读回来再过滤」。
+      expected = [...expected, 'listDirectoryPage', 'listByStatus', 'countByStatus', 'listByStudentId'];
+    }
     if (key === 'teams' || key === 'teamEvents') expected = [...expected, 'listByIds'];
     if (key === 'teamMembers') expected = [...expected, 'listByUser', 'listByTeams'];
     if (key === 'teamEventEntries') expected = [...expected, 'listForUser'];

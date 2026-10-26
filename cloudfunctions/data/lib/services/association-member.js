@@ -27,12 +27,24 @@ function normalizeText(value) {
 }
 
 /**
+ * 关键词长度上限。
+ *
+ * 【为什么要截断】（2026-10-26 第四轮审查 P-13）
+ * 关键词进云端后是聚合里的 `indexOfCP`——对每个人都做一次全串子串比较，
+ * 成本与关键词长度成正比。正常姓名/昵称最长也就十几个字，客户端传一个
+ * 几十 KB 的串既不可能是用户输入的，也不该让全校名册陪它比一遍。
+ * 截断而不是报错：搜索框粘进一段长文本时，行为退化为「按前 32 字搜」，
+ * 用户仍然能看懂结果。
+ */
+const KEYWORD_MAX = 32;
+
+/**
  * 关键词归一化。空串表示未过滤。
  * @param {*} keyword
  * @returns {string}
  */
 function normalizeKeyword(keyword) {
-  return normalizeText(keyword).trim();
+  return normalizeText(keyword).trim().slice(0, KEYWORD_MAX);
 }
 
 /** 昵称与真名归一后的两个字段 */

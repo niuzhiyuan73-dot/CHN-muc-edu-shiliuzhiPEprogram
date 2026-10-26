@@ -1309,8 +1309,9 @@ async function listTeamMatches(payload = {}, ctx) {
   const teams = await repo.teams.list();
   const teamName = new Map(teams.map(team => [team._id, team.name]));
   const manage = canManageAssociationSpace(ctx);
-  const rows = (await repo.teamMatches.list())
-    .filter(match => match.eventId === event._id)
+  // 按赛事下推（`eventId` 已在 EVENT_SCOPED 索引内，2026-10-26 第四轮审查 P-4）：
+  // 原来读本协会**历年全部**团队比赛再内存过滤，赛程页每打开一次就翻若干页 RPC。
+  const rows = (await repo.teamMatches.listByEvent(event._id))
     .sort((a, b) => (Number(a.round) - Number(b.round)) || (Number(a.slot) - Number(b.slot)))
     .map(match => matchView(match, teamName, {
       canRecord: manage || match.recorderId === ctx.actorId || (strategy.sportFormat !== 'football11' && [match.teamA, match.teamB].some(
@@ -2322,10 +2323,13 @@ async function getTeamMatchStats(payload = {}, ctx) {
   if (!inScope(event, ctx)) return ok(refused('赛事不存在，或不在本协会'));
   if (!supportsMatchData(ctx, event, match)) return ok(refused('赛事运动规则与协会不符，或统计功能尚未开放'));
 
-  const entries = await repo.teamEventEntries.list();
+  // 两处都按赛事下推（2026-10-26 第四轮审查 P-4）：原来读本协会全年的报名与
+  // **全部**技术统计再筛这一场，统计集合是只增不减的，越到赛季后段越慢。
+  const entries = await repo.teamEventEntries.listByEvent(match.eventId);
   const teams = await repo.teams.list();
   const teamName = new Map(teams.map(team => [team._id, team.name]));
-  const stats = (await repo.teamMatchStats.list()).filter(row => row.matchId === match._id);
+  const stats = (await repo.teamMatchStats.listByEvent(match.eventId))
+    .filter(row => row.matchId === match._id);
   const manage = canManageAssociationSpace(ctx);
   const captain = [match.teamA, match.teamB].some(
     teamId => (teams.find(team => team._id === teamId) || {}).captainId === ctx.actorId
@@ -2611,12 +2615,14 @@ async function getTeamEventPlayerStats(payload = {}, ctx) {
   const event = await repo.teamEvents.getById(payload.eventId);
   if (!inScope(event, ctx)) return ok(refused('赛事不存在，或不在本协会'));
 
-  const matches = (await repo.teamMatches.list())
-    .filter(match => match.eventId === event._id && match.status === TEAM_MATCH_STATUS.PUBLISHED);
+  // 三个集合都按赛事下推（2026-10-26 第四轮审查 P-4）：个人累计统计页原来
+  // 把本协会**历年**比赛、统计与报名全部读回来再筛本届，随赛季线性变慢。
+  const matches = (await repo.teamMatches.listByEvent(event._id))
+    .filter(match => match.status === TEAM_MATCH_STATUS.PUBLISHED);
   const publishedIds = new Set(matches.map(match => match._id));
-  const stats = (await repo.teamMatchStats.list())
+  const stats = (await repo.teamMatchStats.listByEvent(event._id))
     .filter(row => publishedIds.has(row.matchId) && row.published);
-  const entries = await repo.teamEventEntries.list();
+  const entries = await repo.teamEventEntries.listByEvent(event._id);
 
   const byPlayer = new Map();
   for (const doc of stats) {

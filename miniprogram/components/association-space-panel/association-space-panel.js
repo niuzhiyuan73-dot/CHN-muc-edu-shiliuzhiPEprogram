@@ -38,6 +38,17 @@ const DEFAULT_SUB = 'training';
 const isKnownSub = (key) => SUB_TABS.some((def) => def.key === key);
 /** 一格的名录一次取多少——既是成员页签一页，也是建组选人的候选池 */
 const MEMBER_PAGE = 20;
+
+/**
+ * 搜索输入防抖窗口（2026-10-26 第四轮审查 P-1）。
+ *
+ * 【为什么必须有】名录搜索走的是服务端聚合（`schoolMembers` 关联 `users`
+ * 再按计算字段排序），一次请求的成本与全校在册人数成正比。`bindinput` 每按
+ * 一个键就发一次：输入「张宇轩」在中文输入法下是 3~6 次触发，等于 3~6 次全量
+ * 聚合，而只有最后一次的结果会被看到。300ms 是「停下再取」的经验值，低于
+ * 人对卡顿的感知阈值。
+ */
+const SEARCH_DEBOUNCE_MS = 300;
 const PICK_POOL = 50;
 /** 通知 / 训练列表一页条数 */
 const NOTICE_PAGE = 20;
@@ -199,6 +210,16 @@ Component({
   lifetimes: {
     attached() {
       this.onLoad();
+    },
+    /**
+     * 卸载时收掉搜索防抖的定时器。
+     *
+     * 组件被销毁后 `setData` 会告警（「setData 在已销毁的组件上调用」），而防抖
+     * 定时器正好是「延迟 300ms 之后才 setData」——不清理就是一次必然发生的告警。
+     * 同时把还在等待的那次输入 resolve 掉，避免调用方（含用例）一直挂着。
+     */
+    detached() {
+      this.cancelSearchTimers();
     },
   },
 
@@ -521,6 +542,9 @@ Component({
       if (!this.api) return Promise.resolve();
       const { append = false } = options;
       const keyword = String(this.data.groupKeyword || '').trim();
+      // 请求序号：换词或翻页都会顶掉在途请求，旧响应不许回写（见 loadMembers 同款说明）
+      const seq = this.rosterSeq = (this.rosterSeq || 0) + 1;
+      const stale = () => seq !== this.rosterSeq;
       this.setData({ groupLoading: true, groupEmptyNote: '', error: '' });
       return this.api.listAssociationMembers({
         keyword,
@@ -528,6 +552,7 @@ Component({
         cursor: append ? this.data.groupCursor : '',
       })
         .then((result) => {
+          if (stale()) return undefined;
           if (!result || result.ok === false) throw new Error((result && result.message) || '成员加载失败');
           const rows = (result.members || []).map((row) => this.describeMember(row));
           this.rememberMemberNames(rows);
@@ -542,22 +567,27 @@ Component({
               ? (keyword ? '没有找到匹配的成员' : '本协会暂无可选会员')
               : '',
           });
+          return undefined;
         })
-        .catch((err) => this.setData({
-          groupLoading: false,
-          error: err.message || '成员加载失败',
-          groupEmptyNote: '成员加载失败，请重试',
-        }));
+        .catch((err) => {
+          if (stale()) return;
+          this.setData({
+            groupLoading: false,
+            error: err.message || '成员加载失败',
+            groupEmptyNote: '成员加载失败，请重试',
+          });
+        });
     },
 
     /** 搜索框输入：关键词变了就得重新取第一页（游标里的排序档位依赖关键词） */
     onInputGroupKeyword(event) {
       const raw = event.detail.value == null ? '' : String(event.detail.value);
       this.setData({ groupKeyword: raw });
-      return this.loadGroupRoster();
+      return this.scheduleSearch('roster', () => this.loadGroupRoster());
     },
 
     onClearGroupKeyword() {
+      this.cancelSearch('roster');
       this.setData({ groupKeyword: '' });
       return this.loadGroupRoster();
     },
@@ -677,9 +707,16 @@ Component({
     /** 首屏/切回时按当前关键词重拉第一页 */
     loadMembers() {
       if (!this.api) return Promise.resolve();
+      // 【请求序号】快速改词时会有多个请求在途，云端的返回顺序不保证与发出顺序
+      // 一致。旧响应若回写，会把「张」的结果盖到「张三」的界面上，并顺手把
+      // memberCursor 换成旧页的游标——下一次「加载更多」就从错的位置续读，
+      // 表现为重复或漏人（2026-10-26 第四轮审查 P-1）。
+      const seq = this.memberSeq = (this.memberSeq || 0) + 1;
+      const stale = () => seq !== this.memberSeq;
       this.setData({ memberLoading: true, memberError: '' });
       return this.api.listAssociationMembers({ keyword: this.data.keyword, limit: MEMBER_PAGE })
         .then((result) => {
+          if (stale()) return undefined;
           this.setData({
             memberLoading: false,
             members: (result.members || []).map((row) => this.describeMember(row)),
@@ -687,33 +724,105 @@ Component({
             memberHasMore: Boolean(result.hasMore),
           });
           this.refreshMemberEmptyNote(result.keyword);
+          return undefined;
         })
-        .catch((err) => this.setData({ memberLoading: false, memberError: err.message || '成员加载失败' }));
+        .catch((err) => {
+          if (stale()) return;
+          this.setData({ memberLoading: false, memberError: err.message || '成员加载失败' });
+        });
     },
 
     onLoadMore() {
       if (this.data.memberLoading || !this.data.memberHasMore || !this.api) return undefined;
+      const seq = this.memberSeq = (this.memberSeq || 0) + 1;
+      const stale = () => seq !== this.memberSeq;
       this.setData({ memberLoading: true });
       return this.api.listAssociationMembers({ keyword: this.data.keyword, cursor: this.data.memberCursor, limit: MEMBER_PAGE })
         .then((result) => {
+          if (stale()) return undefined;
           this.setData({
             memberLoading: false,
             members: this.data.members.concat((result.members || []).map((row) => this.describeMember(row))),
             memberCursor: result.nextCursor || '',
             memberHasMore: Boolean(result.hasMore),
           });
+          return undefined;
         })
-        .catch((err) => this.setData({ memberLoading: false, memberError: err.message || '成员加载失败' }));
+        .catch((err) => {
+          if (stale()) return;
+          this.setData({ memberLoading: false, memberError: err.message || '成员加载失败' });
+        });
     },
 
     onInputKeyword(event) {
       this.applyKeyword(event.detail.value);
-      return this.loadMembers();
+      return this.scheduleSearch('member', () => this.loadMembers());
     },
 
     onClearKeyword() {
+      this.cancelSearch('member');
       this.applyKeyword('');
       return this.loadMembers();
+    },
+
+    /**
+     * 搜索防抖：`scheduleSearch(key, run)`。
+     *
+     * 【为什么要返回 Promise】调用方（页面、用例）等的是「这次输入最终取到了」，
+     * 不是「防抖排上了队」。所以定时器到点后把 `run()` 的结果接过来 resolve；
+     * 若这次输入被下一次输入顶掉，也要立刻 resolve 掉旧的——否则它永远挂着。
+     *
+     * @param {string} key 'member' | 'roster'，两处搜索各有一套定时器
+     * @param {Function} run 真正发起请求的函数（返回 Promise）
+     * @returns {Promise<void>}
+     */
+    scheduleSearch(key, run) {
+      const timers = this.searchTimers || (this.searchTimers = {});
+      const waiters = this.searchWaiters || (this.searchWaiters = {});
+      if (timers[key]) {
+        clearTimeout(timers[key]);
+        timers[key] = null;
+      }
+      // 上一次输入被这次的按键顶掉：给它一个着落，别让调用方一直等
+      if (waiters[key]) {
+        waiters[key]();
+        waiters[key] = null;
+      }
+      return new Promise((resolve) => {
+        waiters[key] = resolve;
+        timers[key] = setTimeout(() => {
+          timers[key] = null;
+          const done = waiters[key];
+          waiters[key] = null;
+          Promise.resolve(run()).then(
+            () => { if (done) done(); },
+            () => { if (done) done(); },
+          );
+        }, SEARCH_DEBOUNCE_MS);
+      });
+    },
+
+    /** 收掉某一处的挂起搜索（清空关键词时用：马上重取，不必再等 300ms 后重复取一次）。 */
+    cancelSearch(key) {
+      const timers = this.searchTimers || {};
+      const waiters = this.searchWaiters || {};
+      if (timers[key]) {
+        clearTimeout(timers[key]);
+        timers[key] = null;
+      }
+      if (waiters[key]) {
+        waiters[key]();
+        waiters[key] = null;
+      }
+    },
+
+    /** 组件卸载时收摊（见 detached 的说明）。 */
+    cancelSearchTimers() {
+      const keys = new Set([
+        ...Object.keys(this.searchTimers || {}),
+        ...Object.keys(this.searchWaiters || {}),
+      ]);
+      for (const key of keys) this.cancelSearch(key);
     },
 
     /** 只更新关键词与搜索态，真正的取数交给 loadMembers */

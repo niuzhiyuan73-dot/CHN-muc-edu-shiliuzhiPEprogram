@@ -157,6 +157,31 @@ function createSchoolMemoryRepo(seed = {}) {
             return out;
           };
         }
+        // 名册分页 / 按状态计数 / 按学号取（2026-10-26 第四轮审查 P-2 / P-3 / P-7）：
+        // 与云端同一套语义（`_id` 游标 + 多取一条判 hasMore），两端口径分叉会让
+        // 「本地能翻页、云端翻不动」变成只在真机出现的毛病。
+        if (key === 'schoolMembers') {
+          result[key].listByStatus = async (status, options = {}) => {
+            if (inTx) throw new Error('事务内不允许条件读取（schoolMembers），请改用 getById');
+            if (typeof status !== 'string' || !status) return { rows: [], hasMore: false };
+            const limit = Math.max(1, Math.min(Number(options.limit) || 50, 200));
+            const afterId = typeof options.afterId === 'string' ? options.afterId : '';
+            const rows = (await repo[key].list())
+              .filter(doc => owns(doc) && doc.status === status
+                && (!afterId || String(doc._id) > afterId))
+              .sort((a, b) => String(a._id).localeCompare(String(b._id)));
+            return { rows: rows.slice(0, limit).map(clone), hasMore: rows.length > limit };
+          };
+          result[key].countByStatus = async status => (await repo[key].list())
+            .filter(doc => owns(doc) && doc.status === String(status || '')).length;
+          result[key].listByStudentId = async studentId => {
+            if (inTx) throw new Error('事务内不允许条件读取（schoolMembers），请改用 getById');
+            if (typeof studentId !== 'string' || !studentId) return [];
+            return (await repo[key].list())
+              .filter(doc => owns(doc) && doc.studentId === studentId).map(clone);
+          };
+        }
+
         // 本赛季的比赛（`matchTime >= sinceIso`）：与云端 listSince 同口径。
         // 模拟端在内存里按 ISO 串比较——与云端字符串范围比较等价。
         if (key === 'matches') {

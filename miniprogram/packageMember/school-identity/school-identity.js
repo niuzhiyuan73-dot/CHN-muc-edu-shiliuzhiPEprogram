@@ -8,6 +8,8 @@ Page({
     loading: true, submitting: false, error: '', notice: '',
     user: null, account: null, statusText: '', canApply: false, canReview: false, applications: [],
     members: [], grants: [], readOnly: false,
+    // 名册分页（2026-10-26 第四轮审查 P-2）：一页 50 人，总数单独下发。
+    memberTotal: 0, memberHasMore: false, memberCursor: '', memberLoadingMore: false,
     /** 能不能在这所学校发起转校申请（浏览外校 + 本人在别校有有效身份） */
     canTransfer: false,
     /** 我在本校是否已有待审的转校申请 */
@@ -41,9 +43,19 @@ Page({
       let members = [];
       let grants = session.grants || [];
       let readOnly = Boolean(session.readOnly);
+      let memberTotal = 0;
+      let memberHasMore = false;
+      let memberCursor = '';
       try {
         const roster = await api.getSchoolMembers();
-        if (roster && roster.ok) { members = roster.members; grants = roster.grants; readOnly = roster.readOnly; }
+        if (roster && roster.ok) {
+          members = roster.members;
+          grants = roster.grants;
+          readOnly = roster.readOnly;
+          memberTotal = Number(roster.total || members.length);
+          memberHasMore = Boolean(roster.hasMore);
+          memberCursor = roster.nextCursor || '';
+        }
       } catch (err) { console.error('[school-identity] 成员名单读取失败', err); }
       if (this.unloaded || version !== this.loadVersion) return;
       this.api = api;
@@ -62,7 +74,7 @@ Page({
         studentId: account && account.studentId || '', user: session.user, account,
         statusText: account ? STATUS_LABEL[account.status] || '身份状态待确认' : '尚未申请',
         canReview: session.canReview,
-        members, grants, readOnly,
+        members, grants, readOnly, memberTotal, memberHasMore, memberCursor,
         canApply: Boolean(session.user && !homeMismatch && (!account || ['pending', 'rejected'].includes(account.status))),
         canTransfer,
         transferPending,
@@ -78,6 +90,33 @@ Page({
       if (version === this.loadVersion) this.update({ error: err.message || '加载失败，请重试' });
     } finally {
       if (version === this.loadVersion) this.update({ loading: false });
+    }
+  },
+  /**
+   * 名册「加载更多」。
+   *
+   * 与 reload 共用 `loadVersion`：翻页在途时若整页重载（下拉刷新 / 换学校 /
+   * 审批后刷新），旧响应不得把新列表追加成两段——那是五态里的「竞态」。
+   * 失败不清已有成员，只给一句可重试的提示（与列表加载失败同一口径）。
+   */
+  async onLoadMoreMembers() {
+    if (this.data.memberLoadingMore || !this.data.memberHasMore || !this.api) return;
+    const version = this.loadVersion;
+    this.update({ memberLoadingMore: true });
+    try {
+      const roster = await this.api.getSchoolMembers({ cursor: this.data.memberCursor });
+      if (this.unloaded || version !== this.loadVersion) return;
+      if (!roster || !roster.ok) throw new Error((roster && roster.message) || '成员加载失败');
+      this.update({
+        members: this.data.members.concat(roster.members || []),
+        memberHasMore: Boolean(roster.hasMore),
+        memberCursor: roster.nextCursor || '',
+        memberTotal: Number(roster.total || this.data.memberTotal),
+      });
+    } catch (err) {
+      if (version === this.loadVersion) this.update({ error: err.message || '成员加载失败' });
+    } finally {
+      if (version === this.loadVersion) this.update({ memberLoadingMore: false });
     }
   },
   onSchoolChange(event) {

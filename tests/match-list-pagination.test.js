@@ -121,10 +121,11 @@ test('云端一万场比赛只回传本页文档及计数，不逐页读取历�
   assert.equal(page.rows.length, 100);
   assert.equal(page.hasMore, true);
   assert.equal(db.calls.length, 3, '一页查询 + 两个 count，次数不随台账增长');
-  assert.equal(db.calls.reduce((sum, call) => sum + call.returned, 0), 102);
+  // 一页查询多取 1 条判 hasMore（2026-10-26 第四轮审查 P-8），另两个 count 各回 1 条。
+  assert.equal(db.calls.reduce((sum, call) => sum + call.returned, 0), 103);
   const data = db.calls.find(call => call.stages.some(([stage]) => stage === 'limit'));
   assert.deepEqual(data.stages.find(([stage]) => stage === 'sort')[1], { matchTime: -1, _id: -1 });
-  assert.equal(data.stages.find(([stage]) => stage === 'limit')[1], 100);
+  assert.equal(data.stages.find(([stage]) => stage === 'limit')[1], 101, '取 limit + 1 条，多一条只用于判 hasMore');
 });
 
 test('列表服务只调用分页原语与一次比分批读，保留归属校验、顺序及首帧比分', async () => {

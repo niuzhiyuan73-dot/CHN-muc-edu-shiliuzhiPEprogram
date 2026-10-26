@@ -21,6 +21,18 @@ const grantOptions = ctx => grantablePermissions(ctx).map(permission => ({
   permission, label: PERMISSION_LABEL[permission],
 }));
 
+/** 名册一页的默认条数与上限（下发给客户端的 DTO 数量，直接决定回包体积）。 */
+const ROSTER_PAGE = 50;
+const ROSTER_PAGE_MAX = 200;
+/**
+ * 待审申请的单次上限。
+ *
+ * 【为什么是软上限而不是分页】审核页是「逐条处理」的工作台，处理完一条就整页
+ * 重载，天然不会翻到第 N 页；真正要防的是「一次把几千条待审读进回包」。
+ * 200 条远超一次开学的积压量，超出时回 `hasMore` 让页面提示先处理本批。
+ */
+const APPLICATIONS_PAGE_MAX = 200;
+
 function createSchoolHandlers({ claimKey }) {
   const refused = (message) => ({ ok: false, account: null, message });
   const freshContext = (tx, ctx) => buildSchoolContext({ repo: tx, actorId: ctx.actorId,
@@ -112,8 +124,18 @@ function createSchoolHandlers({ claimKey }) {
     if (reason.length > 500) return ok(refused('审核理由过长'));
     // 兼容尚未生成学号占用文档的 S1 种子/存量身份。新审批统一写 claim，
     // 因而读取后的并发审批仍由事务中的共享 claim 文档阻止重复占用。
-    const priorMembers = payload.decision === 'approve'
-      ? await ctx.repo.forScope(ctx).schoolMembers.list() : [];
+    //
+    // 【为什么只查「这个学号」】（2026-10-26 第四轮审查 P-7）
+    // 原先 `schoolMembers.list()` 把整校名册读回来再 some()：5000 人的学校
+    // 每次审批 = 50 页 RPC，而且这次读**不提供任何额外保护**——并发判重的真正
+    // 防线是事务内的 studentIdClaims（同一学号写同一 _id，冲突即重试）。
+    // 现在先点读申请单取学号，再按字段窄查（索引 schoolId + studentId）。
+    const reviewTargetId = payload.decision === 'approve'
+      ? schoolMemberKey(payload.userId, ctx.schoolId) : '';
+    const reviewTarget = reviewTargetId
+      ? await ctx.repo.forScope(ctx).schoolMembers.getById(reviewTargetId) : null;
+    const priorMembers = reviewTarget && reviewTarget.studentId
+      ? await ctx.repo.forScope(ctx).schoolMembers.listByStudentId(reviewTarget.studentId) : [];
     const result = await ctx.repo.transaction(async tx => {
       const fresh = await freshContext(tx, ctx);
       if (!canSchoolAction(fresh, 'reviewMembers', fresh)) return refused('没有本校审核权限');
@@ -403,7 +425,7 @@ function createSchoolHandlers({ claimKey }) {
    * @param {Object} ctx
    */
   async function getSchoolApplications(_payload, ctx) {
-    if (!canSchoolAction(ctx, 'reviewMembers', ctx)) return ok({ ok: false, applications: [], message: '没有本校审核权限' });
+    if (!canSchoolAction(ctx, 'reviewMembers', ctx)) return ok({ ok: false, applications: [], hasMore: false, message: '没有本校审核权限' });
     // 账号按「待审申请人」的编号批量取。原先是 users.list()（全平台账号整表读），
     // 审核页一次就把别校账号也读回来了（2026-10-21 审查 P0-1）。
     // 转出校名称只对「转校申请」存在，按去重后的 id 逐个取——不走 schools.list()，
@@ -412,8 +434,11 @@ function createSchoolHandlers({ claimKey }) {
     // 学院名走 Map（原先 find 在循环里，2026-10-21 审查 P2-7）。
     const collegeNameById = new Map(colleges.map(row => [row.collegeId, row.name]));
     const collegeName = id => collegeNameById.get(id) || '';
-    const rows = await ctx.repo.forScope(ctx).schoolMembers.list();
-    const pending = rows.filter(row => row.status === 'pending');
+    // 只取 pending：原来是把整校名册读回来再 filter，5000 人的学校 = 50 页 RPC
+    // 只为了几条待审（2026-10-26 第四轮审查 P-3）。
+    const pendingPage = await ctx.repo.forScope(ctx).schoolMembers
+      .listByStatus(SCHOOL_MEMBER_STATUS.PENDING, { limit: APPLICATIONS_PAGE_MAX });
+    const pending = pendingPage.rows;
     const userById = new Map(
       (await ctx.repo.users.listByIds(pending.map(row => row.userId))).map(user => [user._id, user]),
     );
@@ -435,7 +460,9 @@ function createSchoolHandlers({ claimKey }) {
         gender: user && user.gender || '',
         avatarUrl: user && user.avatarUrl || '' };
     });
-    return ok({ ok: true, applications, message: '' });
+    // hasMore=true 表示待审超过一页上限：审核页提示「先处理当前批次」，
+    // 而不是悄悄只显示一部分（软上限，见 APPLICATIONS_PAGE_MAX）。
+    return ok({ ok: true, applications, hasMore: Boolean(pendingPage.hasMore), message: '' });
   }
 
   async function getSchoolDirectory(_payload, ctx) {
@@ -520,20 +547,48 @@ function createSchoolHandlers({ claimKey }) {
    * @param {Object} _payload
    * @param {Object} ctx
    */
-  async function getSchoolMembers(_payload, ctx) {
-    if (!canReadSchool(ctx)) return ok({ ok: false, members: [], grants: [], readOnly: false, message: '没有读取该校成员的权限' });
+  /**
+   * 本校成员与权限。**任何有效平台账号都能读任意启用学校**（跨校只读），
+   * 因此这里不放管理角色门槛，只要求学校与协会可用；返回里不带学号、手机号，
+   * 与跨校参赛名单同一隐私口径。
+   *
+   * 【为什么分页】（2026-10-26 第四轮审查 P-2）
+   * 原先一次下发全校在册成员。名册只增不减，几千人时单次回包会撞云函数 1MB
+   * 上限，表现为整个接口「服务异常」；而页面一屏也只看得下十几行。现在按
+   * `_id` 游标分页（同一校内等价于按 userId 升序，展示顺序不变），`countByStatus`
+   * 单独给总数——它是聚合计数，不读文档。
+   *
+   * 【权限标签为什么可以按页批读】
+   * 每行的「校级角色 + 协会身份」都是按主键点取，主键由 userId 派生，整页一次
+   * `_.in` 就够（原来每页 20 行 40 次点读，见 H-5）。角色表与 membership 表
+   * 也不再整表读：只取这一页涉及的那几个人。
+   *
+   * @param {Object} payload { limit?, cursor? }
+   * @param {Object} ctx
+   * @returns {Promise<Object>} {ok, members, total, hasMore, nextCursor, grants, readOnly}
+   */
+  async function getSchoolMembers(payload = {}, ctx) {
+    if (!canReadSchool(ctx)) {
+      return ok({ ok: false, members: [], grants: [], readOnly: false,
+        total: 0, hasMore: false, nextCursor: '', message: '没有读取该校成员的权限' });
+    }
     const readOnly = Boolean(ctx.actor.primarySchoolId && ctx.actor.primarySchoolId !== ctx.schoolId);
-    // 学院 / 校级角色 / membership 各取一次建 Map：逐成员 3 次 getById 是 N+1，
-    // 云端 QPS 30 下上百人的名录就够触发限流（2026-10-17 只读审计 C5）。
-    const [colleges, roles, memberships] = await Promise.all([
-      ctx.repo.forScope(ctx).colleges.list(),
-      ctx.repo.forScope(ctx).schoolRoles.list(),
-      ctx.repo.forScope(ctx).memberships.list(),
+    const limit = Number.isInteger(payload.limit) && payload.limit > 0
+      ? Math.min(payload.limit, ROSTER_PAGE_MAX) : ROSTER_PAGE;
+    const afterId = typeof payload.cursor === 'string' ? payload.cursor : '';
+    const scoped = ctx.repo.forScope(ctx);
+    const page = await scoped.schoolMembers.listByStatus(SCHOOL_MEMBER_STATUS.ACTIVE, { limit, afterId });
+    const rows = page.rows;
+    // 学院名走 Map（原先 find 在循环里，2026-10-21 审查 P2-7）；
+    // 角色与 membership 只按这一页的人批读，不再整表取。
+    const [colleges, roles, memberships, total] = await Promise.all([
+      scoped.colleges.list(),
+      scoped.schoolRoles.listByIds(rows.map(row => schoolRoleKey(row.userId, ctx.schoolId))),
+      scoped.memberships.listByIds(rows.map(row => schoolMembershipKey(row.userId, ctx))),
+      scoped.schoolMembers.countByStatus(SCHOOL_MEMBER_STATUS.ACTIVE),
     ]);
-    // 学院名走 Map（原先 find 在循环里，2026-10-21 审查 P2-7）。
     const collegeNameById = new Map(colleges.map(row => [row.collegeId, row.name]));
     const collegeName = id => collegeNameById.get(id) || '';
-    const rows = (await ctx.repo.forScope(ctx).schoolMembers.list()).filter(row => row.status === SCHOOL_MEMBER_STATUS.ACTIVE);
     // 账号按在册成员编号批量取，不读全平台 users（2026-10-21 审查 P0-1）。
     const userById = new Map(
       (await ctx.repo.users.listByIds(rows.map(row => row.userId))).map(user => [user._id, user]),
@@ -554,8 +609,16 @@ function createSchoolHandlers({ claimKey }) {
         membershipById.get(schoolMembershipKey(row.userId, ctx)),
       ),
     }));
-    members.sort((a, b) => (a.userId < b.userId ? -1 : 1));
-    return ok({ ok: true, members, grants: readOnly ? [] : grantOptions(ctx), readOnly, message: '' });
+    return ok({
+      ok: true,
+      members,
+      total,
+      hasMore: Boolean(page.hasMore),
+      nextCursor: page.hasMore && rows.length ? rows[rows.length - 1]._id : '',
+      grants: readOnly ? [] : grantOptions(ctx),
+      readOnly,
+      message: '',
+    });
   }
 
   /**

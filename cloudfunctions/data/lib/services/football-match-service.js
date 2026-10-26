@@ -102,7 +102,8 @@ async function mutate(payload, ctx, action, operation, { dependencies = false } 
   if (!requestPattern.test(payload.requestId || '') || !Number.isInteger(payload.expectRevision)) return ok(refused('缺少请求编号或比赛版本，请刷新后重试'));
   const outside = await readTarget(payload, ctx);
   if (!outside.ok) return ok(outside);
-  const related = dependencies ? (await outside.repo.teamMatches.list()).filter(m => m.eventId === outside.event._id && m._id !== outside.match._id) : [];
+  const related = dependencies ? (await outside.repo.teamMatches.listByEvent(outside.event._id))
+    .filter(m => m._id !== outside.match._id) : [];
   if (related.length > 70) return ok(refused('关联赛程超过单次处理容量，请分届办赛'));
   const basis = outside.event.revision || 0;
   return ok(await ctx.repo.transaction(async root => {
@@ -283,7 +284,7 @@ async function getTeamEventPlayerStats(payload, ctx) {
   const repo = ctx.repo.forScope(ctx);
   const event = await repo.teamEvents.getById(payload.eventId);
   if (!validEvent(ctx, event) || event.status === 'draft') return ok(refused('赛事不存在或尚未发布'));
-  const matches = publicMatches((await repo.teamMatches.list()).filter(m => m.eventId === event._id));
+  const matches = publicMatches(await repo.teamMatches.listByEvent(event._id));
   const players = aggregate(matches);
   const order = field => players.filter(p => p[field] !== null).sort((a, b) => b[field] - a[field] || a.userId.localeCompare(b.userId));
   const completeCount = matches.filter(m => ['A', 'B'].every(s => m.footballPublished.sides[s].coverage.goals === 'full'
