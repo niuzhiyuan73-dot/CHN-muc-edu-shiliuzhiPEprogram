@@ -274,28 +274,74 @@ async function recordDirOf(ctx, doc) {
 async function recordDirOfUsers(ctx, userIds) {
   const memberCollegeId = (ctx.schoolMember && ctx.schoolMember.collegeId) || '';
   if (!memberCollegeId) return EMPTY_RECORD_DIR;
+  return userDirectory(ctx, userIds);
+}
 
-  const ids = [...new Set((Array.isArray(userIds) ? userIds : [])
+/**
+ * 「这批人 + 操作者」的学院关系（2026-10-26 第六轮 D）。
+ *
+ * 与 `recordDirOfUsers` 同一个读法（学院目录 1 页 + 这批人学籍一次批读），
+ * 但**不做「操作者没有学院就短路」**那一步：
+ *   · 判球路径的短路是对的——同学院判定必然不成立，读都不用读；
+ *   · 代签 / 指派这类路径的短路是**错的**——它们要判的是「目标会员属于哪个学院」，
+ *     与操作者自己有没有学院无关。短路会让 `collegeOf(target)` 变空串，而
+ *     `canCheckIn` 把「目标学院为空」当作「未指定目标」直接放行（见 checkIn 的注释：
+ *     始终带上目标学院，避免学院边界被放行）。所以这里必须照常解析。
+ *
+ * 返回值与 `buildDirectory` 的子集同形（actorCollege / collegeIdOf /
+ * collegeNameById / collegeOf），调用方不必分支。
+ *
+ * @param {Object} ctx
+ * @param {Array<string>} userIds 额外需要的会员编号（会去重、忽略空值，自动并入操作者）
+ * @returns {Promise<Object>}
+ */
+async function userDirectory(ctx, userIds) {
+  const ids = [...new Set([...(Array.isArray(userIds) ? userIds : []), ctx.actorId]
     .filter(id => typeof id === 'string' && id))];
   const scoped = ctx.repo.forScope(ctx);
   const [colleges, rows] = await Promise.all([
     scoped.colleges.list(),
     ids.length ? scoped.schoolMembers.listByIds(ids.map(id => schoolMemberKey(id, ctx.schoolId))) : [],
   ]);
-
   const nameById = new Map(colleges.map(item => [item.collegeId, item.name]));
   const collegeIdByUser = new Map();
   for (const row of rows) {
     if (row && row.userId && row.collegeId) collegeIdByUser.set(row.userId, row.collegeId);
   }
+  const myCollegeId = (ctx.schoolMember && ctx.schoolMember.collegeId) || '';
   // 操作者自己一定在表里（他的学院名要用于「同学院」判定，见 recordDirOf 的说明）
-  collegeIdByUser.set(ctx.actorId, memberCollegeId);
-
+  if (myCollegeId) collegeIdByUser.set(ctx.actorId, myCollegeId);
   return {
-    actorCollege: nameById.get(memberCollegeId) || '',
+    actorCollege: nameById.get(myCollegeId) || '',
     collegeIdOf: userId => collegeIdByUser.get(userId) || '',
     collegeNameById: id => nameById.get(id) || '',
     collegeOf: userId => nameById.get(collegeIdByUser.get(userId)) || '',
+  };
+}
+
+/**
+ * 只解析**操作者自己**的学院（2026-10-26 第六轮 D）。
+ *
+ * 【给谁用】写动作的身份闸（`freshActorGate` → `legacyActorOf`）从目录里唯一取的
+ * 就是 `dir.actorCollege` 这一个字符串，而 `buildDirectory` 为此要读全校在册名单
+ * + 这批人的账号（2000 人的学校 40 次 RPC）。
+ *
+ * 【为什么不是「随便查得到就查」】这里显式只认操作者本人：别人的学院一律给空串。
+ * 需要别人学院的地方（代签、指派、判球）**必须**改用 `userDirectory` / `recordDirOf`。
+ * 给空串而不是抛错，是因为空的学院名在旧栈判定里是「不同学院」，属于**收紧**；
+ * 唯一会因此放行的是「目标学院为空 = 未指定目标」那类分支，所以那些路径不能走这里。
+ *
+ * @param {Object} ctx
+ * @returns {Promise<Object>} 与 buildDirectory 子集同形
+ */
+async function actorDirectory(ctx) {
+  const myCollegeId = (ctx.schoolMember && ctx.schoolMember.collegeId) || '';
+  const name = await actorCollegeNameOf(ctx);
+  return {
+    actorCollege: name,
+    collegeIdOf: userId => (userId === ctx.actorId ? myCollegeId : ''),
+    collegeNameById: id => (myCollegeId && id === myCollegeId ? name : ''),
+    collegeOf: userId => (userId === ctx.actorId ? name : ''),
   };
 }
 
@@ -322,5 +368,6 @@ async function actorCollegeNameOf(ctx) {
 
 module.exports = {
   legacyRoleOf, buildDirectory, buildCollegeDirectory, recordOptions, legacyActorOf,
-  actorCollegeNameOf, recordDirOf, recordDirOfUsers, EMPTY_RECORD_DIR,
+  actorCollegeNameOf, recordDirOf, recordDirOfUsers, userDirectory, actorDirectory,
+  EMPTY_RECORD_DIR,
 };

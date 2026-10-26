@@ -25,7 +25,7 @@
  */
 
 const { canReadAssociationSpace } = require('./association-space-permission.js');
-const { legacyActorOf, legacyRoleOf, buildDirectory } = require('./school-actor.js');
+const { legacyActorOf, legacyRoleOf, buildDirectory, actorDirectory } = require('./school-actor.js');
 const { permissionOf, permissionLabelOf, canSchoolAction } = require('./school-permission.js');
 const { displayRating } = require('./school-rating-service.js');
 const { aggregatePoints, collectEventPointFacts, mountEventPointDeltas } = require('./school-points-service.js');
@@ -893,7 +893,9 @@ async function getSchoolSeason(payload = {}, ctx) {
  */
 async function resetSchoolSeason(payload = {}, ctx) {
   if (!ctx.actorId) return ok(refused('请先登录'));
-  const dir = await buildDirectory(ctx);
+  // 【2026-10-26 第六轮 D】目录只喂给 legacyActorOf（它只取 actorCollege），
+  // 不再为一次「能不能重置赛季」读全校名册。
+  const dir = await actorDirectory(ctx);
   if (!canResetSeason(legacyActorOf(ctx, dir))) return ok(refused('只有管理员可以开始新赛季'));
 
   // 分界点由客户端传入，但必须是个能解析的时间。NaN 会顺着 resetTime 流进

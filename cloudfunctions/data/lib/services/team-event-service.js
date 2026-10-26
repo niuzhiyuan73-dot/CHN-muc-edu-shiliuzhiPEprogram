@@ -266,8 +266,11 @@ async function listTeamEvents(payload = {}, ctx) {
 
   const manage = canManageAssociationSpace(ctx);
   const repo = ctx.repo.forScope(ctx);
-  const [events, entries, dir] = await Promise.all([
-    repo.teamEvents.list(), repo.teamEventEntries.list(), buildDirectory(ctx),
+  // 【2026-10-26 第六轮 D】原来还在这里 buildDirectory：整个函数只用它的
+  // `collegeIdOf(ctx.actorId)`，而那正是上下文里已有的 schoolMember.collegeId。
+  // 为一个字段读全校名册 + 全量账号（2000 人 40 次 RPC）不划算，直接取上下文。
+  const [events, entries] = await Promise.all([
+    repo.teamEvents.list(), repo.teamEventEntries.list(),
   ]);
   const countByEvent = new Map();
   for (const entry of entries) {
@@ -285,7 +288,7 @@ async function listTeamEvents(payload = {}, ctx) {
 
   // 「我能不能报名」：本院院队的报名处在什么状态。
   // 院队编号是确定性派生的，所以不必先把队读出来就能与报名记录比对。
-  const myCollegeId = dir.collegeIdOf(ctx.actorId);
+  const myCollegeId = (ctx.schoolMember && ctx.schoolMember.collegeId) || '';
   const myTeamId = myCollegeId ? collegeTeamKey(myCollegeId, ctx) : '';
   const canManageMyCollege = Boolean(myCollegeId) && canSchoolAction(ctx, 'manageCollege', {
     schoolId: ctx.schoolId, association: ctx.association, collegeId: myCollegeId,

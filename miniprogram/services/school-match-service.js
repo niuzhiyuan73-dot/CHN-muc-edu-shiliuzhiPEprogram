@@ -716,7 +716,11 @@ async function transition(payload, ctx, spec) {
   if (!ctx.actorId) return ok(refused('请先登录'));
   if (typeof payload.matchId !== 'string' || !payload.matchId) return ok(refused('缺少比赛编号'));
 
-  const dir = await buildDirectory(ctx);
+  // 【2026-10-26 第六轮 D】只要「这场比赛的两队选手 + 操作者」的学院关系。
+  // 原来读全校名册 + 全量账号（2000 人 40 次 RPC），而一场比赛最多涉及 4 个人。
+  // 这里多一次比赛点读是为了拿到参赛者编号——事务内仍会重读一次做权限判定。
+  const snapshot = await ctx.repo.forScope(ctx).matches.getById(payload.matchId);
+  const dir = await recordDirOf(ctx, snapshot);
   const result = await ctx.repo.transaction(async tx => {
     const fresh = await freshContext(tx, ctx);
     if (!canReadAssociationSpace(fresh)) return refused('账号已停用，或没有本协会的访问权限');
@@ -769,7 +773,9 @@ async function forfeitSchoolMatch(payload = {}, ctx) {
   if (typeof payload.matchId !== 'string' || !payload.matchId) return ok(refused('缺少比赛编号'));
   const forfeitBy = String(payload.forfeitBy || ctx.actorId).trim();
 
-  const dir = await buildDirectory(ctx);
+  // 【2026-10-26 第六轮 D】下面只用目录的 `role`，而 role 来自 legacyRoleOf(ctx)、
+  // 与目录无关。原来为它读全校名册 + 全量账号，纯浪费。
+  const dir = EMPTY_RECORD_DIR;
   const result = await ctx.repo.transaction(async tx => {
     const fresh = await freshContext(tx, ctx);
     // 与 confirm / revoke 同一道闸：停用账号、失效学籍都不能借弃权改成绩（F1 同类）
@@ -805,8 +811,9 @@ async function assignSchoolMatchReferee(payload = {}, ctx) {
   if (typeof payload.matchId !== 'string' || !payload.matchId) return ok(refused('缺少比赛编号'));
 
   const refereeId = String(payload.refereeId || '').trim();
-  // 名录（整表读）只能在事务外取；事务内只按主键点读，见 buildDirectory 的约束
-  const dir = await buildDirectory(ctx);
+  // 【2026-10-26 第六轮 D】matchSummary 只需要这场比赛的参赛者学院，用 recordDirOf 点读。
+  const snapshot = await ctx.repo.forScope(ctx).matches.getById(payload.matchId);
+  const dir = await recordDirOf(ctx, snapshot);
   const result = await ctx.repo.transaction(async tx => {
     const fresh = await freshContext(tx, ctx);
     // 指派裁判是管理动作：事务内按最新身份重判（请求期间被撤权不予放行，F1/F2 同类）

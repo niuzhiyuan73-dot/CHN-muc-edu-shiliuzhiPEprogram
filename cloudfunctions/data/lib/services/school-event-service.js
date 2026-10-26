@@ -43,7 +43,7 @@ const {
   canReadAssociationSpace, canManageAssociationSpace, canParticipateInAssociation,
 } = require('./association-space-permission.js');
 // 角色 / 名单的推导收在 school-actor，两套栈只有一份口径。
-const { buildDirectory, legacyActorOf, actorCollegeNameOf } = require('./school-actor.js');
+const { buildDirectory, legacyActorOf, actorCollegeNameOf, actorDirectory, userDirectory } = require('./school-actor.js');
 const {
   schoolKey, belongsToSchoolScope, schoolEventKey, schoolEventSignupKey,
   associationGroupMemberKey, schoolMemberKey,
@@ -698,7 +698,10 @@ async function startSchoolEvent(payload = {}, ctx) {
   if (typeof payload.eventId !== 'string' || !payload.eventId) return ok(refused('缺少赛事编号'));
   if (!canReadAssociationSpace(ctx)) return ok(refused('没有读取协会空间的权限'));
 
-  const dir = await buildDirectory(ctx);
+  // 【2026-10-26 第六轮 D】目录只进身份闸，而 legacyActorOf 从目录里唯一取的就是
+  // actorCollege。原来为此读全校名册 + 全量账号（2000 人的学校 40 次 RPC），
+  // 现在一次点读学院名。
+  const dir = await actorDirectory(ctx);
   const result = await ctx.repo.transaction(async tx => {
     const gate = await freshActorGate(tx, ctx, dir);
     if (!gate.ok) return refused(gate.message);
@@ -799,7 +802,10 @@ async function checkInSchoolEvent(payload = {}, ctx) {
   if (!userId) return ok(refused('请指定要签到的会员'));
   if (!canReadAssociationSpace(ctx)) return ok(refused('没有读取协会空间的权限'));
 
-  const dir = await buildDirectory(ctx);
+  // 【2026-10-26 第六轮 D】只要「目标会员 + 操作者」两个人的学院。
+  // 这里**不能**用 actorDirectory：那会给别人的学院空串，而「目标学院为空」
+  // 在 canCheckIn 里等同于「未指定目标」直接放行——学院边界会被绕过。
+  const dir = await userDirectory(ctx, [userId]);
   // 始终带上目标学院，避免「未指定目标」的短路把学院边界放行（见 event.canCheckIn）。
   const target = { college: dir.collegeOf(userId) };
 
@@ -839,7 +845,10 @@ async function finishSchoolEvent(payload = {}, ctx) {
   if (typeof payload.eventId !== 'string' || !payload.eventId) return ok(refused('缺少赛事编号'));
   if (!canReadAssociationSpace(ctx)) return ok(refused('没有读取协会空间的权限'));
 
-  const dir = await buildDirectory(ctx);
+  // 【2026-10-26 第六轮 D】目录只进身份闸，而 legacyActorOf 从目录里唯一取的就是
+  // actorCollege。原来为此读全校名册 + 全量账号（2000 人的学校 40 次 RPC），
+  // 现在一次点读学院名。
+  const dir = await actorDirectory(ctx);
   const signups = await ctx.repo.forScope(ctx).eventSignups.listByEvent(payload.eventId);
 
   const result = await ctx.repo.transaction(async tx => {
