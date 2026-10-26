@@ -311,9 +311,11 @@ function createSchoolMemoryRepo(seed = {}) {
         };
         // 运动会录分页的两个下推（与云端 forMeet 同口径，2026-10-23 H-9）：
         // 本场次的报名按编号批读、成绩按 sessionKey 取，不再读一届全部。
-        // 报名 / 场次 / 意向按「本项目」取：与云端 listByProject 同口径
-        // （意向是 2026-10-26 第五轮审查 E 补的，两端口径必须一致）。
-        if (key === 'sportsMeetEntries' || key === 'sportsMeetSessions' || key === 'sportsMeetInterests') {
+        // 报名 / 场次 / 意向 / 成绩 / 发布快照 / 指派 / 结果行按「本项目」取：
+        // 与云端 listByProject 同口径（第五轮 B 把七项统一）。
+        if (key === 'sportsMeetEntries' || key === 'sportsMeetSessions' || key === 'sportsMeetInterests'
+          || key === 'sportsMeetScores' || key === 'sportsMeetPublications'
+          || key === 'sportsMeetJudgeAssignments' || key === 'sportsMeetResultRows') {
           result[key].listByProject = async projectKey => {
             if (inTx) throw new Error(`事务内不允许条件读取（${key}），请改用 getById`);
             if (typeof projectKey !== 'string' || !projectKey) return [];

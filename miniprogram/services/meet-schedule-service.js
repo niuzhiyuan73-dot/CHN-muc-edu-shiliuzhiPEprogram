@@ -495,7 +495,9 @@ async function listMeetEventSessions(payload = {}, ctx) {
   const [events, sessions, assignments] = await Promise.all([
     listAliveEvents(ctx.repo.forMeet(scope).sportsMeetEvents),
     listSessions(ctx.repo, ctx),
-    ctx.repo.forMeet(scope).sportsMeetJudgeAssignments.list(),
+    // 只取本项目的指派（2026-10-26 第五轮 B）：一届的指派是「场次 × 裁判数」，
+    // 而这里只需要「我在这几场里算不算裁判」。
+    ctx.repo.forMeet(scope).sportsMeetJudgeAssignments.listByProject(eventKey),
   ]);
   const event = events.find((doc) => doc._id === eventKey);
   if (!event) return refused('项目组别不存在');
@@ -740,7 +742,9 @@ async function getMyMeetJudgeTasks(payload = {}, ctx) {
 
   const [sessions, assignments, events] = await Promise.all([
     listSessions(ctx.repo, ctx),
-    ctx.repo.forMeet(scope).sportsMeetJudgeAssignments.list(),
+    // 只要「指派给我的」（2026-10-26 第五轮 B）：`listByJudge` 是现成的下推原语，
+    // 原来读一届全部指派（场次 × 裁判数）再按 judgeId 过滤。
+    ctx.repo.forMeet(scope).sportsMeetJudgeAssignments.listByJudge(ctx.actorId),
     listAliveEvents(ctx.repo.forMeet(scope).sportsMeetEvents),
   ]);
   const eventOf = new Map(events.map((doc) => [doc._id, doc]));

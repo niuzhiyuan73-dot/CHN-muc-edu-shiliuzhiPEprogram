@@ -60,8 +60,11 @@ function expectedMethodsOf(key) {
   let expected = [...REQUIRED_METHODS];
   // 录分页只要「本场次的报名与成绩」（2026-10-23 H-9）：一届的报名与成绩可上千条，
   // 而一个场次十几条。报名按编号批读、成绩按 sessionKey 查。
-  // 意向也按项目取（2026-10-26 第五轮审查 E）：提交名单要看「这些人对本项目有没意向」。
-  if (key === 'sportsMeetEntries' || key === 'sportsMeetSessions' || key === 'sportsMeetInterests') {
+  // 2026-10-26 第五轮 B：凡带 eventKey 的运动会集合统一给 listByProject，
+  // 把「读一届再按项目过滤」的 45 处调用点换掉。
+  const PROJECT_SCOPED = ['sportsMeetEntries', 'sportsMeetSessions', 'sportsMeetInterests',
+    'sportsMeetScores', 'sportsMeetPublications', 'sportsMeetJudgeAssignments', 'sportsMeetResultRows'];
+  if (PROJECT_SCOPED.includes(key)) {
     expected = [...expected, 'listByProject'];
   }
   if (key === 'sportsMeetScores' || key === 'sportsMeetJudgeAssignments') {

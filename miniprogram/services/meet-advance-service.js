@@ -98,14 +98,16 @@ async function drawMeetHeats(payload = {}, ctx) {
   const scope = scopeOf(ctx);
 
   const event = await ctx.repo.forMeet(scope).sportsMeetEvents.getById(eventKey);
+  // 三处都按本项目下推（2026-10-26 第五轮 B）：抽签只需要本项目的报名、
+  // 本项目的发布快照与「本项目有没有录过分」。原来读一届全部，随项目数线性变慢。
   const [entries, publications, existingScores] = await Promise.all([
-    ctx.repo.forMeet(scope).sportsMeetEntries.list(),
-    ctx.repo.forMeet(scope).sportsMeetPublications.list(),
-    ctx.repo.forMeet(scope).sportsMeetScores.list(),
+    ctx.repo.forMeet(scope).sportsMeetEntries.listByProject(eventKey),
+    ctx.repo.forMeet(scope).sportsMeetPublications.listByProject(eventKey),
+    ctx.repo.forMeet(scope).sportsMeetScores.listByProject(eventKey),
   ]);
   if (!event || event.meetId !== ctx.meetId) return refused('项目组别不存在或不属于本届运动会');
   if (!canManageMeet(ctx)) return refused('只有校级管理员及以上可以抽签分组');
-  if (event.heatDraw || existingScores.some(row => row.eventKey === eventKey)) return refused('该项目已经分组或录分，不能重复抽签覆盖名单');
+  if (event.heatDraw || existingScores.length > 0) return refused('该项目已经分组或录分，不能重复抽签覆盖名单');
   if (event.scoreType === MEET_SCORE_TYPE.VERSUS) {
     return refused('胜负项目不做分组，请用签表编排');
   }
@@ -264,12 +266,13 @@ async function advanceMeetEvent(payload = {}, ctx) {
   const scope = scopeOf(ctx);
 
   const event = await ctx.repo.forMeet(scope).sportsMeetEvents.getById(eventKey);
+  // 晋级只看本项目的报名/场次/快照/结果行/成绩（2026-10-26 第五轮 B）。
   const [entries, sessions, publications, rows, scores] = await Promise.all([
-    ctx.repo.forMeet(scope).sportsMeetEntries.list(),
-    ctx.repo.forMeet(scope).sportsMeetSessions.list(),
-    ctx.repo.forMeet(scope).sportsMeetPublications.list(),
-    ctx.repo.forMeet(scope).sportsMeetResultRows.list(),
-    ctx.repo.forMeet(scope).sportsMeetScores.list(),
+    ctx.repo.forMeet(scope).sportsMeetEntries.listByProject(eventKey),
+    ctx.repo.forMeet(scope).sportsMeetSessions.listByProject(eventKey),
+    ctx.repo.forMeet(scope).sportsMeetPublications.listByProject(eventKey),
+    ctx.repo.forMeet(scope).sportsMeetResultRows.listByProject(eventKey),
+    ctx.repo.forMeet(scope).sportsMeetScores.listByProject(eventKey),
   ]);
   if (!event || event.meetId !== ctx.meetId) return refused('项目组别不存在或不属于本届运动会');
   if (!canManageMeet(ctx)) return refused('只有校级管理员及以上可以推进晋级');
@@ -511,8 +514,8 @@ async function drawMeetBracket(payload = {}, ctx) {
 
   const [event, entries, sessions] = await Promise.all([
     ctx.repo.forMeet(scope).sportsMeetEvents.getById(eventKey),
-    ctx.repo.forMeet(scope).sportsMeetEntries.list(),
-    ctx.repo.forMeet(scope).sportsMeetSessions.list(),
+    ctx.repo.forMeet(scope).sportsMeetEntries.listByProject(eventKey),
+    ctx.repo.forMeet(scope).sportsMeetSessions.listByProject(eventKey),
   ]);
   if (!event || event.meetId !== ctx.meetId) return refused('项目组别不存在或不属于本届运动会');
   if (!canManageMeet(ctx)) return refused('只有校级管理员及以上可以编排赛制');
@@ -728,12 +731,14 @@ async function setMeetMatchWinner(payload = {}, ctx) {
   if (!canPublishMeetResult(ctx)) return refused('只有校级管理员及以上或本届总裁判可以判定胜负');
   const scope = scopeOf(ctx);
 
-  const [session, sessions, events] = await Promise.all([
+  const [session, events] = await Promise.all([
     ctx.repo.forMeet(scope).sportsMeetSessions.getById(sessionKey),
-    ctx.repo.forMeet(scope).sportsMeetSessions.list(),
     listAliveEvents(ctx.repo.forMeet(scope).sportsMeetEvents),
   ]);
   if (!session || session.meetId !== ctx.meetId) return refused('场次不存在或不属于本届运动会');
+  // 签表只在**同一项目**内推演（2026-10-26 第五轮 B）：原来读一届全部场次，
+  // 只为算出本项目那几场的前后手。eventKey 来自刚点读的场次，不信任入参。
+  const sessions = await ctx.repo.forMeet(scope).sportsMeetSessions.listByProject(session.eventKey);
   if (!session.entryKeys || !session.entryKeys.some(Boolean)) {
     return refused('该场次还没有对阵双方');
   }
@@ -847,8 +852,8 @@ async function getMeetBracket(payload = {}, ctx) {
 
   const [event, entries, sessions] = await Promise.all([
     ctx.repo.forMeet(scope).sportsMeetEvents.getById(eventKey),
-    ctx.repo.forMeet(scope).sportsMeetEntries.list(),
-    ctx.repo.forMeet(scope).sportsMeetSessions.list(),
+    ctx.repo.forMeet(scope).sportsMeetEntries.listByProject(eventKey),
+    ctx.repo.forMeet(scope).sportsMeetSessions.listByProject(eventKey),
   ]);
   if (!event || event.meetId !== ctx.meetId) return refused('项目组别不存在或不属于本届运动会');
   if (event.scoreType !== MEET_SCORE_TYPE.VERSUS) return refused('该项目不是胜负项目');
@@ -949,9 +954,10 @@ async function resetMeetDraw(payload = {}, ctx) {
   const [meet, event, sessions, publications, scores] = await Promise.all([
     ctx.repo.forMeet(scope).sportsMeets.getById(ctx.meetId),
     ctx.repo.forMeet(scope).sportsMeetEvents.getById(eventKey),
-    ctx.repo.forMeet(scope).sportsMeetSessions.list(),
-    ctx.repo.forMeet(scope).sportsMeetPublications.list(),
-    ctx.repo.forMeet(scope).sportsMeetScores.list(),
+    // 重抽前的「有没有分过组 / 录过分」只看本项目（2026-10-26 第五轮 B）
+    ctx.repo.forMeet(scope).sportsMeetSessions.listByProject(eventKey),
+    ctx.repo.forMeet(scope).sportsMeetPublications.listByProject(eventKey),
+    ctx.repo.forMeet(scope).sportsMeetScores.listByProject(eventKey),
   ]);
   if (!event || event.meetId !== ctx.meetId) return refused('项目组别不存在或不属于本届运动会');
   if (!canManageMeet(ctx) && !isChiefJudge(ctx, meet)) {

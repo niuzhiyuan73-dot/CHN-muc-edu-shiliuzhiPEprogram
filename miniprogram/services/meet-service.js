@@ -287,8 +287,10 @@ async function setMeetEventProcedure(payload = {}, ctx) {
 
   const [event, sessions, publications] = await Promise.all([
     ctx.repo.forMeet(scope).sportsMeetEvents.getById(eventKey),
-    ctx.repo.forMeet(scope).sportsMeetSessions.list(),
-    ctx.repo.forMeet(scope).sportsMeetPublications.list(),
+    // 改赛制只看本项目（2026-10-26 第五轮 B）：原来读一届全部场次与快照，
+    // 只为判断「这个项目有没有排过场次 / 发布过成绩」。
+    ctx.repo.forMeet(scope).sportsMeetSessions.listByProject(eventKey),
+    ctx.repo.forMeet(scope).sportsMeetPublications.listByProject(eventKey),
   ]);
   if (!event || event.meetId !== ctx.meetId) return refused('项目组别不存在或不属于本届运动会');
   const template = getTemplate(event.templateId);

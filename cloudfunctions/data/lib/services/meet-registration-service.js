@@ -457,9 +457,10 @@ async function getMeetApplicantPool(payload = {}, ctx) {
   const resolved = await resolveCollege(ctx, payload);
   if (!resolved.ok) return refused(resolved.message);
 
-  const interests = (await ctx.repo.forMeet(scope).sportsMeetInterests.list())
-    .filter((doc) => doc.eventKey === event.doc._id && doc.collegeId === resolved.collegeId
-      && isActiveInterest(doc))
+  // 只取本项目的意向（2026-10-26 第五轮 B）：报名旺季一届意向数千条，
+  // 而这里只要「本项目、本院、还有效」的那几条。
+  const interests = (await ctx.repo.forMeet(scope).sportsMeetInterests.listByProject(event.doc._id))
+    .filter((doc) => doc.collegeId === resolved.collegeId && isActiveInterest(doc))
     .slice(0, APPLICANT_POOL_MAX);
 
   // 【为什么不再逐人点读两次】（2026-10-22 第二轮审查 P-5）

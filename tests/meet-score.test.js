@@ -419,3 +419,53 @@ test('发布时检测事务前快照过期，不写出混合版本成绩', async
   assert.equal((await world.repo.sportsMeetPublications.list()).length,0);
   assert.equal((await world.repo.sportsMeetStandings.list()).length,0);
 });
+
+test('按项目下推：预览 / 发布 / 已发布结果 / 报名池只读本项目，不再整届扫描（第五轮 B）', async () => {
+  const world = await makeWorld();
+  const { repo, meetId, admin, sprint } = world;
+  const sessionKey = sessionOf(meetId, sprint);
+  // 三名裁判全部交卷、三个学院的参赛记录都收齐才能发布（缺分不发）
+  let tick = 0;
+  for (const collegeId of ['c01', 'c02', 'c03']) {
+    const entryKey = await entryOf(world, sprint, collegeId);
+    for (const judgeId of ['u_j1', 'u_j2', 'u_j3']) {
+      tick += 1;
+      await giveScore(world, sessionKey, entryKey, judgeId, `12.${30 + tick}`);
+    }
+  }
+  const published = await score.publishMeetResults({ eventKey: sprint }, admin);
+  assert.equal(published.ok, true, published.message);
+
+  // 记录 forMeet 表面上的每一次读：改造前这些接口走的是 `.list()`（读一届的全部
+  // 报名/成绩/场次/快照），改造后必须全部是 `.listByProject()`。
+  const used = [];
+  const rawForMeet = repo.forMeet.bind(repo);
+  repo.forMeet = (scope) => {
+    const surface = rawForMeet(scope);
+    const keys = ['sportsMeetEntries', 'sportsMeetSessions', 'sportsMeetScores',
+      'sportsMeetPublications', 'sportsMeetResultRows', 'sportsMeetJudgeAssignments', 'sportsMeetInterests'];
+    for (const key of keys) {
+      for (const name of ['list', 'listByProject']) {
+        const raw = surface[key] && surface[key][name];
+        if (typeof raw !== 'function') continue;
+        surface[key][name] = (...args) => { used.push(`${key}.${name}`); return raw(...args); };
+      }
+    }
+    return surface;
+  };
+  const unscoped = () => used.filter((name) => name.endsWith('.list'));
+
+  used.length = 0;
+  assert.equal((await score.getMeetResultPreview({ eventKey: sprint }, admin)).ok, true);
+  assert.deepEqual(unscoped(), [], `预览不该整届读：${used.join(', ')}`);
+  assert.ok(used.includes('sportsMeetEntries.listByProject'), '报名应当按项目下推');
+
+  used.length = 0;
+  assert.equal((await score.getPublishedResults({ eventKey: sprint }, admin)).ok, true);
+  assert.deepEqual(unscoped(), [], `已发布结果不该整届读：${used.join(', ')}`);
+
+  used.length = 0;
+  const pool = await reg.getMeetApplicantPool({ eventKey: sprint, collegeId: 'c01' }, admin);
+  assert.equal(pool.ok, true, pool.message);
+  assert.deepEqual(unscoped(), [], `报名池不该整届读：${used.join(', ')}`);
+});

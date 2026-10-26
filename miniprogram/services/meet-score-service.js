@@ -474,12 +474,14 @@ async function getMeetResultPreview(payload = {}, ctx) {
   const eventKey = String(payload.eventKey || '').trim();
   if (!eventKey) return refused('请指定项目组别');
 
+  // 预览只汇总**本项目**（2026-10-26 第五轮 B）：一届的项目 × 学院 × 名额上千条，
+  // 成绩还要乘裁判数，而这里只出一个项目的均值与缺分。
   const [event, entries, scores, sessions, assignments] = await Promise.all([
     ctx.repo.forMeet(scope).sportsMeetEvents.getById(eventKey),
-    ctx.repo.forMeet(scope).sportsMeetEntries.list(),
-    ctx.repo.forMeet(scope).sportsMeetScores.list(),
-    ctx.repo.forMeet(scope).sportsMeetSessions.list(),
-    ctx.repo.forMeet(scope).sportsMeetJudgeAssignments.list(),
+    ctx.repo.forMeet(scope).sportsMeetEntries.listByProject(eventKey),
+    ctx.repo.forMeet(scope).sportsMeetScores.listByProject(eventKey),
+    ctx.repo.forMeet(scope).sportsMeetSessions.listByProject(eventKey),
+    ctx.repo.forMeet(scope).sportsMeetJudgeAssignments.listByProject(eventKey),
   ]);
   if (!event || event.meetId !== ctx.meetId) return refused('项目组别不存在或不属于本届运动会');
 
@@ -641,11 +643,13 @@ async function publishMeetResults(payload = {}, ctx) {
   const event = await ctx.repo.forMeet(scope).sportsMeetEvents.getById(eventKey);
   const [meet, entries, scores, sessions, assignments, publications] = await Promise.all([
     ctx.repo.sportsMeets.getById(ctx.meetId),
-    ctx.repo.forMeet(scope).sportsMeetEntries.list(),
-    ctx.repo.forMeet(scope).sportsMeetScores.list(),
-    ctx.repo.forMeet(scope).sportsMeetSessions.list(),
-    ctx.repo.forMeet(scope).sportsMeetJudgeAssignments.list(),
-    ctx.repo.forMeet(scope).sportsMeetPublications.list(),
+    // 发布一次只看本项目（2026-10-26 第五轮 B）：上面那段判权注释说的「六个整届
+    // 集合、上万条文档」现在只剩「届次文档 + 本项目的这几百条」。
+    ctx.repo.forMeet(scope).sportsMeetEntries.listByProject(eventKey),
+    ctx.repo.forMeet(scope).sportsMeetScores.listByProject(eventKey),
+    ctx.repo.forMeet(scope).sportsMeetSessions.listByProject(eventKey),
+    ctx.repo.forMeet(scope).sportsMeetJudgeAssignments.listByProject(eventKey),
+    ctx.repo.forMeet(scope).sportsMeetPublications.listByProject(eventKey),
   ]);
   if (!isAlive(meet) || meet.schoolId !== ctx.schoolId) return refused('运动会不存在或已删除');
   if (!event || event.meetId !== ctx.meetId) return refused('项目组别不存在或不属于本届运动会');
@@ -1059,10 +1063,10 @@ async function getPublishedResults(payload = {}, ctx) {
   if (!eventKey) return refused('请指定项目组别');
 
   const [publications, rows, event, sessions] = await Promise.all([
-    ctx.repo.forMeet(scope).sportsMeetPublications.list(),
-    ctx.repo.forMeet(scope).sportsMeetResultRows.list(),
+    ctx.repo.forMeet(scope).sportsMeetPublications.listByProject(eventKey),
+    ctx.repo.forMeet(scope).sportsMeetResultRows.listByProject(eventKey),
     ctx.repo.forMeet(scope).sportsMeetEvents.getById(eventKey),
-    ctx.repo.forMeet(scope).sportsMeetSessions.list(),
+    ctx.repo.forMeet(scope).sportsMeetSessions.listByProject(eventKey),
   ]);
   const mine = publications.filter((doc) => doc.eventKey === eventKey);
   if (mine.length === 0) return ok({ published: false, eventKey, rounds: [] });
