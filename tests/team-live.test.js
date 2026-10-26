@@ -343,3 +343,35 @@ test('旧实时比赛迁移前五人；开台后禁止通过修改出场名单�
   assert.equal(result.ok, false);
   assert.match(result.message, /换人/);
 });
+
+test('观众轮询只发 3 次批读，不逐场点读（2026-10-26 第五轮审查 A）', async () => {
+  const { repo } = await fixture();
+  // 同一届赛事的 7 场：改造前 = 7 次比赛点读 + 7 次同一赛事点读 + 14 次球队点读。
+  for (let i = 0; i < 6; i += 1) {
+    await repo.teamMatches.set(`m${i}`, { _id: `m${i}`, ...scope, eventId: 'event',
+      teamA: 'a', teamB: 'b', status: 'scheduled', revision: 1 });
+  }
+  const calls = [];
+  const rawForScope = repo.forScope.bind(repo);
+  repo.forScope = (input) => {
+    const surface = rawForScope(input);
+    for (const key of ['teamMatches', 'teamEvents', 'teams']) {
+      for (const name of ['getById', 'listByIds', 'list']) {
+        const raw = surface[key][name];
+        if (typeof raw !== 'function') continue;
+        surface[key][name] = (...args) => { calls.push(`${key}.${name}`); return raw(...args); };
+      }
+    }
+    return surface;
+  };
+  const ctx = await buildSchoolContext({ repo, actorId: 'viewer', scope, now: new Date('2026-10-20T08:00:00Z') });
+  const ids = ['match', 'm0', 'm1', 'm2', 'm3', 'm4', 'm5'];
+  const { data } = await service.getTeamLiveScores({ matchIds: ids }, ctx);
+
+  assert.equal(data.scores.length, 7, '七场都要回');
+  assert.equal(calls.filter(name => name.endsWith('.getById')).length, 0, '不许逐场点读');
+  assert.equal(calls.filter(name => name === 'teamMatches.listByIds').length, 1);
+  assert.equal(calls.filter(name => name === 'teamEvents.listByIds').length, 1, '同一赛事只读一次');
+  assert.ok(calls.filter(name => name === 'teams.listByIds').length <= 1, '球队最多一次批读');
+  assert.ok(calls.length <= 3, `一轮轮询最多 3 次读，实际 ${calls.join(', ')}`);
+});

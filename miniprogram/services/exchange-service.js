@@ -1,7 +1,7 @@
 /** S4 跨校邀请赛。独立集合，服务端强制不计校内分。2026-10-16 起支持与普通赛事同样的六种赛制。 */
 const { buildSchoolContext } = require('./school-context.js');
 const { canSchoolAction } = require('./school-permission.js');
-const { schoolKey, schoolAssociationKey, PLATFORM_ROLE, PLATFORM_STATUS, SCHOOL_MEMBER_STATUS } = require('../utils/school.js');
+const { schoolKey, schoolAssociationKey, schoolMemberKey, PLATFORM_ROLE, PLATFORM_STATUS, SCHOOL_MEMBER_STATUS } = require('../utils/school.js');
 const { planExchangeDraw, planExchangeMatches, changedExchangeMatches, placementsFromExchange } = require('./exchange-plan.js');
 const { formatOf, normalizeGroupCount, normalizeAdvancePerGroup } = require('./draw.js');
 const {
@@ -512,9 +512,16 @@ async function assignExchangeReferee(payload = {}, ctx) {
   const refereeId = typeof payload.refereeId === 'string' ? payload.refereeId.trim() : '';
   let memberId = '';
   if (refereeId) {
-    const members = await ctx.repo.schoolMembers.list();
-    const found = members.find(row => row.userId === refereeId && row.status === SCHOOL_MEMBER_STATUS.ACTIVE &&
-      snapshot.participantSchoolIds.includes(row.schoolId));
+    // 【只点读参赛校那几份学籍】（2026-10-26 第五轮审查 C）
+    // 原先是 `ctx.repo.schoolMembers.list()`——那是**基础仓储**的 list()，条件是空对象，
+    // 等于把全平台所有学校的名册读回来再挑一个 userId。跨校赛事只关心参赛校，
+    // 而学籍主键是确定性的（`sm:<schoolId>:<userId>`），逐个点读就够。
+    const schools = Array.isArray(snapshot.participantSchoolIds) ? snapshot.participantSchoolIds : [];
+    const candidates = await Promise.all(schools.map(schoolId => ctx.repo
+      .forScope({ schoolId, association: ctx.association })
+      .schoolMembers.getById(schoolMemberKey(refereeId, schoolId))));
+    const found = candidates.find(row => row && row.userId === refereeId
+      && row.status === SCHOOL_MEMBER_STATUS.ACTIVE && schools.includes(row.schoolId));
     if (!found) return ok(refused('裁判必须是参赛学校的有效会员'));
     memberId = found._id;
   }
@@ -647,6 +654,39 @@ async function getExchangeEvents(_payload, ctx) {
   return ok({ ok: true, events: events.sort((a, b) => a.startTime.localeCompare(b.startTime)), message: '' });
 }
 
+/**
+ * 参赛校的「在册会员」名单（跨校赛事指定裁判时的候选池）。
+ *
+ * 【为什么按校逐个读】（2026-10-26 第五轮审查 C）
+ * 原来用的是基础仓储的 `schoolMembers.list()`——条件是空对象，读的是**全平台**
+ * 所有学校的名册（含待审、离校、停用），再按 `participantSchoolIds` 过滤。
+ * 跨校赛事只涉及几所学校，真正的候选范围就是「这几所学校的在册会员」：按校走
+ * 受范围仓储 + 状态下推，页数从「全平台 / 100」降到「参赛校在册 / 200」。
+ *
+ * 【为什么逐校翻到底而不是设上限】这是管理员挑裁判用的**全量候选**，截断会让
+ * 某些人永远选不到；成本已经按校收窄，越界的极端情况由 MAX_READ_ROWS 兜底。
+ *
+ * @param {Object} ctx
+ * @param {Array<string>} schoolIds 参赛学校编号
+ * @returns {Promise<Array<Object>>}
+ */
+async function activeMembersOfSchools(ctx, schoolIds) {
+  const rows = [];
+  for (const schoolId of schoolIds) {
+    if (typeof schoolId !== 'string' || !schoolId) continue;
+    const scoped = ctx.repo.forScope({ schoolId, association: ctx.association });
+    let afterId = '';
+    for (;;) {
+      const page = await scoped.schoolMembers
+        .listByStatus(SCHOOL_MEMBER_STATUS.ACTIVE, { limit: 200, afterId });
+      rows.push(...page.rows);
+      if (!page.hasMore || page.rows.length === 0) break;
+      afterId = page.rows[page.rows.length - 1]._id;
+    }
+  }
+  return rows;
+}
+
 async function getExchangeEvent(payload = {}, ctx) {
   const event = await ctx.repo.exchangeEvents.getById(payload.eventId);
   if (!canSee(event, ctx)) return ok(refused('赛事不存在或没有访问权限'));
@@ -672,11 +712,12 @@ async function getExchangeEvent(payload = {}, ctx) {
   const placement = event.draw
     ? placementsFromExchange({ event, draw: event.draw, matches: existingMatches })
     : { ok: false, message: '' };
-  // 只取「本校在册 + 参与本次邀请赛的学校」这批人，再按他们的编号批量取昵称。
+  // 只取「参赛校的在册会员」这批人，再按他们的编号批量取昵称。
   // 原先是 users.list()（全平台账号整表读）后给 referees 查表——一次跨校赛事
-  // 详情就把全平台账号读回来了（2026-10-21 审查 P0-1）。
-  const refereeRows = (await ctx.repo.schoolMembers.list())
-    .filter(row => row.status === SCHOOL_MEMBER_STATUS.ACTIVE && event.participantSchoolIds.includes(row.schoolId));
+  // 详情就把全平台账号读回来了（2026-10-21 审查 P0-1）；名册那一侧同理，
+  // 2026-10-26 第五轮审查 C 改成按参赛校下推。
+  const refereeRows = await activeMembersOfSchools(ctx,
+    Array.isArray(event.participantSchoolIds) ? event.participantSchoolIds : []);
   const names = new Map(
     (await ctx.repo.users.listByIds(refereeRows.map(row => row.userId)))
       .map(user => [user._id, user.nickName || '']),

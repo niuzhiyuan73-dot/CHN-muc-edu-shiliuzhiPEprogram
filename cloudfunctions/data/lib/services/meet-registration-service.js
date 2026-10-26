@@ -204,11 +204,15 @@ async function touchCollegeScope(tx, { schoolId, meetId, collegeId, now }) {
  * 所以"每人 3 次身份点读"其实是把事务预算直接吃掉 3/N。搬到事务外以后，
  * 事务内只留「声明占用」这一处真正需要原子性的判断（并发重复报名的唯一竞态）。
  *
- * 【为什么用 Promise.all 而不是批读接口】
- * 三个集合都是按**确定性复合主键**取单条（`schoolMemberKey` / `meetInterestKey`），
- * 没有等价的 where 条件；批读要靠 `_id in [...]`，而受范围仓储目前没有
- * `listByIds`。并发点读的 RPC 数与原来相同（只是不再计入事务预算），
- * 拿到批读能力后可以再降一次。
+ * 【为什么不改成「每人 3 次」以外的形态】（2026-10-26 第五轮审查 E）
+ * 原注释写的是「受范围仓储没有 listByIds，只能点读」——账号与意向这两个前提已经
+ * 不成立了，本轮改成批读：账号一次 `_.in`，意向按项目一次查询（`listByProject`）。
+ * **学籍仍按人点读**：运动会上下文没有 association，`forScope` 进不去（schoolScope
+ * 要求学校 + 协会），而顶层 `schoolMembers` 只有按校整表读的 `listBySchool`。
+ * 换句话说，缺的是「学校级、按编号批读」的入口；补它要动仓储分层，留给运动会
+ * 读放大专项（第五轮 B）一起做，不在本轮顺手加。
+ *
+ * 于是每次提交的读次数从 3N 降到 N + 2（N ≤ MEET_ENTRY_MAX_MEMBERS = 20）。
  *
  * @param {Object} ctx
  * @param {string} eventKey 项目组别编号
@@ -216,15 +220,27 @@ async function touchCollegeScope(tx, { schoolId, meetId, collegeId, now }) {
  * @returns {Promise<Map<string,{userId:string,member:Object|null,user:Object|null,interest:Object|null}>>}
  */
 async function candidateSnapshotOf(ctx, eventKey, userIds) {
-  const rows = await Promise.all(userIds.map(async (userId) => {
-    const [member, user, interest] = await Promise.all([
-      ctx.repo.schoolMembers.getById(schoolMemberKey(userId, ctx.schoolId)),
-      ctx.repo.users.getById(userId),
-      ctx.repo.sportsMeetInterests.getById(meetInterestKey(ctx.meetId, eventKey, userId)),
-    ]);
-    return { userId, member: member || null, user: user || null, interest: interest || null };
-  }));
-  return new Map(rows.map((row) => [row.userId, row]));
+  const ids = [...new Set((Array.isArray(userIds) ? userIds : [])
+    .filter((id) => typeof id === 'string' && id))];
+  if (ids.length === 0) return new Map();
+  const [users, interests, members] = await Promise.all([
+    ctx.repo.users.listByIds(ids),
+    ctx.repo.forMeet({ schoolId: ctx.schoolId, meetId: ctx.meetId }).sportsMeetInterests.listByProject(eventKey),
+    Promise.all(ids.map((userId) => ctx.repo.schoolMembers.getById(schoolMemberKey(userId, ctx.schoolId)))),
+  ]);
+  const memberById = new Map(members.filter(Boolean).map((row) => [row.userId, row]));
+  const userById = new Map(users.map((row) => [row._id, row]));
+  const wanted = new Set(ids);
+  const interestById = new Map();
+  for (const row of interests) {
+    if (row && wanted.has(row.userId)) interestById.set(row.userId, row);
+  }
+  return new Map(ids.map((userId) => [userId, {
+    userId,
+    member: memberById.get(userId) || null,
+    user: userById.get(userId) || null,
+    interest: interestById.get(userId) || null,
+  }]));
 }
 
 /**

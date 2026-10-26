@@ -138,10 +138,11 @@ function buildScoped(repo, io, inTx, options) {
     // 「比赛项目」，而协会侧的 listByEvent 指的是「一场赛事」。同名不同义会让仓储
     // 契约扫描把它们混为一谈（协会侧的 listByEvent 顶层也有，运动会没有顶层的
     // 等价值——它必须带 meetId 范围）。
-    if (key === 'sportsMeetEntries' || key === 'sportsMeetSessions') {
-      // 报名与场次都按「本项目」取：录分页列的是本项目的报名（预赛分组才收窄到
-      // 本场，直接决赛的场次本来就要全项目的人），裁判权限判定要的是「本项目
-      // 有哪些场次」。
+    // 报名 / 场次 / 意向都按「本项目」取。
+    // 前两者是录分页要的（预赛分组才收窄到本场，直接决赛的场次本来就要全项目的人；
+    // 裁判权限判定要的是「本项目有哪些场次」）；意向是 2026-10-26 第五轮审查 E 补的：
+    // 提交名单时要看「这些人对本项目有没有意向」，原先是读全届意向再按 userId 挑。
+    if (key === 'sportsMeetEntries' || key === 'sportsMeetSessions' || key === 'sportsMeetInterests') {
       result[key].listByProject = (projectKey) => {
         if (typeof projectKey !== 'string' || !projectKey) return Promise.resolve([]);
         return io.query(key, { ...expected, eventKey: projectKey });

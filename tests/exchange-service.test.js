@@ -718,3 +718,29 @@ test('锁定后名册是唯一参赛者来源：抽签与详情都读它', async
     '详情里的参赛者必须与名册一一对应',
   );
 });
+
+test('跨校详情与指定裁判只按参赛校读名册（2026-10-26 第五轮审查 C）', async () => {
+  const repo = fixture();
+  const id = await readyFour(repo);
+  await call(repo, 'drawExchangeEvent', { eventId: id, seedValue: 5 });
+  const rows = await repo.exchangeMatches.listByEvent(id);
+  const match = rows.filter(row => row.round === 1).sort((a, b) => a.slot - b.slot)[0];
+
+  // 记下每个被打开的范围：改造前的实现走的是基础仓储 list()（条件为空 = 全平台），
+  // 根本不经过 forScope，所以「参与本次读取的学校集合」这条断言它能挡得住。
+  const scopes = [];
+  const rawForScope = repo.forScope.bind(repo);
+  repo.forScope = (input) => { scopes.push(input.schoolId); return rawForScope(input); };
+
+  const detail = await call(repo, 'getExchangeEvent', { eventId: id });
+  assert.equal(detail.ok, true, detail.message);
+  assert.ok(detail.referees.length > 0, '参赛校在册会员仍应出现在裁判候选里');
+  assert.ok(detail.referees.every(row => ['muc', 'buaa'].includes(row.schoolId)), '候选只来自参赛校');
+
+  const assigned = await call(repo, 'assignExchangeReferee',
+    { eventId: id, matchId: match._id, refereeId: 'demo_muc_member' });
+  assert.equal(assigned.ok, true, assigned.message);
+  assert.equal((await repo.exchangeMatches.getById(match._id)).referee, 'demo_muc_member');
+  assert.ok(scopes.every(schoolId => ['muc', 'buaa'].includes(schoolId)),
+    `只允许打开参赛校的范围，实际 ${[...new Set(scopes)].join(', ')}`);
+});

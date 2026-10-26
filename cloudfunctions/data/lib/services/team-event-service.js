@@ -3330,7 +3330,22 @@ async function updateTeamLiveScore(payload = {}, ctx) {
   }));
 }
 
-/** 观众读摘要，不下发操作流水；待审核分数仍沿用既有可见性规则。 */
+/**
+ * 观众读摘要，不下发操作流水；待审核分数仍沿用既有可见性规则。
+ *
+ * 【为什么整批读，而不是逐场点读】（2026-10-26 第五轮审查 A）
+ * 这个接口被 `live-watch` **每 2 秒**打一次，原来的实现是「每场点读比赛 → 再点读
+ * 它所属赛事 → 再为判队长点读两支球队」：50 场就是最多 50 + 50 + 100 = 200 次
+ * RPC/拍。而同一届赛事的 50 场共用**一个** eventId、球队更是反复出现——重复读了
+ * 几十遍同一份文档。按 32 场淘汰赛算，一个观众页开着就是 ~3800 读/分钟，
+ * 8 分钟就能吃掉全校一天的读配额。
+ *
+ * 现在三个集合各一次 `_.in`：
+ *   1. 比赛按编号批读（`listByIds`，自带范围条件）；
+ *   2. 赛事按去重后的 eventId 批读；
+ *   3. 球队**只在真要判队长时才读**——管理员与被指派的记录员在这一步之前就返回了。
+ * 200 次 → 通常 2~3 次。订单（scores 顺序）仍按入参 ids 走，客户端按 matchId 取用。
+ */
 async function getTeamLiveScores(payload = {}, ctx) {
   if (!ctx.actorId || !canReadAssociationSpace(ctx) || !assertTeamSport(ctx)) return ok(refused('没有本协会的读取权限'));
   const strategy = teamSportStrategyFor(ctx.association);
@@ -3338,25 +3353,44 @@ async function getTeamLiveScores(payload = {}, ctx) {
   const ids = [...new Set((Array.isArray(payload.matchIds) ? payload.matchIds : [])
     .filter(id => typeof id === 'string' && id))];
   if (ids.length > 50) return ok(refused('一次最多查询 50 场比赛'));
+  if (ids.length === 0) return ok({ ok: true, scores: [], message: '' });
   const repo = ctx.repo.forScope(ctx);
+
+  const matches = new Map((await repo.teamMatches.listByIds(ids))
+    .filter(match => inScope(match, ctx))
+    .map(match => [match._id, match]));
+  if (matches.size === 0) return ok({ ok: true, scores: [], message: '' });
+
+  const eventIds = [...new Set([...matches.values()].map(match => match.eventId).filter(Boolean))];
+  const events = new Map((await repo.teamEvents.listByIds(eventIds)).map(event => [event._id, event]));
+
+  // 队长的判定要读球队，但只有「既不是管理员、也不是本场记录员」的场次才用得上。
+  const manage = canManageAssociationSpace(ctx);
+  const needCaptain = [...matches.values()].filter(match => !manage && match.recorderId !== ctx.actorId);
+  const teamIds = [...new Set(needCaptain
+    .flatMap(match => [match.teamA, match.teamB])
+    .filter(id => typeof id === 'string' && id))];
+  const teams = new Map((await repo.teams.listByIds(teamIds)).map(team => [team._id, team]));
+  const captainOfMe = match => [match.teamA, match.teamB].some((teamId) => {
+    const team = teams.get(teamId);
+    return Boolean(team) && inScope(team, ctx) && team.captainId === ctx.actorId;
+  });
+
   const scores = [];
-  for (let index = 0; index < ids.length; index += 10) {
-    const batch = await Promise.all(ids.slice(index, index + 10).map(async id => {
-      const match = await repo.teamMatches.getById(id);
-      if (!inScope(match, ctx)) return null;
-      const event = await repo.teamEvents.getById(match.eventId);
-      const matchStrategy = inScope(event, ctx) && teamSportStrategyFor(ctx.association, event);
-      if (!matchStrategy || !matchStrategy.supportsLiveScore
-        || (match.sportFormat !== undefined && match.sportFormat !== matchStrategy.sportFormat)) return null;
-      const editor = await canRecordTeamMatch(match, ctx, repo);
-      const view = matchView(match, null, { canRecord: editor, canSeePending: editor });
-      return { matchId: id, live: view.live, scoreText: view.scoreText,
-        scoreA: view.scoreA, scoreB: view.scoreB, overtime: view.overtime, forfeit: view.forfeit, winner: view.winner,
-        status: view.status, statusLabel: view.statusLabel, revision: view.revision,
-        pointsA: view.live ? view.live.scoreA : null, pointsB: view.live ? view.live.scoreB : null,
-        finished: [TEAM_MATCH_STATUS.PUBLISHED, TEAM_MATCH_STATUS.CANCELED].includes(match.status) };
-    }));
-    scores.push(...batch.filter(Boolean));
+  for (const id of ids) {
+    const match = matches.get(id);
+    if (!match) continue;
+    const event = events.get(match.eventId);
+    const matchStrategy = inScope(event, ctx) && teamSportStrategyFor(ctx.association, event);
+    if (!matchStrategy || !matchStrategy.supportsLiveScore
+      || (match.sportFormat !== undefined && match.sportFormat !== matchStrategy.sportFormat)) continue;
+    const editor = manage || Boolean(match.recorderId && match.recorderId === ctx.actorId) || captainOfMe(match);
+    const view = matchView(match, null, { canRecord: editor, canSeePending: editor });
+    scores.push({ matchId: id, live: view.live, scoreText: view.scoreText,
+      scoreA: view.scoreA, scoreB: view.scoreB, overtime: view.overtime, forfeit: view.forfeit, winner: view.winner,
+      status: view.status, statusLabel: view.statusLabel, revision: view.revision,
+      pointsA: view.live ? view.live.scoreA : null, pointsB: view.live ? view.live.scoreB : null,
+      finished: [TEAM_MATCH_STATUS.PUBLISHED, TEAM_MATCH_STATUS.CANCELED].includes(match.status) });
   }
   return ok({ ok: true, scores, message: '' });
 }
