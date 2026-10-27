@@ -41,7 +41,25 @@ const MEET_ACTIONS = new Set(SCHOOL_MEET_ACTIONS);
  */
 const ANON_ACTIONS = new Set(['getSchoolDirectory', 'getSchoolIdentitySession']);
 
-async function handleSchoolRequest(event, { repo, openId, now = new Date() }) {
+/**
+ * 写完之后**只清本范围**缓存的动作（2026-10-27 第八轮审查 P2-6）。
+ *
+ * 【为什么不是一律全清】判球一次就是一次写，全清会把所有用户的上下文一起打掉：
+ * 一场比赛 50 球期间，观众与其它协会的读请求全部命中不了缓存——缓存对最热的
+ * 计分台反而完全失效。而这些动作只写实时比分 / 比赛记录，不碰
+ * schoolMembers / schoolRoles / memberships，**不可能改变任何人的身份**，
+ * 所以按 `schoolId + association` 失效就够。
+ *
+ * 【新增条目的判据】只允许「纯比赛类」写：不写学籍、不写角色、不写会籍、
+ * 不改学校/协会状态。撤权、审批、任免、变更学籍一律走全清（默认分支）。
+ * 拿不准就别加——多清一次只多付几次读，漏清是一段撤权不生效的窗口。
+ */
+const SCOPE_ONLY_INVALIDATION = new Set([
+  'startSchoolLiveScore', 'recordSchoolRally', 'undoSchoolRally', 'finishSchoolLiveScore',
+  'startTeamLiveScore', 'updateTeamLiveScore',
+]);
+
+async function handleSchoolRequest(event, { repo, openId, clientIp = '', now = new Date() }) {
   if (event.protocolVersion !== 2) return fail('学校接口需要协议版本 2，请升级客户端');
   if (!Object.prototype.hasOwnProperty.call(handlers, event.action)) return fail('该操作尚未支持学校范围');
 
@@ -52,13 +70,15 @@ async function handleSchoolRequest(event, { repo, openId, now = new Date() }) {
   // 限流放在「动作确认存在」之后：未知动作不消耗配额，也免得把探测请求
   // 与真实业务混在一个桶里。每个读接口要读 6~8 个集合，不限流时一个
   // 在册账号的循环就能打空全校每日读配额（见 rate-limit.js 的说明）。
-  const limited = guardRate(openId, event.action);
+  // clientIp 只用于**匿名**分桶：匿名请求没有 OPENID 可分，过去全站共用一个桶，
+  // 一个来源打满就让所有新用户卡在选校页（2026-10-27 第八轮审查 P1-5）。
+  const limited = guardRate(openId, event.action, now.getTime(), { clientIp });
   if (limited) return fail(limited.message);
 
   // 【身份上下文缓存】（2026-10-23 H-10）读动作的上下文缓存 5 秒；写动作不缓存，
-  // 且执行完把整份缓存失效——写请求可能改了**别人**的权限/状态，而缓存里存的是
-  // 别人的上下文。全清而不是精确失效，是因为精确失效需要每个写接口上报「改了谁」，
-  // 漏一处就是静默的越权窗口（详见 services/context-cache.js 的文件头）。
+  // 且执行完让缓存失效——写请求可能改了**别人**的权限/状态，而缓存里存的是
+  // 别人的上下文。默认全清；只有 SCOPE_ONLY_INVALIDATION 里的纯比赛类写
+  // 才按范围清（2026-10-27 第八轮审查 P2-6，理由见那里的注释）。
   //
   // 用 try/finally 保证 handler 抛错时也失效：一次失败的事务可能已经改了一半。
   const readOnly = contextCache.isReadAction(event.action);
@@ -76,7 +96,15 @@ async function handleSchoolRequest(event, { repo, openId, now = new Date() }) {
       scope: { schoolId: event.schoolId, association: event.association } });
     return await handlers[event.action](event.payload || {}, ctx);
   } finally {
-    if (!readOnly) contextCache.invalidateAll();
+    if (!readOnly) {
+      // 纯比赛类写只失效本范围（见 SCOPE_ONLY_INVALIDATION）；其余全清。
+      // 运动会没有 association，因此不进白名单，走全清。
+      if (SCOPE_ONLY_INVALIDATION.has(event.action) && event.association) {
+        contextCache.invalidateScope(event.schoolId, event.association);
+      } else {
+        contextCache.invalidateAll();
+      }
+    }
   }
 }
 

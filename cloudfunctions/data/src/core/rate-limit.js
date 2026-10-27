@@ -38,25 +38,73 @@ const WINDOW_MS = 1000;
 const LIMITS = Object.freeze({ read: 8, write: 3 });
 
 /**
- * 匿名桶的阈值（每「全站」每秒，不是每人）。
+ * 日预算（每账号每天，北京时间自然日）。
+ *
+ * 【为什么秒级阈值不够】（2026-10-27 第八轮审查 P1-2）
+ * 秒级限流只压「瞬时速率」，压不住「持续低速」。读 8 次/秒 × 每次 6~8 次点读
+ * ≈ 每秒 50 次读；官方每日读配额 5 万次，**一个账号循环十几分钟就能打空**，
+ * 之后全校所有接口开始返回空列表（还会与读失败降级叠加，更难排查）。
+ * 秒级阈值再往下压会误伤首屏（首页一次并发 6 个协会的请求就在同一秒），
+ * 所以配额必须按「天」计，而不是把每秒阈值调到 1~2。
+ *
+ * 【数值怎么来的】
+ * 5 万 / 每请求约 8 次读 ≈ 6000 个请求是理论上限。取 4000 留出余量：
+ * 单个账号最多消耗约 3.2 万次读（64% 配额），刷不空全校。
+ * 正常使用远低于此——一次页面操作 1~3 个请求，轮询另有豁免（见 POLL_ACTIONS）。
+ * 写 1500：判球 10 场 = 500 次，加报名/审核仍有余量。
+ *
+ * 【为什么还是进程内】
+ * 与秒级桶同一取舍：新增持久化计数器等于给每个请求加一次读写，把限流本身
+ * 变成放大器。容器级是「挡住误用与好奇的循环」这一目标的合理成本；
+ * 多实例会放大额度，这是已知局限（真正硬防要靠网关或持久化计数器）。
+ */
+const DAILY_LIMITS = Object.freeze({ read: 4000, write: 1500 });
+
+/**
+ * 轮询动作：不计入日预算。
+ *
+ * 【为什么豁免】这类接口每 2 秒一拍，看一场一小时的比赛就是 1800 次请求；
+ * 而它每次只花 1 次读（`_.in` 批读 + 上下文缓存），打不空配额。
+ * 不豁免的话，正常观众会被日预算误封——那是把安全措施变成故障。
+ * **新增轮询接口必须来这里登记**，否则它会被当普通读吃掉预算。
+ */
+const POLL_ACTIONS = new Set(['getSchoolLiveScores', 'getTeamLiveScores']);
+
+/**
+ * 匿名桶的阈值（每「来源」每秒）。
  *
  * 【为什么要单独设，而且设得更严】
- * 没有 OPENID 的请求无法按人区分——所有匿名流量共享同一个桶。这既是它的
- * 局限，也是必须把额度压到最低的理由：它挡不住「换身份」，只能挡住「同一个
- * 来源猛打」。协议 2 的动作没有一个是匿名可用的，所以正常用户根本走不到这里
- * （见 school-request.js 的入口拦截），这里的额度只要有就够。
+ * 没有 OPENID 的请求无法按人区分。2026-10-27 起按 `CLIENTIP` 分桶（此前全站
+ * 共用一个桶，一个来源打满就让所有新用户卡在选校页）。拿不到 IP 时才退回共享桶。
+ * 协议 2 只有两个动作允许匿名，正常用户根本走不到这里。
  */
 const ANON_LIMITS = Object.freeze({ read: 3, write: 1 });
+
+/**
+ * 匿名桶的日预算（每来源每天）。
+ *
+ * 比登录账号更严：匿名面只有「选校目录」与「我是谁」，正常用户一天至多几十次。
+ * 没有日预算时，3 次/秒 × 24 小时 = 25 万请求，同样能打空全校配额。
+ */
+const ANON_DAILY_LIMITS = Object.freeze({ read: 800, write: 200 });
 
 /** 只读动作的命名约定：get / list / search 开头。其余（含未知动作）一律按写算。 */
 const READ_ACTION = /^(get|list|search)/;
 
-/** openId（或匿名桶）→ { sec, read, write }。每账号恒一条，不会无界增长。 */
+/** 桶键（openId 或 `anon:<ip>`）→ { sec, read, write }。每账号恒一条，不会无界增长。 */
 const buckets = new Map();
+
+/** 桶键 → { day, read, write }。日预算，跨天自动重置。 */
+const daily = new Map();
 
 /** 清理阈值：活跃账号超过这个数时才扫描一次过期桶，避免每请求都遍历。 */
 const SWEEP_THRESHOLD = 20000;
+const DAILY_SWEEP_THRESHOLD = 20000;
 let lastSweepSec = -1;
+
+const DAY_MS = 86400000;
+/** 北京时间相对 UTC 的偏移：日预算按国内自然日切，与入口钉住的 TZ 一致。 */
+const TZ_OFFSET_MS = 8 * 3600 * 1000;
 
 function disabled() {
   return process.env.RATE_LIMIT === 'off' || process.env.NODE_ENV === 'test';
@@ -76,22 +124,75 @@ function sweep(nowSec) {
   }
 }
 
+/** 北京时间自然日序号。 */
+function dayOf(nowMs) {
+  return Math.floor((nowMs + TZ_OFFSET_MS) / DAY_MS);
+}
+
+/** 日预算表膨胀时清掉往日的行（容器热复用数天才会走到）。 */
+function sweepDaily(day) {
+  if (daily.size <= DAILY_SWEEP_THRESHOLD) return;
+  for (const [key, row] of daily) if (row.day !== day) daily.delete(key);
+}
+
 /**
- * 记一次请求并按阈值判定。
+ * 日预算判定。
  *
- * @param {string} openId 微信 OPENID；空串归入同一个匿名桶
+ * 轮询动作直接放行且**不计数**（见 POLL_ACTIONS：看一场比赛就是 1800 次请求，
+ * 每次只 1 次读，计进来只会误封正常观众）。
+ *
+ * @param {string} key 桶键
+ * @param {'read'|'write'} kind
+ * @param {string} action
+ * @param {number} nowMs
+ * @param {boolean} anon 是否匿名桶（额度更严）
+ * @returns {null|{message:string, kind:string, limit:number, scope:string}}
+ */
+function guardDaily(key, kind, action, nowMs, anon) {
+  if (POLL_ACTIONS.has(action)) return null;
+  const day = dayOf(nowMs);
+  const limit = (anon ? ANON_DAILY_LIMITS : DAILY_LIMITS)[kind];
+  let row = daily.get(key);
+  if (!row || row.day !== day) {
+    sweepDaily(day);
+    row = { day, read: 0, write: 0 };
+    daily.set(key, row);
+  }
+  row[kind] += 1;
+  if (row[kind] > limit) {
+    return {
+      message: kind === 'write'
+        ? '今日操作次数已达上限，请明天再试'
+        : '今日使用次数已达上限，请明天再试',
+      kind,
+      limit,
+      scope: 'day',
+    };
+  }
+  return null;
+}
+
+/**
+ * 记一次请求并按阈值判定：先看秒级速率，再看当日预算。
+ *
+ * 顺序不能反：先判秒级，被秒级拒掉的请求**不会**计入日预算，否则一次连点
+ * 就能把一天的额度提前吃掉。
+ *
+ * @param {string} openId 微信 OPENID；空串表示匿名
  * @param {string} action 协议 2 的动作名
  * @param {number} [nowMs] 当前毫秒时间戳，仅供测试注入（生产用 Date.now()）
+ * @param {{clientIp?:string}} [meta] 匿名桶的区分依据（`getWXContext().CLIENTIP`）
  * @returns {null|{ message:string, kind:string, limit:number }} null 表示放行
  */
-function guardRate(openId, action, nowMs = Date.now()) {
+function guardRate(openId, action, nowMs = Date.now(), meta = {}) {
   if (disabled()) return null;
 
   const kind = kindOf(action);
   const nowSec = Math.floor(nowMs / WINDOW_MS);
-  // 没有 OPENID ⇒ 全站共享一个桶，用更严的额度（见 ANON_LIMITS 的说明）。
+  // 没有 OPENID ⇒ 按来源（CLIENTIP）分桶，拿不到 IP 时退回全站共享桶。
   const anon = !openId;
-  const key = anon ? 'anon' : openId;
+  const clientIp = typeof meta.clientIp === 'string' ? meta.clientIp.trim() : '';
+  const key = anon ? (clientIp ? `anon:${clientIp}` : 'anon') : openId;
   const limit = (anon ? ANON_LIMITS : LIMITS)[kind];
 
   let bucket = buckets.get(key);
@@ -114,13 +215,17 @@ function guardRate(openId, action, nowMs = Date.now()) {
       limit,
     };
   }
-  return null;
+  return guardDaily(key, kind, action, nowMs, anon);
 }
 
 /** 仅供测试：清空计数，避免用例之间互相影响。 */
 function resetRateLimit() {
   buckets.clear();
+  daily.clear();
   lastSweepSec = -1;
 }
 
-module.exports = { guardRate, resetRateLimit, LIMITS, ANON_LIMITS, kindOf };
+module.exports = {
+  guardRate, resetRateLimit, kindOf,
+  LIMITS, ANON_LIMITS, DAILY_LIMITS, ANON_DAILY_LIMITS, POLL_ACTIONS, dayOf,
+};

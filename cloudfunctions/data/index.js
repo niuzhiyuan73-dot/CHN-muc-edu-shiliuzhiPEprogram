@@ -70,6 +70,23 @@ function maskOpenId(openId) {
 /** 容器级仓储单例 */
 let repo = null;
 
+// 【启动留痕】（2026-10-27 第八轮审查 P3）
+// 这几项都能用环境变量收紧或关闭（限流、读上限、事务预算、上下文缓存）。
+// 线上排查「为什么没限流」「为什么读上限是 500」时，先看这一行日志，
+// 不必去猜控制台配置改没改过；RATE_LIMIT=off 单独用告警级别打出来。
+(function logStartupConfig() {
+  const disabled = process.env.RATE_LIMIT === 'off';
+  const payload = {
+    tz: process.env.TZ,
+    rateLimit: disabled ? 'off' : 'on',
+    maxReadRows: process.env.MAX_READ_ROWS || '(默认 10000)',
+    txBudget: process.env.TX_OPERATION_BUDGET || '(默认 100)',
+    contextCacheTtlMs: process.env.CONTEXT_CACHE_TTL_MS || '(默认 5000)',
+  };
+  if (disabled) console.warn('[data] 启动配置：限流已关闭（RATE_LIMIT=off），仅供压测/验收', payload);
+  else console.log('[data] 启动配置', payload);
+}());
+
 function getRepo() {
   if (!repo) repo = createRepo(cloud.database());
   return repo;
@@ -86,9 +103,10 @@ exports.main = async (event = {}) => {
   try {
     // 只认 protocolVersion（见 src/core/route.js 的说明）。
     if (isSchoolRequest(event)) {
-      const { OPENID } = cloud.getWXContext();
+      const { OPENID, CLIENTIP } = cloud.getWXContext();
       openId = OPENID || '';
-      return await handleSchoolRequest(event, { repo: getRepo(), openId });
+      // CLIENTIP 只给匿名限流分桶用（见 core/rate-limit.js 的 ANON_LIMITS）。
+      return await handleSchoolRequest(event, { repo: getRepo(), openId, clientIp: CLIENTIP || '' });
     }
 
     // 协议 1 已下线：不带 protocolVersion 的请求不做任何业务。
@@ -105,6 +123,9 @@ exports.main = async (event = {}) => {
       association: event && event.association,
       // 只记哈希，不记明文 OpenID（见 maskOpenId 的说明）
       openIdHash: maskOpenId(openId),
+      // 读上限越界等「配置性问题」带 code，便于在日志里与真实数据库故障区分
+      // （2026-10-27 第八轮审查 P2-7）。
+      code: err && err.code,
       error: err && (err.stack || err.message || err),
     });
     return fail('服务异常，请稍后再试');

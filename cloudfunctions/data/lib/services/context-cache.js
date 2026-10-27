@@ -146,6 +146,29 @@ function invalidateAll() {
   store.clear();
 }
 
+/**
+ * 按范围失效：只清这一个「学校 + 协会」下的所有上下文。
+ *
+ * 【什么时候可以用它，什么时候不许】（2026-10-27 第八轮审查 P2-6）
+ * 判球一次就是一次写，全清会把**所有用户**的上下文一起打掉：计分台一场 50 球
+ * 期间，旁边的观众与别的协会的读请求全部命中不了缓存，等于缓存对热路径完全失效。
+ *
+ * 但「按范围清」只有在「这次写只可能改变本范围内的人」时才成立。所以调用方
+ * 必须显式声明（见 school-request.js 的 SCOPE_ONLY_INVALIDATION）：目前只允许
+ * **纯比赛/比分类**写动作——它们不碰 schoolMembers / schoolRoles / memberships，
+ * 也就不会改变任何人的身份。撤权、审批、任免、变更学籍这些动作一律走全清。
+ *
+ * 拿不准就全清：多付几次读，不会错；清少了，就是一段撤权不生效的窗口。
+ *
+ * @param {string} schoolId
+ * @param {string} association
+ */
+function invalidateScope(schoolId, association) {
+  if (!schoolId) return invalidateAll();
+  const prefix = `${schoolId}|${association || ''}|`;
+  for (const key of [...store.keys()]) if (key.startsWith(prefix)) store.delete(key);
+}
+
 /** 仅供诊断：当前窗口与缓存条数。 */
 function stats() {
   return { ttlMs, size: store.size };
@@ -158,5 +181,5 @@ function __setTtlForTest(ms) {
 }
 
 module.exports = {
-  isReadAction, keyOf, get, set, invalidateAll, stats, __setTtlForTest, DEFAULT_TTL_MS,
+  isReadAction, keyOf, get, set, invalidateAll, invalidateScope, stats, __setTtlForTest, DEFAULT_TTL_MS,
 };

@@ -89,8 +89,15 @@ const MAX_READ_ROWS = Math.max(1, Number(process.env.MAX_READ_ROWS) > 0
  */
 function tooManyRows(name, where) {
   const cond = where && Object.keys(where).length ? `（条件 ${JSON.stringify(where)}）` : '';
-  return new Error(`单次读取 ${name}${cond} 超过 ${MAX_READ_ROWS} 条上限：`
+  const err = new Error(`单次读取 ${name}${cond} 超过 ${MAX_READ_ROWS} 条上限：`
     + '请改用带条件的仓储方法缩小范围（listByEvent / listByUser / listByStatus / listPage / listTop），不要整表读后在应用层过滤');
+  // 【为什么要带 code】（2026-10-27 第八轮审查 P2-7）
+  // 这条错以前只是一句中文，入口兜成「服务异常，请稍后再试」之后，云端日志里
+  // 与真实的数据库故障长得一样。带上 code 与集合名，既能在日志里筛出来，
+  // 也便于将来按 code 回一条可操作提示（而不是让用户看到通用文案）。
+  err.code = 'READ_CAP_EXCEEDED';
+  err.collection = name;
+  return err;
 }
 
 /** 官方事务上限 100 个读写操作；环境变量只允许收紧，不能放大云端上限。 */
@@ -124,14 +131,22 @@ function isMissingCollection(err) {
 }
 
 /**
- * 判断读失败是不是「文档不存在」。
- * 云开发把它当异常抛，但业务上等价于 null。
+ * 判断读失败是不是「文档不存在」。云开发把它当异常抛，业务上等价于 null。
  *
- * 【集合不存在为什么必须排除在外】（2026-10-17 只读审计 C3）
- * -502005 的 errMsg 同样含 "not exist"，旧正则把它和文档不存在混为一谈：
- * 少建一个集合时，读路径静默返回 null/空（表现为「账号不存在」「学校不存在或
- * 已停用」「榜单为空」），排查方向被彻底带偏；只有写路径才炸。集合不存在必须
- * 响亮地失败，让控制台日志里一眼可辨。
+ * 【判据为什么要收得这么窄】（2026-10-27 第八轮审查 P0-1）
+ * 原判据有两条：`errCode === -1`，或 errMsg 里出现 `not exist`。两条都过宽——
+ * `-1` 是云开发的**通用失败码**（权限不足、瞬时故障、请求异常都可能落在它上面），
+ * 而 `/not exist/i` 还会命中 `index not exist`、`field not exist` 这类文案。
+ * 于是一次读失败就变成「这条数据不存在」。
+ *
+ * 后果不止是「排查变难」：`school-repository.js` 的 `write()` 把
+ * `current === null` 当作「确实没有这条记录」，随即**跳过归属校验**直接整条写入
+ * （写入前 `checked()` 会把 schoolId / association 改写成调用方范围）。也就是说，
+ * 一次被吞掉的读失败足以把「这条文档不属于我」变成「覆盖它」。这是本项目继
+ * `byIds` 之后第二条能跨校写的路径，必须堵在源头。
+ *
+ * 现在的判定只认「明确说是文档不存在」的文案；其余错误交给 `readDoc` 的第三态
+ * 处理（探测确认后才当 null，否则原样抛出）。宁可响亮地失败，也不静默给空。
  *
  * @param {Error} err
  * @returns {boolean}
@@ -139,16 +154,56 @@ function isMissingCollection(err) {
 function isMissingDoc(err) {
   if (!err) return false;
   if (isMissingCollection(err)) return false;
-  const code = err.errCode !== undefined ? err.errCode : err.code;
-  if (code === -1) return true;
-  return /not exist/i.test(String(err.errMsg || err.message || ''));
+  const msg = String(err.errMsg || err.message || '');
+  if (!msg) return false;
+  // 只认带 document 的文案：`document.get:fail document not exists` /
+  // `cannot find document` / `document does not exist`。集合缺失已在上一步排除。
+  return /document[^.]{0,40}(not\s*exist|not\s*found|does not exist)/i.test(msg)
+    || /cannot find document/i.test(msg);
+}
+
+/**
+ * 第三态：错误既没说是「集合缺失」，也没说是「文档不存在」时，确认这条文档在不在。
+ *
+ * 【为什么做一次 count，而不是直接返回 null】
+ * 返回 null 就是把「读失败」伪装成「没有数据」——写路径会据此跳过归属校验（见
+ * isMissingDoc 的说明）。做一次按主键的聚合计数，成本 1 次读，只在异常路径发生：
+ *   · count = 0  → 文档确实不存在（错误大概率是 SDK 换了一种文案）；
+ *   · count > 0  → 文档在，是这次读失败了 → 把原错误抛出去；
+ *   · 探测本身失败 → 同样抛原错误（探测失败不能当作「不存在」的证据）。
+ *
+ * 【事务内为什么直接返回 false】
+ * 云开发事务里不允许条件查询，`instrumentTransaction` 的 `where()` 会主动抛错。
+ * 事务内也就无法区分这两种情况，于是让原错误继续上抛、整体回滚——这比在事务里
+ * 「猜一个不存在」安全得多。
+ *
+ * @param {Object} scope db 或已包装的事务
+ * @param {string} name 集合名
+ * @param {string} id
+ * @returns {Promise<boolean>} true 表示确认不存在
+ */
+async function docAbsent(scope, name, id) {
+  try {
+    const res = await scope.collection(name).where({ _id: id }).count();
+    const total = Number(res && (res.total !== undefined ? res.total : res.count));
+    return Number.isFinite(total) && total === 0;
+  } catch (probeErr) {
+    return false;
+  }
 }
 
 /**
  * 按主键读一条，不存在返回 null。
  *
+ * 三种结果必须分清（2026-10-27 第八轮审查 P0-1）：
+ *   1. 读到了 → 文档；
+ *   2. **确认**不存在（明确文案，或探测计数为 0）→ null；
+ *   3. 其余一切（权限、超配额、瞬时故障、事务内无法探测）→ 抛出。
+ * 第 3 条是关键：`buildScoped.write()` 把 null 当作「可以写入的新记录」，
+ * 一旦读失败被折成 null，归属校验就被跳过了。
+ *
  * 集合不存在时不降级成 null，而是抛一句可操作的中文错误：README §三 要求建齐
- * 30 个集合，少建任何一个都该在云端日志里写明是哪个集合，而不是让业务层把
+ * 集合，少建任何一个都该在云端日志里写明是哪个集合，而不是让业务层把
  * 「集合没建」当成「这条数据没有」继续演下去。
  *
  * @param {Object} scope db 或 transaction
@@ -161,10 +216,12 @@ async function readDoc(scope, name, id) {
     const res = await scope.collection(name).doc(id).get();
     return (res && res.data) || null;
   } catch (err) {
-    if (isMissingDoc(err)) return null;
     if (isMissingCollection(err)) {
       throw new Error(`数据库集合 ${name} 不存在（错误码 -502005）：请先在云开发控制台按 README §三 建齐全部集合`);
     }
+    if (isMissingDoc(err)) return null;
+    // 第三态：确认之后才敢说「没有这条数据」，否则原错误上抛。
+    if (await docAbsent(scope, name, id)) return null;
     throw err;
   }
 }

@@ -279,3 +279,47 @@ test('球队战绩 —— 没有参赛的球队给空战绩，不编造数字', 
   assert.deepEqual(record.seasons, []);
   assert.deepEqual(record.recent, []);
 });
+
+/**
+ * 战绩页的读量收窄（2026-10-27 第八轮审查 P1-4）
+ * ============================================================
+ * `getTeamRecord` 原实现一次读本协会历年的 teamEvents / teamEventEntries /
+ * teamMatches / teamMembers / teams 五个集合，再加 buildDirectory（全校名册）——
+ * 只为一个队的战绩页。届数越多、队伍越多，翻页越多，最后撞云函数超时。
+ *
+ * 这条用例盯的是「不再整表读」这件事本身：谁把 list() 改回来，它就红。
+ * ============================================================
+ */
+function spyTeamFullReads(repo) {
+  const calls = [];
+  const raw = repo.forScope.bind(repo);
+  repo.forScope = (input) => {
+    const surface = raw(input);
+    for (const key of ['teamEvents', 'teamEventEntries', 'teamMatches', 'teamMembers', 'teams']) {
+      if (!surface[key] || typeof surface[key].list !== 'function') continue;
+      const original = surface[key].list.bind(surface[key]);
+      surface[key].list = (...args) => { calls.push(key); return original(...args); };
+    }
+    return surface;
+  };
+  return calls;
+}
+
+test('球队战绩按队收窄：不读本协会历年的五个集合', async () => {
+  const repo = fixture();
+  const { eventId, teamIds } = await lockedEvent(repo, { teamCount: 2 });
+  await playAndPublish(repo, eventId, teamIds[0]);
+
+  const calls = spyTeamFullReads(repo);
+  const record = await call(repo, 'getTeamRecord', { teamId: teamIds[0] }, 'u_t1p0');
+  assert.equal(record.ok, true, record.message);
+  assert.deepEqual(calls, [],
+    '战绩页应走 listByTeam / listByTeams / listByIds；整表读会随协会历史线性变慢');
+
+  // 收窄之后口径不能变：该有的名次与近期战绩仍在
+  assert.equal(record.overall.games, 1);
+  assert.equal(record.seasons.length, 1);
+  assert.equal(record.recent.length, 1);
+  assert.equal(record.team.memberCount, 5);
+  assert.equal(record.team.captainName, 'u_t0c昵称');
+});

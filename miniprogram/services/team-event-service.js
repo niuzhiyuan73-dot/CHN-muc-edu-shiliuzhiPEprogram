@@ -3108,20 +3108,42 @@ async function getTeamRecord(payload = {}, ctx) {
   }
   if (!inScope(team, ctx)) return ok(refused('球队不存在，或不在本协会'));
 
-  const [events, entries, matches, members, teams, dir] = await Promise.all([
-    repo.teamEvents.list(), repo.teamEventEntries.list(), repo.teamMatches.list(),
-    repo.teamMembers.list(), repo.teams.list(), buildDirectory(ctx),
+  // 【按队收窄，不再读本协会历年全量】（2026-10-27 第八轮审查 P1-4）
+  // 原实现一次读 teamEvents / teamEventEntries / teamMatches / teamMembers /
+  // teams 五个集合，外加 buildDirectory（全校名册 + 账号）——只为一个队的战绩页。
+  // 读量与协会历史总量成正比：届数越多、队伍越多，翻页越多，最后撞云函数超时。
+  // 现在先按队取报名，得到「这支队参加过的届」，再按编号批读赛事与对手队名：
+  // 读量只与这支队自己的参赛史成正比。
+  const [entries, members, teamMatches] = await Promise.all([
+    repo.teamEventEntries.listByTeam(team._id),
+    repo.teamMembers.listByTeams([team._id]),
+    repo.teamMatches.listByTeams([team._id]),
+  ]);
+  const eventIds = [...new Set(entries.map(entry => entry.eventId).filter(Boolean))];
+  const opponentIds = [...new Set(
+    teamMatches.flatMap(match => [match.teamA, match.teamB])
+      .filter(id => typeof id === 'string' && id && id !== team._id),
+  )];
+  const [events, opponents, accounts] = await Promise.all([
+    eventIds.length ? repo.teamEvents.listByIds(eventIds) : Promise.resolve([]),
+    opponentIds.length ? repo.teams.listByIds(opponentIds) : Promise.resolve([]),
+    // 只要「队长 + 本队队员」的昵称：原先借 buildDirectory 读全校名册（20 页）
+    // 只为取几个名字，现在按编号批读账号（1 次 `_.in`）。
+    (() => {
+      const ids = [...new Set([team.captainId, ...members.map(row => row.userId)]
+        .filter(id => typeof id === 'string' && id))];
+      return ids.length ? ctx.repo.users.listByIds(ids) : Promise.resolve([]);
+    })(),
   ]);
   const eventById = new Map(events.map(event => [event._id, event]));
-  const teamName = new Map(teams.map(row => [row._id, row.name]));
+  const teamName = new Map([[team._id, team.name], ...opponents.map(row => [row._id, row.name])]);
+  const accountById = new Map(accounts.map(user => [user._id, user]));
   const nameOf = (userId) => {
-    const user = (dir.members || []).find(item => item._id === userId);
+    const user = accountById.get(userId);
     return (user && (user.nickName || user.realName)) || '';
   };
 
-  const teamMatches = matches.filter(match => match.teamA === team._id || match.teamB === team._id);
   const overall = teamRecordOf(teamMatches, team._id);
-
   const seasons = entries
     .filter(entry => entry.teamId === team._id)
     .map((entry) => {
@@ -3129,7 +3151,7 @@ async function getTeamRecord(payload = {}, ctx) {
       // 草稿赛事不对外：它可能只是管理员试建的一张空壳
       if (!event || event.status === TEAM_EVENT_STATUS.DRAFT) return null;
       const record = teamRecordOf(
-        matches.filter(match => match.eventId === event._id),
+        teamMatches.filter(match => match.eventId === event._id),
         team._id
       );
       const rank = placementOf(event, team._id, entry);

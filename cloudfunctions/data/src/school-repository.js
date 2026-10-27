@@ -108,6 +108,13 @@ function buildScoped(repo, io, inTx, options) {
       return { ...doc, ...expected };
     };
     // 按主键写前检查已有归属，检查与写入保持在同一事务。
+    //
+    // 【`current === null` 为什么可以当作「确实不存在」】（2026-10-27 第八轮审查 P0-1）
+    // 这里一旦把「读失败」误当成「没有记录」，下面的 owns() 校验就被跳过，
+    // 随后 checked() 会把 schoolId / association 改写成调用方范围整条写入——
+    // 等于跨校覆盖。这个不变量由适配器保证：cloud-repo 的 readDoc 只在
+    // **确认**不存在时返回 null，其余错误一律抛出（见那里的 isMissingDoc /
+    // docAbsent）。因此**不要**在这里再加「读不到就当空」的兜底。
     const write = async (id, doc, mode) => {
       if (!id || typeof id !== 'string') throw new Error('缺少记录 ID');
       if (doc._id !== undefined && doc._id !== id) throw new Error('记录 ID 不一致');
@@ -421,6 +428,15 @@ function buildScoped(repo, io, inTx, options) {
   return result;}
 
 function attachSchoolRepository(repo, io, inTx) {
+  // 【顶层 list() 是「跨范围读」，业务代码不要用】（2026-10-27 第八轮审查 P1-3）
+  // 这里的条件对象是空的：`io.query(key, {})` 会把**全平台**该集合读回来。
+  // 它存在只为满足「两套仓储方法面一致」的契约（模拟仓储的顶层 list 也是全量），
+  // 业务读取一律走 `forScope(ctx).<集合>.list()`（带 schoolId + association）。
+  //
+  // 为什么不在运行时抛错：契约测试（cloud-repo-contract）把顶层 list 当作合法
+  // 形态钉着，模拟端也这么实现；运行时禁掉会造成两端分叉。防线改为
+  // `tests/top-level-list-guard.test.js` 的静态扫描——禁止业务代码写
+  // `ctx.repo.<集合>.list()`，只有平台级小集合（学校 / 协会 / 学院目录）例外。
   for (const key of SCHOOL_COLLECTIONS) {
     repo[key] = {
       getById: (id) => io.read(key, id),
