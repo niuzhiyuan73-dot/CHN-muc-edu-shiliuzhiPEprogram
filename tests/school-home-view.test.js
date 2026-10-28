@@ -91,8 +91,11 @@ test('聚合 —— 民大首页：公告置顶在前、近期赛事、概况数
   // 会员数学校级一份（24 + 校管理员 + 会员 + 会员二 + 学院负责人）；比赛 / 赛事按协会汇总
   assert.strictEqual(view.summary.memberCount, 28);
   // 2026-10-20 起演示内容按 3 倍扩容，这里跟着走（球拍项目的赛事与流水都 ×3）
-  assert.strictEqual(view.summary.matchCount, 102);
-  assert.strictEqual(view.summary.eventCount, 21);
+  const seed = require('../miniprogram/services/school-seed').createSchoolDemoContent();
+  assert.strictEqual(view.summary.matchCount, seed.matches.filter(row => row.schoolId === 'muc').length
+    + seed.teamMatches.filter(row => row.schoolId === 'muc').length);
+  assert.strictEqual(view.summary.eventCount, seed.events.filter(row => row.schoolId === 'muc').length
+    + seed.teamEvents.filter(row => row.schoolId === 'muc' && row.status !== 'draft').length);
   assert.strictEqual(view.summary.seasonText, '第 1 赛季');
 });
 
@@ -104,6 +107,19 @@ test('聚合 —— 游客只看公告：近期赛事与概况不取', async () 
   assert.ok(view.announcements.rows.length > 0, '访客能看公告');
   assert.deepStrictEqual(view.upcomingEvents, [], '访客看不到近期赛事');
   assert.strictEqual(view.summary, null, '访客看不到概况');
+});
+
+test('首页跨项目：足球、篮球均展示为团队赛事；管理员也看不到已下架公告', async () => {
+  schoolMock.setDemoActor('demo_muc_admin');
+  const api = schoolMock.forAssociationSpace({ schoolId: 'muc', association: 'pkb' });
+  const first = await api.listSchoolAnnouncements({});
+  const archivedId = first.announcements[0].announcementId;
+  assert.equal((await api.archiveSchoolAnnouncement({ announcementId: archivedId })).ok, true);
+  const view = await loadSchoolHomeView({ schoolId: 'muc', viewerId: 'demo_muc_admin', eventLimit: 100 });
+  assert.ok(view.upcomingEvents.some(row => row.association === 'fb' && row.eventKind === 'team'));
+  assert.ok(view.upcomingEvents.some(row => row.association === 'bk' && row.eventKind === 'team'));
+  assert.ok(view.upcomingEvents.some(row => row.eventKind === 'individual'));
+  assert.ok(!view.announcements.rows.some(row => row.id === archivedId));
 });
 
 test('聚合 —— 跨校只读浏览得到真实空聚合，不编数字', async () => {
@@ -162,6 +178,11 @@ function fakeClient({ announcements = [], events = [], matchTotal = 0, seasonNum
     },
     async listSchoolMatches() {
       return { ok: true, total: matchTotal, matches: [], hasMore: false };
+    },
+    async listTeamEvents(payload = {}) {
+      if (failAssociations.includes(assocId)) throw new Error('没有读取协会空间的权限');
+      return { ok: true, events: events.filter(event => event.isSignup || event.isOngoing).slice(0, payload.limit || 5)
+        .map(event => ({ ...event, eventKind: 'team' })), totalAll: events.length, matchTotal };
     },
     async getSchoolSeason() {
       return { ok: true, season: { seasonNumber } };
@@ -240,6 +261,10 @@ test('首页每协会只发一次赛事查询，且只取近期几条', async ()
         async listSchoolEvents(payload = {}) {
           eventCalls.push({ assoc: scope.association, ...payload });
           return api.listSchoolEvents(payload);
+        },
+        async listTeamEvents(payload = {}) {
+          eventCalls.push({ assoc: scope.association, ...payload });
+          return api.listTeamEvents(payload);
         },
         async listSchoolMembers(payload = {}) {
           memberCalls.push(scope.association);

@@ -23,7 +23,8 @@
         <input class="identity-input" placeholder="请输入学号" value="{{studentId}}" maxlength="64" disabled="{{submitting}}" bindinput="onStudentIdInput" />
         <button class="btn btn-primary" loading="{{submitting}}" disabled="{{submitting}}" bindtap="onApply">{{account.status === 'pending' ? '更新申请' : '提交申请'}}</button>
       </block>
-      <view wx:elif="{{account}}" class="hint">{{collegeName}} · 学号 {{studentId}}</view>
+      <view wx:elif="{{account}}" class="hint">学籍学院：{{collegeName}} · 学号 {{studentId}}</view>
+      <view wx:if="{{managedCollegeName}}" class="hint">授权管理学院：{{managedCollegeName}}</view>
     </view>
     <!-- 转校： browse 外校且本人在别校有身份时可以申请转入本校。
          只需**本校**（转入学校）的校级管理员同意，原学校不需要处理。 -->
@@ -45,6 +46,7 @@
     </view>
     <view wx:if="{{canReview}}" class="card">
       <view class="card-title">{{schoolName}} · 待审核 {{applications.length}} 人</view>
+      <view wx:if="{{applicationsHasMore}}" class="hint">当前显示本批 {{applications.length}} 人，仍有更多申请；处理后请刷新继续审核。</view>
       <view wx:if="{{!applications.length}}" class="hint">当前没有待审核申请</view>
       <view wx:for="{{applications}}" wx:key="userId" class="application">
         <view class="applicant-name">
@@ -65,12 +67,22 @@
       <view wx:for="{{members}}" wx:key="userId" class="member-row">
         <view class="member-main">
           <view class="applicant-name">{{item.nickName}}</view>
-          <view class="hint member-meta">{{item.collegeName || '学院待补充'}} · {{item.permissionLabel}}</view>
+          <view class="hint member-meta">学籍：{{item.collegeName || '学院待补充'}} · {{item.permissionLabel}}</view>
+          <view wx:if="{{item.managedCollegeName}}" class="hint">管理：{{item.managedCollegeName}}</view>
         </view>
         <button wx:if="{{grants.length && item.userId !== user.userId}}" size="mini" data-user-id="{{item.userId}}" disabled="{{submitting}}" bindtap="onGrant">指定权限</button>
       </view>
       <!-- 名册分页：一页 50 人（回包体积有上限，见 getSchoolMembers 的说明） -->
       <button wx:if="{{memberHasMore}}" size="mini" class="btn btn-ghost" disabled="{{memberLoadingMore}}" bindtap="onLoadMoreMembers">{{memberLoadingMore ? '加载中…' : '加载更多'}}</button>
+    </view>
+    <view wx:if="{{grantEditor}}" class="card">
+      <view class="card-title">为 {{grantEditor.name}} 指定管理学院</view>
+      <picker range="{{colleges}}" range-key="name" value="{{grantEditor.collegeIndex}}" disabled="{{submitting}}" bindchange="onGrantCollegeChange">
+        <view class="selection">{{colleges[grantEditor.collegeIndex].name}} ›</view>
+      </picker>
+      <view class="hint">管理学院可以与学籍学院不同。</view>
+      <button class="btn btn-primary" disabled="{{submitting}}" bindtap="onConfirmGrant">确认授权</button>
+      <button class="btn btn-ghost" disabled="{{submitting}}" bindtap="onCancelGrant">取消</button>
     </view>
   </block>
 </view>

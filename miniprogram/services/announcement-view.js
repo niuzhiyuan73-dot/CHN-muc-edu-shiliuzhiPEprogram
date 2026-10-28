@@ -24,7 +24,7 @@
  * 【公开列表为什么不再分协会与分类】
  * 2026-10-18 起公告只有管理员能发，发的是全校信息；协会维度与「通知 / 赛事 /
  * 战报」分类都已从界面移除。repo 里 announcements 也移进了 SCHOOL_ONLY 档，
- * 一次查询就拿到本校全部公告，不再逐协会各取一次（那样会把同一条公告重复
+ * 同一学校使用一份游标分页，不再逐协会各取一次（那样会把同一条公告重复
  * 显示三遍）。分类字段仍留在数据里，只是不再展示、不再参与筛选。
  * ============================================================
  */
@@ -70,7 +70,7 @@ function schoolAnnouncementRow(summary, withManage = false) {
  *   themeClass     当前协会的主题类（只用于配色，不影响取数）
  *   rows           已发布公告，置顶优先 → 发布时间倒序
  *   total          公告总条数
- *   visibleCount   实际展示条数（当前与 total 相同，保留字段兼容空态判断）
+ *   visibleCount   当前页条数；页面续读时累加，total 始终为服务端总数
  *   emptyText      一条都没有时的文案
  *
  * @param {Object} [options]
@@ -88,14 +88,18 @@ async function loadSchoolAnnouncementListView(options = {}) {
   // 显式只要「已发布」：listSchoolAnnouncements 对有管理权的人返回全量
   // （含已下架，供审计），而公开列表不该因为看的人恰好是管理员就把已下架的
   // 内容摆出来——范围由这里收口，不靠查看者身份碰巧不是管理员。
-  const result = await api.listSchoolAnnouncements({ status: ANNOUNCEMENT_STATUS.PUBLISHED });
-  // 服务端已按「置顶优先 → 发布时间倒序」排好（复用 sortAnnouncements），这里不再重排
+  const result = await api.listSchoolAnnouncements({ status: ANNOUNCEMENT_STATUS.PUBLISHED,
+    ...(options.cursor ? { cursor: options.cursor } : {}), ...(options.limit ? { limit: options.limit } : {}) });
+  if (!result || result.ok === false) throw new Error((result && result.message) || '公告读取失败');
+  // 服务端按置顶、时间、编号稳定排序，这里保持游标顺序。
   const rows = (result.announcements || []).map((summary) => schoolAnnouncementRow(summary));
 
   return {
     themeClass: brandOf(current).rootClass,
     rows,
-    total: rows.length,
+    total: Number.isFinite(result.total) ? result.total : rows.length,
+    hasMore: Boolean(result.hasMore),
+    nextCursor: result.nextCursor || '',
     visibleCount: rows.length,
     emptyText: '还没有发布公告',
   };
@@ -117,7 +121,10 @@ async function loadSchoolAnnouncementListView(options = {}) {
 async function loadSchoolAnnouncementManageView(options = {}) {
   const { schoolId, association, loggedIn = false } = options;
   const api = space.forScope({ schoolId, association });
-  const result = await api.listSchoolAnnouncements({});
+  const result = await api.listSchoolAnnouncements({
+    ...(options.cursor ? { cursor: options.cursor } : {}), ...(options.limit ? { limit: options.limit } : {}),
+  });
+  if (!result || (result.ok === false && result.code !== 'FORBIDDEN')) throw new Error((result && result.message) || '公告读取失败');
 
   if (!result.canManage) {
     return {
@@ -128,22 +135,22 @@ async function loadSchoolAnnouncementManageView(options = {}) {
       viewer: { userId: '', loggedIn },
       rows: [],
       total: 0,
+      hasMore: false, nextCursor: '',
       publishedCount: 0,
       archivedCount: 0,
     };
   }
 
   const rows = (result.announcements || [])
-    .map((summary) => schoolAnnouncementRow(summary, true))
-    // 已下架的沉到底部，好让「还能操作的那些」先被看到（sort 稳定，组内保持原序）
-    .sort((a, b) => Number(a.archived) - Number(b.archived));
+    .map((summary) => schoolAnnouncementRow(summary, true));
 
   return {
     allowed: true,
     blockedText: '',
     viewer: { userId: '', loggedIn: true },
     rows,
-    total: rows.length,
+    total: Number.isFinite(result.total) ? result.total : rows.length,
+    hasMore: Boolean(result.hasMore), nextCursor: result.nextCursor || '',
     publishedCount: rows.filter((row) => !row.archived).length,
     archivedCount: rows.filter((row) => row.archived).length,
   };

@@ -208,11 +208,12 @@
           class="field-input"
           type="number"
           value="{{form.quota}}"
-          placeholder="不填视为不限"
+          placeholder="不填按上限 {{capacity}} 人"
           bindinput="onInputQuota"
         />
       </view>
       <view wx:if="{{errors.quota}}" class="field-error">{{errors.quota}}</view>
+      <view class="field-hint">本项目最多 {{capacity}} 人；不填写或填 0 仍受此上限限制。</view>
     </view>
 
     <!-- ========== 报名资格（小组限制，B6） ========== -->

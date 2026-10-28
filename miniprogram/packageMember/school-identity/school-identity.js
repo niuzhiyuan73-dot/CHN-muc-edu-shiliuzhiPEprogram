@@ -7,7 +7,7 @@ Page({
     colleges: [], collegeIndex: -1, collegeName: '', studentId: '',
     loading: true, submitting: false, error: '', notice: '',
     user: null, account: null, statusText: '', canApply: false, canReview: false, applications: [],
-    members: [], grants: [], readOnly: false,
+    members: [], grants: [], readOnly: false, applicationsHasMore: false, grantEditor: null, managedCollegeName: '',
     // 名册分页（2026-10-26 第四轮审查 P-2）：一页 50 人，总数单独下发。
     memberTotal: 0, memberHasMore: false, memberCursor: '', memberLoadingMore: false,
     /** 能不能在这所学校发起转校申请（浏览外校 + 本人在别校有有效身份） */
@@ -28,15 +28,17 @@ Page({
     const api = service.forSchoolIdentity({ schoolId, association: 'pkb' });
     this.update({ loading: true, error: '', applications: [], canReview: false, canApply: false,
       members: [], grants: [], readOnly: false, canTransfer: false, transferPending: false,
-      user: null, account: null, statusText: '' });
+      user: null, account: null, statusText: '', applicationsHasMore: false, grantEditor: null });
     try {
       const [directory, session] = await Promise.all([api.getSchoolDirectory(), api.getSchoolIdentitySession()]);
       if (!directory.ok || !session.ok) throw new Error(directory.message || session.message || '读取学校信息失败');
       let applications = [];
+      let applicationsHasMore = false;
       if (session.canReview) {
         const result = await api.getSchoolApplications();
         if (!result.ok) throw new Error(result.message || '读取申请失败');
         applications = result.applications;
+        applicationsHasMore = Boolean(result.hasMore);
       }
       // 成员名单与「可授予的权限」独立读取：失败只是收起指定权限入口，
       // 不该拖垮本页的身份与申请内容（跨校只读同样走这条只读接口）。
@@ -74,6 +76,8 @@ Page({
         studentId: account && account.studentId || '', user: session.user, account,
         statusText: account ? STATUS_LABEL[account.status] || '身份状态待确认' : '尚未申请',
         canReview: session.canReview,
+        applicationsHasMore,
+        managedCollegeName: (directory.colleges.find(c => c.collegeId === session.managedCollegeId) || {}).name || '',
         members, grants, readOnly, memberTotal, memberHasMore, memberCursor,
         canApply: Boolean(session.user && !homeMismatch && (!account || ['pending', 'rejected'].includes(account.status))),
         canTransfer,
@@ -197,7 +201,7 @@ Page({
     const options = [];
     for (const grant of this.data.grants) {
       // 学院负责人必须落到本校有效学院；会员未登记学院时这一档无从指定
-      if (grant.permission === 'collegeLeader' && !member.collegeId) continue;
+      if (grant.permission === 'collegeLeader' && !this.data.colleges.length) continue;
       const holding = member.permission === grant.permission;
       options.push({ permission: grant.permission, make: !holding,
         label: holding ? `取消${grant.label}` : `设为${grant.label}` });
@@ -205,22 +209,39 @@ Page({
     if (!options.length) return;
     // 真机弹选择框；测试环境没有 wx.showActionSheet，直接采用首项。
     if (typeof wx === 'undefined' || typeof wx.showActionSheet !== 'function') {
-      return this.submitGrant(userId, options[0].permission, options[0].make);
+      return this.chooseGrant(userId, options[0].permission, options[0].make);
     }
     return wx.showActionSheet({
       itemList: options.map(option => option.label),
       success: res => {
         const picked = options[res.tapIndex];
-        if (picked) this.submitGrant(userId, picked.permission, picked.make);
+        if (picked) this.chooseGrant(userId, picked.permission, picked.make);
       },
     });
   },
 
   /** 提交一次授权/取消：改哪一档由 permission 决定，学院负责人需带学院。 */
-  submitGrant(userId, permission, make) {
+  chooseGrant(userId, permission, make) {
+    if (permission !== 'collegeLeader' || !make) return this.submitGrant(userId, permission, make);
+    const member = this.data.members.find(row => row.userId === userId);
+    if (!member || !this.data.colleges.length) return;
+    const index = this.data.colleges.findIndex(row => row.collegeId === (member.managedCollegeId || member.collegeId));
+    this.update({ grantEditor: { userId, name: member.nickName, collegeIndex: Math.max(0, index) } });
+  },
+  onGrantCollegeChange(event) {
+    const index = Number(event.detail.value);
+    if (!this.data.submitting && this.data.grantEditor && this.data.colleges[index]) this.update({ 'grantEditor.collegeIndex': index });
+  },
+  onCancelGrant() { if (!this.data.submitting) this.update({ grantEditor: null }); },
+  onConfirmGrant() {
+    const editor = this.data.grantEditor;
+    const college = editor && this.data.colleges[editor.collegeIndex];
+    if (college) return this.submitGrant(editor.userId, 'collegeLeader', true, college.collegeId);
+  },
+  submitGrant(userId, permission, make, targetCollegeId) {
     const member = this.data.members.find(row => row.userId === userId);
     if (!member || this.data.submitting) return undefined;
-    const collegeId = permission === 'collegeLeader' ? member.collegeId : '';
+    const collegeId = permission === 'collegeLeader' ? targetCollegeId || member.managedCollegeId || member.collegeId : '';
     return this.write(api => api.grantSchoolPermission({ userId, permission, make, collegeId }));
   },
 

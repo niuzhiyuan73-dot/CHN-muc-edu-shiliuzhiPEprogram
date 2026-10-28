@@ -41,6 +41,8 @@ Page({
     loading: true,
     /** 加载失败时的提示 */
     error: '',
+    loadingMore: false,
+    moreError: '',
     /** 当前协会的主题类，挂在页面根节点上 */
     themeClass: '',
     /** 视图模型，形状见 services/announcement-view.js */
@@ -53,8 +55,11 @@ Page({
 
   /** 返回 Promise 是有意为之：测试需要句柄等首屏加载完 */
   onLoad() {
+    this.unloaded = false;
     return this.refresh();
   },
+
+  onUnload() { this.unloaded = true; this.requestVersion = (this.requestVersion || 0) + 1; },
 
   /** 从发布页返回时刷新一次，刚发的公告才能立刻出现在台账里 */
   onShow() {
@@ -115,8 +120,10 @@ Page({
    * @returns {Promise<void>}
    */
   async refresh() {
+    const version = this.requestVersion = (this.requestVersion || 0) + 1;
     const scope = this.currentScope();
     this.scope = scope;
+    this.setData({ loading: true, loadingMore: false, moreError: '', error: '' });
 
     // 有没有学校身份只影响「去登录 / 没权限」的措辞，判权仍由服务端负责。
     // 取 account（在册学校身份）而不是 user：演示账号里没有停用的平台账号，
@@ -130,13 +137,36 @@ Page({
     }
 
     try {
+      if (this.unloaded || version !== this.requestVersion) return;
       const view = await loadSchoolAnnouncementManageView({ ...scope, loggedIn });
+      if (this.unloaded || version !== this.requestVersion || JSON.stringify(scope) !== JSON.stringify(this.currentScope())) return;
       this.loaded = true;
       this.setData({ loading: false, error: '', view, themeClass: currentThemeClass() });
     } catch (err) {
+      if (this.unloaded || version !== this.requestVersion) return;
       console.error('[announcement-manage] 公告加载失败', err);
       this.loaded = true;
-      this.setData({ loading: false, error: '公告加载失败，请下拉重试', themeClass: currentThemeClass() });
+      this.setData({ loading: false, view: {}, error: '公告加载失败，请下拉重试', themeClass: currentThemeClass() });
+    }
+  },
+
+  async loadMore() {
+    if (this.data.loading || this.data.loadingMore || !this.data.view.allowed || !this.data.view.hasMore) return;
+    const version = this.requestVersion;
+    const scope = this.scope;
+    const cursor = this.data.view.nextCursor;
+    this.setData({ loadingMore: true, moreError: '' });
+    try {
+      if (!cursor) throw new Error('分页信息失效，请下拉刷新');
+      const page = await loadSchoolAnnouncementManageView({ ...scope, cursor, loggedIn: true });
+      if (this.unloaded || version !== this.requestVersion || JSON.stringify(scope) !== JSON.stringify(this.currentScope())) return;
+      if (!page.allowed) { this.setData({ view: page, loadingMore: false }); return; }
+      if (page.hasMore && (!page.nextCursor || page.nextCursor === cursor)) throw new Error('分页信息失效，请下拉刷新');
+      const rows = Array.from(new Map(this.data.view.rows.concat(page.rows).map(row => [row.id, row])).values());
+      this.setData({ view: { ...page, rows, publishedCount: rows.filter(row => !row.archived).length,
+        archivedCount: rows.filter(row => row.archived).length }, loadingMore: false });
+    } catch (error) {
+      if (!this.unloaded && version === this.requestVersion) this.setData({ loadingMore: false, moreError: error.message || '加载失败，请重试' });
     }
   },
 
@@ -148,22 +178,21 @@ Page({
   /** 下架一条公告。先确认，再动手 */
   async onArchive(event) {
     const id = event.currentTarget.dataset.id;
-    if (!id || this.data.acting) return undefined;
-
-    const confirmed = await this.confirm(ARCHIVE_CONFIRM);
-    if (!confirmed) return undefined;
-
+    if (!id || this.data.acting || !this.data.view.allowed) return undefined;
     this.setData({ acting: true });
-    const result = await space.forScope(this.scope || this.currentScope())
-      .archiveSchoolAnnouncement({ announcementId: id });
-    this.setData({ acting: false });
-
-    if (!result.ok) {
-      this.showToast(result.message || '下架失败');
-      return undefined;
+    const scope = this.scope || this.currentScope();
+    try {
+      const confirmed = await this.confirm(ARCHIVE_CONFIRM);
+      if (!confirmed || this.unloaded) return;
+      const result = await space.forScope(scope).archiveSchoolAnnouncement({ announcementId: id });
+      if (this.unloaded) return;
+      if (!result.ok) { this.showToast(result.message || '下架失败'); return; }
+      this.showToast('已下架', 'success');
+      return this.refresh();
+    } catch (error) {
+      if (!this.unloaded) this.showToast(error.message || '下架失败，请重试');
+    } finally {
+      if (!this.unloaded) this.setData({ acting: false });
     }
-
-    this.showToast('已下架', 'success');
-    return this.refresh();
   },
 });

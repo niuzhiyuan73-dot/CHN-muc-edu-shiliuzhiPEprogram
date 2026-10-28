@@ -288,6 +288,7 @@ function buildDetailView(input = {}) {
     // 不必自己再解一次路由 query
     eventId: (dto.event && dto.event.eventId) || '',
     event: row,
+    signupNote: dto.signupNote || '',
     signupRows,
     hasSignups: signupRows.length > 0,
     signupsEmptyNote: '还没有人报名',

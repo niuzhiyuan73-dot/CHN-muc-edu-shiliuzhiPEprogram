@@ -57,7 +57,7 @@
         </view>
         <view class="notice-content">{{item.content}}</view>
         <view class="notice-foot">
-          <text class="assoc-chip">{{item.associationGlyph}} {{item.associationName}}</text>
+          <text>学校公告</text>
           <text class="notice-date">{{item.dateText}}</text>
         </view>
       </view>
@@ -81,6 +81,7 @@
         wx:for="{{view.upcomingEvents}}"
         wx:key="id"
         data-event-id="{{item.id}}"
+        data-event-kind="{{item.eventKind}}"
         data-association="{{item.association}}"
         bindtap="onOpenEvent"
       >

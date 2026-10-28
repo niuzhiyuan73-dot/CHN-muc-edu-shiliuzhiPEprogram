@@ -34,6 +34,10 @@
         </view>
       </view>
 
+      <view wx:if="{{view.total > 0}}" class="card-subtitle">已加载 {{view.rows.length}} / {{view.total}} 条</view>
+      <view wx:if="{{moreError}}" class="pagination-error">{{moreError}}</view>
+      <button wx:if="{{view.hasMore}}" class="btn btn-outline btn-block" bindtap="loadMore" loading="{{loadingMore}}" disabled="{{loadingMore}}">{{moreError ? '重试加载' : '加载更多'}}</button>
+
       <view wx:if="{{isMock}}" class="mock-note">
         当前为本地模拟数据，用于开发预览
       </view>

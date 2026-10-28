@@ -17,8 +17,8 @@
  * 让学院负责人知道为什么还要再交一次。
  *
  * 【学院从哪来】
- * 学校维度下没有旧栈那份账号快照。本人学院编号取自学校身份会话
- * （account.collegeId）；范围（学校 + 协会）在进入时固定一次，读与写都用它。
+ * 目标学院来自赛事的 submittableCollegeIds；学籍学院只在属于授权范围时作为默认项。
+ * 多个学院可管理时显示选择器，提交始终携带目标 collegeId。
  * ============================================================
  */
 
@@ -54,8 +54,11 @@ Page({
    */
   onLoad(query = {}) {
     this.eventId = query.eventId || '';
+    this.collegeId = query.collegeId || '';
     return this.refresh();
   },
+
+  onUnload() { this.loadRequest = (this.loadRequest || 0) + 1; },
 
   /** 从审核页返回时刷新一次，刚被退回的名单状态才在页面上 */
   onShow() {
@@ -98,17 +101,21 @@ Page({
    * @returns {Promise<void>}
    */
   async refresh() {
+    const request = this.loadRequest = (this.loadRequest || 0) + 1;
     const scope = this.currentScope();
     this.scope = scope;
+    this.setData({ loading: true, error: '' });
     const session = await this.readSession();
     this.actorId = (session && session.user && session.user.userId) || null;
-    const collegeId = (session && session.account && session.account.collegeId) || '';
+    if (request !== this.loadRequest) return;
+    const preferredCollegeId = (session && session.account && session.account.collegeId) || '';
 
     try {
       const view = await loadCollegeEntryView(this.eventId, {
         schoolId: scope.schoolId, association: scope.association,
-        actorId: this.actorId, collegeId,
+        actorId: this.actorId, collegeId: this.collegeId, preferredCollegeId,
       });
+      if (request !== this.loadRequest) return;
       // 采纳装载器探测出的真实编号再用于写：query 在微信开发者工具 / 真机里是
       // 原样透传的（未解码），继续拿路由原值提交会被服务端答「学院赛不存在」
       // （见 utils/route-query.js）。解析只做一次，之后读写与跳转都用它。
@@ -123,13 +130,22 @@ Page({
         themeClass: currentThemeClass(),
       });
     } catch (err) {
+      if (request !== this.loadRequest) return;
       console.error('[college-entry] 加载失败', err);
       this.loaded = true;
-      this.setData({ loading: false, error: '名单页加载失败，请返回重试', themeClass: currentThemeClass() });
+      this.setData({ loading: false, view: {}, memberIds: [], error: '名单页加载失败，请返回重试', themeClass: currentThemeClass() });
     }
   },
 
   /* ---------- 交互 ---------- */
+
+  onCollegeChange(event) {
+    if (this.data.submitting) return;
+    const college = (this.data.view.collegeOptions || [])[Number(event.detail.value)];
+    if (!college) return;
+    this.collegeId = college.collegeId;
+    return this.refresh();
+  },
 
   /** 勾选 / 取消勾选队员。checkbox-group 给出的就是全部已选项 */
   onToggleMember(event) {
@@ -152,17 +168,23 @@ Page({
   /* ---------- 提交 ---------- */
 
   async onSubmit() {
-    if (this.data.submitting) return undefined;
+    if (this.data.loading || this.data.submitting) return undefined;
     if (!this.data.view.canSubmit) return undefined;
 
     const scope = this.scope || this.currentScope();
     this.setData({ submitting: true });
-    const result = await space.forScope(scope).submitCollegeEntry({
+    let result;
+    try { result = await space.forScope(scope).submitCollegeEntry({
       eventId: this.eventId,
+      collegeId: this.data.view.collegeId,
       college: this.data.view.college,
       memberIds: this.data.memberIds,
       remark: this.data.remark,
-    });
+    }); } catch (error) {
+      this.setData({ submitting: false });
+      this.showToast(error.message || '提交失败，请重试');
+      return;
+    }
 
     if (!result || !result.ok) {
       this.setData({ submitting: false });

@@ -10,8 +10,18 @@
   <view wx:if="{{loading}}" class="card hint">正在读取…</view>
   <block wx:else>
     <view wx:if="{{canCreate}}" class="card">
-      <view class="card-title">发起两校交流赛</view>
-      <view class="hint">主办方：{{schoolName}}；另一所试点学校将收到邀请</view>
+      <view class="card-title">发起跨校交流赛</view>
+      <view class="hint">主办方：{{schoolName}}；选择参赛学校（共 2 至 8 所），分别设置名额。</view>
+      <checkbox-group bindchange="onSchoolSelection">
+        <label wx:for="{{schoolChoices}}" wx:key="schoolId" class="selection">
+          <checkbox value="{{item.schoolId}}" checked="{{item.selected}}" disabled="{{busy || item.host || (selectedSchoolIds.length >= 8 && !item.selected)}}" />{{item.name}}{{item.host ? '（主办校）' : ''}}
+        </label>
+      </checkbox-group>
+      <block wx:for="{{schoolChoices}}" wx:key="schoolId">
+        <view wx:if="{{item.selected}}">
+          <view class="hint">{{item.name}}名额</view><input class="field" type="number" value="{{item.quota}}" data-schoolid="{{item.schoolId}}" bindinput="onSchoolQuota" disabled="{{busy}}" />
+        </view>
+      </block>
       <input class="field" placeholder="赛事名称" value="{{title}}" data-field="title" bindinput="onField" maxlength="80" disabled="{{busy}}" />
       <input class="field" placeholder="比赛地点" value="{{location}}" data-field="location" bindinput="onField" maxlength="120" disabled="{{busy}}" />
       <picker mode="date" value="{{date}}" data-field="date" bindchange="onField" disabled="{{busy}}"><view class="selection">比赛日期：{{date}}</view></picker>
@@ -22,7 +32,6 @@
       <picker wx:if="{{showBronze}}" range="{{bronzeOptions}}" range-key="label" value="{{bronzeIndex}}" disabled="{{busy}}" bindchange="onBronzeChange"><view class="selection">三四名：{{bronzeLabel}} ›</view></picker>
       <view wx:if="{{showGfReset}}" class="selection">总决赛重赛（胜者组冠军先记 1:0）<switch checked="{{gfReset}}" disabled="{{busy}}" bindchange="onGfResetChange" /></view>
       <view class="hint">总名额</view><input class="field" type="number" value="{{quota}}" data-field="quota" bindinput="onField" disabled="{{busy}}" />
-      <view class="hint">每校名额</view><input class="field" type="number" value="{{schoolQuota}}" data-field="schoolQuota" bindinput="onField" disabled="{{busy}}" />
       <button class="btn btn-primary" disabled="{{busy}}" loading="{{busy}}" bindtap="onCreate">创建并发出邀请</button>
     </view>
     <view class="card">

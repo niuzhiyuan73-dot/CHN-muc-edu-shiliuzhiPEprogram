@@ -45,6 +45,9 @@ const CMD = Symbol('db.command');
 const command = {
   gte: (value) => ({ [CMD]: 'gte', value }),
   lte: (value) => ({ [CMD]: 'lte', value }),
+  lt: (value) => ({ [CMD]: 'lt', value }),
+  neq: (value) => ({ [CMD]: 'neq', value }),
+  or: (value) => ({ [CMD]: 'or', value }),
   // 字段是否存在：用于数「回填前的历史文档」（没有 memberStatus 的那些）。
   exists: (value) => ({ [CMD]: 'exists', value }),
   gt: (value) => ({ [CMD]: 'gt', value }),
@@ -69,6 +72,7 @@ function matchWhere(doc, where) {
   if (!where) return true;
   if (isCommand(where)) {
     if (where[CMD] === 'and') return where.value.every((part) => matchWhere(doc, part));
+    if (where[CMD] === 'or') return where.value.some((part) => matchWhere(doc, part));
     return false;
   }
   return Object.keys(where).every((field) => {
@@ -78,6 +82,8 @@ function matchWhere(doc, where) {
     if (cond[CMD] === 'in') return Array.isArray(cond.value) && fieldValues(doc, field).some(value => cond.value.includes(value));
     if (cond[CMD] === 'gte') return compare(doc[field], cond.value) >= 0;
     if (cond[CMD] === 'lte') return compare(doc[field], cond.value) <= 0;
+    if (cond[CMD] === 'lt') return compare(doc[field], cond.value) < 0;
+    if (cond[CMD] === 'neq') return doc[field] !== cond.value;
     if (cond[CMD] === 'gt') return compare(doc[field], cond.value) > 0;
     if (cond[CMD] === 'exists') return (doc[field] !== undefined) === Boolean(cond.value);
     return false;

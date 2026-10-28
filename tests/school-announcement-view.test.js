@@ -179,7 +179,7 @@ describe('学校公告管理视图 —— 内容', () => {
     assert.strictEqual(view.rows[0].pinned, true);
   });
 
-  test('下架后：公开列表少一条，台账里仍在、沉到底部、不再给按钮', async () => {
+  test('下架后：公开列表少一条，台账保持分页顺序、不再给按钮', async () => {
     const published = await api().listSchoolAnnouncements({});
     const target = published.announcements[0];
     await api().archiveSchoolAnnouncement({ announcementId: target.announcementId });
@@ -189,7 +189,7 @@ describe('学校公告管理视图 —— 内容', () => {
     assert.strictEqual(view.publishedCount, COUNTS.muc - 1);
     assert.strictEqual(view.archivedCount, 1);
 
-    const last = view.rows[view.rows.length - 1];
+    const last = view.rows.find(row => row.id === target.announcementId);
     assert.strictEqual(last.id, target.announcementId);
     assert.strictEqual(last.archived, true);
     assert.strictEqual(last.statusLabel, '已下架');

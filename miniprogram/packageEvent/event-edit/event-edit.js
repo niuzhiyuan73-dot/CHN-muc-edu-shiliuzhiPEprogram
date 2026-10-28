@@ -55,6 +55,7 @@ const {
 const { isMock } = require('../../services/runtime-mode.js');
 const { currentThemeClass } = require('../../services/branding.js');
 const schoolSession = require('../../services/school-session.js');
+const { drawCapacityOf } = require('../../utils/event-capacity.js');
 const associationScope = require('../../services/association-scope.js');
 const space = require('../../services/association-space.js');
 const identity = require('../../services/school-identity.js');
@@ -139,6 +140,7 @@ function todayText(now = new Date()) {
 
 Page({
   data: {
+    capacity: drawCapacityOf({ matchType: MATCH_TYPE.SINGLES }),
     /** 提交中，防止连点重复提交 */
     submitting: false,
     isMock,
@@ -322,6 +324,8 @@ Page({
     const resetMode = doubles && !allowed.includes(this.data.form.seedMode);
     this.setData({
       matchTypeIndex: index,
+      capacity: drawCapacityOf({ matchType: type }),
+      errors: { ...this.data.errors, quota: '' },
       // 组别选项随项目换一套，且一并复位到「不限」——单打选过「男单」再切双打，
       // 男单不是双打的合法组别，留着会带着一个必被校验拒绝的值提交
       disciplines: doubles ? DOUBLES_DISCIPLINE_LABELS : SINGLES_DISCIPLINE_LABELS,
@@ -474,6 +478,12 @@ Page({
     if (this.data.blockReason) return undefined;
 
     const form = { ...this.data.form, startTime: this.buildStartTime() };
+    const capacity = drawCapacityOf(form);
+    if (Number(form.quota) > capacity) {
+      const message = `本项目最多 ${capacity} 人，请调整名额`;
+      this.setData({ errors: { quota: message }, errorText: message });
+      return;
+    }
     // 报名资格：不限小组，或勾选的小组（B6）
     const audience = this.data.audienceIndex === 1
       ? { audienceMode: 'groups', audienceGroupIds: this.data.selectedGroupIds }

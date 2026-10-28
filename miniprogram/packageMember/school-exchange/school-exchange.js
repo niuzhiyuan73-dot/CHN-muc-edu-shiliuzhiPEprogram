@@ -25,6 +25,7 @@ Page({
     loading: true, busy: false, error: '', notice: '', schoolId: 'muc', schoolName: '中央民族大学',
     schoolIndex: 0, schools: [], actors: [], actorIndex: 0, actorName: '',
     canCreate: false, events: [], detail: null, scoreDraft: {},
+    schoolChoices: [], selectedSchoolIds: [],
     refereePicker: null,
     title: '民大北航单打交流赛', location: '模拟球场', date: '', time: '18:00', quota: '4', schoolQuota: '2',
     // 赛制与它的参数：默认单败淘汰（与历史口径一致），其余选项按赛制显隐
@@ -99,7 +100,14 @@ Page({
       const found = actors.findIndex(actor => actor.id === identity.getDemoActor());
       const actorIndex = found >= 0 ? found : 0;
       const schoolIndex = directory.schools.findIndex(school => school.schoolId === target.schoolId);
+      const previous = new Map((this.data.schoolChoices || []).map(row => [row.schoolId, row]));
+      const selected = this.data.selectedSchoolIds.length ? this.data.selectedSchoolIds
+        : directory.schools.filter(row => row.schoolId !== target.schoolId).slice(0, 1).map(row => row.schoolId);
+      const selectedSchoolIds = [...new Set([target.schoolId, ...selected])].filter(id => directory.schools.some(row => row.schoolId === id));
       this.update({ schools: directory.schools, schoolIndex, schoolName: directory.schools[schoolIndex].name,
+        selectedSchoolIds,
+        schoolChoices: directory.schools.map(row => ({ ...row, selected: selectedSchoolIds.includes(row.schoolId),
+          host: row.schoolId === target.schoolId, quota: previous.get(row.schoolId)?.quota || this.data.schoolQuota })),
         actors, actorIndex, actorName: (actors[actorIndex] && actors[actorIndex].label) || '',
         isMock: identity.isMockNow(),
         canCreate: session.canManageAssociation, detail, scoreDraft: {},
@@ -143,7 +151,7 @@ Page({
     if (this.data.busy) return;
     const school = this.data.schools[Number(event.detail.value)];
     if (!school) return;
-    this.update({ schoolId: school.schoolId, notice: '' });
+    this.update({ schoolId: school.schoolId, notice: '', selectedSchoolIds: [], schoolChoices: [] });
     this.requestId = '';
     return this.reload();
   },
@@ -220,19 +228,42 @@ Page({
   },
   onCreate() {
     if (!this.data.canCreate) return;
-    const schoolIds = this.data.schools.map(school => school.schoolId);
-    if (schoolIds.length !== 2) { this.update({ error: '当前体验页需要两所试点学校' }); return; }
+    const schoolIds = this.data.selectedSchoolIds;
+    if (schoolIds.length < 2 || schoolIds.length > 8 || !schoolIds.includes(this.data.schoolId)) {
+      this.update({ error: '请选择含主办校在内的 2 至 8 所学校' }); return;
+    }
+    const quota = Number(this.data.quota);
+    const schoolQuotas = Object.fromEntries(this.data.schoolChoices.filter(row => schoolIds.includes(row.schoolId))
+      .map(row => [row.schoolId, Number(row.quota)]));
+    if (!Number.isInteger(quota) || quota < 2 || quota > 128 || schoolIds.some(id => !Number.isInteger(schoolQuotas[id])
+      || schoolQuotas[id] < 1 || schoolQuotas[id] > quota) || Object.values(schoolQuotas).reduce((sum, n) => sum + n, 0) < quota) {
+      this.update({ error: '总名额须为 2 至 128 人，各校名额须为正整数且合计不少于总名额' }); return;
+    }
     const start = new Date(`${this.data.date}T${this.data.time}:00`);
     if (!Number.isFinite(start.getTime())) { this.update({ error: '请选择有效时间' }); return; }
     this.requestId = this.requestId || `create_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
     return this.write(api => api.createExchangeEvent({ requestId: this.requestId, title: this.data.title,
       location: this.data.location, startTime: start.toISOString(), participantSchoolIds: schoolIds,
-      quota: Number(this.data.quota), schoolQuotas: Object.fromEntries(schoolIds.map(id => [id, Number(this.data.schoolQuota)])),
+      quota, schoolQuotas,
       // 赛制与参数：服务端只保留该赛制真正用得到的字段（见 normalizeExchangeFormat）
       format: this.data.format, groupCount: Number(this.data.groupCount),
       advancePerGroup: Number(this.data.advancePerGroup), bronzeMode: this.data.bronzeMode,
       gfReset: Boolean(this.data.gfReset),
     }));
+  },
+  onSchoolSelection(event) {
+    if (this.data.busy) return;
+    const ids = [...new Set([this.data.schoolId, ...(event.detail.value || [])])]
+      .filter(id => this.data.schools.some(row => row.schoolId === id));
+    if (ids.length > 8) { this.update({ error: '一次最多邀请 8 所学校' }); return; }
+    this.requestId = '';
+    this.update({ selectedSchoolIds: ids, error: '', schoolChoices: this.data.schoolChoices.map(row => ({ ...row, selected: ids.includes(row.schoolId) })) });
+  },
+  onSchoolQuota(event) {
+    if (this.data.busy) return;
+    this.requestId = '';
+    const id = event.currentTarget.dataset.schoolid;
+    this.update({ schoolChoices: this.data.schoolChoices.map(row => row.schoolId === id ? { ...row, quota: event.detail.value } : row) });
   },
   onRespond(event) {
     if (!this.data.detail || !this.data.detail.canRespond) return;

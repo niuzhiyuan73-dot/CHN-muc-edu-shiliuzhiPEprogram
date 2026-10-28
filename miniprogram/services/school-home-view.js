@@ -4,8 +4,8 @@
  * 首页自上而下两块内容：公告 + 近期赛事，以及登录后的概况数字。
  * 学校维度下这两块都按「当前浏览学校」取数，**跨该校的协会聚合**：
  *
- *   · 公告  —— 各协会 listSchoolAnnouncements 聚合，置顶优先、时间倒序；
- *   · 赛事  —— 各协会 listSchoolEvents 聚合，只留报名中 / 进行中，开赛时间升序；
+ *   · 公告  —— 学校级 listSchoolAnnouncements 一份，只展示已发布；
+ *   · 赛事  —— 按运动类型取个人赛或团队摘要，合并近期赛事、按开赛时间升序；
  *   · 概况  —— 会员数（学校级，取一份）、比赛数 / 赛事数（按协会相加）、赛季编号。
  *
  * 每个协会单独建客户端、单独容错：某协会未启用 / 无读取权限时跳过该协会，
@@ -24,14 +24,15 @@
  * ============================================================
  */
 
-const { allAssociations, getAssociation } = require('../utils/associations.js');
+const { allAssociations, getAssociation, isTeamSport } = require('../utils/associations.js');
 const { formatDate, formatDateTime } = require('../utils/format.js');
+const { ANNOUNCEMENT_STATUS } = require('../utils/constants.js');
 
 /** 首页默认展示的公告与赛事条数。太多会把首屏撑得很长。 */
 const DEFAULT_ANNOUNCEMENT_LIMIT = 3;
 const DEFAULT_EVENT_LIMIT = 3;
 
-/** 单次列表页大小。协会内容超过一页时循环取完，不把第一页当全集。 */
+/** 公告首页最多取一页，完整列表由公告页继续翻页。 */
 const PAGE_LIMIT = 50;
 
 /** 时间字段转毫秒。非法值一律当 0 沉底，绝不产生 NaN 比较 */
@@ -56,7 +57,7 @@ function isUpcomingEvent(event) {
 function sortUpcoming(rows, limit) {
   return rows
     .filter(isUpcomingEvent)
-    .sort((a, b) => timeValue(a.startTime) - timeValue(b.startTime))
+    .sort((a, b) => (timeValue(a.startTime) || Infinity) - (timeValue(b.startTime) || Infinity))
     .slice(0, limit);
 }
 
@@ -80,10 +81,11 @@ function announcementRow(item) {
 function eventRow(event, assoc) {
   return {
     id: event.eventId,
-    title: event.title || '',
+    eventKind: event.eventKind || 'individual',
+    title: event.title || event.name || '',
     statusLabel: event.statusLabel || '',
     isOngoing: Boolean(event.isOngoing),
-    timeText: formatDateTime(event.startTime),
+    timeText: event.startTime ? formatDateTime(event.startTime) : '时间待定',
     location: event.location || '',
     quotaText: event.quotaText || '',
     signedUp: Boolean(event.mySignup && event.mySignup.signed),
@@ -99,9 +101,9 @@ function eventRow(event, assoc) {
  * 读不到时抛错，由调用方退化成「暂无公告」。
  */
 async function collectAnnouncements(api) {
-  const page = await api.listSchoolAnnouncements({ limit: PAGE_LIMIT });
+  const page = await api.listSchoolAnnouncements({ limit: PAGE_LIMIT, status: ANNOUNCEMENT_STATUS.PUBLISHED });
   if (!page.ok) throw new Error(page.message || '公告读取失败');
-  return { announcements: page.announcements || [], hasMore: Boolean(page.hasMore) };
+  return { announcements: page.announcements || [], total: page.total, hasMore: Boolean(page.hasMore) };
 }
 
 /**
@@ -166,7 +168,9 @@ async function loadSchoolHomeView(options = {}) {
       let matchTotal = 0;
       let eventTotal = 0;
       if (viewerId) {
-        const [page, matches] = await Promise.all([
+        const [page, matches] = isTeamSport(assoc.id)
+          ? [await api.listTeamEvents({ home: true, limit: HOME_EVENT_FETCH }), null]
+          : await Promise.all([
           api.listSchoolEvents({
             limit: HOME_EVENT_FETCH, offset: 0, status: UPCOMING_EVENT_STATUS, order: 'asc',
           }),
@@ -177,7 +181,7 @@ async function loadSchoolHomeView(options = {}) {
         // totalAll 是「不看状态筛选」的赛事总量：概况里的「N 场赛事」用它，
         // 不能被「只看近期」的筛选带偏成个位数。
         eventTotal = Number(page.totalAll || 0) || events.length;
-        matchTotal = Number((matches && matches.total) || 0);
+        matchTotal = Number(isTeamSport(assoc.id) ? page.matchTotal || 0 : (matches && matches.total) || 0);
       }
       return { assoc: getAssociation(assoc.id), events, matchTotal, eventTotal };
     } catch (err) {
@@ -232,7 +236,7 @@ async function loadSchoolHomeView(options = {}) {
     loggedIn: Boolean(viewerId),
     announcements: {
       rows: announcementDocs.slice(0, announcementLimit),
-      total: announcementDocs.length,
+      total: Number.isFinite(announcementPage.total) ? announcementPage.total : announcementDocs.length,
       hasMore: announcementsHasMore || announcementDocs.length > announcementLimit,
     },
     upcomingEvents,

@@ -2,6 +2,7 @@
 const { schoolScope, SCHOOL_MEMBER_STATUS } = require('../lib/utils/school.js');
 const { MEET_COLLECTIONS, meetScope } = require('../lib/utils/meet-scope.js');
 const { attachTeamReads, unique } = require('../lib/services/scoped-team-reads.js');
+const { attachOverviewReads } = require('../lib/services/school-overview-reads.js');
 
 const SCHOOL_COLLECTIONS = ['schools', 'schoolAssociations', 'colleges', 'schoolMembers', 'schoolRoles', 'studentIdClaims',
   'exchangeEvents', 'exchangeInvitations', 'exchangeSignups', 'exchangeMatches',
@@ -423,6 +424,7 @@ function buildScoped(repo, io, inTx, options) {
   }
   if (!inTx) result.transaction = (fn) => repo.transaction((tx) => fn(surfaceOf(tx, scope)));
   attachTeamReads(result, { inTx, query: io.query, byIds: io.byIds, command: io.cmd });
+  attachOverviewReads(result, { inTx, top: io.top, count: io.count, command: io.cmd });
   if (result.schoolMembers) result.schoolMembers.listDirectoryPage = options => {
     if (inTx) throw new Error('事务内不允许查询会员目录');
     return io.memberPage(scope, options);

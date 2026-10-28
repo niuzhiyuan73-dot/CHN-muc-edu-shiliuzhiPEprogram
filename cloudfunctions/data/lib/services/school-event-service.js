@@ -76,8 +76,7 @@ const EVENT_LIST_MAX = 50;
 
 // 抽签最多 44 场：6 次身份读 + 赛事读 + 每场读/写 + 赛事写 + 审计 = 97。
 // 重抽也必须预留逐场重读；双打两人一队，分组赛按最坏的偶数组估算。
-const DRAW_MATCH_MAX = 44;
-const drawCapacityOf = event => DRAW_MATCH_MAX * 2 * (event.matchType === MATCH_TYPE.DOUBLES ? 2 : 1);
+const { drawCapacityOf } = require('../utils/event-capacity.js');
 
 const iso = value => new Date(value).toISOString();
 const formatOf = doc => (doc && doc.format) || DEFAULT_EVENT_FORMAT;
@@ -545,7 +544,10 @@ async function publishSchoolEvent(payload = {}, ctx) {
   const built = buildEventRecord(payload, { actor: ctx.actor, now: ctx.now });
   if (!built.ok) return ok(refused(built.firstError, { errors: built.errors }));
   const capacity = drawCapacityOf(built.record);
-  if (Number(built.record.quota) > capacity) return ok(refused(`本赛制最多支持 ${capacity} 人，请缩小名额`));
+  if (Number(built.record.quota) > capacity) {
+    const message = `本赛制最多支持 ${capacity} 人，请缩小名额`;
+    return ok(refused(message, { errors: { quota: message } }));
+  }
   // 小组限制（B6）：与训练同一把尺子校验；非法即拒绝，不静默降级为不限。
   const audience = buildAudience(payload);
   if (!audience.ok) return ok(refused(audience.message));

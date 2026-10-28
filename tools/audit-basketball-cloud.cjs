@@ -22,6 +22,9 @@ const command = {
   gt: value => ({ [CMD]: 'gt', value }),
   gte: value => ({ [CMD]: 'gte', value }),
   lte: value => ({ [CMD]: 'lte', value }),
+  lt: value => ({ [CMD]: 'lt', value }),
+  neq: value => ({ [CMD]: 'neq', value }),
+  or: value => ({ [CMD]: 'or', value }),
   in: value => ({ [CMD]: 'in', value }),
   and: value => ({ [CMD]: 'and', value }),
 };
@@ -29,6 +32,7 @@ const isCmd = value => Boolean(value && value[CMD]);
 function matchRow(row, where) {
   if (!where) return true;
   if (isCmd(where)) {
+    if (where[CMD] === 'or') return where.value.some(part => matchRow(row, part));
     return where[CMD] === 'and' ? where.value.every(part => matchRow(row, part)) : false;
   }
   return Object.entries(where).every(([field, cond]) => {
@@ -38,6 +42,8 @@ function matchRow(row, where) {
     if (cond[CMD] === 'gt') return String(row[field] ?? '') > String(cond.value ?? '');
     if (cond[CMD] === 'gte') return String(row[field] ?? '') >= String(cond.value ?? '');
     if (cond[CMD] === 'lte') return String(row[field] ?? '') <= String(cond.value ?? '');
+    if (cond[CMD] === 'lt') return String(row[field] ?? '') < String(cond.value ?? '');
+    if (cond[CMD] === 'neq') return row[field] !== cond.value;
     return false;
   });
 }
@@ -63,14 +69,21 @@ function database(seed) {
         throw new Error('injected RPC failure');
       }
     }
-    const query = (where = {}, offset = 0, count = 100) => ({
-      where: next => query(next, offset, count),
-      orderBy: () => query(where, offset, count),
-      skip: next => query(where, next, count), limit: next => query(where, offset, next),
+    const query = (where = {}, offset = 0, count = 100, order = []) => ({
+      where: next => query(next, offset, count, order),
+      orderBy: (field, direction) => query(where, offset, count, [...order, { field, direction }]),
+      skip: next => query(where, next, count, order), limit: next => query(where, offset, next, order),
+      count: async () => ({ total: [...table.values()].filter(row => matchRow(row, where)).length }),
       get: async () => {
         assert.ok(!trace, 'query forbidden inside transaction');
         return { data: [...table.values()].filter(row => matchRow(row, where))
-          .sort((a,b) => a._id.localeCompare(b._id)).slice(offset, offset + count).map(clone) };
+          .sort((a, b) => {
+            for (const { field, direction } of order) {
+              const av = a[field] == null ? '' : a[field], bv = b[field] == null ? '' : b[field];
+              if (av !== bv) return (av < bv ? -1 : 1) * (direction === 'desc' ? -1 : 1);
+            }
+            return a._id.localeCompare(b._id);
+          }).slice(offset, offset + count).map(clone) };
       },
     });
     return { ...query(), doc: id => {

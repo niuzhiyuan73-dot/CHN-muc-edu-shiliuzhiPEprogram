@@ -556,6 +556,8 @@ function createSchoolHandlers({ claimKey }) {
       // 本人权限档位：校级 / 协会 / 学院，普通会员为空串（展示标签退回「会员」）。
       permission: manageable ? permissionOf(ctx.schoolRole, ctx.membership) : '',
       permissionLabel: manageable ? permissionLabelOf(ctx.schoolRole, ctx.membership) : '',
+      managedCollegeId: manageable && ctx.membership && ctx.membership.status === 'active' && ctx.membership.role === 'staff'
+        ? ctx.membership.collegeId || '' : '',
       // 能不能管**自己的学院**（学院赛名单提交的判据）。校级 / 协会负责人可管任一本校学院；
       // 学院负责人只在本学院上有权；平台管理员跨校也可管。口径与 canSchoolAction 同源。
       canManageCollege: manageable ? canSchoolAction(ctx, 'manageCollege',
@@ -634,6 +636,12 @@ function createSchoolHandlers({ claimKey }) {
       nickName: (userById.get(row.userId) || {}).nickName || '会员',
       collegeId: row.collegeId || '',
       collegeName: collegeName(row.collegeId),
+      managedCollegeId: membershipById.get(schoolMembershipKey(row.userId, ctx))?.status === 'active'
+        && membershipById.get(schoolMembershipKey(row.userId, ctx))?.role === 'staff'
+        ? membershipById.get(schoolMembershipKey(row.userId, ctx)).collegeId || '' : '',
+      managedCollegeName: membershipById.get(schoolMembershipKey(row.userId, ctx))?.status === 'active'
+        && membershipById.get(schoolMembershipKey(row.userId, ctx))?.role === 'staff'
+        ? collegeName(membershipById.get(schoolMembershipKey(row.userId, ctx)).collegeId) : '',
       permission: permissionOf(
         roleById.get(schoolRoleKey(row.userId, ctx.schoolId)),
         membershipById.get(schoolMembershipKey(row.userId, ctx)),

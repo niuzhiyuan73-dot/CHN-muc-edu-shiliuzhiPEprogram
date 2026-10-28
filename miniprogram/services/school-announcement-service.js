@@ -12,7 +12,7 @@
  *     的 `manageSchool`，见 canPublishAnnouncement）；协会负责人与学院负责人
  *     仍不能发——公告是发全校的，没有「某个协会的公告」这一说；
  *   · 内容校验、落库记录、排序全部复用旧栈（`validateAnnouncement` /
- *     `buildAnnouncementRecord` / `sortAnnouncements`），不另抄一份。
+ *     `buildAnnouncementRecord`）；列表排序由仓储按置顶、时间、编号执行。
  *
  * 【为什么写进独立的 announcements 集合、按范围过滤】
  * 旧栈把公告盖一个 association 章供读路径过滤，且没有学校边界。学校维度把
@@ -37,7 +37,7 @@ const { buildSchoolContext } = require('./school-context.js');
 const { canReadAssociationSpace } = require('./association-space-permission.js');
 const { isPlatformAdminCtx, canSchoolAction } = require('./school-permission.js');
 const { legacyActorOf } = require('./school-actor.js');
-const { buildAnnouncementRecord, sortAnnouncements } = require('./announcement.js');
+const { buildAnnouncementRecord } = require('./announcement.js');
 const {
   schoolKey, schoolAnnouncementKey,
 } = require('../utils/school.js');
@@ -108,36 +108,31 @@ function announcementSummary(doc, canManage) {
 
 async function listSchoolAnnouncements(payload = {}, ctx) {
   if (!canReadAssociationSpace(ctx)) {
-    return ok({ ok: false, announcements: [], canManage: false, categories: [],
+    return ok({ ok: false, code: 'FORBIDDEN', announcements: [], canManage: false, categories: [],
       message: '没有读取协会空间的权限' });
   }
   const canManage = canPublishAnnouncement(ctx);
-  const all = (await ctx.repo.forScope(ctx).announcements.list()).filter(isAnnouncementDoc);
-  // 撤回 / 下架的公告对普通会员不再可读；平台管理员保留可见以便审计。
-  const visible = canManage
-    ? all
-    : all.filter(row => row.status === ANNOUNCEMENT_STATUS.PUBLISHED);
-
-  let rows = visible;
-  if (typeof payload.category === 'string' && payload.category) {
-    rows = rows.filter(row => row.category === payload.category);
-  }
-  if (typeof payload.status === 'string' && payload.status) {
-    rows = rows.filter(row => row.status === payload.status);
-  }
-  // 置顶优先 → 发布时间倒序（旧栈口径）；V8 的 sort 稳定，同刻按写入序。
-  const sorted = sortAnnouncements(rows.slice());
   const limit = Number.isInteger(payload.limit) && payload.limit > 0
     ? Math.min(payload.limit, ANNOUNCEMENT_LIST_MAX) : ANNOUNCEMENT_LIST_LIMIT;
-  const page = sorted.slice(0, limit);
-
-  return ok({
-    ok: true, canManage,
-    hasMore: sorted.length > page.length,
-    announcements: page.map(doc => announcementSummary(doc, canManage)),
-    categories: ANNOUNCEMENT_CATEGORIES.slice(),
-    message: '',
-  });
+  const status = typeof payload.status === 'string' ? payload.status : '';
+  const empty = { announcements: [], total: 0, hasMore: false, nextCursor: '',
+    canManage, categories: ANNOUNCEMENT_CATEGORIES.slice() };
+  if (!canManage && status && status !== ANNOUNCEMENT_STATUS.PUBLISHED) {
+    return ok({ ok: true, ...empty, message: '' });
+  }
+  try {
+    const page = await ctx.repo.forScope(ctx).announcements.listPage({
+      status: canManage ? status : ANNOUNCEMENT_STATUS.PUBLISHED,
+      category: typeof payload.category === 'string' ? payload.category : '',
+      cursor: payload.cursor, limit,
+    });
+    return ok({ ok: true, ...empty, total: page.total, hasMore: page.hasMore,
+      nextCursor: page.nextCursor,
+      announcements: page.rows.map(doc => announcementSummary(doc, canManage)), message: '' });
+  } catch (error) {
+    if (error.code === 'INVALID_CURSOR') return ok({ ok: false, ...empty, message: error.message });
+    throw error;
+  }
 }
 
 /* ------------------------------------------------------------------ 写 */

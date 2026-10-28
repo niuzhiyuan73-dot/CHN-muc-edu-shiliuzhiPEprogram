@@ -266,6 +266,19 @@ async function listTeamEvents(payload = {}, ctx) {
 
   const manage = canManageAssociationSpace(ctx);
   const repo = ctx.repo.forScope(ctx);
+  if (payload.home === true) {
+    const page = await repo.teamEvents.homeSummary({ limit: payload.limit });
+    return ok({ ok: true, totalAll: page.totalAll, matchTotal: page.matchTotal,
+      hasMore: page.hasMore, canManage: manage, message: '',
+      events: page.events.map(event => ({ eventId: event._id, eventKind: 'team',
+        title: event.name || '', status: event.status,
+        statusLabel: TEAM_EVENT_STATUS_LABEL[event.status] || '',
+        startTime: event.startTime || '', location: event.location || '',
+        isSignup: event.status === TEAM_EVENT_STATUS.REGISTRATION,
+        isOngoing: [TEAM_EVENT_STATUS.LOCKED, TEAM_EVENT_STATUS.SCHEDULED, TEAM_EVENT_STATUS.RUNNING].includes(event.status),
+      })),
+    });
+  }
   // 【2026-10-26 第六轮 D】原来还在这里 buildDirectory：整个函数只用它的
   // `collegeIdOf(ctx.actorId)`，而那正是上下文里已有的 schoolMember.collegeId。
   // 为一个字段读全校名册 + 全量账号（2000 人 40 次 RPC）不划算，直接取上下文。

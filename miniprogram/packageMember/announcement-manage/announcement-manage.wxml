@@ -30,7 +30,7 @@
     <!-- ========== 台账 ========== -->
     <view class="card">
       <view class="manage-summary">
-        共 {{view.total}} 条 · 已发布 {{view.publishedCount}} · 已下架 {{view.archivedCount}}
+        共 {{view.total}} 条 · 已加载 {{view.rows.length}} 条（已发布 {{view.publishedCount}} · 已下架 {{view.archivedCount}}）
       </view>
 
       <view wx:if="{{view.rows.length === 0}}" class="empty-note">还没有任何公告</view>
@@ -56,6 +56,9 @@
         </view>
       </view>
     </view>
+
+    <view wx:if="{{moreError}}" class="pagination-error">{{moreError}}</view>
+    <button wx:if="{{view.hasMore}}" class="btn btn-outline btn-block" bindtap="loadMore" loading="{{loadingMore}}" disabled="{{loadingMore}}">{{moreError ? '重试加载' : '加载更多'}}</button>
 
     <view wx:if="{{isMock}}" class="mock-note">
       当前为本地模拟数据，发布与下架只写入内存，重启小程序即清空

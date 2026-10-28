@@ -5,6 +5,7 @@ const clone = value => value === undefined ? undefined : JSON.parse(JSON.stringi
 const { memoryMatchPage } = require('./match-list-query');
 const { attachTeamReads, fieldValues } = require('./scoped-team-reads.js');
 const { memoryDirectoryPage } = require('./account-directory.js');
+const { attachOverviewReads, memoryOverviewIO } = require('./school-overview-reads.js');
 /**
  * 带 eventId 的「从属集合」：按赛事取子集用 listByEvent（条件查询 + 索引），
  * 不整表读完再内存过滤。顶层与 forScope 两处都要提供，方法面与云端
@@ -268,6 +269,7 @@ function createSchoolMemoryRepo(seed = {}) {
         byIds: async (key, ids, fields) => [...new Set(ids)].map(id => getState()[key].get(id))
           .filter(doc => doc && Object.entries(fields).every(([field, value]) => doc[field] === value)).map(clone),
       });
+      attachOverviewReads(result, { inTx, ...memoryOverviewIO(key => [...getState()[key].values()].map(clone)) });
       result.schoolMembers.listDirectoryPage = async options => {
         if (inTx) throw new Error('事务内不允许查询会员目录');
         return memoryDirectoryPage([...getState().schoolMembers.values()], [...getState().users.values()], scope, options);

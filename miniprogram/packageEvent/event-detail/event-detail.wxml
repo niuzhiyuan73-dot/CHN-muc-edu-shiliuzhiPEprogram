@@ -61,7 +61,7 @@
 
       <view wx:if="{{view.event.canSignUp}}" class="btn btn-primary btn-block" bindtap="onSignUp">报名</view>
       <view wx:elif="{{view.event.canCancelSignup}}" class="btn btn-outline btn-block" bindtap="onCancelSignup">取消报名</view>
-      <view wx:else class="signup-note">报名已截止，或你当前的状态不能报名</view>
+      <view wx:else class="signup-note">{{view.signupNote || '当前暂不可报名，请刷新查看最新状态'}}</view>
     </view>
 
     <!-- ========== 管理动作 ========== -->

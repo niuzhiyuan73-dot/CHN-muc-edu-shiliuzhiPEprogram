@@ -442,7 +442,7 @@ test('首页 —— 登录后近期赛事标出自己报没报', async () => {
   // 先看首页取了哪一场，再给它报名，否则报了名的那场可能根本不在列表里。
   const page = instantiate(indexConfig);
   await page.onLoad();
-  const target = page.data.view.upcomingEvents[0];
+  const target = page.data.view.upcomingEvents.find(row => row.eventKind === 'individual');
   assert.ok(target, '首页应有近期赛事');
 
   // 首页聚合了多个协会的赛事：报名要走这场赛事所属协会的空间
@@ -4366,7 +4366,7 @@ test('公告管理页 —— 平台管理员看到台账', async () => {
   }
 });
 
-test('公告管理页 —— 下架后台账里仍在、沉到底部且不再给按钮，公开页少一条', async () => {
+test('公告管理页 —— 下架后台账里仍在且不再给按钮，公开页少一条', async () => {
   const fx = announcementFixture();
   try {
     await fx.seed('pkb', PKB_ANNOUNCEMENTS);
@@ -4382,7 +4382,7 @@ test('公告管理页 —— 下架后台账里仍在、沉到底部且不再给
     assert.strictEqual(page.data.view.publishedCount, 5);
     assert.strictEqual(page.data.view.archivedCount, 1);
 
-    const last = page.data.view.rows[page.data.view.rows.length - 1];
+    const last = page.data.view.rows.find(row => row.id === target);
     assert.strictEqual(last.id, target);
     assert.strictEqual(last.archived, true);
     assert.strictEqual(last.canArchive, false);

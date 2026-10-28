@@ -209,19 +209,22 @@ async function resolveCollegeEventId(api, eventId) {
  * @param {string} options.schoolId
  * @param {string} options.association
  * @param {string|null} [options.actorId]
- * @param {string} [options.collegeId] 替哪个学院提交；缺省取会话里的本人学院
+ * @param {string} [options.collegeId] 替哪个学院提交；缺省从服务端授权范围选择
  * @returns {Promise<Object>} 与旧栈 loadCollegeEntryView 同形
  */
 async function loadCollegeEntryView(eventId, options = {}) {
-  const { schoolId, association, actorId = null, collegeId = '' } = options;
+  const { schoolId, association, actorId = null, collegeId: requestedCollegeId = '', preferredCollegeId = '' } = options;
   const api = space.forScope({ schoolId, association });
   const resolved = await resolveCollegeEventId(api, eventId);
   const resolvedId = resolved.id;
 
+  const allowedIds = asArray(resolved.dto && resolved.dto.submittableCollegeIds);
+  const collegeId = requestedCollegeId || (allowedIds.includes(preferredCollegeId) ? preferredCollegeId : allowedIds[0]) || '';
+
   const [eventDto, entriesDto, membersDto] = await Promise.all([
     Promise.resolve(resolved.dto),
     api.listCollegeEntries({ eventId: resolvedId }),
-    api.listSchoolMembers({}),
+    allowedIds.includes(collegeId) ? api.listSchoolMembers({ collegeId }) : Promise.resolve({ ok: true, members: [] }),
   ]);
 
   const found = okOf(eventDto);
@@ -273,6 +276,9 @@ async function loadCollegeEntryView(eventId, options = {}) {
     status,
     statusLabel: found ? event.statusLabel || '未知状态' : '',
     college,
+    collegeId,
+    collegeOptions: submittable.map(id => ({ collegeId: id, name: nameById.get(id) || id })),
+    collegeIndex: Math.max(0, submittable.indexOf(collegeId)),
     legPlanText: found ? event.legPlanText : '',
     rosterText: found ? event.rosterText : '',
     allowMultiEntry: found ? event.allowMultiEntry !== false : false,

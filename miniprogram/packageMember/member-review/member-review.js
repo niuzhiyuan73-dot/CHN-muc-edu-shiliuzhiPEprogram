@@ -147,8 +147,11 @@ Page({
     const { applicationId, revision } = event.currentTarget.dataset;
     if (!applicationId) return;
 
+    const row = (this.data.view.rows || []).find(item => item.userId === applicationId);
+    const text = row && row.transfer ? { ...APPROVE_TEXT, title: '通过转校申请',
+      hint: `将其从${row.transferFromName || '原学校'}转入本校，原学校历史成绩保留。确认通过？` } : APPROVE_TEXT;
     this.setData({
-      action: { open: true, mode: 'approve', applicationId, revision: Number(revision) || 0, ...APPROVE_TEXT },
+      action: { open: true, mode: 'approve', applicationId, revision: Number(revision) || 0, ...text },
       reason: '',
       actionError: '',
     });
@@ -158,9 +161,11 @@ Page({
   onOpenReject(event) {
     const { applicationId, revision } = event.currentTarget.dataset;
     if (!applicationId) return;
-
+    const row = (this.data.view.rows || []).find(item => item.userId === applicationId);
+    const text = row && row.transfer ? { ...REJECT_TEXT, title: '驳回转校申请',
+      hint: '驳回后保留原学校身份，请说明转校资料需要补充的内容。' } : REJECT_TEXT;
     this.setData({
-      action: { open: true, mode: 'reject', applicationId, revision: Number(revision) || 0, ...REJECT_TEXT },
+      action: { open: true, mode: 'reject', applicationId, revision: Number(revision) || 0, ...text },
       reason: '',
       actionError: '',
     });
@@ -226,8 +231,10 @@ Page({
     this.setData({ acting: true, actionError: '' });
     let result;
     try {
-      result = await identity.forSchoolIdentity(this.scope || this.currentScope())
-        .reviewSchoolMembership({ userId, decision, revision, reason });
+      const row = (this.data.view.rows || []).find(item => item.userId === userId);
+      const api = identity.forSchoolIdentity(this.scope || this.currentScope());
+      result = await api[row && row.transfer ? 'reviewSchoolTransfer' : 'reviewSchoolMembership']({ userId, decision, revision, reason });
+      if (row && row.transfer && decision === 'approve') successText = '已通过转校申请';
     } catch (err) {
       this.setData({ acting: false, actionError: err.message || '操作失败' });
       return undefined;

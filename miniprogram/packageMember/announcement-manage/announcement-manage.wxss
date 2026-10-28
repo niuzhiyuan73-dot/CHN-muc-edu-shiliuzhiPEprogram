@@ -9,6 +9,12 @@
   padding: var(--space-md) var(--space-lg);
 }
 
+.pagination-error {
+  color: var(--color-danger-text);
+  font-size: var(--font-sm);
+  margin: var(--space-sm) 0;
+}
+
 .entry-hint {
   font-size: var(--font-sm);
   color: var(--color-text-secondary);

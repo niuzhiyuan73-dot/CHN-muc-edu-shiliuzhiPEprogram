@@ -330,10 +330,11 @@ Page({
 
   /** 点近期赛事的一条：跨协会的先切过去，再进详情 */
   onOpenEvent(event) {
-    const { eventId, association } = event.currentTarget.dataset;
+    const { eventId, association, eventKind } = event.currentTarget.dataset;
     if (!eventId) return undefined;
     this.switchTo(association);
-    return wx.navigateTo({ url: `/packageEvent/event-detail/event-detail?eventId=${encodeURIComponent(eventId)}` });
+    const path = eventKind === 'team' ? '/packageTeam/team-event-detail/team-event-detail' : '/packageEvent/event-detail/event-detail';
+    return wx.navigateTo({ url: `${path}?eventId=${encodeURIComponent(eventId)}` });
   },
 
   /** 点公告的一条：公告是学校级的一条通道，不必先切协会 */

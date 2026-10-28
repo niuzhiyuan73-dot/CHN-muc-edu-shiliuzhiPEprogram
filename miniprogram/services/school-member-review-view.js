@@ -53,6 +53,8 @@ function schoolApplicationRow(application, ctx = {}) {
     applicationId: application.userId,
     userId: application.userId,
     revision: Number(application.revision || 0),
+    transfer: Boolean(application.transfer),
+    transferFromName: application.transferFromName || '',
     // 昵称可能没填，退回实名再退回编号——绝不渲染出 undefined
     nickName: application.nickName || application.realName || application.userId,
     avatarUrl: application.avatarUrl || '',
@@ -104,6 +106,7 @@ async function loadSchoolMemberReviewView(options = {}) {
   }
 
   const result = await api.getSchoolApplications();
+  if (!result || result.ok === false) throw new Error(result && result.message || '入会申请读取失败');
   const applications = (result && result.applications) || [];
   const rows = applications.map((application) =>
     schoolApplicationRow(application, { viewerId: viewer.userId, canManage: true }));
@@ -114,6 +117,7 @@ async function loadSchoolMemberReviewView(options = {}) {
     viewer,
     rows,
     pendingCount: rows.length,
+    hasMore: Boolean(result.hasMore),
     emptyText: PENDING_EMPTY,
   };
 }

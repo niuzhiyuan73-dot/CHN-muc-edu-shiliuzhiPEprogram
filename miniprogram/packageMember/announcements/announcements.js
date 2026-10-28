@@ -24,6 +24,7 @@
 const { loadSchoolAnnouncementListView } = require('../../services/announcement-view.js');
 const { isMock } = require('../../services/runtime-mode.js');
 const schoolSession = require('../../services/school-session.js');
+const associationScope = require('../../services/association-scope.js');
 const { LEGACY_SCHOOL_ID } = require('../../utils/school.js');
 
 Page({
@@ -32,6 +33,8 @@ Page({
     loading: true,
     /** 加载失败时的提示 */
     error: '',
+    loadingMore: false,
+    moreError: '',
     /** 视图模型，形状见 services/announcement-view.js */
     view: {},
     /** 开发期标注模拟数据 */
@@ -40,7 +43,13 @@ Page({
 
   /** 返回 Promise 是有意为之：测试需要句柄等首屏加载完 */
   onLoad() {
+    this.unloaded = false;
     return this.refresh();
+  },
+
+  onUnload() { this.unloaded = true; this.requestVersion = (this.requestVersion || 0) + 1; },
+  currentScope() {
+    return { schoolId: schoolSession.getSchoolId() || LEGACY_SCHOOL_ID, association: associationScope.getAssociation() };
   },
 
   /** 下拉刷新 */
@@ -60,14 +69,36 @@ Page({
    * @returns {Promise<void>}
    */
   async refresh() {
+    const version = this.requestVersion = (this.requestVersion || 0) + 1;
+    const scope = this.currentScope();
+    this.scope = scope;
+    this.setData({ loading: true, loadingMore: false, moreError: '', error: '' });
     try {
-      const view = await loadSchoolAnnouncementListView({
-        schoolId: schoolSession.getSchoolId() || LEGACY_SCHOOL_ID,
-      });
+      const view = await loadSchoolAnnouncementListView(scope);
+      if (this.unloaded || version !== this.requestVersion || JSON.stringify(scope) !== JSON.stringify(this.currentScope())) return;
       this.setData({ loading: false, error: '', view });
     } catch (err) {
+      if (this.unloaded || version !== this.requestVersion) return;
       console.error('[announcements] 公告加载失败', err);
-      this.setData({ loading: false, error: '公告加载失败，请下拉重试' });
+      this.setData({ loading: false, view: {}, error: '公告加载失败，请下拉重试' });
+    }
+  },
+
+  async loadMore() {
+    if (this.data.loading || this.data.loadingMore || !this.data.view.hasMore) return;
+    const version = this.requestVersion;
+    const scope = this.scope;
+    const cursor = this.data.view.nextCursor;
+    this.setData({ loadingMore: true, moreError: '' });
+    try {
+      if (!cursor) throw new Error('分页信息失效，请下拉刷新');
+      const page = await loadSchoolAnnouncementListView({ ...scope, cursor });
+      if (this.unloaded || version !== this.requestVersion || JSON.stringify(scope) !== JSON.stringify(this.currentScope())) return;
+      if (page.hasMore && (!page.nextCursor || page.nextCursor === cursor)) throw new Error('分页信息失效，请下拉刷新');
+      const rows = Array.from(new Map(this.data.view.rows.concat(page.rows).map(row => [row.id, row])).values());
+      this.setData({ view: { ...page, rows, visibleCount: rows.length }, loadingMore: false });
+    } catch (error) {
+      if (!this.unloaded && version === this.requestVersion) this.setData({ loadingMore: false, moreError: error.message || '加载失败，请重试' });
     }
   },
 });

@@ -48,3 +48,9 @@
   color: var(--color-text-secondary);
   line-height: 1.7;
 }
+
+.pagination-error {
+  color: var(--color-danger-text);
+  font-size: var(--font-sm);
+  margin: var(--space-sm) 0;
+}

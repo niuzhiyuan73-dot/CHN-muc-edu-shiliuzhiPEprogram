@@ -65,6 +65,7 @@ Page({
 
   onUnload() {
     this.unloaded = true;
+    this.queryVersion = (this.queryVersion || 0) + 1;
   },
 
   onPullDownRefresh() {
@@ -82,9 +83,14 @@ Page({
 
   /** 按当前筛选条件取第一页 */
   async reload() {
-    this.update({ loading: true, error: '' });
+    const version = this.queryVersion = (this.queryVersion || 0) + 1;
+    const query = this.query({ offset: 0 });
+    const key = JSON.stringify(this.query());
+    this.update({ loading: true, busy: false, error: '', hasMore: false });
     try {
-      const result = await this.client().listSportsMeets(this.query({ offset: 0 }));
+      const result = await this.client().listSportsMeets(query);
+      if (this.unloaded || version !== this.queryVersion || key !== JSON.stringify(this.query())) return;
+      if (result.ok === false) throw new Error(result.message || '加载失败');
       this.update({
         loading: false,
         items: result.items,
@@ -94,7 +100,9 @@ Page({
         canManage: Boolean(result.permissions && result.permissions.canManage),
       });
     } catch (err) {
-      this.update({ loading: false, error: (err && err.message) || '加载失败' });
+      if (!this.unloaded && version === this.queryVersion && key === JSON.stringify(this.query())) {
+        this.update({ loading: false, items: [], total: 0, offset: 0, hasMore: false, canManage: false, error: (err && err.message) || '加载失败' });
+      }
     }
   },
 
@@ -111,10 +119,15 @@ Page({
   },
 
   async loadMore() {
-    if (this.data.busy || !this.data.hasMore) return;
+    if (this.data.loading || this.data.busy || !this.data.hasMore) return;
+    const version = this.queryVersion;
+    const key = JSON.stringify(this.query());
+    const query = this.query({ offset: this.data.offset });
     this.update({ busy: true });
     try {
-      const result = await this.client().listSportsMeets(this.query({ offset: this.data.offset }));
+      const result = await this.client().listSportsMeets(query);
+      if (this.unloaded || version !== this.queryVersion || key !== JSON.stringify(this.query())) return;
+      if (result.ok === false) throw new Error(result.message || '加载失败');
       const items = this.data.items.concat(result.items);
       this.update({
         items,
@@ -123,12 +136,13 @@ Page({
         busy: false,
       });
     } catch (err) {
-      this.update({ busy: false, error: (err && err.message) || '加载失败' });
+      if (!this.unloaded && version === this.queryVersion && key === JSON.stringify(this.query())) this.update({ busy: false, error: (err && err.message) || '加载失败' });
     }
   },
 
   onKeywordInput(event) {
-    this.update({ keyword: event.detail.value });
+    this.queryVersion = (this.queryVersion || 0) + 1;
+    this.update({ keyword: event.detail.value, loading: false, busy: false, hasMore: false });
   },
 
   onSearch() {

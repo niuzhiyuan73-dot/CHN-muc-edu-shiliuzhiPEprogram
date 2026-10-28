@@ -31,6 +31,9 @@
       <view class="event-meta">名单 {{view.rosterText}} · {{view.startTimeText}}</view>
       <view wx:if="{{view.location}}" class="event-meta">{{view.location}}</view>
       <view class="field-hint">我方参赛学院：{{view.college}}</view>
+      <picker wx:if="{{view.collegeOptions.length > 1}}" range="{{view.collegeOptions}}" range-key="name" value="{{view.collegeIndex}}" disabled="{{submitting}}" bindchange="onCollegeChange">
+        <view class="field-hint">切换管理学院 ›</view>
+      </picker>
     </view>
 
     <!-- 已提交过时显示状态，退回的还要把理由带出来 -->
