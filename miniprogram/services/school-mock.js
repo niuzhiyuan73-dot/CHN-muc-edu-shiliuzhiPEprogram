@@ -270,8 +270,10 @@ function forSchoolIdentity(input) {
       ? { ...await buildMeetContext({ repo: boundRepo, ...binding, scope: { schoolId: scope.schoolId } }), isMock: true }
       : await buildSchoolContext({ repo: boundRepo, ...binding, scope });
     const result = await handler(payload || {}, ctx);
-    if (!result.ok) throw new Error(result.message);
-    return result.data;
+    // 失败按值返回（{ok:false, message}），与云端 school-request 的 acceptResult 同形。
+    // 从前这里 throw，于是同一个「没权限」在四组门面里表现不一：页面得同时写
+    // try/catch 与 if (!result.ok) 才不漏（2026-10-28 第十轮只读审计 P1）。
+    return result.ok ? result.data : result;
   }])));
 }
 module.exports = { forSchoolIdentity, setDemoActor, getDemoActor: () => actorId, simulateNewWechat, DEMO_ACTORS, reset };
@@ -281,7 +283,8 @@ function forExchange(input) {
   const boundRepo = repo;
   return Object.freeze(Object.fromEntries(Object.entries(exchangeHandlers).map(([name, handler]) => [name, async payload => {
     const ctx = await buildSchoolContext({ repo: boundRepo, ...binding, scope: target });
-    return (await handler(payload || {}, ctx)).data;
+    const result = await handler(payload || {}, ctx);
+    return result.ok ? result.data : result;
   }])));
 }
 module.exports.forExchange = forExchange;
@@ -293,7 +296,8 @@ function forAssociationSpace(input) {
   return Object.freeze(Object.fromEntries(Object.entries(spaceHandlers).map(([name, handler]) => [name, async payload => {
     const ctx = await buildSchoolContext({ repo: boundRepo, ...binding, scope: target });
     // isMock 供比赛「对手确认」等口径在本地演示时放宽（见 school-match-service）。
-    return (await handler(payload || {}, Object.freeze({ ...ctx, isMock: true }))).data;
+    const result = await handler(payload || {}, Object.freeze({ ...ctx, isMock: true }));
+    return result.ok ? result.data : result;
   }])));
 }
 module.exports.forAssociationSpace = forAssociationSpace;
@@ -308,8 +312,13 @@ function forMeet(input) {
     await meetDemoReady;
     const ctx = await buildMeetContext({ repo: boundRepo, ...binding, scope });
     const result = await handler(payload || {}, ctx);
-    if (!result.ok) throw new Error(result.message);
-    return result.data;
+    // 与云端 forMeet 的 throwOnRefused 对齐：运动会页面按「失败进 catch」写的，
+    // 这里保持抛出，双端表现才一致（理由见 school-cloud.js 那段说明）。
+    // 顶层 ok:false 与 data.ok:false 两种形态都转成异常。
+    if (result.ok === false) throw new Error(result.message || '操作失败');
+    const data = result.data;
+    if (data && data.ok === false) throw new Error(data.message || '操作失败');
+    return data;
   }])));
 }
 module.exports.forMeet = forMeet;

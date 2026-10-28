@@ -40,7 +40,8 @@ const {
 const { meetCollegeLeadKey } = require('../utils/meet-scope.js');
 const { countsTowardPersonalQuota } = require('./meet-measure.js');
 
-const ok = (data) => ({ ok: true, data });
+// DTO 补 ok:true，与其余三域同形（见 meet-service.js 的说明）。
+const ok = (data) => ({ ok: true, data: { ...data, ok: data.ok === undefined ? true : data.ok } });
 const refused = (message, extra = {}) => ({ ok: false, message, ...extra });
 
 /** 4.2 默认：个人项目每人最多 2 项（D35），团体与接力不计入 */

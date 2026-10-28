@@ -21,7 +21,8 @@ const {
 } = require('./meet-permission.js');
 const { listAliveEvents } = require('../utils/meet-scope.js');
 
-const ok = (data) => ({ ok: true, data });
+// DTO 补 ok:true，与其余三域同形（见 meet-service.js 的说明）。
+const ok = (data) => ({ ok: true, data: { ...data, ok: data.ok === undefined ? true : data.ok } });
 const refused = (message, extra = {}) => ({ ok: false, message, ...extra });
 
 const scopeOf = (ctx) => ({ schoolId: ctx.schoolId, meetId: ctx.meetId });

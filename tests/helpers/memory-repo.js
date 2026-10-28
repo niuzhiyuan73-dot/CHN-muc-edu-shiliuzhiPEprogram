@@ -368,7 +368,17 @@ function createMemoryRepo(seed = {}) {
       },
 
       seasons: {
+        // 2026-10-28 第十轮只读审计 P2：这里从前只有 get/set，而共享服务写的是
+        // `repo.seasons.getById(...)`（赛季文档是「每范围一份」的点读，没有条件查询
+        // 的需求）。于是这套桩下一调赛季就读到 `getById is not a function`，五个动作
+        // （getSchoolSeason / resetSchoolSeason / getSchoolMemberStats /
+        // getSchoolMemberProfile / getSchoolMatchEntryContext）在桩上永远跑不通，
+        // 3222 条用例全绿也照不出来——两端真实仓储都有 getById（school-memory-repo.js
+        // 逐集合生成、cloud-repo.js 的「三件套补齐」），只有桩少了一层。
+        // get 保留：既有调用方（memberships.get）保留别名口径，这里同样两种叫法都认。
+        getById: (id) => read('seasons', id),
         get: (id) => read('seasons', id),
+        list: () => [...target.seasons.values()].map(clone),
         set: async (id, doc) => {
           target.seasons.set(id, { ...doc, _id: id });
         },

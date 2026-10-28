@@ -19,8 +19,20 @@ const { pacer } = require('./request-pace.js');
  * 服务端按「每账号每秒 8 次读」限流，而首页一次要发约 15 个读请求——
  * 超出的部分被拒后，页面各自 catch 成「该协会没有内容」，首屏静默缺数据。
  * 这里按 6/秒排队（低于阈值、留并发余量），把「被拒」换成「晚一点到」。
+ *
+ * 【运动会门面为什么把业务拒绝重新抛成异常】（2026-10-28 第十轮只读审计 P1）
+ * 服务端已统一：业务拒绝一律在 data 里（`{ok:false, message}`），顶层 ok:false
+ * 只留给「请求本身处理不了」——两类失败在信封上分得开了。
+ * 但客户端的 6 个运动会页面是按「读完要么拿到数据、要么进 catch」写的
+ * （meet-detail / meet-schedule / meet-score / meet-setup / meet-standing /
+ * meet-college 共 60 余处 catch，只有 meet-list 判过 `ok === false`）。
+ * 若这里直接改成值返回，那些页面在「没权限 / 没指定学院 / 报名已截止」时会
+ * 静默变成空数据、连提示都没有——退化比不统一更糟。所以运动会门面显式传
+ * `throwOnRefused`：失败照旧抛出，页面一行不改，服务端契约仍然是对的。
+ * 将来若要把四个门面在客户端也统一成值返回，先改那 6 个页面的失败分支。
  */
-function requestFor(scope) {
+function requestFor(scope, options = {}) {
+  const throwOnRefused = options.throwOnRefused === true;
   return (action, payload = {}) => {
     const isWrite = isSchoolWriteAction(action);
     const run = async () => {
@@ -31,7 +43,9 @@ function requestFor(scope) {
         protocolVersion: 2, ...scope, action, payload,
       } });
       if (!result || !result.ok) throw new Error(result && result.message || '学校接口请求失败');
-      return result.data;
+      const data = result.data;
+      if (throwOnRefused && data && data.ok === false) throw new Error(data.message || '操作失败');
+      return data;
     };
     return isWrite ? guardWrite(run) : run();
   };
@@ -232,7 +246,7 @@ function forExchange(input) {
  * meetId 可选：列清单、搜项目模板、发起运动会都没有「届」。
  */
 function forMeet(input) {
-  const request = requestFor(meetRequestScope(input));
+  const request = requestFor(meetRequestScope(input), { throwOnRefused: true });
   return Object.freeze({
     // 草稿与配置（B4）
     createSportsMeet: payload => request('createSportsMeet', payload),

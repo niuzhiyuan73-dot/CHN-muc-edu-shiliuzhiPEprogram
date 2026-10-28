@@ -41,13 +41,20 @@ const { registrationWindow } = require('./meet-registration-service.js');
 const { meetReadable, canManageMeet, isActiveMeetLead } = require('./meet-permission.js');
 const { meetCollegeLeadKey } = require('../utils/meet-scope.js');
 
-const ok = (data) => ({ ok: true, data });
+// 【DTO 为什么也带 ok:true】（2026-10-28 第十轮只读审计 P2）
+// 身份 / 协会空间 / 跨校三域的处理器在业务对象里回 `ok:true`，运动会域此前只在外层
+// 信封里写。于是 `okOf(dto)` 那种「按业务对象的 ok 判成败」的写法只在四分之三的域
+// 可用，跨域复用的视图函数拿到运动会 DTO 会把成功判成失败。这里统一注入：
+// refused 的 `ok:false` 原样保留，其余补 true。七个 meet 服务同一行写法。
+const ok = (data) => ({ ok: true, data: { ...data, ok: data.ok === undefined ? true : data.ok } });
 const refused = (message, extra = {}) => ({ ok: false, message, ...extra });
 
 const MEET_NAME_MAX = 40;
 const LOCATION_MAX = 60;
 const PAGE_MAX = 50;
 const PAGE_DEFAULT = 20;
+/** 学院目录一页的条数（详见 listMeetColleges 的说明）。一个学校的学院数远小于此。 */
+const MEET_COLLEGE_MAX = 200;
 const YEAR_MIN = 2000;
 const YEAR_MAX = 2100;
 
@@ -412,7 +419,22 @@ async function listMeetColleges(payload = {}, ctx) {
     .filter((doc) => (keyword ? String(doc.name || '').includes(keyword) : true))
     .map((doc) => ({ collegeId: doc.collegeId || doc._id, name: doc.name || '' }))
     .sort((a, b) => String(a.name).localeCompare(String(b.name)));
-  return ok({ items: items.slice(0, 50), total: items.length });
+  // 【2026-10-28 第十轮只读审计 P2】从前是 `items.slice(0, 50)` + total：超过 50 个
+  // 学院时，第 51 个起既拿不到也没有 hasMore，页面无从知道被截断了。现在按页返回，
+  // 默认页大小抬到 200（一个学校的学院数远小于此），超出时明确给 hasMore/nextOffset，
+  // 调���方要翻页就继续要——不再有「静默少一半学院」这种形态。
+  const limit = Number.isInteger(payload.limit) && payload.limit > 0
+    ? Math.min(payload.limit, MEET_COLLEGE_MAX) : MEET_COLLEGE_MAX;
+  const offset = Number.isInteger(payload.offset) && payload.offset >= 0 ? payload.offset : 0;
+  const page = items.slice(offset, offset + limit);
+  return ok({
+    items: page,
+    total: items.length,
+    offset,
+    limit,
+    hasMore: offset + page.length < items.length,
+    nextOffset: offset + page.length,
+  });
 }
 
 /** 改草稿基本资料；只有草稿可改（发布后改需规则版本，本批不做）。 */

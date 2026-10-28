@@ -1,5 +1,5 @@
 /** 协议 2：学校身份 + 协会空间接口。未迁移的旧 action 不可借此跨校调用。 */
-const { fail } = require('../envelope.js');
+const { fail, ok } = require('../envelope.js');
 const { buildSchoolContext } = require('./school-context.js');
 const { buildMeetContext } = require('../../lib/services/meet-context.js');
 const { SCHOOL_MEET_ACTIONS } = require('../../lib/utils/school-actions.js');
@@ -59,6 +59,40 @@ const SCOPE_ONLY_INVALIDATION = new Set([
   'startTeamLiveScore', 'updateTeamLiveScore',
 ]);
 
+/**
+ * 把处理器返回统一成协议 2 的信封形状（2026-10-28 第十轮只读审计 P1）。
+ *
+ * 【为什么要收这一道】
+ * 四组处理器有两套失败写法：
+ *   · 身份 / 协会空间 / 跨校：`return ok(refused(...))` → 顶层 `{ok:true, data:{ok:false, message}}`
+ *   · 运动会：`return refused(...)` → 顶层 `{ok:false, message}`
+ * 后者原样当云函数回包，就落进 `envelope.js` 明令禁止的那一档——顶层 ok:false
+ * 只表示「请求本身处理不了」。客户端 `requestFor` 见到它会 `throw`，页面拿到的是
+ * 异常而不是 `{ok:false}` 对象；同样一次「没权限」，运动会页面必须 try/catch，
+ * 其余三面页面可以 `if (result.ok === false)`，新增页面照哪一套写都可能错。
+ *
+ * 【为什么在入口收，而不是把 7 个 meet 服务里的 refused 逐个包成 ok()】
+ * 那些 `return refused(...)` 有相当一部分在事务回调里，外层还要 `if (!result.ok)`
+ * 再判一次（如 `meet-schedule-service` 的批量指派、`meet-advance-service` 的推进）。
+ * 逐个包成 `ok(refused(...))` 会让内部判断永远为真，把业务流程改坏。入口一处
+ * 收口，业务代码一行不动。
+ *
+ * 【为什么只认「顶层 ok:false 且没有 data」】
+ * 已包好的 `{ok:true, data:{ok:false}}` 必须原样放行（`data` 即业务对象）；只有
+ * 裸露的 `{ok:false, message}` 才是这套旧写法。前置校验的 `fail(...)` 不经过
+ * 这里（它在调用处理器之前就返回了），所以「未登录 / 限流 / 未知动作」仍是
+ * 真正的顶层失败，语义不变。
+ *
+ * @param {*} result 处理器返回值
+ * @returns {*} 信封形状的返回值
+ */
+function acceptResult(result) {
+  if (result && typeof result === 'object' && result.ok === false && result.data === undefined) {
+    return ok(result);
+  }
+  return result;
+}
+
 async function handleSchoolRequest(event, { repo, openId, clientIp = '', now = new Date() }) {
   if (event.protocolVersion !== 2) return fail('学校接口需要协议版本 2，请升级客户端');
   if (!Object.prototype.hasOwnProperty.call(handlers, event.action)) return fail('该操作尚未支持学校范围');
@@ -86,20 +120,20 @@ async function handleSchoolRequest(event, { repo, openId, clientIp = '', now = n
     if (event.action === 'getMySportsDashboard') {
       // 本人体育中心属于学校；不因某一协会停用而整体失效。每次新建身份，不使用读缓存。
       const personalCtx = await buildMeetContext({ repo, openId, now, scope: { schoolId: event.schoolId } });
-      return await handlers[event.action](event.payload || {}, personalCtx);
+      return acceptResult(await handlers[event.action](event.payload || {}, personalCtx));
     }
     // 运动会分支：只要求 schoolId，meetId 按动作可选（列表/建赛/搜项目都没有届）。
     if (MEET_ACTIONS.has(event.action)) {
       if (!event.schoolId) return fail('运动会接口必须指定学校');
       const meetCtx = await buildMeetContext({ repo, openId, now, action: event.action,
         scope: { schoolId: event.schoolId, meetId: event.meetId } });
-      return await handlers[event.action](event.payload || {}, meetCtx);
+      return acceptResult(await handlers[event.action](event.payload || {}, meetCtx));
     }
 
     if (!event.schoolId || !event.association) return fail('学校接口必须指定学校和项目');
     const ctx = await buildSchoolContext({ repo, openId, now, action: event.action,
       scope: { schoolId: event.schoolId, association: event.association } });
-    return await handlers[event.action](event.payload || {}, ctx);
+    return acceptResult(await handlers[event.action](event.payload || {}, ctx));
   } finally {
     if (!readOnly) {
       // 纯比赛类写只失效本范围（见 SCOPE_ONLY_INVALIDATION）；其余全清。

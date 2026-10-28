@@ -30,7 +30,8 @@ const {
 const { buildMeetContext, freshMeetContext } = require('./meet-context.js');
 const { canManageMeet, isActiveMeetLead } = require('./meet-permission.js');
 
-const ok = (data) => ({ ok: true, data });
+// DTO 补 ok:true，与其余三域同形（见 meet-service.js 的说明）。
+const ok = (data) => ({ ok: true, data: { ...data, ok: data.ok === undefined ? true : data.ok } });
 const refused = (message, extra = {}) => ({ ok: false, message, ...extra });
 
 const MAX_ID_LENGTH = 40;
