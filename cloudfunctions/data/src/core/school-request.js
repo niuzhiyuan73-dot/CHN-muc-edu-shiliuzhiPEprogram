@@ -115,6 +115,13 @@ async function handleSchoolRequest(event, { repo, openId, clientIp = '', now = n
   // 才按范围清（2026-10-27 第八轮审查 P2-6，理由见那里的注释）。
   //
   // 用 try/finally 保证 handler 抛错时也失效：一次失败的事务可能已经改了一半。
+  //
+  // 【业务拒绝也一律失效，这是刻意的】（2026-10-28 审计 2 P-3 的结论）
+  // 审计里提过「写动作因参数不合法被拒时并没有写入，可以不清缓存」。试过之后放弃了：
+  // ① 与 tests/context-cache-scope.test.js 的口径冲突——那两个用例盯的就是「哪个动作
+  //    走哪条失效」，一旦按「这次有没有真写」短路，分流规则就不再由动作名决定；
+  // ② 代价不对等：多清一次只是多几次读，漏清一次是一段「撤权不生效」的窗口。
+  // 所以保持「写动作必清、只按范围大小分流」。
   const readOnly = contextCache.isReadAction(event.action);
   try {
     if (event.action === 'getMySportsDashboard') {

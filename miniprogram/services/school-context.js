@@ -21,9 +21,13 @@ async function buildSchoolContext({
   const target = schoolScope(scope);
   const cacheable = contextCache.isReadAction(action);
   const cacheKey = cacheable ? contextCache.keyOf(target, openId, actorId) : '';
+  // 记下「这次读是几点开始的」：buildSchoolContext 要跨 3~5 次读库，期间若有写请求
+  // 做了失效，这份结果是失效前的快照，不能写回缓存（见 context-cache.js 的 set）。
+  let readStartedAt = 0;
   if (cacheable) {
     const cached = contextCache.get(cacheKey);
     if (cached) return Object.freeze({ repo, ...target, now, ...cached });
+    readStartedAt = Date.now();
   }
   const [school, schoolAssociation, actor] = await Promise.all([
     repo.schools.getById(target.schoolId),
@@ -47,7 +51,7 @@ async function buildSchoolContext({
   const docs = { actor, openId: resolvedOpenId, actorId: actor ? actor._id : '',
     school, schoolAssociation, schoolMember: owned(member), schoolRole: owned(role),
     membership: owned(membership) && membership.association === target.association ? membership : null };
-  if (cacheable) contextCache.set(cacheKey, docs);
+  if (cacheable) contextCache.set(cacheKey, docs, readStartedAt);
   return Object.freeze({ repo, ...target, now, ...docs });
 }
 

@@ -25,6 +25,7 @@
  */
 
 const { canReadAssociationSpace } = require('./association-space-permission.js');
+const { loadColleges } = require('./college-directory.js');
 const { legacyActorOf, legacyRoleOf, buildDirectory, actorDirectory } = require('./school-actor.js');
 const { permissionOf, permissionLabelOf, canSchoolAction } = require('./school-permission.js');
 const { displayRating } = require('./school-rating-service.js');
@@ -781,8 +782,11 @@ async function getSchoolMemberHonors(payload = {}, ctx) {
  */
 async function getSchoolMemberProfile(payload = {}, ctx) {
   if (!canReadAssociationSpace(ctx)) return ok(refused('没有读取本协会成绩的权限'));
-  const userId = typeof payload.userId === 'string' && payload.userId ? payload.userId : ctx.actorId;
+  const userId = typeof payload.userId === 'string' && payload.userId ? payload.userId.trim() : ctx.actorId;
   if (!userId) return ok(refused('缺少会员编号'));
+  // 同 getSchoolMember：userId 会拼进 _id，超长会让 schoolKey 抛错并被兜成「服务异常」
+  // （2026-10-28 审计 2 B-3）。
+  if (userId.length > 128) return ok(refused('会员编号格式不正确'));
   const historyLimit = Number.isInteger(payload.historyLimit) && payload.historyLimit > 0
     ? Math.min(payload.historyLimit, 200) : 20;
 
@@ -798,7 +802,7 @@ async function getSchoolMemberProfile(payload = {}, ctx) {
     ctx.repo.schoolMembers.getById(schoolMemberKey(userId, ctx.schoolId)),
     ctx.repo.schoolRoles.getById(schoolRoleKey(userId, ctx.schoolId)),
     ctx.repo.memberships.get(schoolMembershipKey(userId, ctx)),
-    scopeRepo.colleges.list(),
+    loadColleges(ctx),
     scopeRepo.memberRatings.listByUser(userId),
     // 回填监控（与榜单同一把尺子）：只要有评级文档缺 memberStatus，分母就会偏小，
     // 名次会虚高。这时退回旧的全量口径，慢但正确。

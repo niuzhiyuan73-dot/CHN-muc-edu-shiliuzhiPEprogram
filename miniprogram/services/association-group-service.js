@@ -24,6 +24,7 @@
  */
 
 const { buildSchoolContext } = require('./school-context.js');
+const { loadColleges } = require('./college-directory.js');
 const { canReadAssociationSpace, canManageAssociationSpace } = require('./association-space-permission.js');
 const { permissionLabelOf } = require('./school-permission.js');
 const {
@@ -152,7 +153,7 @@ async function describeMembers(repo, ctx, userIds) {
   const ids = [...new Set((Array.isArray(userIds) ? userIds : [])
     .filter(id => typeof id === 'string' && id))];
   const [colleges, members, roles, memberships] = await Promise.all([
-    repo.forScope(ctx).colleges.list(),
+    loadColleges(ctx, repo),
     ids.length ? repo.forScope(ctx).schoolMembers.listByIds(ids.map(id => schoolMemberKey(id, ctx.schoolId))) : [],
     ids.length ? repo.forScope(ctx).schoolRoles.listByIds(ids.map(id => schoolRoleKey(id, ctx.schoolId))) : [],
     ids.length ? repo.forScope(ctx).memberships.listByIds(ids.map(id => schoolMembershipKey(id, ctx))) : [],

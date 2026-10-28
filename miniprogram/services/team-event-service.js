@@ -34,6 +34,7 @@ const { EVENT_FORMAT } = require('../utils/constants.js');
 // 展示与年份判定统一按东八区（云函数跑在 UTC）
 const { displayYearOf } = require('../utils/format.js');
 const { teamSportStrategyFor } = require('../utils/team-sport-rules.js');
+const { isCalendarDate } = require('./meet-time.js');
 const { sportTypeOf } = require('../utils/associations.js');
 const { drawBracket } = require('../utils/bracket.js');
 const { roundRobinRounds } = require('../utils/standings.js');
@@ -92,6 +93,10 @@ function toMatchTime(value) {
   if (value === null || value === undefined) return { ok: true, value: null };
   const raw = String(value).trim();
   if (raw === '') return { ok: true, value: null };
+  // 手填的「年月日 + 时分」先过日历日回读：`2026-02-30 10:00` 会被 Date.parse 静默进位成
+  // 03-02，比赛时间白白错两天（2026-10-28 审计 2 B-2）。时分超范围 Date.parse 自己会拒。
+  const naive = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})$/.exec(raw);
+  if (naive && !isCalendarDate(naive[1])) return { ok: false, value: null };
   // `YYYY-MM-DD HH:mm` 在部分运行时会被当成非法日期；补成显式带时区的 ISO
   const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(raw)
     ? `${raw.replace(' ', 'T')}:00+08:00`
@@ -3341,9 +3346,11 @@ async function startTeamLiveScore(payload = {}, ctx) {
         && [TEAM_MATCH_STATUS.REVIEWING, TEAM_MATCH_STATUS.PUBLISHED].includes(match.status))) {
       return refused('只有未开赛或进行中的比赛可以进入实时计分台');
     }
-    const [teamA, teamB] = await Promise.all([
-      tx.teams.getById(match.teamA), tx.teams.getById(match.teamB),
-    ]);
+    // 事务内不并发：云开发要求对同一事务对象的操作串行，Promise.all 会同时发起两次读。
+    // 本地内存仓储是同步 Map，照不出问题；云端可能撞事务冲突，而这条路径正是「开计分台」
+    // 的第一步，失败就进不去（2026-10-28 审计 2 C-2）。
+    const teamA = await tx.teams.getById(match.teamA);
+    const teamB = await tx.teams.getById(match.teamB);
     const statContext = await liveStatContext(tx, match, event);
     let state = match.liveScore;
     if (match.status === TEAM_MATCH_STATUS.SCHEDULED || !state) {

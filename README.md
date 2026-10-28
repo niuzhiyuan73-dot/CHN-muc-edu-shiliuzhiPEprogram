@@ -3,8 +3,8 @@
 一个原生微信小程序（WXML / WXSS / JS，零框架），把校内**多个体育协会**的等级分、赛事、训练与校级活动装进同一套系统。
 
 - 当前进度：篮球五人制与实时计分已落地；足球 F0—F3 已完成，支持赛后报告与成绩；足球/篮球已有协会内“我的球队”累计统计页签
-- 自检：`npm test` → **3227 项用例通过 / 0 失败 / 0 超时**（197 个测试文件 / 31.2 秒）
-- 云端共享库：`npm run check:cloud-sync` → 96 个文件一致
+- 自检：`npm test` → **3232 项用例通过 / 0 失败 / 0 超时**（198 个测试文件 / 32.3 秒）
+- 云端共享库：`npm run check:cloud-sync` → 97 个文件一致
 - 界面进度：F01–F17 已提交 `581104f`；F18 的个人赛程、待办、运动护照已接入，本批按用户授权验收后提交，尚未部署；场地看板、校园赛历、成绩分享卡暂不做。见[个人体育中心说明](docs/个人体育中心-使用与实现说明.md)
 - 数据源：默认**本地模拟**（`miniprogram/config.js` 的 `CLOUD_ENV_ID` 为空），填入环境 ID 即切云端，页面代码一行不改
 
@@ -94,7 +94,7 @@ services                 视图模型 + 数据源门面（MOCK / CLOUD 同一套
         │
 utils                    纯函数：计分、抽签、分组、榜单、积分、权限
         │
-        ├── tools/sync-cloud-lib.js ──逐字节镜像──▶ cloudfunctions/data/lib/（96 文件）
+        ├── tools/sync-cloud-lib.js ──逐字节镜像──▶ cloudfunctions/data/lib/（97 文件）
         │
 cloudfunctions/data      唯一云函数：协议 2 请求信封 + 仓储 + 事务
         └── src/core      身份上下文、路由、四个领域的 action handler（共 202 个）

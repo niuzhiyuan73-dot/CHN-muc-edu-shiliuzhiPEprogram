@@ -1,4 +1,4 @@
-const { parseMeetTime } = require('./meet-time.js');
+const { parseMeetTime, isCalendarDate } = require('./meet-time.js');
 const { unchanged, scheduleRevisionOf, touchScheduleRevision } = require('./meet-consistency.js');
 /**
  * 运动会：草稿、项目运行时配置与报名发布（B4）
@@ -80,8 +80,19 @@ const STATUS_LABEL = Object.freeze({
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/;
 
+/**
+ * 剥掉零宽字符再判空。
+ *
+ * `'   '.trim() === ''` 拦得住纯空格，拦不住零宽字符：`'\u200B'.trim().length === 1`，
+ * 于是「名称」可以存成一串看不见的东西——列表里出现空白标题，点进去又删不掉
+ * （2026-10-28 审计 2 B-5）。
+ */
+function stripZeroWidth(text) {
+  return String(text).replace(/[\u200B-\u200D\u2060\uFEFF]/g, '');
+}
+
 function textOf(value, max, label) {
-  const text = String(value == null ? '' : value).trim();
+  const text = stripZeroWidth(String(value == null ? '' : value)).trim();
   if (!text) return { ok: false, message: `请填写${label}` };
   if (text.length > max) return { ok: false, message: `${label}不超过 ${max} 个字` };
   return { ok: true, value: text };
@@ -90,9 +101,14 @@ function textOf(value, max, label) {
 function dateOf(value, label) {
   const text = String(value == null ? '' : value).trim();
   if (!DATE_PATTERN.test(text)) return { ok: false, message: `${label}格式应为 YYYY-MM-DD` };
-  const time = Date.parse(`${text}T00:00:00Z`);
-  if (!Number.isFinite(time)) return { ok: false, message: `${label}不是有效日期` };
-  return { ok: true, value: text, time };
+  // 回读校验日历日：`2026-02-30` 能被 Date.parse 静默进位成 03-02，只判 isFinite 拦不住
+  // （2026-10-28 审计 2 B-1，详见 meet-time.js 的 isCalendarDate）。
+  const year = Number(text.slice(0, 4));
+  if (year < YEAR_MIN || year > YEAR_MAX) {
+    return { ok: false, message: `${label}的年份应在 ${YEAR_MIN}–${YEAR_MAX} 之间` };
+  }
+  if (!isCalendarDate(text)) return { ok: false, message: `${label}不是有效日期` };
+  return { ok: true, value: text, time: Date.parse(`${text}T00:00:00Z`) };
 }
 
 function timeOf(value, label) {

@@ -26,6 +26,7 @@
  */
 
 const { canReadAssociationSpace } = require('./association-space-permission.js');
+const { loadColleges } = require('./college-directory.js');
 const { schoolMemberKey, SCHOOL_MEMBER_STATUS, PLATFORM_STATUS } = require('../utils/school.js');
 
 const ok = data => ({ ok: true, data });
@@ -71,7 +72,7 @@ async function listSchoolMembers(payload = {}, ctx) {
     rows.push(...page.rows);
     afterId = page.hasMore && page.rows.length ? page.rows[page.rows.length - 1]._id : '';
   } while (afterId);
-  const colleges = await scoped.colleges.list();
+  const colleges = await loadColleges(ctx);
   const nameByCollegeId = new Map(colleges.map(item => [item.collegeId, item.name]));
   const collegeName = id => nameByCollegeId.get(id) || '';
 
@@ -104,8 +105,12 @@ async function listSchoolMembers(payload = {}, ctx) {
  */
 async function getSchoolMember(payload = {}, ctx) {
   if (!canReadAssociationSpace(ctx)) return ok(refused('没有读取本协会成员名录的权限'));
-  const userId = typeof payload.userId === 'string' ? payload.userId : '';
+  const userId = typeof payload.userId === 'string' ? payload.userId.trim() : '';
   if (!userId) return ok(refused('缺少会员编号'));
+  // 长度先在这里挡：userId 会拼进 `schoolMembers` 的 _id（schoolKey），超过上限时
+  // schoolKey 会抛「记录键字段过长」，被入口兜成「服务异常」——一次脏请求就是一条
+  // 错误日志 + 一句用户看不懂的提示（2026-10-28 审计 2 B-3）。账号编号本身远短于 128。
+  if (userId.length > 128) return ok(refused('会员编号格式不正确'));
 
   const [member, user] = await Promise.all([
     ctx.repo.schoolMembers.getById(schoolMemberKey(userId, ctx.schoolId)),
@@ -115,7 +120,7 @@ async function getSchoolMember(payload = {}, ctx) {
   if (!user || user.platformStatus !== PLATFORM_STATUS.ACTIVE || user.primarySchoolId !== ctx.schoolId) {
     return ok(refused('找不到这位会员'));
   }
-  const colleges = await ctx.repo.forScope(ctx).colleges.list();
+  const colleges = await loadColleges(ctx);
   const nameByCollegeId = new Map(colleges.map(item => [item.collegeId, item.name]));
   return ok({ ok: true, member: memberRow(user, member, id => nameByCollegeId.get(id) || ''), message: '' });
 }

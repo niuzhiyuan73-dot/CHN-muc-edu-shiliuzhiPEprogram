@@ -39,6 +39,7 @@
  */
 
 const { buildSchoolContext } = require('./school-context.js');
+const { loadColleges } = require('./college-directory.js');
 const {
   canReadAssociationSpace, canManageAssociationSpace, canParticipateInAssociation,
 } = require('./association-space-permission.js');
@@ -496,7 +497,7 @@ async function listSchoolEventSignups(payload = {}, ctx) {
   const [ledger, actorCollege, colleges] = await Promise.all([
     ctx.repo.forScope(ctx).eventSignups.listByEvent(doc._id),
     actorCollegeNameOf(ctx),
-    ctx.repo.forScope(ctx).colleges.list(),
+    loadColleges(ctx),
   ]);
   const actor = legacyActorOf(ctx, { actorCollege, managedCollegeName: actorCollege });
   const rows = ledger

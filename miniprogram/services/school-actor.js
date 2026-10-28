@@ -21,6 +21,7 @@
  */
 
 const { permissionOf, isPlatformAdminCtx, PERMISSION } = require('./school-permission.js');
+const { loadColleges } = require('./college-directory.js');
 const { ROLE, USER_STATUS } = require('../utils/constants.js');
 const { PLATFORM_STATUS, collegeKey, schoolMemberKey } = require('../utils/school.js');
 
@@ -66,7 +67,7 @@ function managementCollegeId(ctx) {
 async function buildDirectory(ctx) {
   const [members, colleges] = await Promise.all([
     ctx.repo.forScope(ctx).schoolMembers.list(),
-    ctx.repo.forScope(ctx).colleges.list(),
+    loadColleges(ctx),
   ]);
   // 账号按在册成员的编号批量取。原先是 ctx.repo.users.list()——users 是平台级
   // 集合（不带 schoolId），一次要把**全平台所有学校**的账号读回来建 Map，
@@ -120,7 +121,7 @@ async function buildDirectory(ctx) {
 async function buildCollegeDirectory(ctx) {
   const [members, colleges] = await Promise.all([
     ctx.repo.forScope(ctx).schoolMembers.list(),
-    ctx.repo.forScope(ctx).colleges.list(),
+    loadColleges(ctx),
   ]);
   // 账号按在册成员编号批量取（原先是 users.list()，会把全平台账号读进来，
   // 2026-10-21 审查 P0-1）。
@@ -308,7 +309,7 @@ async function userDirectory(ctx, userIds) {
     .filter(id => typeof id === 'string' && id))];
   const scoped = ctx.repo.forScope(ctx);
   const [colleges, rows] = await Promise.all([
-    scoped.colleges.list(),
+    loadColleges(ctx),
     ids.length ? scoped.schoolMembers.listByIds(ids.map(id => schoolMemberKey(id, ctx.schoolId))) : [],
   ]);
   const nameById = new Map(colleges.map(item => [item.collegeId, item.name]));

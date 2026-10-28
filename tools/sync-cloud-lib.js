@@ -90,6 +90,8 @@ const MANIFEST = [
   // 身份上下文缓存（H-10）：上下文在云端每请求都要建，缓存必须与 buildSchoolContext
   // 同源；模拟端也 require 同一份，两端才能用同一套 TTL 与失效规则。
   'services/context-cache.js',
+  // 学院目录缓存（2026-10-28 审计 2 P-1）：与 context-cache 同理，被云端列表接口共用。
+  'services/college-directory.js',
   'services/school-membership-service.js',
   // 协会空间：权限、受众、成员搜索为纯模块；各 service 只依赖注入的 repo 与上下文。
   'services/association-space-permission.js',

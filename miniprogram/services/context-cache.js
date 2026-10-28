@@ -67,6 +67,10 @@ const NON_CACHEABLE_ACTIONS = new Set([]);
 
 const store = new Map();
 let ttlMs = readTtl();
+/** 最近一次「整体失效」的时间戳：`set` 用它判断这次读是不是失效前的旧快照。 */
+let lastInvalidateAt = 0;
+/** 按范围失效的时间戳：`prefix -> ts`，理由同上，粒度到「学校 + 协会」。 */
+const scopeInvalidatedAt = new Map();
 
 /**
  * 运行在 Node 里吗（云函数 / 单元测试）。
@@ -131,8 +135,20 @@ function get(key) {
   return hit.docs;
 }
 
-function set(key, docs) {
+function set(key, docs, readAt) {
   if (ttlMs <= 0) return;
+  // 【写回前先看这段时间有没有发生过失效】（2026-10-28 审计 2 C-1）
+  // 读请求的路径是「get 未命中 → 3~5 次 await 读库 → set 写回」。若这中间有写请求做了
+  // invalidateAll（比如管理员刚撤了某人的权），这次 set 就会把**失效前读到的旧身份**
+  // 重新写进缓存，随后 TTL 内所有读都拿到旧权限——等于「清了也没清干净」。
+  // 判断依据是「这次读是几点开始的」：晚于最近一次失效才允许写回；早于（含同一毫秒）
+  // 说明读到的是失效前的快照，直接丢弃（下次读自然重建）。同一毫秒按「失效前」处理是
+  // 有意保守——毫秒级分辨不出先后时，宁可多读一次，也不要留下旧权限。
+  const startedAt = Number.isFinite(readAt) ? readAt : Date.now();
+  if (startedAt <= lastInvalidateAt) return;
+  for (const [prefix, invalidatedAt] of scopeInvalidatedAt) {
+    if (startedAt <= invalidatedAt && key.startsWith(prefix)) return;
+  }
   store.set(key, { docs, expiresAt: Date.now() + ttlMs });
   if (store.size <= MAX_ENTRIES) return;
   // 先清已经过期的，再按插入顺序淘汰——上下文是纯派生数据，丢掉随时可重建。
@@ -143,6 +159,8 @@ function set(key, docs) {
 
 /** 整体失效：写动作执行后调用（原因见文件头「为什么不按用户精确失效」）。 */
 function invalidateAll() {
+  lastInvalidateAt = Date.now();
+  scopeInvalidatedAt.clear();
   store.clear();
 }
 
@@ -167,6 +185,14 @@ function invalidateScope(schoolId, association) {
   if (!schoolId) return invalidateAll();
   const prefix = `${schoolId}|${association || ''}|`;
   for (const key of [...store.keys()]) if (key.startsWith(prefix)) store.delete(key);
+  // 记下「这个范围是什么时候失效的」，供 set 判断「我这次读是不是失效前的快照」。
+  // 只保留最近若干条，避免前缀表无界增长（前缀数 = 有写动作的范围数，量级很小）。
+  scopeInvalidatedAt.set(prefix, Date.now());
+  if (scopeInvalidatedAt.size > MAX_ENTRIES) {
+    const cutoff = [...scopeInvalidatedAt.entries()].sort((a, b) => a[1] - b[1])
+      .slice(0, scopeInvalidatedAt.size - MAX_ENTRIES);
+    for (const [key] of cutoff) scopeInvalidatedAt.delete(key);
+  }
 }
 
 /** 仅供诊断：当前窗口与缓存条数。 */
@@ -178,6 +204,8 @@ function stats() {
 function __setTtlForTest(ms) {
   ttlMs = Number.isFinite(Number(ms)) && Number(ms) >= 0 ? Math.floor(Number(ms)) : 0;
   store.clear();
+  lastInvalidateAt = 0;
+  scopeInvalidatedAt.clear();
 }
 
 module.exports = {

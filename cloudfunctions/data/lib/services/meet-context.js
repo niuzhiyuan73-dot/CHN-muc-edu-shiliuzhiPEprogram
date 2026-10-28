@@ -47,9 +47,12 @@ async function buildMeetContext({
   const cacheKey = cacheable
     ? `meet|${contextCache.keyOf({ schoolId, association: meetId }, openId, actorId)}`
     : '';
+  // 记下「这次读是几点开始的」，供 set 判断期间是否发生过失效（见 context-cache.js）。
+  let readStartedAt = 0;
   if (cacheable) {
     const cached = contextCache.get(cacheKey);
     if (cached) return Object.freeze({ repo, schoolId, meetId, now, ...cached });
+    readStartedAt = Date.now();
   }
 
   const [school, actor] = await Promise.all([
@@ -79,7 +82,7 @@ async function buildMeetContext({
     // 不属于本届或不属于本校的记录一律当「不存在」，不让越界数据进入上下文。
     meet: meet && meet.schoolId === schoolId ? meet : null,
   };
-  if (cacheable) contextCache.set(cacheKey, docs);
+  if (cacheable) contextCache.set(cacheKey, docs, readStartedAt);
   return Object.freeze({ repo, schoolId, meetId, now, ...docs });
 }
 

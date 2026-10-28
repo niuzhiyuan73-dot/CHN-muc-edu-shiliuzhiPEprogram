@@ -30,6 +30,7 @@
  */
 
 const { buildSchoolContext } = require('./school-context.js');
+const { loadColleges } = require('./college-directory.js');
 const {
   canReadAssociationSpace, canManageAssociationSpace, canParticipateInAssociation,
 } = require('./association-space-permission.js');
@@ -394,7 +395,7 @@ async function listTrainingRegistrations(payload = {}, ctx) {
     : '';
 
   const registrations = [];
-  const colleges = await ctx.repo.forScope(ctx).colleges.list();
+  const colleges = await loadColleges(ctx);
   // 学院名走 Map（原先 find 在循环里，2026-10-21 审查 P2-7）。
   const collegeNameById = new Map(colleges.map(row => [row.collegeId, row.name]));
   const collegeName = id => collegeNameById.get(id) || '';

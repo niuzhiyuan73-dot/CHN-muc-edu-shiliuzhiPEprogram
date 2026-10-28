@@ -12,6 +12,7 @@
  */
 
 const { normalizeKeyword } = require('./association-member.js');
+const { loadColleges } = require('./college-directory.js');
 const { canReadAssociationSpace } = require('./association-space-permission.js');
 const { permissionLabelOf } = require('./school-permission.js');
 const {
@@ -37,7 +38,7 @@ async function listAssociationMembers(payload = {}, ctx) {
   }
   const scoped = ctx.repo.forScope(ctx);
   const [page, colleges] = await Promise.all([
-    scoped.schoolMembers.listDirectoryPage({ keyword, cursor: payload.cursor, limit }), scoped.colleges.list(),
+    scoped.schoolMembers.listDirectoryPage({ keyword, cursor: payload.cursor, limit }), loadColleges(ctx),
   ]);
   const collegeNameById = new Map(colleges.map(row => [row.collegeId, row.name]));
   page.members = page.members.map(member => ({ ...member, collegeName: collegeNameById.get(member.collegeId) || '' }));

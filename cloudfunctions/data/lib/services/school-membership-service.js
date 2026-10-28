@@ -1,5 +1,6 @@
 const ok = data => ({ ok: true, data });
 const { buildSchoolContext } = require('./school-context.js');
+const { loadColleges } = require('./college-directory.js');
 const {
   canSchoolAction, canReadSchool, canGrantPermission, grantablePermissions,
   isPlatformAdminCtx, permissionOf, permissionLabelOf, PERMISSION, PERMISSION_LABEL,
@@ -464,7 +465,7 @@ function createSchoolHandlers({ claimKey }) {
     // 审核页一次就把别校账号也读回来了（2026-10-21 审查 P0-1）。
     // 转出校名称只对「转校申请」存在，按去重后的 id 逐个取——不走 schools.list()，
     // 免得给本读路径新增对 where({}) 空条件的依赖（该兼容性未实测，见审计 §二）。
-    const colleges = await ctx.repo.forScope(ctx).colleges.list();
+    const colleges = await loadColleges(ctx);
     // 学院名走 Map（原先 find 在循环里，2026-10-21 审查 P2-7）。
     const collegeNameById = new Map(colleges.map(row => [row.collegeId, row.name]));
     const collegeName = id => collegeNameById.get(id) || '';
@@ -503,7 +504,7 @@ function createSchoolHandlers({ claimKey }) {
     const schools = (await ctx.repo.schools.list()).filter(row => row.status === 'active').map(row => ({
       schoolId: row.schoolId, name: row.name, shortName: row.shortName,
     }));
-    const colleges = (await ctx.repo.forScope(ctx).colleges.list()).filter(row => row.status === 'active').map(row => ({
+    const colleges = (await loadColleges(ctx)).filter(row => row.status === 'active').map(row => ({
       collegeId: row.collegeId, name: row.name,
     }));
     return ok({ ok: true, schools, colleges, message: '' });
@@ -618,7 +619,7 @@ function createSchoolHandlers({ claimKey }) {
     // 学院名走 Map（原先 find 在循环里，2026-10-21 审查 P2-7）；
     // 角色与 membership 只按这一页的人批读，不再整表取。
     const [colleges, roles, memberships, total] = await Promise.all([
-      scoped.colleges.list(),
+      loadColleges(ctx),
       scoped.schoolRoles.listByIds(rows.map(row => schoolRoleKey(row.userId, ctx.schoolId))),
       scoped.memberships.listByIds(rows.map(row => schoolMembershipKey(row.userId, ctx))),
       scoped.schoolMembers.countByStatus(SCHOOL_MEMBER_STATUS.ACTIVE),

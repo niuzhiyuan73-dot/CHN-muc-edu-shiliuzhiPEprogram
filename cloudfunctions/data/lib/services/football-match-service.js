@@ -225,8 +225,12 @@ async function getTeamMatchLineup(payload, ctx) {
   const manage = canManageAssociationSpace(ctx); const editor = canEdit(ctx, match);
   if (!manage && !teams.some(t => t?.captainId === ctx.actorId) && !editor) return ok(refused('只有参赛队队长、录入人或协会负责人可以查看未发布名单'));
   const report = editor ? match.footballDraft || match.footballPublished : match.footballPublished;
-  return ok({ ok: true, revision: match.revision, minOnCourt: 7, matchRosterMax: event.rules.matchRosterMax,
-    sportFormat: 'football11', matchId: match._id, rules: event.rules, format: event.format,
+  // rules 兜底：本服务其它 8 处都写成 `event.rules && event.rules.x`，只有这里直接解引用。
+  // 新建赛事必经 normalizeRules（rules 必填），但历史文档或控制台手工改过的事件可能没有
+  // 这个字段——那时整条「查看名单」会 500，而不是少一个上限值（2026-10-28 审计 2 B-4）。
+  const rules = event.rules || {};
+  return ok({ ok: true, revision: match.revision, minOnCourt: 7, matchRosterMax: rules.matchRosterMax,
+    sportFormat: 'football11', matchId: match._id, rules, format: event.format,
     teamAName: teams[0]?.name || match.teamA, teamBName: teams[1]?.name || match.teamB,
     eventId: event._id,
     sides: ['A', 'B'].map((side, i) => ({ side, teamName: teams[i]?.name || '',
