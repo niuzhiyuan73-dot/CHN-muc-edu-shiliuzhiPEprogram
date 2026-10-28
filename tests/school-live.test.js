@@ -67,6 +67,41 @@ async function rallies(repo, matchId, side, n, prefix) {
   }
 }
 
+for (const action of ['startSchoolLiveScore', 'recordSchoolRally', 'undoSchoolRally', 'finishSchoolLiveScore']) {
+  for (const mutation of ['account', 'membership', 'referee', 'match', 'role']) {
+    test(`${action}：事务前 ${mutation} 改变后拒绝，实时态及比赛不变`, async () => {
+      const repo = fixture();
+      const matchId = await seedMatch(repo, { bestOf: 1 });
+      await call(repo, 'startSchoolLiveScore', { matchId });
+      await rallies(repo, matchId, 'A', action === 'finishSchoolLiveScore' ? 11 : 1, 'before');
+      const transaction = repo.transaction;
+      let beforeMatch;
+      const beforeLive = await repo.liveScores.getById(schoolLiveKey(matchId, { schoolId: 'muc', association: 'pkb' }));
+      repo.transaction = async work => {
+        const actor = mutation === 'role' ? 'demo_muc_admin' : 'demo_muc_member';
+        if (mutation === 'role') {
+          const key = require('../miniprogram/utils/school').schoolRoleKey(actor, 'muc');
+          await repo.schoolRoles.set(key, { ...await repo.schoolRoles.getById(key), status: 'disabled' });
+        }
+        if (mutation === 'account') await repo.users.set(actor, { ...await repo.users.getById(actor), platformStatus: 'disabled' });
+        if (mutation === 'membership') {
+          const key = schoolMemberKey(actor, 'muc');
+          await repo.schoolMembers.set(key, { ...await repo.schoolMembers.getById(key), status: 'left' });
+        }
+        if (mutation === 'referee') await repo.matches.set(matchId, { ...await repo.matches.getById(matchId), referee: 'demo_muc_member_3' });
+        if (mutation === 'match') await repo.matches.set(matchId, { ...await repo.matches.getById(matchId), status: MATCH_STATUS.ACTIVE });
+        beforeMatch = await repo.matches.getById(matchId);
+        return transaction(work);
+      };
+      const result = await call(repo, action, { matchId, side: 'A', rallyId: 'after-revoke' },
+        { actor: mutation === 'role' ? 'demo_muc_admin' : 'demo_muc_member' });
+      assert.equal(result.ok, false, result.message);
+      assert.deepEqual(await repo.matches.getById(matchId), beforeMatch);
+      assert.deepEqual(await repo.liveScores.getById(beforeLive._id), beforeLive);
+    });
+  }
+}
+
 test('开台：参赛者可开，非参赛会员被拒；重开不重置比分', async () => {
   const repo = fixture();
   const matchId = await seedMatch(repo);

@@ -24,6 +24,48 @@ beforeEach(() => { runtime.setDataSource('mock'); mock.reset(); });
  */
 const DEMO_EXCHANGE_EVENTS = 2;
 
+test('裁判选人只在打开面板时按校分页查询；切换搜索或关闭后丢弃在途结果', async () => {
+  const p = require('./helpers/page-harness').instantiate(page());
+  p.data.detail = { event: { _id: 'event', invitations: { muc: 'accepted', buaa: 'pending' } },
+    schools: [{ id: 'muc', name: '民大' }, { id: 'buaa', name: '北航' }],
+    matches: [{ _id: 'match', canAssignReferee: true }] };
+  let resolve;
+  const calls = [];
+  p.api = { listExchangeRefereeCandidates: query => { calls.push(query); return new Promise(done => { resolve = done; }); } };
+  const pending = p.onOpenReferee({ currentTarget: { dataset: { matchid: 'match' } } });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(p.data.refereePicker.schools.map(s => s.id), ['muc']);
+  p.onRefereeKeyword(select('新关键词'));
+  resolve({ ok: true, members: [{ userId: 'stale' }], hasMore: true, nextCursor: 'old' });
+  await pending;
+  assert.deepEqual(p.data.refereePicker.rows, []);
+  const searching = p.onSearchReferees();
+  assert.equal(calls[1].keyword, '新关键词');
+  assert.equal(calls[1].cursor, '');
+  p.onCloseReferee();
+  resolve({ ok: true, members: [{ userId: 'late' }], hasMore: false, nextCursor: '' });
+  await searching;
+  assert.equal(p.data.refereePicker, null);
+});
+
+test('裁判选人分页追加、失败清旧名单并允许重试', async () => {
+  const p = require('./helpers/page-harness').instantiate(page());
+  p.data.detail = { event: { _id: 'event' } };
+  p.data.refereePicker = { matchId: 'match', schools: [{ id: 'muc' }], schoolIndex: 0,
+    keyword: '', rows: [{ userId: 'first' }], hasMore: true, cursor: 'cursor-1' };
+  p.api = { listExchangeRefereeCandidates: async query => {
+    assert.equal(query.cursor, 'cursor-1');
+    return { ok: true, members: [{ userId: 'second' }], hasMore: false, nextCursor: '' };
+  } };
+  await p.onMoreReferees();
+  assert.deepEqual(p.data.refereePicker.rows.map(row => row.userId), ['first', 'second']);
+  p.api.listExchangeRefereeCandidates = async () => { throw Error('offline'); };
+  await p.onSearchReferees();
+  assert.equal(p.data.refereePicker.error, 'offline');
+  assert.deepEqual(p.data.refereePicker.rows, []);
+  assert.equal(p.data.refereePicker.loading, false);
+});
+
 test('local page completes invitation, guest acceptance, two-school signup and locking', async () => {
   const p = page();
   await p.onLoad();

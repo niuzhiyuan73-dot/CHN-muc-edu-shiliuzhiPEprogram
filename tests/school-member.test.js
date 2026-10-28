@@ -26,6 +26,31 @@ const C02 = 'c02';
 const NAME_C01 = COLLEGES[0];
 const NAME_C02 = COLLEGES[1];
 
+test('5001 条会籍中先下推状态和学院，只批读 2 个符合条件的账号', async () => {
+  const seed = createSchoolDemoSeed();
+  for (let i = 0; i < 5001; i++) {
+    const id = `scale-${i}`;
+    seed.schoolMembers.push({ _id: schoolMemberKey(id, 'muc'), schoolId: 'muc', userId: id,
+      collegeId: i < 3 ? C02 : C01, status: i === 2 ? 'left' : 'active' });
+    seed.users.push({ _id: id, platformStatus: 'active', primarySchoolId: 'muc' });
+  }
+  const repo = createSchoolMemoryRepo(seed);
+  const ctx = await buildSchoolContext({ repo, actorId: 'demo_muc_admin', scope: { schoolId: 'muc', association: 'pkb' }, now: NOW });
+  const readIds = [];
+  const listByIds = repo.users.listByIds;
+  repo.users.listByIds = ids => { readIds.push(...ids); return listByIds(ids); };
+  const forScope = repo.forScope;
+  repo.forScope = scope => {
+    const result = forScope(scope);
+    result.schoolMembers.list = () => { throw Error('不应读取全校会籍'); };
+    return result;
+  };
+  const result = (await handlers.listSchoolMembers({ collegeId: C02 }, ctx)).data;
+  assert.equal(result.ok, true);
+  assert.equal(result.members.length, 2);
+  assert.deepEqual(readIds.sort(), ['scale-0', 'scale-1']);
+});
+
 /** 民大在册会员：admin(c01) / member(c01,男) / member_2(c02,女) / member_3(c01,男) / disabled(c01,停用)。 */
 function fixture() {
   const seed = createSchoolDemoSeed();

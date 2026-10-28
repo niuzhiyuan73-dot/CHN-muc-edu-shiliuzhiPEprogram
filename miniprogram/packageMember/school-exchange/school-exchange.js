@@ -25,6 +25,7 @@ Page({
     loading: true, busy: false, error: '', notice: '', schoolId: 'muc', schoolName: '中央民族大学',
     schoolIndex: 0, schools: [], actors: [], actorIndex: 0, actorName: '',
     canCreate: false, events: [], detail: null, scoreDraft: {},
+    refereePicker: null,
     title: '民大北航单打交流赛', location: '模拟球场', date: '', time: '18:00', quota: '4', schoolQuota: '2',
     // 赛制与它的参数：默认单败淘汰（与历史口径一致），其余选项按赛制显隐
     formats: FORMAT_OPTIONS, formatIndex: 0, format: constants.DEFAULT_EVENT_FORMAT,
@@ -52,7 +53,7 @@ Page({
     this.unloaded = false;
     return this.reload();
   },
-  onUnload() { this.unloaded = true; this.sequence = (this.sequence || 0) + 1; },
+  onUnload() { this.unloaded = true; this.sequence = (this.sequence || 0) + 1; this.refereeSequence = (this.refereeSequence || 0) + 1; },
   update(values) { if (!this.unloaded) this.setData(values); },
 
   /**
@@ -72,8 +73,9 @@ Page({
     });
   },
   async reload(eventId = '') {
+    this.refereeSequence = (this.refereeSequence || 0) + 1;
     const seq = this.sequence = (this.sequence || 0) + 1;
-    this.update({ loading: true, error: '', events: [], detail: null, canCreate: false });
+    this.update({ loading: true, error: '', events: [], detail: null, canCreate: false, refereePicker: null });
     try {
       // 2026-10-16 起云端也已接入（协议 2 注册了邀请赛动作），门面按数据源自己选，
       // 页面不再拦「非模拟模式」——否则云环境一上线，这里就成了唯一的死路。
@@ -252,11 +254,52 @@ Page({
     const eventId = this.data.detail.event._id;
     return this.write(api => api.drawExchangeEvent({ eventId }));
   },
+  onOpenReferee(event) {
+    const detail = this.data.detail;
+    const matchId = event.currentTarget.dataset.matchid;
+    if (!detail || !(detail.matches || []).some(m => m._id === matchId && m.canAssignReferee)) return;
+    const schools = detail.schools.filter(s => detail.event.invitations[s.id] === 'accepted');
+    if (!schools.length) return;
+    this.update({ refereePicker: { matchId, schools, schoolIndex: 0, keyword: '', rows: [], cursor: '', hasMore: false } });
+    return this.loadReferees(false);
+  },
+  async loadReferees(append = false) {
+    const picker = this.data.refereePicker;
+    if (!picker || append && !picker.hasMore) return;
+    const seq = this.refereeSequence = (this.refereeSequence || 0) + 1;
+    this.update({ 'refereePicker.loading': true, 'refereePicker.error': '' });
+    try {
+      const result = await this.api.listExchangeRefereeCandidates({ eventId: this.data.detail.event._id,
+        schoolId: picker.schools[picker.schoolIndex].id, keyword: picker.keyword,
+        cursor: append ? picker.cursor : '', limit: 20 });
+      if (seq !== this.refereeSequence || this.unloaded) return;
+      if (!result.ok) throw new Error(result.message);
+      this.update({ 'refereePicker.rows': append ? [...picker.rows, ...result.members] : result.members,
+        'refereePicker.cursor': result.nextCursor, 'refereePicker.hasMore': result.hasMore });
+    } catch (error) {
+      if (seq === this.refereeSequence) this.update({ 'refereePicker.error': error.message || '候选读取失败',
+        'refereePicker.rows': [], 'refereePicker.hasMore': false });
+    } finally { if (seq === this.refereeSequence) this.update({ 'refereePicker.loading': false }); }
+  },
+  onRefereeSchool(event) {
+    this.update({ 'refereePicker.schoolIndex': Number(event.detail.value), 'refereePicker.rows': [] });
+    return this.loadReferees(false);
+  },
+  onRefereeKeyword(event) {
+    this.refereeSequence = (this.refereeSequence || 0) + 1;
+    this.update({ 'refereePicker.keyword': event.detail.value, 'refereePicker.rows': [],
+      'refereePicker.cursor': '', 'refereePicker.hasMore': false, 'refereePicker.loading': false });
+  },
+  onSearchReferees() { return this.loadReferees(false); },
+  onMoreReferees() { if (!this.data.refereePicker.loading) return this.loadReferees(true); },
+  onCloseReferee() { this.refereeSequence = (this.refereeSequence || 0) + 1; this.update({ refereePicker: null }); },
   onRefereeChange(event) {
     if (this.data.busy || !this.data.detail) return;
-    const referee = this.data.detail.referees[Number(event.detail.value)];
+    const picker = this.data.refereePicker;
+    if (!picker) return;
+    const referee = picker.rows.find(row => row.userId === event.currentTarget.dataset.userid);
     if (!referee) return;
-    const matchId = event.currentTarget.dataset.matchid;
+    const matchId = picker.matchId;
     const eventId = this.data.detail.event._id;
     return this.write(api => api.assignExchangeReferee({ eventId, matchId, refereeId: referee.userId }));
   },

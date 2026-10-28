@@ -217,6 +217,7 @@ function forExchange(input) {
     confirmExchangeRanking: payload => request('confirmExchangeRanking', payload),
     getExchangeEvents: payload => request('getExchangeEvents', payload),
     getExchangeEvent: payload => request('getExchangeEvent', payload),
+    listExchangeRefereeCandidates: payload => request('listExchangeRefereeCandidates', payload),
   });
 }
 

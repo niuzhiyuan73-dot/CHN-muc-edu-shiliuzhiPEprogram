@@ -53,13 +53,19 @@ async function listSchoolMembers(payload = {}, ctx) {
   if (!canReadAssociationSpace(ctx)) {
     return ok({ ok: false, members: [], total: 0, message: '没有读取本协会成员名录的权限' });
   }
-  const [rows, colleges] = await Promise.all([
-    ctx.repo.forScope(ctx).schoolMembers.list(),
-    ctx.repo.forScope(ctx).colleges.list(),
-  ]);
+  const scoped = ctx.repo.forScope(ctx);
+  const filterCollegeId = typeof payload.collegeId === 'string' && payload.collegeId ? payload.collegeId : '';
+  const rows = [];
+  let afterId = '';
+  do {
+    const page = await scoped.schoolMembers.listByStatus(SCHOOL_MEMBER_STATUS.ACTIVE,
+      { collegeId: filterCollegeId, afterId, limit: 200 });
+    rows.push(...page.rows);
+    afterId = page.hasMore && page.rows.length ? page.rows[page.rows.length - 1]._id : '';
+  } while (afterId);
+  const colleges = await scoped.colleges.list();
   const nameByCollegeId = new Map(colleges.map(item => [item.collegeId, item.name]));
   const collegeName = id => nameByCollegeId.get(id) || '';
-  const filterCollegeId = typeof payload.collegeId === 'string' && payload.collegeId ? payload.collegeId : '';
 
   // 名录要按 userId 补昵称 / 头像。**按这批会员的编号批量取**，而不是
   // 「读全平台 users 再建索引」：users 是平台级集合（不带 schoolId），list()

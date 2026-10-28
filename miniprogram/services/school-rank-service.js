@@ -990,6 +990,12 @@ async function resetSchoolSeason(payload = {}, ctx) {
 
   const id = seasonKeyOf(ctx);
   const result = await ctx.repo.transaction(async tx => {
+    const fresh = await require('./school-context.js').buildSchoolContext({
+      repo: tx, actorId: ctx.actorId, scope: ctx, now: ctx.now,
+    });
+    if (!canReadAssociationSpace(fresh) || !canResetSeason(legacyActorOf(fresh, dir))) {
+      return refused('只有当前有效的管理员可以开始新赛季');
+    }
     const existing = await tx.seasons.getById(id);
     const base = existing && belongsToSchoolScope(existing, ctx) ? existing : defaultSeason(ctx);
     const resetTime = requested || ctx.now;

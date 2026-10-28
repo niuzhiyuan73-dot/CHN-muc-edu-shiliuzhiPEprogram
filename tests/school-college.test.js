@@ -90,6 +90,31 @@ async function publish(repo, token, extra = {}, opts = {}) {
 
 /* ------------------------------------------------------------ 发布 */
 
+test('正式授权：学籍在 c01，仅管理 c02，不能借学籍提交 c01 名单；事务内改授权也拒绝', async () => {
+  const repo = fixture();
+  const scope = { schoolId: 'muc', association: 'pkb' };
+  const admin = await buildSchoolContext({ repo, actorId: 'demo_muc_admin', scope, now: NOW });
+  const granted = (await require('../miniprogram/services/school-membership-service').createSchoolHandlers({}).grantSchoolPermission({
+    userId: 'demo_muc_member', permission: 'collegeLeader', collegeId: C02, make: true,
+  }, admin)).data;
+  assert.equal(granted.ok, true, granted.message);
+  const event = await publish(repo, 'assigned-college');
+  const payload = { eventId: event.eventId, collegeId: C01, memberIds: ['demo_muc_member'] };
+  assert.equal((await call(repo, 'submitCollegeEntry', payload, { actor: 'demo_muc_member' })).ok, false);
+  const validPayload = { ...payload, collegeId: C02, memberIds: ['demo_muc_member_4'] };
+  assert.equal((await call(repo, 'submitCollegeEntry', validPayload, { actor: 'demo_muc_member' })).ok, true);
+  const before = await repo.collegeEntries.list();
+  const transaction = repo.transaction;
+  repo.transaction = async work => {
+    const key = schoolMembershipKey('demo_muc_member', scope);
+    await repo.memberships.set(key, { ...await repo.memberships.get(key), collegeId: C01 });
+    return transaction(work);
+  };
+  const result = await call(repo, 'submitCollegeEntry', validPayload, { actor: 'demo_muc_member' });
+  assert.equal(result.ok, false);
+  assert.deepEqual(await repo.collegeEntries.list(), before);
+});
+
 test('置顶：审计失败整体回滚，不能留下半次写入', async () => {
   const repo = fixture();
   const event = await publish(repo, 'pin-rollback');

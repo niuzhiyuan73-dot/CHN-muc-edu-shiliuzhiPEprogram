@@ -20,6 +20,22 @@ const NOW = new Date('2026-10-13T10:00:00Z');
 const HOUR = 60 * 60 * 1000;
 const at = offset => new Date(NOW.getTime() + offset).toISOString();
 
+test('重置赛季：事务前撤销管理员角色，赛季原样保留', async () => {
+  const repo = fixture();
+  const scope = { schoolId: 'muc', association: 'pkb' };
+  const ctx = await buildSchoolContext({ repo, actorId: 'demo_muc_admin', scope, now: NOW });
+  const before = await repo.seasons.list();
+  const transaction = repo.transaction;
+  repo.transaction = async work => {
+    const id = require('../miniprogram/utils/school').schoolRoleKey(ctx.actorId, scope.schoolId);
+    await repo.schoolRoles.set(id, { ...await repo.schoolRoles.getById(id), status: 'disabled' });
+    return transaction(work);
+  };
+  const result = (await handlers.resetSchoolSeason({}, ctx)).data;
+  assert.equal(result.ok, false);
+  assert.deepEqual(await repo.seasons.list(), before);
+});
+
 function fixture() {
   const seed = createSchoolDemoSeed();
   seed.users.push({

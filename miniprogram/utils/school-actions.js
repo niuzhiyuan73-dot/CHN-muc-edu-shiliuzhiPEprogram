@@ -97,7 +97,7 @@ const SCHOOL_EXCHANGE_ACTIONS = Object.freeze([
   'withdrawExchangeInvitation', 'cancelExchangeEvent',
   'lockExchangeRoster',         'drawExchangeEvent',          'assignExchangeReferee',
   'submitExchangeScore',        'confirmExchangeRanking',     'getExchangeEvents',
-  'getExchangeEvent',
+  'getExchangeEvent',           'listExchangeRefereeCandidates',
 ]);
 
 /**

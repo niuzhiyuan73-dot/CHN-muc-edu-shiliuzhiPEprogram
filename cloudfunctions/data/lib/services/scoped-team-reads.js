@@ -34,6 +34,24 @@ function attachTeamReads(surface, { inTx, query, byIds, command }) {
   // 原先是把本协会**历年**全部报名读回来再按 teamId 过滤。
   surface.teamEventEntries.listByTeam = id => select('teamEventEntries', 'teamId', [id]);
   surface.teamMatches.listByEvents = ids => select('teamMatches', 'eventId', ids);
+  surface.teamMatches.listScheduleCandidates = async targets => {
+    if (inTx) throw new Error('事务内不允许条件读取（teamMatches）');
+    const timed = targets.filter(row => row.matchTime && Number.isFinite(Date.parse(row.matchTime)));
+    if (!timed.length) return [];
+    // 所有可排期场次最多预留 480 分钟，向前扩窗覆盖跨日重叠；整轮合并成四类资源查询。
+    const low = new Date(Math.min(...timed.map(row => Date.parse(row.matchTime))) - 480 * 60000).toISOString();
+    const high = new Date(Math.max(...timed.map(row => Date.parse(row.matchTime) + row.durationMinutes * 60000))).toISOString();
+    const teams = timed.flatMap(row => [row.teamA, row.teamB]);
+    const pages = await Promise.all([['teamA', teams], ['teamB', teams],
+      ['location', timed.map(row => row.location)], ['refereeId', timed.map(row => row.refereeId)]]
+      .map(([field, values]) => {
+        const ids = [...new Set(values.filter(Boolean))];
+        return ids.length ? query('teamMatches', command.and([
+          { ...scope, [field]: command.in(ids) }, { matchTime: command.gte(low) }, { matchTime: command.lte(high) },
+        ])) : [];
+      }));
+    return unique(pages.flat());
+  };
   surface.teamMatches.listByTeams = async ids => unique((await Promise.all([
     select('teamMatches', 'teamA', ids), select('teamMatches', 'teamB', ids),
   ])).flat());

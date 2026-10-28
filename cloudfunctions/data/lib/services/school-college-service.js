@@ -39,6 +39,7 @@ const { displayYearOf } = require('../utils/format.js');
 const { canReadAssociationSpace } = require('./association-space-permission.js');
 // 学院目录（编号 ↔ 全名）与旧栈「账号」的推导收在 school-actor，两套栈只有一份口径。
 const { buildCollegeDirectory, legacyActorOf } = require('./school-actor.js');
+const { canSchoolAction } = require('./school-permission.js');
 const {
   schoolKey, schoolMemberKey, belongsToSchoolScope, collegeEventKey, collegeEntryKey,
   collegeLineupKey, PLATFORM_STATUS, SCHOOL_MEMBER_STATUS, associationGroupMemberKey,
@@ -104,7 +105,7 @@ async function freshActorGate(tx, ctx, dir) {
   if (!canReadAssociationSpace(fresh)) {
     return { ok: false, message: '账号已停用，或没有本协会的访问权限', actor: null };
   }
-  return { ok: true, message: '', actor: legacyActorOf(fresh, dir) };
+  return { ok: true, message: '', actor: legacyActorOf(fresh, dir), ctx: fresh };
 }
 
 /**
@@ -125,7 +126,7 @@ async function inTransaction(ctx, dir, work) {
   return ctx.repo.transaction(async tx => {
     const gate = await freshActorGate(tx, ctx, dir);
     if (!gate.ok) return refused(gate.message);
-    return work(tx, gate.actor);
+    return work(tx, gate.actor, gate.ctx);
   });
 }
 
@@ -458,9 +459,10 @@ async function submitCollegeEntry(payload = {}, ctx) {
   const { collegeId, college } = resolveCollege(payload, dir);
   const members = memberMapOf(dir);
 
-  const result = await inTransaction(ctx, dir, async (tx, actor) => {
+  const result = await inTransaction(ctx, dir, async (tx, actor, fresh) => {
     const doc = await tx.collegeEvents.getById(payload.eventId);
     if (!isCollegeEventDoc(doc) || !belongsToSchoolScope(doc, ctx)) return refused('学院赛不存在');
+    if (!canSchoolAction(fresh, 'manageCollege', { ...ctx, collegeId })) return refused('只能提交本学院的名单');
 
     // 校验复用旧栈纯规则：在册、同学院、人数上下限。有效学院清单取本校目录。
     const built = buildCollegeEntryRecord(
@@ -718,7 +720,8 @@ async function submitCollegeLineup(payload = {}, ctx) {
   const members = memberMapOf(dir);
   const nowIso = iso(ctx.now);
 
-  const result = await inTransaction(ctx, dir, async (tx, actor) => {
+  const result = await inTransaction(ctx, dir, async (tx, actor, fresh) => {
+    if (!canSchoolAction(fresh, 'manageCollege', { ...ctx, collegeId })) return refused('只能管理授权的本学院');
     const current = await tx.ties.getById(payload.tieId);
     if (!isCollegeTieDoc(current) || !belongsToSchoolScope(current, ctx)) return refused('找不到这个大场');
     // 事务内复查：大场已开始 / 已结束就不能再改排阵。

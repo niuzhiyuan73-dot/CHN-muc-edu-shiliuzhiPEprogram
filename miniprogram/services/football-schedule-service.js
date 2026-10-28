@@ -15,19 +15,29 @@ function parseTime(value) {
   return Number.isFinite(n) ? new Date(n).toISOString() : undefined;
 }
 function conflicts(matches, events) {
-  const active = matches.filter(m => m.matchTime && m.status !== 'canceled');
-  for (let i = 0; i < active.length; i += 1) {
-    const a = active[i]; const ar = events.find(e => e._id === a.eventId);
-    const durationA = a.durationMinutes || (ar ? matchMinutes(ar.rules, ar.format) : 120);
-    for (const b of active.slice(i + 1)) {
-      const br = events.find(e => e._id === b.eventId);
-      const durationB = b.durationMinutes || (br ? matchMinutes(br.rules, br.format) : 120);
-      const startA = Date.parse(a.matchTime); const startB = Date.parse(b.matchTime);
-      if (startA >= startB + durationB * 60000 || startB >= startA + durationA * 60000) continue;
-      const resource = [a.teamA, a.teamB].some(t => t === b.teamA || t === b.teamB) ? '球队'
-        : a.location && a.location === b.location ? '场地'
-          : a.refereeId && a.refereeId === b.refereeId ? '裁判' : null;
-      if (resource) return `赛程冲突：${resource}在预留时间内重叠（${a._id} / ${b._id}）`;
+  const eventById = new Map(events.map(e => [e._id, e]));
+  const resources = new Map();
+  for (const match of matches) {
+    if (!match.matchTime || match.status === 'canceled') continue;
+    const event = eventById.get(match.eventId);
+    const start = Date.parse(match.matchTime);
+    if (!Number.isFinite(start)) continue;
+    const end = start + (match.durationMinutes || (event ? matchMinutes(event.rules, event.format) : 120)) * 60000;
+    for (const [kind, id] of [['球队', match.teamA], ['球队', match.teamB], ['场地', match.location], ['裁判', match.refereeId]]) {
+      if (!id) continue;
+      const key = `${kind}:${id}`;
+      if (!resources.has(key)) resources.set(key, { kind, rows: [] });
+      resources.get(key).rows.push({ id: match._id, start, end });
+    }
+  }
+  for (const { kind, rows } of resources.values()) {
+    rows.sort((a, b) => a.start - b.start);
+    let previous = null;
+    for (const row of rows) {
+      if (previous && row.start < previous.end && previous.id !== row.id) {
+        return `赛程冲突：${kind}在预留时间内重叠（${previous.id} / ${row.id}）`;
+      }
+      if (!previous || row.end > previous.end) previous = row;
     }
   }
   return '';
@@ -38,12 +48,12 @@ async function change(payload, ctx, roundMode) {
   const repo = ctx.repo.forScope(ctx);
   const configId = schoolAssociationKey(ctx);
   const config = await repo.schoolAssociations.getById(configId);
-  const [matches, events] = await Promise.all([repo.teamMatches.list(), repo.teamEvents.list()]);
-  const targets = roundMode ? matches.filter(m => m.eventId === payload.eventId && m.round === payload.round && (!payload.stage || m.stage === payload.stage))
-    : matches.filter(m => m._id === payload.matchId);
+  const targets = roundMode
+    ? (await repo.teamMatches.listByEvent(payload.eventId)).filter(m => m.round === payload.round && (!payload.stage || m.stage === payload.stage))
+    : [await repo.teamMatches.getById(payload.matchId)].filter(Boolean);
   if (!targets.length) return ok(fail('比赛或轮次不存在'));
   if (targets.length > 30) return ok(fail('本轮超过单次处理容量，请按阶段分别排期'));
-  const event = events.find(e => e._id === targets[0].eventId);
+  const event = await repo.teamEvents.getById(targets[0].eventId);
   if (!scoped(event, ctx) || teamSportStrategyFor(ctx.association, event)?.sportFormat !== 'football11') return ok(fail('赛事规则不匹配'));
   const writes = [];
   const shift = Number(payload.shiftMinutes);
@@ -81,7 +91,10 @@ async function change(payload, ctx, roundMode) {
   if (existing) return ok(existing.result);
   if (roundMode && (!Number.isInteger(payload.expectRevision) || payload.expectRevision !== event.revision)) return ok(fail('缺少赛事版本或赛程已变动，请刷新后重试'));
   if (!writes.length) return ok(fail('这一轮没有可顺延的未开赛场次'));
-  const planned = matches.map(m => writes.find(w => w._id === m._id) || m);
+  const candidates = await repo.teamMatches.listScheduleCandidates(writes);
+  const writeIds = new Set(writes.map(m => m._id));
+  const planned = [...candidates.filter(m => !writeIds.has(m._id)), ...writes];
+  const events = await repo.teamEvents.listByIds([...new Set(planned.map(m => m.eventId))]);
   const conflict = conflicts(planned, events);
   if (conflict) return ok(fail(conflict));
   return ok(await ctx.repo.transaction(async root => {

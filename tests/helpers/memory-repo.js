@@ -44,6 +44,7 @@ function clone(doc) {
 const CMD = Symbol('db.command');
 const command = {
   gte: (value) => ({ [CMD]: 'gte', value }),
+  lte: (value) => ({ [CMD]: 'lte', value }),
   // 字段是否存在：用于数「回填前的历史文档」（没有 memberStatus 的那些）。
   exists: (value) => ({ [CMD]: 'exists', value }),
   gt: (value) => ({ [CMD]: 'gt', value }),
@@ -76,6 +77,7 @@ function matchWhere(doc, where) {
     if (cond[CMD] === 'and') return cond.value.every((part) => matchWhere(doc, part));
     if (cond[CMD] === 'in') return Array.isArray(cond.value) && fieldValues(doc, field).some(value => cond.value.includes(value));
     if (cond[CMD] === 'gte') return compare(doc[field], cond.value) >= 0;
+    if (cond[CMD] === 'lte') return compare(doc[field], cond.value) <= 0;
     if (cond[CMD] === 'gt') return compare(doc[field], cond.value) > 0;
     if (cond[CMD] === 'exists') return (doc[field] !== undefined) === Boolean(cond.value);
     return false;

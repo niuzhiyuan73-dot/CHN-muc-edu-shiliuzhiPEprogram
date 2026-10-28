@@ -60,6 +60,12 @@ const ACTION_TEXT = {
 const RENDER_STEP = 20;
 
 Component({
+  properties: {
+    active: { type: Boolean, value: true, observer(value) {
+      if (!value) this.suspend();
+      else if (!this.hidden && this.loaded) this.refresh();
+    } },
+  },
   options: {
     // app.wxss 的 .card / .pool-tabs / .btn / .sheet 等全局类要渗进来
     styleIsolation: 'apply-shared',
@@ -151,14 +157,19 @@ Component({
     /** 从录入页返回时刷新一次，刚提交的比赛才能立刻出现在待确认里 */
     onShow() {
       this.hidden = false;
-      if (!this.loaded) return undefined;
+      if (!this.loaded || this.data.active === false) return undefined;
       return this.refresh();
     },
 
     /** 离开面板就停表，不再空转；回到前台时 onShow 会重新订阅 */
     onHide() {
       this.hidden = true;
-      if (this.liveHandle) this.liveHandle.pause();
+      this.suspend();
+    },
+
+    suspend() {
+      this.request = (this.request || 0) + 1;
+      if (this.liveHandle) { this.liveHandle(); this.liveHandle = null; }
     },
 
     onUnload() {
@@ -201,6 +212,7 @@ Component({
      * @returns {Promise<void>}
      */
     async refresh() {
+      if (this.hidden || this.data.active === false) return;
       const request = this.request = (this.request || 0) + 1;
       if (this.liveHandle) { this.liveHandle(); this.liveHandle = null; }
       const scope = { schoolId: schoolSession.getSchoolId() || 'muc', association: associationScope.getAssociation() };
@@ -254,10 +266,12 @@ Component({
      * ——适配器会先停旧表，天然完成重订阅。
      */
     syncLiveWatch() {
-      if (this.hidden) return;
+      if (this.hidden || this.data.active === false) return;
       if (this.liveHandle) this.liveHandle();
       const api = this.api;
+      const request = this.request;
       this.liveHandle = watchLiveScores(this.liveIds(), (views) => {
+        if (this.hidden || this.data.active === false || request !== this.request) return;
         const next = applyLiveRows(this.data.view.records || [], views);
         // 窗口里的那几条也要跟着更新：比分变了，屏上得立刻看到
         this.setData({ 'view.records': next, visibleRecords: next.slice(0, this.data.renderLimit) });

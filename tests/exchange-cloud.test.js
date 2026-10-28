@@ -88,7 +88,7 @@ test('邀请赛动作已在协议 2 注册，且服务端实现来自共享库�
     'cancelExchangeSignup', 'removeExchangeSignup', 'checkInExchangeSignup',
     'withdrawExchangeInvitation', 'cancelExchangeEvent',
     'lockExchangeRoster', 'drawExchangeEvent', 'assignExchangeReferee',
-    'submitExchangeScore', 'confirmExchangeRanking', 'getExchangeEvents', 'getExchangeEvent'];
+    'submitExchangeScore', 'confirmExchangeRanking', 'getExchangeEvents', 'getExchangeEvent', 'listExchangeRefereeCandidates'];
   assert.deepEqual(Object.keys(handlers).sort(), expected.slice().sort());
   assert.equal((await request(fixture(), 'notAnExchangeAction')).ok, false, '未注册动作仍被拒');
 });

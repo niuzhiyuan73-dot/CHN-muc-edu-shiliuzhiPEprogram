@@ -52,6 +52,37 @@ test('host creates one canonical unrated singles event and guest school accepts'
   assert.equal((await call(repo, 'getExchangeEvents', {}, 'demo_buaa_member', 'buaa')).events[0]._id, id);
 });
 
+test('裁判候选：普通会员不能查；待接受学校不可查；详情只批读已指派裁判', async () => {
+  const repo = fixture();
+  const id = await create(repo);
+  const ctx = await buildSchoolContext({ repo, actorId: 'demo_muc_member', scope: { schoolId: 'muc', association: 'pkb' }, now: NOW });
+  const originalScope = repo.forScope;
+  repo.forScope = scope => {
+    const result = originalScope(scope);
+    result.schoolMembers.list = result.schoolMembers.listByStatus = () => { throw Error('详情不应查询名册'); };
+    return result;
+  };
+  const before = (await handlers.getExchangeEvent({ eventId: id }, ctx)).data;
+  assert.equal(before.ok, true);
+  assert.deepEqual(before.referees, []);
+  assert.equal((await call(repo, 'listExchangeRefereeCandidates', { eventId: id }, 'demo_muc_member')).ok, false);
+  assert.equal((await call(repo, 'listExchangeRefereeCandidates', { eventId: id, schoolId: 'buaa' })).ok, false);
+  await accept(repo, id);
+  const pages = [];
+  let cursor = '';
+  do {
+    const page = await call(repo, 'listExchangeRefereeCandidates', { eventId: id, schoolId: 'buaa', limit: 1, cursor });
+    assert.equal(page.ok, true, page.message);
+    assert.equal(page.members.length, 1);
+    assert.deepEqual(Object.keys(page.members[0]).sort(), ['nickName', 'schoolId', 'schoolName', 'userId']);
+    pages.push(...page.members);
+    cursor = page.nextCursor;
+  } while (cursor);
+  assert.equal(new Set(pages.map(row => row.userId)).size, pages.length);
+  const found = await call(repo, 'listExchangeRefereeCandidates', { eventId: id, schoolId: 'buaa', keyword: pages[0].nickName });
+  assert.ok(found.members.some(row => row.userId === pages[0].userId));
+});
+
 test('only school managers may create or accept invitations, members cannot see pending guest events', async () => {
   const repo = fixture();
   assert.equal((await call(repo, 'createExchangeEvent', form, 'demo_muc_member')).ok, false);
@@ -734,8 +765,11 @@ test('跨校详情与指定裁判只按参赛校读名册（2026-10-26 第五轮
 
   const detail = await call(repo, 'getExchangeEvent', { eventId: id });
   assert.equal(detail.ok, true, detail.message);
-  assert.ok(detail.referees.length > 0, '参赛校在册会员仍应出现在裁判候选里');
-  assert.ok(detail.referees.every(row => ['muc', 'buaa'].includes(row.schoolId)), '候选只来自参赛校');
+  assert.deepEqual(detail.referees, [], '未指派裁判时详情不包含候选名册');
+  const candidates = await call(repo, 'listExchangeRefereeCandidates', { eventId: id, schoolId: 'muc' });
+  assert.equal(candidates.ok, true, candidates.message);
+  assert.ok(candidates.members.length > 0);
+  assert.ok(candidates.members.every(row => row.schoolId === 'muc'), '候选只来自请求的参赛校');
 
   const assigned = await call(repo, 'assignExchangeReferee',
     { eventId: id, matchId: match._id, refereeId: 'demo_muc_member' });

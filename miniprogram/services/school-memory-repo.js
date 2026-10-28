@@ -168,6 +168,7 @@ function createSchoolMemoryRepo(seed = {}) {
             const afterId = typeof options.afterId === 'string' ? options.afterId : '';
             const rows = (await repo[key].list())
               .filter(doc => owns(doc) && doc.status === status
+                && (!options.collegeId || doc.collegeId === options.collegeId)
                 && (!afterId || String(doc._id) > afterId))
               .sort((a, b) => String(a._id).localeCompare(String(b._id)));
             return { rows: rows.slice(0, limit).map(clone), hasMore: rows.length > limit };
@@ -256,10 +257,13 @@ function createSchoolMemoryRepo(seed = {}) {
         }
       }
       attachTeamReads(result, {
-        inTx, command: { in: values => ({ values }) },
+        inTx, command: { in: values => ({ values }), and: parts => ({ parts }),
+          gte: low => ({ low }), lte: high => ({ high }) },
         query: async (key, where) => [...getState()[key].values()]
-          .filter(doc => Object.entries(where).every(([field, value]) =>
-            fieldValues(doc, field).some(item => value && value.values ? value.values.includes(item) : item === value)))
+          .filter(doc => (where.parts || [where]).every(part => Object.entries(part).every(([field, value]) =>
+            fieldValues(doc, field).some(item => value && value.values ? value.values.includes(item)
+              : value && value.low !== undefined ? item >= value.low
+                : value && value.high !== undefined ? item <= value.high : item === value))))
           .map(clone),
         byIds: async (key, ids, fields) => [...new Set(ids)].map(id => getState()[key].get(id))
           .filter(doc => doc && Object.entries(fields).every(([field, value]) => doc[field] === value)).map(clone),

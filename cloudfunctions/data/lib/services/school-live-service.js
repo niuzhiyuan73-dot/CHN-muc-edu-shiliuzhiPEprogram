@@ -16,6 +16,7 @@
  */
 
 const { canReadAssociationSpace } = require('./association-space-permission.js');
+const { buildSchoolContext } = require('./school-context.js');
 const { schoolLiveKey, belongsToSchoolScope } = require('../utils/school.js');
 const { MATCH_STATUS, ROLE } = require('../utils/constants.js');
 const { canRecordScore, fillScheduledMatch } = require('./match-record.js');
@@ -24,9 +25,7 @@ const {
   LIVE_STATUS, SIDE, RALLY_KEEP, createLive, applyRally,
   undoRally: undoLiveRally, hasRally, isFinalized, liveScoreOf, toOfficialScores, foldedCount,
 } = require('./live-score.js');
-const {
-  buildDirectory, recordOptions, isMatchDoc, matchSummary,
-} = require('./school-match-service.js');
+const { recordOptions, isMatchDoc, matchSummary } = require('./school-match-service.js');
 
 const ok = data => ({ ok: true, data });
 const refused = (message, extra = {}) => ({ ok: false, message, ...extra });
@@ -57,7 +56,7 @@ function mayRecord(doc, ctx, dir) {
 }
 
 /** 写接口公共入参：登录、比赛编号、读权限、计分权。 */
-async function guard(payload, ctx, options = {}) {
+async function guard(payload, ctx) {
   if (!ctx.actorId) return { error: '请先登录' };
   if (typeof payload.matchId !== 'string' || !payload.matchId) return { error: '缺少比赛编号' };
   if (!canReadAssociationSpace(ctx)) return { error: '没有读取协会空间的权限' };
@@ -69,16 +68,18 @@ async function guard(payload, ctx, options = {}) {
     return { error: '这场比赛已生效或已作废，不能再计分' };
   }
 
-  // 定稿要把正式比分写回比赛记录，`fillScheduledMatch` 需要本院在册名单做校验，
-  // 因此只有那一条路读全院目录（一场比赛只发生一次）；判球/撤销走最小读取。
   // 学院关系只对**学院负责人**这一档有意义：管理员与参赛者本人在 canRecordScore
   // 里更早就返回了，为他们读学院映射是纯浪费。
-  const dir = options.withRoster
-    ? await buildDirectory(ctx)
-    : (legacyRoleOf(ctx) === ROLE.STAFF ? await recordDirOf(ctx, match) : EMPTY_RECORD_DIR);
+  const dir = legacyRoleOf(ctx) === ROLE.STAFF ? await recordDirOf(ctx, match) : EMPTY_RECORD_DIR;
 
   if (!mayRecord(match, ctx, dir)) return { error: '你无权为这场比赛计分' };
   return { dir, match };
+}
+
+// 每次写入都在同一事务中读取身份、裁判、对阵和终态；这些文档参与并发冲突检测。
+async function transactionGuard(tx, payload, ctx) {
+  const fresh = await buildSchoolContext({ repo: tx, actorId: ctx.actorId, scope: ctx, now: ctx.now });
+  return { ...await guard(payload, fresh), ctx: fresh };
 }
 
 async function startSchoolLiveScore(payload = {}, ctx) {
@@ -87,14 +88,17 @@ async function startSchoolLiveScore(payload = {}, ctx) {
 
   const id = schoolLiveKey(payload.matchId, ctx);
   const live = await ctx.repo.transaction(async tx => {
+    const current = await transactionGuard(tx, payload, ctx);
+    if (current.error) return current;
     // 事务内再核一次：并发的两次开台只会落地一条。
     const existing = await tx.liveScores.getById(id);
     if (existing) return existing;
-    const state = createLive(ready.match, { actorId: ctx.actorId, now: ctx.now });
+    const state = createLive(current.match, { actorId: ctx.actorId, now: ctx.now });
     const doc = { ...state, _id: id, schoolId: ctx.schoolId, association: ctx.association };
     await tx.liveScores.set(id, doc);
     return doc;
   });
+  if (live.error) return ok(refused(live.error, { live: null }));
   return ok({ ok: true, live, message: '' });
 }
 
@@ -112,6 +116,8 @@ async function recordSchoolRally(payload = {}, ctx) {
   }
 
   const result = await ctx.repo.transaction(async tx => {
+    const ready = await transactionGuard(tx, payload, ctx);
+    if (ready.error) return { error: ready.error, live: null };
     // 事务内重读：并发判球以库里那份为准，避免两个请求都基于旧分各加一。
     const current = await tx.liveScores.getById(id);
     if (!current || !belongsToSchoolScope(current, ctx)) {
@@ -141,6 +147,8 @@ async function undoSchoolRally(payload = {}, ctx) {
 
   const id = schoolLiveKey(payload.matchId, ctx);
   const result = await ctx.repo.transaction(async tx => {
+    const ready = await transactionGuard(tx, payload, ctx);
+    if (ready.error) return { error: ready.error, live: null };
     const current = await tx.liveScores.getById(id);
     if (!current || !belongsToSchoolScope(current, ctx)) {
       return { error: '这场比赛还没开实时计分台', live: null };
@@ -168,15 +176,16 @@ async function undoSchoolRally(payload = {}, ctx) {
 }
 
 async function finishSchoolLiveScore(payload = {}, ctx) {
-  // 定稿要把比分写回比赛记录，`fillScheduledMatch` 用 dir.memberIds 校验阵容，
-  // 所以这一条路（每场一次）仍然读全院目录。
-  const ready = await guard(payload, ctx, { withRoster: true });
+  // 签表对阵按比赛记录校验；身份和学院权限在事务内重读。
+  const ready = await guard(payload, ctx);
   if (ready.error) return ok(refused(ready.error, { live: null, match: null }));
 
   const id = schoolLiveKey(payload.matchId, ctx);
   const matchId = payload.matchId;
   // 正式比分与定稿章必须一起提交；任何异常都会回滚整个事务。
   const result = await ctx.repo.transaction(async tx => {
+    const ready = await transactionGuard(tx, payload, ctx);
+    if (ready.error) return refused(ready.error, { live: null, match: null });
     const current = await tx.liveScores.getById(id);
     const failed = message => ({ ok: false, live: current || null, match: null, message });
     if (!current || !belongsToSchoolScope(current, ctx)) return failed('这场比赛还没开实时计分台');
@@ -188,10 +197,10 @@ async function finishSchoolLiveScore(payload = {}, ctx) {
     const match = await tx.matches.getById(matchId);
     if (!isMatchDoc(match) || !belongsToSchoolScope(match, ctx)) return failed('找不到这场比赛');
     if (match.status !== MATCH_STATUS.PENDING) return failed('只有待确认的比赛可以录分');
-    if (!mayRecord(match, ctx, ready.dir)) return failed('你无权为这场比赛计分');
+    if (!mayRecord(match, ready.ctx, ready.dir)) return failed('你无权为这场比赛计分');
 
     const filled = fillScheduledMatch(match, scores, {
-      members: ready.dir.memberIds, now: ctx.now, recorder: ctx.actorId,
+      members: [...match.teamA, ...match.teamB], now: ctx.now, recorder: ctx.actorId,
     });
     if (!filled.ok) return failed(filled.firstError || '提交失败');
     // 补录后仍是「待确认」：确认权照旧落在裁判 / 管理员手里。

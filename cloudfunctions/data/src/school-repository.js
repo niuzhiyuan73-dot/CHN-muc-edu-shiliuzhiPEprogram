@@ -244,7 +244,9 @@ function buildScoped(repo, io, inTx, options) {
         const afterId = typeof options.afterId === 'string' ? options.afterId : '';
         // 读 limit + 1 条判 hasMore；超过单次读取上限时由 readUpTo 续读
         // （见 readUpTo 的说明：截断会让 hasMore 恒为 false）。
-        const rows = await readUpTo('schoolMembers', { schoolId: scope.schoolId, status }, limit + 1, afterId);
+        const where = { schoolId: scope.schoolId, status };
+        if (typeof options.collegeId === 'string' && options.collegeId) where.collegeId = options.collegeId;
+        const rows = await readUpTo('schoolMembers', where, limit + 1, afterId);
         return { rows: rows.slice(0, limit), hasMore: rows.length > limit };
       };
       result[key].countByStatus = (status) => {

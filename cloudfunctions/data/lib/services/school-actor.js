@@ -38,6 +38,12 @@ function legacyRoleOf(ctx) {
   return ROLE.MEMBER;
 }
 
+// 管理范围来自授权；schoolMember.collegeId 只表示学籍所属学院。
+function managementCollegeId(ctx) {
+  return legacyRoleOf(ctx) === ROLE.STAFF ? ((ctx.membership && ctx.membership.collegeId) || '')
+    : ((ctx.schoolMember && ctx.schoolMember.collegeId) || '');
+}
+
 /**
  * 一次读齐本范围的在册名单、会员档案与学院改名表，供权限判定、展示与抽签复用。
  *
@@ -149,18 +155,17 @@ async function buildCollegeDirectory(ctx) {
 /**
  * 权限判定的公共入参：角色 + 操作者学院 + 编号→学院。
  *
- * 学院取**传进来的 ctx 自己的学籍**（而不是调用方在事务外缓存的快照）：
- * 撤权、调学院、离校都可能发生在一个请求飞在路上的时候，事务内用 `fresh`
- * 再算一次，学院关系才不会过期（2026-10-16 独立验收 F2）。
+ * 学院负责人使用 ctx.membership.collegeId 的授权范围；学籍学院只用于选手归属。
+ * 事务内以 fresh 重算，避免撤权或调授权后的在途写入。
  *
  * @param {Object} ctx 事务内 fresh 上下文或事务外上下文
  * @param {Object} dir buildDirectory 的结果（只用到「学院编号 → 全名」的静态映射）
  */
 function recordOptions(ctx, dir) {
-  const collegeId = (ctx.schoolMember && ctx.schoolMember.collegeId) ||
+  const collegeId = managementCollegeId(ctx) ||
     (dir && typeof dir.collegeIdOf === 'function' ? dir.collegeIdOf(ctx.actorId) : '');
   const college = (dir && typeof dir.collegeNameById === 'function' ? dir.collegeNameById(collegeId) : '') ||
-    (dir && dir.actorCollege) || '';
+    (legacyRoleOf(ctx) !== ROLE.STAFF && dir && dir.actorCollege) || '';
   return { role: legacyRoleOf(ctx), college, collegeOf: dir.collegeOf };
 }
 
@@ -178,7 +183,10 @@ function legacyActorOf(ctx, dir) {
     _id: ctx.actorId,
     status: USER_STATUS.ACTIVE,
     role: legacyRoleOf(ctx),
-    college: dir.actorCollege,
+    college: legacyRoleOf(ctx) === ROLE.STAFF
+      ? (dir.collegeNameById && dir.collegeNameById(managementCollegeId(ctx))) || dir.managedCollegeName || '' : dir.actorCollege,
+    schoolCollegeId: (ctx.schoolMember && ctx.schoolMember.collegeId) || '',
+    managedCollegeId: legacyRoleOf(ctx) === ROLE.STAFF ? managementCollegeId(ctx) : '',
     gender: actor.gender || '',
     nickName: actor.nickName || '',
     realName: actor.realName || '',
@@ -213,7 +221,7 @@ const EMPTY_RECORD_DIR = Object.freeze({
  * @returns {Promise<Object>} 与 recordOptions 兼容的目录形状
  */
 async function recordDirOf(ctx, doc) {
-  const memberCollegeId = (ctx.schoolMember && ctx.schoolMember.collegeId) || '';
+  const memberCollegeId = managementCollegeId(ctx);
   // 没有学院归属 ⇒ involvesCollege 的两个条件（college 非空、collegeOf 是函数）
   // 必然不成立，与"全院目录里查不到他的学院"是同一个结论，读都不用读。
   if (!memberCollegeId) return EMPTY_RECORD_DIR;
@@ -272,7 +280,7 @@ async function recordDirOf(ctx, doc) {
  * @returns {Promise<Object>} 与 recordOptions 兼容的目录
  */
 async function recordDirOfUsers(ctx, userIds) {
-  const memberCollegeId = (ctx.schoolMember && ctx.schoolMember.collegeId) || '';
+  const memberCollegeId = managementCollegeId(ctx);
   if (!memberCollegeId) return EMPTY_RECORD_DIR;
   return userDirectory(ctx, userIds);
 }
@@ -335,7 +343,7 @@ async function userDirectory(ctx, userIds) {
  * @returns {Promise<Object>} 与 buildDirectory 子集同形
  */
 async function actorDirectory(ctx) {
-  const myCollegeId = (ctx.schoolMember && ctx.schoolMember.collegeId) || '';
+  const myCollegeId = managementCollegeId(ctx);
   const name = await actorCollegeNameOf(ctx);
   return {
     actorCollege: name,
@@ -353,14 +361,14 @@ async function actorDirectory(ctx) {
  * 是 40 次 RPC），在赛事详情这种每次打开都走的读接口上尤其不划算。
  *
  * 不能直接用 `ctx.actor.college`：账号上的学院是历史遗留字段，权威值是
- * `school_members.collegeId`（转学院只改名册）。所以这里按 schoolMember 的
- * collegeId 点读学院目录取全名，与 buildDirectory 同一口径。
+ * `school_members.collegeId`；学院负责人则取 memberships.collegeId 的管理授权。
+ * 按对应的稳定编号点读学院全名。
  *
  * @param {Object} ctx
  * @returns {Promise<string>} 学院全名；没有学院归属时为空串
  */
 async function actorCollegeNameOf(ctx) {
-  const collegeId = (ctx.schoolMember && ctx.schoolMember.collegeId) || '';
+  const collegeId = managementCollegeId(ctx);
   if (!collegeId) return '';
   const doc = await ctx.repo.colleges.getById(collegeKey(ctx.schoolId, collegeId));
   return (doc && doc.name) || '';

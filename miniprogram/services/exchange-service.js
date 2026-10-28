@@ -520,7 +520,7 @@ async function assignExchangeReferee(payload = {}, ctx) {
     // 原先是 `ctx.repo.schoolMembers.list()`——那是**基础仓储**的 list()，条件是空对象，
     // 等于把全平台所有学校的名册读回来再挑一个 userId。跨校赛事只关心参赛校，
     // 而学籍主键是确定性的（`sm:<schoolId>:<userId>`），逐个点读就够。
-    const schools = Array.isArray(snapshot.participantSchoolIds) ? snapshot.participantSchoolIds : [];
+    const schools = (snapshot.participantSchoolIds || []).filter(id => snapshot.invitations[id] === 'accepted');
     const candidates = await Promise.all(schools.map(schoolId => ctx.repo
       .forScope({ schoolId, association: ctx.association })
       .schoolMembers.getById(schoolMemberKey(refereeId, schoolId))));
@@ -541,7 +541,9 @@ async function assignExchangeReferee(payload = {}, ctx) {
     if (memberId) {
       const member = await tx.schoolMembers.getById(memberId);
       if (!member || member.status !== SCHOOL_MEMBER_STATUS.ACTIVE || member.userId !== refereeId ||
-          !event.participantSchoolIds.includes(member.schoolId)) return refused('裁判身份已失效，请重新选择');
+          !event.participantSchoolIds.includes(member.schoolId) || event.invitations[member.schoolId] !== 'accepted') return refused('裁判身份已失效，请重新选择');
+      const user = await tx.users.getById(refereeId);
+      if (!user || user.platformStatus !== PLATFORM_STATUS.ACTIVE || user.primarySchoolId !== member.schoolId) return refused('裁判账号已失效，请重新选择');
     }
     const next = { ...current, referee: refereeId, refereeAt: fresh.now, refereeBy: fresh.actorId, revision: current.revision + 1 };
     await tx.exchangeMatches.set(next._id, next);
@@ -658,37 +660,19 @@ async function getExchangeEvents(_payload, ctx) {
   return ok({ ok: true, events: events.sort((a, b) => a.startTime.localeCompare(b.startTime)), message: '' });
 }
 
-/**
- * 参赛校的「在册会员」名单（跨校赛事指定裁判时的候选池）。
- *
- * 【为什么按校逐个读】（2026-10-26 第五轮审查 C）
- * 原来用的是基础仓储的 `schoolMembers.list()`——条件是空对象，读的是**全平台**
- * 所有学校的名册（含待审、离校、停用），再按 `participantSchoolIds` 过滤。
- * 跨校赛事只涉及几所学校，真正的候选范围就是「这几所学校的在册会员」：按校走
- * 受范围仓储 + 状态下推，页数从「全平台 / 100」降到「参赛校在册 / 200」。
- *
- * 【为什么逐校翻到底而不是设上限】这是管理员挑裁判用的**全量候选**，截断会让
- * 某些人永远选不到；成本已经按校收窄，越界的极端情况由 MAX_READ_ROWS 兜底。
- *
- * @param {Object} ctx
- * @param {Array<string>} schoolIds 参赛学校编号
- * @returns {Promise<Array<Object>>}
- */
-async function activeMembersOfSchools(ctx, schoolIds) {
-  const rows = [];
-  for (const schoolId of schoolIds) {
-    if (typeof schoolId !== 'string' || !schoolId) continue;
-    const scoped = ctx.repo.forScope({ schoolId, association: ctx.association });
-    let afterId = '';
-    for (;;) {
-      const page = await scoped.schoolMembers
-        .listByStatus(SCHOOL_MEMBER_STATUS.ACTIVE, { limit: 200, afterId });
-      rows.push(...page.rows);
-      if (!page.hasMore || page.rows.length === 0) break;
-      afterId = page.rows[page.rows.length - 1]._id;
-    }
+/** 管理员按已接受邀请的学校搜索裁判；每次只返回一页。 */
+async function listExchangeRefereeCandidates(payload = {}, ctx) {
+  const event = await ctx.repo.exchangeEvents.getById(payload.eventId);
+  if (!canSee(event, ctx) || !managesExchange(event, ctx)) return ok(refused('只有赛事管理者可以查询裁判候选'));
+  const schoolId = typeof payload.schoolId === 'string' ? payload.schoolId : ctx.schoolId;
+  if (!(event.participantSchoolIds || []).includes(schoolId) || event.invitations[schoolId] !== 'accepted') {
+    return ok(refused('只能查询已接受邀请的参赛学校'));
   }
-  return rows;
+  const limit = Math.max(1, Math.min(Number(payload.limit) || 20, 50));
+  const page = await ctx.repo.forScope({ schoolId, association: event.association }).schoolMembers
+    .listDirectoryPage({ keyword: payload.keyword, cursor: payload.cursor, limit });
+  return ok({ ok: true, ...page, members: page.members.map(row => ({ userId: row.userId,
+    nickName: row.nickName || row.realName || row.userId, schoolId, schoolName: event.schoolNames[schoolId] || '' })), message: '' });
 }
 
 async function getExchangeEvent(payload = {}, ctx) {
@@ -716,18 +700,11 @@ async function getExchangeEvent(payload = {}, ctx) {
   const placement = event.draw
     ? placementsFromExchange({ event, draw: event.draw, matches: existingMatches })
     : { ok: false, message: '' };
-  // 只取「参赛校的在册会员」这批人，再按他们的编号批量取昵称。
-  // 原先是 users.list()（全平台账号整表读）后给 referees 查表——一次跨校赛事
-  // 详情就把全平台账号读回来了（2026-10-21 审查 P0-1）；名册那一侧同理，
-  // 2026-10-26 第五轮审查 C 改成按参赛校下推。
-  const refereeRows = await activeMembersOfSchools(ctx,
-    Array.isArray(event.participantSchoolIds) ? event.participantSchoolIds : []);
-  const names = new Map(
-    (await ctx.repo.users.listByIds(refereeRows.map(row => row.userId)))
-      .map(user => [user._id, user.nickName || '']),
-  );
-  const referees = refereeRows.map(row => ({ userId: row.userId, nickName: names.get(row.userId) || '', schoolId: row.schoolId,
-      schoolName: event.schoolNames[row.schoolId] || '' }));
+  // 详情仅补齐已经分配的裁判姓名，观众不会触发候选名册查询。
+  const refereeIds = [...new Set(matches.map(match => match.referee).filter(Boolean))];
+  const names = new Map((await ctx.repo.users.listByIds(refereeIds))
+    .map(user => [user._id, user.nickName || user.realName || '']));
+  const referees = refereeIds.map(userId => ({ userId, nickName: names.get(userId) || '' }));
   const canceled = event.status === 'canceled';
   const isOrganizer = isPlatformAdmin(ctx) || (event.schoolId === ctx.schoolId && manages(ctx));
   // 签到：名单锁定后到结束前，管理员替参赛者签（与普通赛事的代签同一口径）
@@ -773,4 +750,4 @@ module.exports = { createExchangeEvent, respondExchangeInvitation, signUpExchang
   cancelExchangeSignup, removeExchangeSignup, checkInExchangeSignup, withdrawExchangeInvitation,
   cancelExchangeEvent,
   lockExchangeRoster, drawExchangeEvent, assignExchangeReferee,
-  submitExchangeScore, confirmExchangeRanking, getExchangeEvents, getExchangeEvent };
+  submitExchangeScore, confirmExchangeRanking, getExchangeEvents, getExchangeEvent, listExchangeRefereeCandidates };

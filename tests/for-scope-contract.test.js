@@ -108,7 +108,7 @@ test('受范围仓储的集合方法面就是约定的那一套（钉住契约�
       // 不再把本协会历年全部报名读回来再按 teamId 过滤。
       expected = [...expected, 'listForUser', 'listByTeam'];
     }
-    if (key === 'teamMatches') expected = [...expected, 'listByEvents', 'listByTeams', 'listForPlayer'];
+    if (key === 'teamMatches') expected = [...expected, 'listByEvents', 'listByTeams', 'listForPlayer', 'listScheduleCandidates'];
     if (key === 'teamMatchStats') expected = [...expected, 'listForUser'];
     assert.deepEqual(methodNames(cloud[key]), expected.sort(),
       `${key} 的方法面变了，请同步本测试与另一端实现`);

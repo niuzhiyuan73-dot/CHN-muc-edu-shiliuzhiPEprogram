@@ -21,6 +21,7 @@ const CMD = Symbol('db.command');
 const command = {
   gt: value => ({ [CMD]: 'gt', value }),
   gte: value => ({ [CMD]: 'gte', value }),
+  lte: value => ({ [CMD]: 'lte', value }),
   in: value => ({ [CMD]: 'in', value }),
   and: value => ({ [CMD]: 'and', value }),
 };
@@ -36,6 +37,7 @@ function matchRow(row, where) {
     if (cond[CMD] === 'in') return Array.isArray(cond.value) && fieldValues(row, field).some(value => cond.value.includes(value));
     if (cond[CMD] === 'gt') return String(row[field] ?? '') > String(cond.value ?? '');
     if (cond[CMD] === 'gte') return String(row[field] ?? '') >= String(cond.value ?? '');
+    if (cond[CMD] === 'lte') return String(row[field] ?? '') <= String(cond.value ?? '');
     return false;
   });
 }

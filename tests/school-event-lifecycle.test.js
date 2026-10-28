@@ -88,6 +88,45 @@ async function scoreMatch(repo, matchId, winner = 'A') {
 const eventMatches = async (repo, eventId) =>
   (await repo.matches.list()).filter(row => row.eventId === eventId);
 
+test('重抽与确认并发：事务前刚结算的比赛及等级分必须完整保留', async () => {
+  const repo = fixture();
+  const event = await publish(repo, 'race-redraw');
+  const draw = await drawWith(repo, event.eventId, ['demo_muc_member', 'demo_muc_member_2']);
+  await scoreMatch(repo, draw.matchIds[0]);
+  const transaction = repo.transaction;
+  let settled;
+  let ratings;
+  repo.transaction = async work => {
+    repo.transaction = transaction;
+    const confirmation = await callMatch(repo, 'confirmSchoolMatch', { matchId: draw.matchIds[0] });
+    assert.equal(confirmation.ok, true, confirmation.message);
+    settled = await repo.matches.getById(draw.matchIds[0]);
+    ratings = await repo.memberRatings.list();
+    return transaction(work);
+  };
+  const result = await call(repo, 'drawSchoolEvent', { eventId: event.eventId, seedValue: 71 });
+  assert.equal(result.ok, false);
+  assert.ok(settled.settlement);
+  assert.deepEqual(await repo.matches.getById(draw.matchIds[0]), settled);
+  assert.deepEqual(await repo.memberRatings.list(), ratings);
+});
+
+test('抽签计划期间报名版本变化：拒绝陈旧签表，不冻结新报名', async () => {
+  const repo = fixture();
+  const event = await publish(repo, 'race-signup');
+  for (const actor of ['demo_muc_member', 'demo_muc_member_2']) await signUp(repo, event.eventId, actor);
+  const transaction = repo.transaction;
+  repo.transaction = async work => {
+    repo.transaction = transaction;
+    await signUp(repo, event.eventId, 'demo_muc_member_3');
+    return transaction(work);
+  };
+  const result = await call(repo, 'drawSchoolEvent', { eventId: event.eventId, seedValue: 42 });
+  assert.equal(result.ok, false);
+  assert.equal((await repo.events.getById(event.eventId)).draw, null);
+  assert.equal((await eventMatches(repo, event.eventId)).length, 0);
+});
+
 test('开赛：未抽签不能开；抽签后可开；仅负责人可开赛', async () => {
   const repo = fixture();
   const event = await publish(repo, 'r1');

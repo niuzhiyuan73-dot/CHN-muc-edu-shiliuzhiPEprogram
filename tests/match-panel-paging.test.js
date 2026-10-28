@@ -66,6 +66,51 @@ function makeRecords(n) {
 
 const config = loadComponent('components/match-panel/match-panel.js');
 
+test('切走比赛页签：请求数及 setData 停止增长，在途响应失效，重新激活恢复', async () => {
+  const page = instantiate(config);
+  const setInterval = global.setInterval;
+  const clearInterval = global.clearInterval;
+  const timers = new Set();
+  global.setInterval = fn => { timers.add(fn); return fn; };
+  global.clearInterval = fn => timers.delete(fn);
+  let calls = 0;
+  let updates = 0;
+  let resolve;
+  const setData = page.setData;
+  page.setData = patch => { updates++; setData(patch); };
+  page.data.active = true;
+  page.data.view = { records: [{ matchId: 'live-1', liveActive: true, live: { finished: false } }] };
+  page.request = 1;
+  page.loaded = true;
+  page.api = { getSchoolLiveScores: async () => { calls++; return new Promise(done => { resolve = done; }); } };
+  try {
+    page.syncLiveWatch();
+    assert.equal(calls, 1);
+    page.data.active = false;
+    config.properties.active.observer.call(page, false);
+    assert.equal(timers.size, 0);
+    resolve({ ok: true, scores: [{ matchId: 'live-1', pointsA: 1 }] });
+    await new Promise(done => setImmediate(done));
+    for (let i = 0; i < 3; i++) for (const tick of timers) tick();
+    assert.equal(calls, 1);
+    assert.equal(updates, 0);
+    page.refresh = () => { page.syncLiveWatch(); };
+    page.data.active = true;
+    config.properties.active.observer.call(page, true);
+    assert.equal(calls, 2);
+    resolve({ ok: true, scores: [{ matchId: 'live-1', pointsA: 2 }] });
+    await new Promise(done => setImmediate(done));
+    assert.equal(updates, 1);
+    page.onHide();
+    config.properties.active.observer.call(page, true);
+    assert.equal(calls, 2, '整个页面隐藏时，激活属性不能重启订阅');
+  } finally {
+    page.onUnload();
+    global.setInterval = setInterval;
+    global.clearInterval = clearInterval;
+  }
+});
+
 test('比赛流水 —— 首屏只铺一屏，不是一次铺满 100 场', () => {
   const page = instantiate(config);
   assert.equal(page.data.renderLimit, 20, '首屏窗口应为 RENDER_STEP');

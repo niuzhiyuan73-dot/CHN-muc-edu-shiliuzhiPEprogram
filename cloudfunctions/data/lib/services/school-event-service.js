@@ -74,6 +74,11 @@ const REQUEST_ID_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
 const EVENT_LIST_LIMIT = 20;
 const EVENT_LIST_MAX = 50;
 
+// 抽签最多 44 场：6 次身份读 + 赛事读 + 每场读/写 + 赛事写 + 审计 = 97。
+// 重抽也必须预留逐场重读；双打两人一队，分组赛按最坏的偶数组估算。
+const DRAW_MATCH_MAX = 44;
+const drawCapacityOf = event => DRAW_MATCH_MAX * 2 * (event.matchType === MATCH_TYPE.DOUBLES ? 2 : 1);
+
 const iso = value => new Date(value).toISOString();
 const formatOf = doc => (doc && doc.format) || DEFAULT_EVENT_FORMAT;
 
@@ -403,7 +408,7 @@ async function getSchoolEvent(payload = {}, ctx) {
   // 算——两者同一把尺子地取最坏情况，页面才不会出现「点了才被拒」或「说满了却放行」
   const shownCount = displaySignupCount(doc, tally);
   const occupied = occupiedSignupCount(doc, tally);
-  const full = Number(doc.quota) > 0 && occupied >= Number(doc.quota);
+  const full = occupied >= drawCapacityOf(doc) || Number(doc.quota) > 0 && occupied >= Number(doc.quota);
   const genderLimit = singleGenderOf(doc.discipline);
   const genderOk = !genderLimit || (ctx.actor && ctx.actor.gender === genderLimit);
   // 小组限制（B6）：详情页也要算出「能不能报、为什么不能报」，与写入端同一把尺子。
@@ -438,7 +443,7 @@ async function getSchoolEvent(payload = {}, ctx) {
   // 却要读全校在册名单 + 这批人的账号（2000 人 = 40 次 RPC）。详情页是每场
   // 赛事都会打开的读接口，换成一个点读。
   const actorCollege = await actorCollegeNameOf(ctx);
-  const actor = legacyActorOf(ctx, { actorCollege });
+  const actor = legacyActorOf(ctx, { actorCollege, managedCollegeName: actorCollege });
 
   return ok({
     ok: true, canManage, canParticipate,
@@ -494,7 +499,7 @@ async function listSchoolEventSignups(payload = {}, ctx) {
     actorCollegeNameOf(ctx),
     ctx.repo.forScope(ctx).colleges.list(),
   ]);
-  const actor = legacyActorOf(ctx, { actorCollege });
+  const actor = legacyActorOf(ctx, { actorCollege, managedCollegeName: actorCollege });
   const rows = ledger
     .filter(row => row.status !== SIGNUP_STATUS.CANCELED)
     .sort((a, b) => (String(a.signTime || '') < String(b.signTime || '') ? -1 : 1));
@@ -539,6 +544,8 @@ async function publishSchoolEvent(payload = {}, ctx) {
 
   const built = buildEventRecord(payload, { actor: ctx.actor, now: ctx.now });
   if (!built.ok) return ok(refused(built.firstError, { errors: built.errors }));
+  const capacity = drawCapacityOf(built.record);
+  if (Number(built.record.quota) > capacity) return ok(refused(`本赛制最多支持 ${capacity} 人，请缩小名额`));
   // 小组限制（B6）：与训练同一把尺子校验；非法即拒绝，不静默降级为不限。
   const audience = buildAudience(payload);
   if (!audience.ok) return ok(refused(audience.message));
@@ -596,6 +603,7 @@ async function signUpSchoolEvent(payload = {}, ctx) {
     // 名额：占用数 = 主记录计数与台账取大（与详情页「能不能报」同一把尺子），
     // 落库时把占用数回写主记录——分叉的历史数据就此收敛，不会越用越偏
     const occupied = occupiedSignupCount(doc, ledgerTally);
+    if (occupied >= drawCapacityOf(doc)) return refused(`本赛制最多支持 ${drawCapacityOf(doc)} 人，名额已满`);
     if (Number(doc.quota) > 0 && occupied >= Number(doc.quota)) {
       return refused('名额已满');
     }
@@ -749,6 +757,9 @@ async function drawSchoolEvent(payload = {}, ctx) {
   }
 
   const signups = await scoped.eventSignups.listByEvent(doc._id);
+  if (new Set(signups.filter(row => row.status !== SIGNUP_STATUS.CANCELED).map(row => row.userId)).size > drawCapacityOf(doc)) {
+    return ok(refused(`本赛制最多支持 ${drawCapacityOf(doc)} 人，请缩小报名名单后抽签`));
+  }
   const existing = await scoped.matches.listByEvent(doc._id);
   if (doc.draw && !canRedraw(existing)) return ok(refused('该赛事已有比赛确认生效，不能再重抽'));
 
@@ -766,6 +777,9 @@ async function drawSchoolEvent(payload = {}, ctx) {
     drawCount: (doc.draw && doc.draw.drawCount ? doc.draw.drawCount : 0) + 1,
   });
   const drafts = buildInitialMatches(doc, draw, defaultFormatOf(ctx.association)).map(draft => scopedMatchDoc(draft, ctx, 'draw'));
+  const snapshots = new Map(existing.map(match => [match._id, match]));
+  const matchIds = [...new Set([...snapshots.keys(), ...drafts.map(match => match._id)])];
+  if (10 + matchIds.length + drafts.length > 100) return ok(refused('抽签场次超过单次处理容量，请缩小报名名单'));
   // 场号在 buildInitialMatches 内已由 court.js 统一排好，结果落库备查。
 
   const result = await ctx.repo.transaction(async tx => {
@@ -774,10 +788,22 @@ async function drawSchoolEvent(payload = {}, ctx) {
     const fresh = await tx.events.getById(payload.eventId);
     if (!isEventDoc(fresh) || !belongsToSchoolScope(fresh, ctx)) return refused('赛事不存在');
     if (!canDrawEvent(fresh, gate.actor)) return refused('只能在报名阶段抽签');
+    if (fresh.revision !== doc.revision) return refused('赛事或报名刚被改过，请刷新后重新抽签');
+    for (const id of matchIds) {
+      const current = await tx.matches.getById(id);
+      const snapshot = snapshots.get(id);
+      if (current && (!belongsToSchoolScope(current, ctx) || current.status === MATCH_STATUS.ACTIVE || current.settlement)) {
+        return refused('该赛事已有比赛确认生效，不能再重抽');
+      }
+      if (Boolean(current) !== Boolean(snapshot) || current &&
+        (current.revision !== snapshot.revision || current.status !== snapshot.status)) {
+        return refused('比赛刚被改过，请刷新后重新抽签');
+      }
+    }
 
     const nowIso = iso(ctx.now);
     for (const draft of drafts) {
-      await tx.matches.set(draft._id, draft);
+      await tx.matches.set(draft._id, { ...draft, revision: Number(snapshots.get(draft._id)?.revision || 0) + 1 });
     }
     const next = { ...fresh, draw, action: 'draw', actor: ctx.actorId,
       actedAt: nowIso, revision: fresh.revision + 1, updatedAt: nowIso };

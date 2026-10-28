@@ -61,9 +61,7 @@
         <view wx:for="{{detail.matches}}" wx:key="_id" class="event-row">
           <view>{{item.groupText}}{{item.stageText}}第{{item.round}}轮：{{item.nameA}}（{{item.schoolNameA}}） vs {{item.nameB}}（{{item.schoolNameB}}）</view>
           <view class="hint">{{item.statusText}} · {{item.scoreText}} · 裁判：{{item.refereeName || '未指定'}}</view>
-          <picker wx:if="{{item.canAssignReferee}}" range="{{detail.referees}}" range-key="nickName" data-matchid="{{item._id}}" bindchange="onRefereeChange">
-            <view class="selection">指定/更换裁判 ›</view>
-          </picker>
+          <button wx:if="{{item.canAssignReferee}}" size="mini" data-matchid="{{item._id}}" bindtap="onOpenReferee">指定/更换裁判</button>
           <view wx:if="{{item.canScore}}" class="actions">
             <input class="field score-input" type="number" placeholder="{{item.nameA}}" value="{{scoreDraft[item._id].a}}" data-matchid="{{item._id}}" data-side="a" bindinput="onScoreInput" />
             <input class="field score-input" type="number" placeholder="{{item.nameB}}" value="{{scoreDraft[item._id].b}}" data-matchid="{{item._id}}" data-side="b" bindinput="onScoreInput" />
@@ -72,6 +70,20 @@
           <!-- 撤销比分已取消：已确认的比分不可撤销，录错时与对手协商后按实际重录前的口径处理 -->
         </view>
       </block>
+      <view wx:if="{{refereePicker}}" class="card">
+        <view class="section-title">选择裁判</view>
+        <picker range="{{refereePicker.schools}}" range-key="name" value="{{refereePicker.schoolIndex}}" bindchange="onRefereeSchool">
+          <view class="selection">{{refereePicker.schools[refereePicker.schoolIndex].name}} ›</view>
+        </picker>
+        <input class="field" maxlength="32" placeholder="搜索昵称或姓名" value="{{refereePicker.keyword}}" bindinput="onRefereeKeyword" bindconfirm="onSearchReferees" />
+        <button size="mini" bindtap="onSearchReferees">搜索</button>
+        <view wx:if="{{refereePicker.loading}}" class="hint">正在读取…</view>
+        <view wx:if="{{refereePicker.error}}" class="hint">{{refereePicker.error}}</view>
+        <view wx:if="{{!refereePicker.loading && !refereePicker.rows.length && !refereePicker.error}}" class="empty-state">暂无符合条件的会员</view>
+        <button wx:for="{{refereePicker.rows}}" wx:key="userId" size="mini" disabled="{{busy || refereePicker.loading}}" data-userid="{{item.userId}}" bindtap="onRefereeChange">{{item.nickName}}</button>
+        <button wx:if="{{refereePicker.hasMore}}" size="mini" disabled="{{refereePicker.loading}}" bindtap="onMoreReferees">加载更多</button>
+        <button size="mini" bindtap="onCloseReferee">关闭</button>
+      </view>
       <button wx:if="{{detail.canConfirmRanking}}" disabled="{{busy}}" bindtap="onConfirmRanking">确认最终名次</button>
       <button wx:if="{{detail.canCancel}}" class="btn" disabled="{{busy}}" bindtap="onCancelEvent">取消整场赛事</button>
       <block wx:if="{{detail.results.length}}">
