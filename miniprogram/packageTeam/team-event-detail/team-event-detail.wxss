@@ -569,3 +569,26 @@
   background: var(--color-primary);
   color: #fff;
 }
+
+/* 统计本地草稿：恢复成功用中性提示，版本冲突用危险语义色 */
+.stats-draft-note {
+  margin: var(--space-xs) var(--space-lg) 0;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-light);
+  color: var(--color-primary-dark);
+  font-size: var(--font-caption);
+  line-height: 1.6;
+}
+
+.stats-draft-note.is-error {
+  background: var(--color-danger-light);
+  color: var(--color-danger-text);
+}
+
+.stats-draft-hint {
+  margin: var(--space-xs) var(--space-lg) 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-caption);
+  line-height: 1.6;
+}

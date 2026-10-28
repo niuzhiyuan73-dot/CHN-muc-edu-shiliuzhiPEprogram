@@ -34,6 +34,7 @@
  */
 
 const { RATING_POOL, SIGNUP_STATUS } = require('../utils/constants.js');
+const { getAssociation, isKnownAssociation } = require('../utils/associations.js');
 // 路由编号兼容（query 值在不同环境可能已解码 / 未解码，见 utils/route-query.js）
 const { resolveRouteId } = require('../utils/route-query.js');
 const space = require('./association-space.js');
@@ -45,6 +46,8 @@ const {
   buildSignupRows,
   buildResultRows,
   buildBracketRows,
+  buildBracketLanes,
+  describeMyBracket,
   buildStandings,
   buildCourtBoard,
   describeDraw,
@@ -226,6 +229,8 @@ function notFoundDetailView() {
     hasSignups: false,
     signupsEmptyNote: '',
     bracketRows: [],
+    bracketLanes: [],
+    myBracketText: '',
     hasBracket: false,
     standings: [],
     hasStandings: false,
@@ -293,6 +298,8 @@ function buildDetailView(input = {}) {
     hasSignups: signupRows.length > 0,
     signupsEmptyNote: '还没有人报名',
     bracketRows,
+    bracketLanes: buildBracketLanes(bracketRows),
+    myBracketText: describeMyBracket(bracketRows),
     hasBracket: bracketRows.length > 0,
     courtBoard,
     hasCourts: courtBoard.length > 0,
@@ -412,12 +419,20 @@ function buildPlacementView(input = {}) {
  * @returns {Object}
  */
 function buildListRow(summary, ctx = {}) {
-  const { actorId = null, canManage = false } = ctx;
-  return buildEventRow(toLegacyEvent(summary), {
+  const { actorId = null, canManage = false, association = '' } = ctx;
+  const row = buildEventRow(toLegacyEvent(summary), {
     actor: actorOf(actorId),
     signups: signupsFromSummary(summary, actorId),
     caps: { ...capsForEvent(summary), canPin: Boolean(canManage) },
   });
+  // 协会标识用于跨协会列表的文字 + 图形双重识别，不单靠主题色区分。
+  const meta = isKnownAssociation(association) ? getAssociation(association) : null;
+  return {
+    ...row,
+    association: association || '',
+    associationName: meta ? meta.shortName : '',
+    associationGlyph: meta ? meta.logoGlyph : '',
+  };
 }
 
 /* ============================================================
@@ -466,32 +481,49 @@ async function loadEventParts(api, eventId, extraUserIds = []) {
  * @param {string} options.schoolId
  * @param {string} options.association
  * @param {string|null} [options.actorId] 只用于「我」的高亮，缺省当访客
- * @param {number} [options.limit] 取几条；不给则用服务端默认
+ * @param {number} [options.limit] 每页条数；Infinity 表示取齐（首页旧口径）
+ * @param {number} [options.offset] 分页起点
+ * @param {string} [options.keyword] 名称 / 场地关键词
+ * @param {string} [options.year] 四位年份
+ * @param {number|number[]} [options.status] 单个或一组赛事状态
  * @returns {Promise<Object>}
  */
 async function loadSchoolEventListView(options = {}) {
-  const { schoolId, association, actorId = null, limit } = options;
+  const {
+    schoolId, association, actorId = null, limit, offset = 0,
+    keyword = '', year = '', status,
+  } = options;
   const api = space.forScope({ schoolId, association });
-  const payload = Number.isInteger(limit) && limit > 0 ? { limit } : {};
-  let dto = await api.listSchoolEvents(limit === Infinity ? { limit: 50, offset: 0 } : payload);
+  const filters = {};
+  if (String(keyword || '').trim()) filters.keyword = String(keyword).trim();
+  if (/^\d{4}$/.test(String(year || ''))) filters.year = String(year);
+  if (Array.isArray(status) && status.length > 0) filters.status = status.filter(value => typeof value === 'number');
+  else if (typeof status === 'number') filters.status = status;
+
+  const pageSize = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 50) : 20;
+  let dto = await api.listSchoolEvents(limit === Infinity
+    ? { ...filters, limit: 50, offset: 0 }
+    : { ...filters, limit: pageSize, offset: Number.isInteger(offset) && offset > 0 ? offset : 0 });
   if (!dto || !dto.ok) throw new Error((dto && dto.message) || '赛事列表读取失败');
   const summaries = [...asArray(dto.events)];
-  let offset = 0;
+  let cursor = 0;
   while (limit === Infinity && dto.hasMore) {
-    if (!(dto.nextOffset > offset)) throw new Error('赛事列表分页没有前进');
-    offset = dto.nextOffset;
-    dto = await api.listSchoolEvents({ limit: 50, offset });
+    if (!(dto.nextOffset > cursor)) throw new Error('赛事列表分页没有前进');
+    cursor = dto.nextOffset;
+    dto = await api.listSchoolEvents({ ...filters, limit: 50, offset: cursor });
     if (!dto || !dto.ok) throw new Error((dto && dto.message) || '赛事列表读取失败');
     summaries.push(...asArray(dto.events));
   }
 
   const canManage = Boolean(dto && dto.canManage);
-  const events = summaries.map(summary => buildListRow(summary, { actorId, canManage }));
+  const events = summaries.map(summary => buildListRow(summary, { actorId, canManage, association }));
+  const filteredTotal = Number(dto && dto.total);
   return {
     events,
     hasEvents: events.length > 0,
-    eventsEmptyNote: '还没有赛事，等管理员发布一场吧',
-    eventTotal: events.length,
+    eventsEmptyNote: Object.keys(filters).length > 0 ? '没有符合条件的赛事，试试清除筛选' : '还没有赛事，等管理员发布一场吧',
+    eventTotal: Number.isFinite(filteredTotal) && filteredTotal >= 0 ? filteredTotal : events.length,
+    nextOffset: Number(dto && dto.nextOffset) || (offset + events.length),
     hasMoreEvents: Boolean(dto && dto.hasMore),
     canPublish: canManage,
     canManage,

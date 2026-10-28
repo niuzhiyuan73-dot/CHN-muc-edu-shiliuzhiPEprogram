@@ -53,6 +53,8 @@ Page(withDetailExperience({
     isMock,
     /** 写操作进行中，防止连点 */
     acting: false,
+    /** 签表展示方式：chart 横向晋级泳道 / list 逐场明细（默认图形，可回退） */
+    bracketMode: 'chart',
 
     /** 「手工指定种子」面板是否打开 */
     seedDialogOpen: false,
@@ -473,6 +475,14 @@ Page(withDetailExperience({
    * 不能直接跳计分台——很多场次是边裁口头报分、由管理员补录，没有逐球过程；
    * 只有实时计分一条路时，这类场次就没法录了（用户反馈）。
    */
+  /** 在「晋级之路」与逐场列表之间切换；不重新取数，两种视图共用同一份行数据 */
+  onToggleBracketMode(event) {
+    const mode = event && event.currentTarget && event.currentTarget.dataset
+      ? event.currentTarget.dataset.mode : '';
+    if (!['chart', 'list'].includes(mode) || mode === this.data.bracketMode) return;
+    this.setData({ bracketMode: mode });
+  },
+
   onRecordMatch(event) {
     const matchId = event.currentTarget.dataset.matchId;
     if (!matchId) return;

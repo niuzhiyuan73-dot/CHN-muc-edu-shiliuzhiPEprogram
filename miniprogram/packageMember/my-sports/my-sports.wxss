@@ -7,3 +7,24 @@
 .sports-record-title{font-size:var(--font-md);font-weight:600;margin:var(--space-sm) 0;overflow-wrap:anywhere}.sports-opponents{font-size:var(--font-body);line-height:1.6;overflow-wrap:anywhere}.sports-score,.sports-rank{font-size:var(--font-lg);font-variant-numeric:tabular-nums;line-height:1.5;margin:var(--space-sm) 0}.sports-rank{color:var(--color-honor)}.sports-proof{font-size:var(--font-caption);color:var(--color-success-text);margin:var(--space-sm) 0}.sports-record-meta{font-size:var(--font-caption);color:var(--color-text-secondary);line-height:1.7;overflow-wrap:anywhere}
 .sports-record-foot{border-top:1rpx solid var(--color-divider);margin-top:var(--space-md);padding-top:var(--space-md);font-size:var(--font-caption);color:var(--color-primary-dark);min-height:44px}.sports-record-foot text:first-child{color:var(--color-text-secondary)}.sports-list-end{color:var(--color-text-secondary);font-size:var(--font-caption);text-align:center;margin:var(--space-lg) 0}.sports-focus-head{font-size:var(--font-body);font-weight:600}
 @media(max-width:360px){.sports-record{padding:var(--space-md)}.sports-record-title{line-height:1.5}}
+
+/* 生涯节点：横向时间轴只承担“回看里程碑”，详细事实仍在下方护照列表 */
+.career-panel{margin:var(--space-md) 0 var(--space-lg);padding:var(--space-lg);border-radius:var(--radius-md);background:var(--color-card);box-shadow:var(--shadow-card)}
+.career-panel-head{display:flex;justify-content:space-between;gap:var(--space-sm);margin-bottom:var(--space-md)}
+.career-title{font-size:var(--font-lg);font-weight:600;color:var(--color-text)}
+.career-note{font-size:var(--font-caption);color:var(--color-text-secondary);line-height:1.6;margin-top:var(--space-xs)}
+.career-scroll{width:100%;white-space:nowrap}
+.career-track{display:flex;align-items:stretch;gap:var(--space-md);padding:var(--space-sm) 0}
+.career-node{position:relative;flex:0 0 270rpx;width:270rpx;white-space:normal;padding-top:var(--space-lg)}
+.career-node::before{content:'';position:absolute;top:54rpx;left:0;right:calc(-1 * var(--space-md));height:2rpx;background:var(--color-divider)}
+.career-node:last-child::before{display:none}
+.career-year{position:absolute;top:0;left:0;color:var(--color-text-secondary);font-size:var(--font-2xs)}
+.career-dot{position:absolute;top:44rpx;left:0;width:22rpx;height:22rpx;border-radius:50%;background:var(--color-primary);border:4rpx solid var(--color-card);box-shadow:0 0 0 2rpx var(--color-primary-light)}
+.career-node.is-honor .career-dot{background:var(--color-honor)}
+.career-card{margin-top:var(--space-sm);padding:var(--space-md);border-radius:var(--radius-md);background:var(--color-bg);border-left:4rpx solid var(--color-primary)}
+.career-node.is-honor .career-card{border-left-color:var(--color-honor)}
+.career-project{font-size:var(--font-2xs);color:var(--color-primary-dark)}
+.career-card-title{margin-top:var(--space-xs);font-size:var(--font-sm);font-weight:600;line-height:1.5;overflow-wrap:anywhere}
+.career-detail{margin-top:var(--space-xs);font-size:var(--font-caption);color:var(--color-honor);font-weight:600}
+.career-proof{margin-top:var(--space-xs);font-size:var(--font-2xs);color:var(--color-success-text);line-height:1.5}
+.career-time{margin-top:var(--space-xs);font-size:var(--font-2xs);color:var(--color-text-tertiary);line-height:1.5}

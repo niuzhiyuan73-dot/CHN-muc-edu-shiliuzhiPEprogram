@@ -1,9 +1,13 @@
 <view class="page-container home-page">
   <view class="hero">
     <view class="hero-head"><view class="hero-main"><view class="hero-title">石榴籽体育</view><view class="hero-school">{{schoolName || '校园体育活动'}}</view></view><view class="hero-badges">
-      <association-switch wx:if="{{auth.loggedIn}}" value="{{associationId}}" bind:change="onAssociationChange" />
+      <association-switch wx:if="{{auth.loggedIn}}" value="{{associationId}}" label="默认项目" bind:change="onAssociationChange" />
       <school-switch wx:if="{{schoolList.length > 1}}" value="{{schoolId}}" list="{{schoolList}}" bind:change="onSchoolChange" />
     </view></view>
+    <view wx:if="{{auth.loggedIn}}" class="hero-default-hint">
+      默认项目只影响协会工作台入口
+      <text wx:if="{{associationName}}" class="hero-workspace-link" bindtap="onOpenAssociationWorkspace">进入{{associationName}}工作台 ›</text>
+    </view>
     <view wx:if="{{isMock}}" class="home-demo">本地模拟预览</view>
   </view>
   <view wx:if="{{readOnlySchool}}" class="readonly-banner">正在浏览 {{schoolName}}（只读）· 可访问内容以当前账号权限为准</view>
@@ -12,14 +16,14 @@
   <block wx:else>
     <view wx:if="{{refreshing}}" class="experience-update">正在更新当前学校的赛事…</view>
     <block wx:if="{{view.loggedIn}}">
-      <view class="experience-heading"><view class="experience-heading-title">我的下一场</view><button class="home-text-button" data-tab="schedule" bindtap="onOpenMySports">全部安排 ›</button></view>
+      <view class="experience-heading"><view class="experience-heading-title">我的下一步</view><button class="home-text-button" data-tab="schedule" bindtap="onOpenMySports">全部安排 ›</button></view>
       <view wx:if="{{personalLoading && !personal}}" class="experience-update">正在核对我的安排…</view>
       <view wx:elif="{{personalError}}" class="personal-empty"><view>{{personalError}}</view><button class="home-text-button" bindtap="refreshPersonal">重试</button></view>
       <block wx:elif="{{personal}}">
-        <view wx:for="{{personal.schedule.items}}" wx:key="key" class="personal-next" data-key="{{item.key}}" bindtap="onOpenPersonalRecord"><view class="personal-next-top"><text>{{item.projectName}} · {{item.rolesText}}</text><text>{{item.state}}</text></view><view class="personal-next-title">{{item.title}}</view><view wx:if="{{item.opponents}}" class="personal-next-opponents">{{item.opponents}}</view><view class="personal-next-time">{{item.timeText}}<text wx:if="{{item.location}}"> · {{item.location}}</text></view><view class="personal-next-link">{{item.waiting ? '查看报名' : '查看安排'}} ›</view></view>
+        <view wx:for="{{personal.schedule.items}}" wx:key="key" class="personal-next" data-key="{{item.key}}" bindtap="onOpenPersonalRecord"><view class="personal-next-top"><text>{{item.projectName}} · {{item.rolesText}}</text><text>{{item.state}}</text></view><view class="personal-next-title">{{item.title}}</view><view wx:if="{{item.opponents}}" class="personal-next-opponents">{{item.opponents}}</view><view class="personal-next-time">{{item.timeText}}<text wx:if="{{item.location}}"> · {{item.location}}</text></view><view class="personal-next-link" data-key="{{item.key}}" catchtap="onOpenPersonalRecord">{{item.actionText || '查看安排'}} ›</view></view>
         <view wx:if="{{!personal.schedule.items.length}}" class="personal-empty">{{personal.schedule.hasMore ? '本批安排仍在核对，可进入全部安排继续查看' : '当前暂无比赛或裁判安排'}}</view>
         <view class="personal-task-head"><text>我的待办</text><button class="home-text-button" data-tab="tasks" bindtap="onOpenMySports">{{personal.tasks.hasMore ? '更多待办 ›' : '查看待办 ›'}}</button></view>
-        <view wx:if="{{personal.tasks.items.length}}" class="card personal-task-list"><view wx:for="{{personal.tasks.items}}" wx:key="key" class="personal-task" data-key="{{item.key}}" bindtap="onOpenPersonalRecord"><view><view>{{item.state}}</view><view class="experience-caption">{{item.projectName}} · {{item.title}}</view></view><text>›</text></view></view>
+        <view wx:if="{{personal.tasks.items.length}}" class="card personal-task-list"><view wx:for="{{personal.tasks.items}}" wx:key="key" class="personal-task" data-key="{{item.key}}" bindtap="onOpenPersonalRecord"><view><view>{{item.state}}</view><view class="experience-caption">{{item.projectName}} · {{item.title}}</view></view><text class="personal-task-action">{{item.actionText || '去处理'}} ›</text></view></view>
         <view wx:else class="experience-caption">{{personal.tasks.hasMore ? '本批没有可展示待办，可继续查看' : '当前没有可处理的待办'}}</view>
       </block>
       <view class="experience-heading"><view class="experience-heading-title">近期赛事</view><button class="home-text-button" bindtap="onGoEvents">进入赛事 ›</button></view>

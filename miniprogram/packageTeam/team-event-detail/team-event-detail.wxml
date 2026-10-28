@@ -419,6 +419,8 @@
       <view class="stats-mode">
         {{statsEditing.mode === 'detailed' ? '按节统计 · 共 ' + statsEditing.periods + ' 节' : '整场统计'}}
       </view>
+      <view wx:if="{{statsDraftNote}}" class="stats-draft-note {{statsDraftError ? 'is-error' : ''}}">{{statsDraftNote}}</view>
+      <view class="stats-draft-hint">输入会自动保存在本机，关闭后仍可恢复；点「保存」才提交给服务端。</view>
       <scroll-view scroll-y class="stats-scroll">
         <view wx:for="{{statGroups}}" wx:for-item="group" wx:key="period" class="stats-team">
           <view wx:if="{{group.period > 0}}" class="stats-team-name">第 {{group.period}} 节</view>

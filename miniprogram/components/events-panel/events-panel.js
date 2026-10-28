@@ -121,12 +121,14 @@ Component({
         if (request !== this.loadRequest) return;
         this.loaded = true;
         // 整个视图模型另存一份。里面的完整榜 allRows 不参与渲染，
-        // 只当筛选的数据源，所以不用塞进 data——省一次 setData 的开销。
+        // 只当筛选的数据源；交给视图层的副本剥掉它，避免整榜再被序列化一次。
         this.view = view;
+        const displayView = { ...view };
+        delete displayView.allRows;
         this.setData({
           loading: false,
           error: '',
-          view,
+          view: displayView,
           demoSchool: false,
           demoSchoolName: '',
           themeClass: currentThemeClass(),

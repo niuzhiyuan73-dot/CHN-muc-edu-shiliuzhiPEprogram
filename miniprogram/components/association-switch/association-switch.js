@@ -34,10 +34,19 @@ Component({
       type: String,
       value: '',
     },
+    /**
+     * 可选前缀，用来交代这个切换器改变的是什么。
+     * 首页 / 我的传「默认项目」；个人详情页的项目切换是页面局部的，留空。
+     */
+    label: {
+      type: String,
+      value: '',
+    },
   },
 
   data: {
     sportName: '',
+    glyph: '',
   },
 
   lifetimes: {
@@ -53,6 +62,7 @@ Component({
       const found = list.find((item) => item.id === id) || list[0] || null;
       this.setData({
         sportName: found ? found.sportName : '',
+        glyph: found ? found.logoGlyph || '' : '',
       });
     },
 

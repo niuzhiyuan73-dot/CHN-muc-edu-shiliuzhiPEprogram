@@ -126,14 +126,16 @@ Component({
       try {
         const view = await loadSchoolRankView(space.forScope(scope), { project: this.currentProject });
         if (request !== this.request) return;
-        // 完整榜单另存一份。它不参与渲染，只当筛选的数据源，
-        // 所以不用塞进 data——省一次 setData 的开销。
+        // 完整榜单另存一份。它不参与渲染，只当筛选的数据源。
+        // 交给视图层的副本必须剥掉 allRows，否则这份完整榜仍会被序列化一次。
         this.view = view;
+        const displayView = { ...view };
+        delete displayView.allRows;
         this.setData({
           loading: false,
           error: '',
           switching: false,
-          view,
+          view: displayView,
           themeClass: currentThemeClass(),
         });
         // 切项目/榜单时保留搜索词：搜姓「张」的人，切到女单榜也该还是「张」

@@ -5,6 +5,8 @@
   bindtap="onTap"
   hover-class="assoc-switch--hover"
 >
+  <text wx:if="{{label}}" class="assoc-switch__label">{{label}}</text>
+  <text wx:if="{{glyph}}" class="assoc-switch__glyph">{{glyph}}</text>
   <text class="assoc-switch__name">{{sportName}}</text>
   <text class="assoc-switch__caret">▾</text>
 </view>

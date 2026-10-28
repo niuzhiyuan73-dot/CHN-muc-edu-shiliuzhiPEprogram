@@ -1,6 +1,6 @@
 <import src="../../templates/member-view.wxml" />
 <view class="page-container profile-page">
-  <block wx:if="{{loggedIn}}"><template is="profileView" data="{{...view, loading: loading, error: error, showSwitch: true, switchValue: associationId}}" /></block>
+  <block wx:if="{{loggedIn}}"><template is="profileView" data="{{...view, loading: loading, error: error, showSwitch: true, switchValue: associationId, switchLabel: '默认项目'}}" /></block>
   <view wx:else class="card guest-card"><view class="card-title">参与校园体育活动</view><view class="card-subtitle">登录后查看个人成绩、赛事经历与学校身份</view><button class="btn btn-primary btn-block guest-btn" bindtap="onGoLogin">登录 / 注册</button></view>
   <view class="experience-heading"><view class="experience-heading-title">个人服务</view></view>
   <view class="card profile-services">

@@ -54,7 +54,10 @@ function instantiate(config) {
   }
   page.setData = (patch, callback) => {
     for (const [key, value] of Object.entries(patch)) {
-      const parts = key.split('.');
+      // 与真机一致：既支持 a.b，也支持数组下标 a[0].b。旧实现只拆点，
+      // 会把 'statRows[0].points' 当成一个普通属性创建出来，页面看似更新、
+      // 断言却仍读旧值。
+      const parts = key.replace(/\[(\d+)\]/g, '.$1').split('.');
       let target = page.data;
       for (let i = 0; i < parts.length - 1; i += 1) {
         if (target[parts[i]] === null || typeof target[parts[i]] !== 'object') target[parts[i]] = {};

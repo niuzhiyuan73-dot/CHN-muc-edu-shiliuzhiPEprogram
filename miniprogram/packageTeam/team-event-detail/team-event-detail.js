@@ -22,6 +22,7 @@ const { withDetailExperience } = require('../../templates/detail-experience');
 const space = require('../../services/association-space.js');
 const { resolveRouteId } = require('../../utils/route-query.js');
 const { watchLiveScores } = require('../../services/live-watch.js');
+const statsDraft = require('../../services/stats-draft.js');
 
 /** 统计指标：顺序即页面上的列顺序，label 给人看，max 只作提示 */
 const STAT_FIELDS = [
@@ -120,6 +121,9 @@ Page(withDetailExperience({
     statsBusy: false,
     /** 统计审核条：{ matchId, canReview, needReview, pending } */
     statsReview: null,
+    /** 本地草稿提示：恢复成功 / 版本冲突。只说明本机状态，不代表服务端已保存 */
+    statsDraftNote: '',
+    statsDraftError: false,
     /** 赛程浮层：{ matchId, title, revision, matchTime, location, referees, recorders, ... } */
     scheduleEditing: null,
     /** 整轮顺延浮层：{ round, stage, label, minutes } */
@@ -161,6 +165,13 @@ Page(withDetailExperience({
   },
   onUnload() {
     this.destroyed = true;
+    // 与刷新序号配合：离开页面后所有在途读取都不得再 setData 或重新订阅比分。
+    this.refreshSeq = (this.refreshSeq || 0) + 1;
+    if (this.draftTimer) {
+      clearTimeout(this.draftTimer);
+      this.draftTimer = null;
+    }
+    this.persistDraft();
     if (this.liveSubscription) this.liveSubscription();
   },
 
@@ -207,6 +218,7 @@ Page(withDetailExperience({
       this.setData({ loading: false, error: '缺少赛事编号' });
       return undefined;
     }
+    const seq = this.refreshSeq = (this.refreshSeq || 0) + 1;
     this.setData({ loading: true, error: '' });
     try {
       // 路由里的编号可能是「未解码」的：跳转方一律 `encodeURIComponent(事件编号)`，
@@ -221,6 +233,8 @@ Page(withDetailExperience({
         failure = response;
         return null;
       });
+      // 两次刷新重叠、或页面已退出时，旧响应不得写回，也不得重新挂比分订阅。
+      if (this.destroyed || seq !== this.refreshSeq) return undefined;
       if (!resolved.id) {
         this.setData({
           loading: false,
@@ -268,11 +282,12 @@ Page(withDetailExperience({
         footballByes: (event.draw?.byes || []).map(id => (result.entries || []).find(row => row.teamId === id)?.teamName || id),
         canManage: event.canManage === true,
       });
-      if (event.supportsMatchData !== false) this.onLoadPlayerStats();
+      if (event.supportsMatchData !== false) this.onLoadPlayerStats(seq);
       else this.setData({ playerStats: [], playerStatsError: '' });
       this.watchScores(result.matches || []);
       return undefined;
     } catch (err) {
+      if (this.destroyed || seq !== this.refreshSeq) return undefined;
       console.error('[team-event-detail] 加载失败', err);
       this.setData({ loading: false, error: '赛事加载失败，请稍后重试' });
       return undefined;
@@ -605,7 +620,11 @@ Page(withDetailExperience({
     const { matchid } = event.currentTarget.dataset;
     const match = this.data.rounds.flatMap(round => round.matches).find(row => row.matchId === matchid);
     if (match && match.status === 'live') return this.onOpenLiveScore(event);
-    this.setData({ notice: '', noticeError: false });
+    if (this.draftTimer) {
+      clearTimeout(this.draftTimer);
+      this.draftTimer = null;
+    }
+    this.setData({ notice: '', noticeError: false, statsDraftNote: '', statsDraftError: false });
     try {
       const result = await space.forScope(this.scope).getTeamMatchStats({ matchId: matchid });
       if (!result || result.ok !== true) {
@@ -660,10 +679,21 @@ Page(withDetailExperience({
           });
         }
       });
+      // 只恢复与当前 revision 一致的本地草稿；服务端版本已经变化时保留服务端
+      // 当前值，并明确提示，不静默覆盖别人的修改。
+      const draftKey = this.statsDraftKey(matchid);
+      const draft = statsDraft.load(draftKey);
+      const restored = statsDraft.merge(rows, draft, STAT_FIELDS.map(item => item.field), editing.revision);
+      const draftNote = restored.conflict
+        ? `检测到本机草稿（版本 ${draft.revision}），但这场已被更新到版本 ${editing.revision}，草稿未自动恢复`
+        : restored.restored ? '已恢复本机未提交的统计草稿，请核对后保存' : '';
+      this.rememberStatLayout(restored.rows, editing.mode);
       this.setData({
         statsEditing: editing,
-        statRows: rows,
-        statGroups: groupStatRows(rows, editing.mode),
+        statRows: restored.rows,
+        statGroups: groupStatRows(restored.rows, editing.mode),
+        statsDraftNote: draftNote,
+        statsDraftError: restored.conflict,
         statsReview: {
           matchId: matchid,
           canReview: result.canReview === true,
@@ -679,20 +709,98 @@ Page(withDetailExperience({
     }
   },
 
-  onCloseStats() {
-    this.setData({
-      statsEditing: null, statRows: [], statGroups: [], statsBusy: false, statsReview: null,
+  /** 本场草稿键：学校 + 协会 + 场次 + 当前账号，避免换账号或换场串数据 */
+  statsDraftKey(matchId) {
+    return statsDraft.keyOf({
+      schoolId: this.scope && this.scope.schoolId,
+      association: this.scope && this.scope.association,
+      matchId,
     });
   },
 
-  /** 改一个格子。整张平表重建，不依赖 setData 的数组下标路径 */
+  /** 记住每个 key 在平表与分组结构中的位置，供单字段路径更新使用 */
+  rememberStatLayout(rows, mode) {
+    const rowIndex = new Map();
+    const groupIndex = new Map();
+    (rows || []).forEach((row, index) => rowIndex.set(row.key, index));
+    const groups = groupStatRows(rows || [], mode);
+    groups.forEach((group, gi) => {
+      (group.rows || []).forEach((row, ri) => groupIndex.set(row.key, { group: gi, row: ri }));
+    });
+    this.statRowIndex = rowIndex;
+    this.statGroupIndex = groupIndex;
+  },
+
+  /** 输入停顿后再落盘，避免每敲一个数字都写一次本地存储 */
+  scheduleDraftSave() {
+    if (this.draftTimer) clearTimeout(this.draftTimer);
+    this.draftTimer = setTimeout(() => {
+      this.draftTimer = null;
+      this.persistDraft();
+    }, 400);
+  },
+
+  /** 立即把当前尚未提交的输入写入本地。只存键与指标，不复制姓名等资料。 */
+  persistDraft() {
+    const editing = this.data.statsEditing;
+    if (!editing) return false;
+    const fields = STAT_FIELDS.map(item => item.field);
+    const rows = (this.data.statRows || [])
+      .map((row) => {
+        const out = { key: row.key, period: row.period || 0 };
+        let filled = false;
+        fields.forEach((field) => {
+          out[field] = row[field] == null ? '' : String(row[field]);
+          if (out[field] !== '') filled = true;
+        });
+        return filled ? out : null;
+      })
+      .filter(Boolean);
+    const key = this.statsDraftKey(editing.matchId);
+    if (rows.length === 0) {
+      statsDraft.clear(key);
+      return false;
+    }
+    return statsDraft.save(key, { revision: editing.revision, mode: editing.mode, rows });
+  },
+
+  onCloseStats() {
+    if (this.draftTimer) {
+      clearTimeout(this.draftTimer);
+      this.draftTimer = null;
+    }
+    // 取消不是丢弃：把已输入内容留在本机，下次打开且版本未变时恢复。
+    this.persistDraft();
+    this.setData({
+      statsEditing: null, statRows: [], statGroups: [], statsBusy: false, statsReview: null,
+      statsDraftNote: '', statsDraftError: false,
+    });
+  },
+
+  /**
+   * 改一个格子：只更新该字段在平表与分组结构里的路径。
+   * 复用同一份渲染数据，避免按节模式下每次按键都重建整张表。
+   */
   onInputStat(event) {
     const key = event.currentTarget.dataset.key;
     const field = event.currentTarget.dataset.field;
-    const rows = this.data.statRows.map((row) => (
-      row.key === key ? { ...row, [field]: event.detail.value } : row
-    ));
-    this.setData({ statRows: rows, statGroups: groupStatRows(rows, this.data.statsEditing.mode) });
+    if (!key || !field) return;
+    const index = this.statRowIndex ? this.statRowIndex.get(key) : undefined;
+    if (index === undefined) {
+      // 兼容异常布局（如热更新后旧表仍在）：退回整表重建，至少不丢输入。
+      const rows = this.data.statRows.map((row) => (
+        row.key === key ? { ...row, [field]: event.detail.value } : row
+      ));
+      this.rememberStatLayout(rows, this.data.statsEditing.mode);
+      this.setData({ statRows: rows, statGroups: groupStatRows(rows, this.data.statsEditing.mode) });
+      this.scheduleDraftSave();
+      return;
+    }
+    const patch = { [`statRows[${index}].${field}`]: event.detail.value };
+    const position = this.statGroupIndex ? this.statGroupIndex.get(key) : null;
+    if (position) patch[`statGroups[${position.group}].rows[${position.row}].${field}`] = event.detail.value;
+    this.setData(patch);
+    this.scheduleDraftSave();
   },
 
   async onSaveStats() {
@@ -733,12 +841,22 @@ Page(withDetailExperience({
       const doneText = result.needReview === true
         ? '统计已保存，等协会负责人审核后对外生效'
         : '统计已保存';
+      if (this.draftTimer) {
+        clearTimeout(this.draftTimer);
+        this.draftTimer = null;
+      }
+      // 服务端已接收这一版，本地草稿完成使命；留着会在下次打开时误导成“未保存”。
+      statsDraft.clear(this.statsDraftKey(editing.matchId));
+      this.statRowIndex = null;
+      this.statGroupIndex = null;
       this.setData({
         statsBusy: false,
         statsEditing: null,
         statRows: [],
         statGroups: [],
         statsReview: null,
+        statsDraftNote: '',
+        statsDraftError: false,
         notice: warnings.length > 0 ? warnings.join('；') : doneText,
         noticeError: false,
       });
@@ -771,12 +889,21 @@ Page(withDetailExperience({
         });
         return undefined;
       }
+      if (this.draftTimer) {
+        clearTimeout(this.draftTimer);
+        this.draftTimer = null;
+      }
+      statsDraft.clear(this.statsDraftKey(review.matchId));
+      this.statRowIndex = null;
+      this.statGroupIndex = null;
       this.setData({
         statsBusy: false,
         statsEditing: null,
         statRows: [],
         statGroups: [],
         statsReview: null,
+        statsDraftNote: '',
+        statsDraftError: false,
         notice: approve ? '统计已通过，榜单已更新' : '统计已退回，对外仍是上一版',
         noticeError: false,
       });
@@ -790,10 +917,12 @@ Page(withDetailExperience({
   },
 
   /** 球员数据榜：赛事页底部一块，只算已发布的比赛 */
-  async onLoadPlayerStats() {    try {
+  async onLoadPlayerStats(seq = this.refreshSeq) {
+    try {
       const result = await space.forScope(this.scope).getTeamEventPlayerStats({
         eventId: this.data.eventId,
       });
+      if (this.destroyed || seq !== this.refreshSeq) return undefined;
       if (!result || result.ok !== true) {
         this.setData({ playerStats: [], playerStatsError: (result && result.message) || '' });
         return undefined;
@@ -802,6 +931,7 @@ Page(withDetailExperience({
         footballAssists: result.assists || [], footballCoverage: result.coverageText || '' });
       return undefined;
     } catch (err) {
+      if (this.destroyed || seq !== this.refreshSeq) return undefined;
       console.error('[team-event-detail] 球员榜加载失败', err);
       this.setData({ playerStats: [], playerStatsError: '球员数据加载失败' });
       return undefined;

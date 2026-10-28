@@ -41,7 +41,7 @@
          首页与「我的」用全局作用域，详情页/他人主页是页面局部——语义由各页自行处理。
          外面包一层是为了给它一个可定位、可推到右侧的宿主节点 -->
     <view wx:if="{{showSwitch}}" class="member-hero-switch">
-      <association-switch value="{{switchValue}}" bind:change="onAssociationChange" />
+      <association-switch value="{{switchValue}}" label="{{switchLabel}}" bind:change="onAssociationChange" />
     </view>
   </view>
 </template>

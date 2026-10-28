@@ -19,6 +19,9 @@ page {
   --color-accent-light: #fbf3e0;
   --color-on-primary: #ffffff;
   --color-on-accent: #49360c;
+  /* 禁用态保持“明显不可点”，同时保证文字与浅底仍有足够对比度 */
+  --color-disabled-bg: #e5e7eb;
+  --color-disabled-text: #4b5563;
   --control-min-height: 44px;
   --motion-fast: 140ms;
   --color-mask: rgba(20, 24, 30, .4);
@@ -227,8 +230,8 @@ page {
 }
 
 .btn-primary.btn-disabled {
-  background: #c8d6d0;
-  color: #ffffff;
+  background: var(--color-disabled-bg);
+  color: var(--color-disabled-text);
 }
 
 .btn-accent {
@@ -278,10 +281,16 @@ page {
 
 .pool-tab {
   flex: 1;
+  min-height: var(--control-min-height);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   text-align: center;
   padding: var(--space-xs) 0;
   border-radius: var(--radius-sm);
   color: var(--color-text-secondary);
+  box-sizing: border-box;
 }
 
 /* 选中的池要一眼看得出来，否则用户不知道下面的数据属于哪个项目 */
@@ -312,11 +321,16 @@ page {
 .tag {
   display: inline-flex;
   align-items: center;
-  padding: 0 var(--space-sm);
-  height: 40rpx;
+  justify-content: center;
+  padding: 4rpx var(--space-sm);
+  min-height: 40rpx;
+  max-width: 100%;
   border-radius: 20rpx;
   font-size: var(--font-xs);
-  line-height: 1;
+  line-height: 1.35;
+  text-align: center;
+  overflow-wrap: anywhere;
+  box-sizing: border-box;
 }
 
 .tag-primary {

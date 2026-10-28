@@ -280,7 +280,8 @@ Page({
       this.update({ loading: false, error: '这所学校还没有启用任何协会' });
       return undefined;
     }
-    if (!silent) this.update({ loading: true, error: '' });
+    // 新查询一开始就释放续页锁：上一页的响应即使后到，也会被下面的令牌拦下。
+    this.update(silent ? { busy: false, error: '' } : { loading: true, error: '', busy: false });
     this.rows = [];
     try {
       const payload = this.data.isTeamFeed ? this.teamQuery() : this.query({ offset: 0 });
@@ -373,9 +374,15 @@ Page({
 
   async loadMore() {
     if (this.data.busy || !this.data.hasMore) return undefined;
+    // 续页与首屏共用同一个请求令牌，并固定发起时的查询键。只要用户改了关键词、
+    // 年份、状态或项目，旧续页就不能再往新列表里追加，也不能把 busy 锁死。
+    const token = this.requestToken;
+    const key = JSON.stringify(this.query());
     this.update({ busy: true });
     try {
       const result = await this.client().listCollegeEvents(this.query({ offset: this.data.offset }));
+      if (this.unloaded || token !== this.requestToken || key !== JSON.stringify(this.query())) return undefined;
+      if (result && result.ok === false) throw new Error(result.message || '加载失败');
       const rows = this.rows.concat(result.events || []);
       this.rows = rows;
       this.update({
@@ -386,7 +393,9 @@ Page({
         hasMore: Boolean(result.hasMore),
       });
     } catch (err) {
-      this.update({ busy: false, error: (err && err.message) || '加载失败' });
+      if (!this.unloaded && token === this.requestToken && key === JSON.stringify(this.query())) {
+        this.update({ busy: false, error: (err && err.message) || '加载失败' });
+      }
     }
     return undefined;
   },

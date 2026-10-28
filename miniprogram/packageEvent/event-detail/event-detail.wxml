@@ -165,10 +165,49 @@
 
     <!-- ========== 签表 ========== -->
     <view wx:if="{{view.hasBracket}}" class="card">
-      <view class="rank-head">
-        <view class="rank-head-title">签表</view>
+      <view class="rank-head bracket-head">
+        <view class="rank-head-title">晋级之路</view>
+        <view class="bracket-mode-switch">
+          <view class="bracket-mode {{bracketMode === 'chart' ? 'is-active' : ''}}" data-mode="chart" bindtap="onToggleBracketMode">图谱</view>
+          <view class="bracket-mode {{bracketMode === 'list' ? 'is-active' : ''}}" data-mode="list" bindtap="onToggleBracketMode">明细</view>
+        </view>
       </view>
 
+      <view class="bracket-my-tip {{view.myBracketText && view.myBracketText.indexOf('暂未') === 0 ? 'is-muted' : ''}}">{{view.myBracketText}}</view>
+
+      <block wx:if="{{bracketMode === 'chart'}}">
+        <scroll-view scroll-x class="bracket-lanes" enable-flex>
+          <view class="bracket-lanes-inner">
+            <view wx:for="{{view.bracketLanes}}" wx:key="key" class="bracket-lane">
+              <view class="bracket-lane-head">
+                <text class="bracket-lane-stage">{{item.stageText}}</text>
+                <text class="bracket-lane-label">{{item.label}}</text>
+              </view>
+              <view wx:for="{{item.rows}}" wx:for-item="match" wx:key="matchId" class="bracket-node {{match.isMine ? 'is-mine' : ''}} {{match.isWinner ? 'is-winner' : ''}}">
+                <view class="bracket-node-top">
+                  <text>{{match.courtText || '场地待定'}}</text>
+                  <text class="tag {{match.statusClass}}">{{match.statusLabel}}</text>
+                </view>
+                <view class="bracket-node-team {{match.winnerSide === 'A' ? 'is-advanced' : ''}}">{{match.teamAText}}</view>
+                <view class="bracket-node-team {{match.winnerSide === 'B' ? 'is-advanced' : ''}}">{{match.teamBText}}</view>
+                <view class="bracket-node-bottom">
+                  <text wx:if="{{match.scoreText}}" class="bracket-node-score">{{match.scoreText}}</text>
+                  <text wx:if="{{match.liveActive}}" class="bracket-node-live">直播中 {{match.live.scoreText}}</text>
+                  <text wx:if="{{match.isMine}}" class="bracket-node-mine">我的场次</text>
+                </view>
+                <view wx:if="{{match.canAssignReferee || match.canRecord || match.canConfirm}}" class="bracket-node-actions">
+                  <view wx:if="{{match.canAssignReferee}}" class="mini-btn" data-match-id="{{match.matchId}}" bindtap="onOpenReferee">裁判</view>
+                  <view wx:if="{{match.canRecord}}" class="mini-btn is-primary" data-match-id="{{match.matchId}}" bindtap="onRecordMatch">录分</view>
+                  <view wx:elif="{{match.canConfirm}}" class="mini-btn is-primary" data-match-id="{{match.matchId}}" bindtap="onConfirmMatch">确认</view>
+                </view>
+              </view>
+            </view>
+          </view>
+        </scroll-view>
+        <view class="field-hint">左右滑动查看各轮。高亮框是你的场次；比分与晋级关系以服务端记录为准。</view>
+      </block>
+
+      <block wx:else>
       <view wx:for="{{view.bracketRows}}" wx:key="matchId" class="bracket-row">
         <view class="bracket-round">{{item.groupText ? item.groupText + ' · ' : ''}}{{item.roundText}}
           <text wx:if="{{item.courtText}}" class="court-tag">{{item.courtText}}</text>
@@ -221,6 +260,7 @@
           bindtap="onConfirmMatch"
         >确认</view>
       </view>
+      </block>
     </view>
 
     <view id="detail-members"></view>

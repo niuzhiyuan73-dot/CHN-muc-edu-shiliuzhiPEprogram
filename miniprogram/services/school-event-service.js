@@ -321,7 +321,24 @@ async function listSchoolEvents(payload = {}, ctx) {
   const wanted = Array.isArray(payload.status)
     ? payload.status.filter(status => typeof status === 'number')
     : (typeof payload.status === 'number' ? [payload.status] : []);
-  const rows = wanted.length > 0 ? allRows.filter(row => wanted.includes(row.status)) : allRows;
+  const keyword = String(payload.keyword == null ? '' : payload.keyword).trim().toLowerCase().slice(0, 40);
+  const yearText = String(payload.year == null ? '' : payload.year);
+  const year = /^\d{4}$/.test(yearText) ? Number(yearText) : null;
+  const yearOf = (value) => {
+    const time = Date.parse(value || '');
+    if (!Number.isFinite(time)) return null;
+    // 展示与筛选都以北京时间为准，避免云函数 UTC 把跨年夜晚间的赛事算到上一年。
+    return new Date(time + 8 * 60 * 60 * 1000).getUTCFullYear();
+  };
+  const rows = allRows.filter((row) => {
+    if (wanted.length > 0 && !wanted.includes(row.status)) return false;
+    if (year && yearOf(row.startTime) !== year) return false;
+    if (keyword) {
+      const haystack = [row.title, row.name, row.location].map(value => String(value || '').toLowerCase()).join('\n');
+      if (!haystack.includes(keyword)) return false;
+    }
+    return true;
+  });
 
   // 人数直接用赛事汇总；本人报名状态仅点读当前页，读量不随报名总数增长。
   const myId = ctx.actorId;

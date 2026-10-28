@@ -3,6 +3,32 @@
   <view class="sports-tabs"><button wx:for="{{tabs}}" wx:key="id" class="sports-tab {{tab === item.id ? 'is-current' : ''}}" data-tab="{{item.id}}" bindtap="onTab">{{item.label}}</button></view>
   <scroll-view scroll-x class="sports-projects"><button wx:for="{{projects}}" wx:key="id" class="sports-project {{project === item.id ? 'is-current' : ''}}" data-project="{{item.id}}" bindtap="onProject">{{item.label}}</button></scroll-view>
   <view class="sports-caption">{{caption}}</view>
+
+  <!-- 生涯时间轴：只取已确认 / 已发布的护照记录，按当前已加载页展示 -->
+  <view wx:if="{{tab === 'passport' && milestones.length && !loading && !error}}" class="career-panel">
+    <view class="career-panel-head">
+      <view>
+        <view class="career-title">生涯节点</view>
+        <view class="career-note">仅展示已核验记录，基于当前已加载页{{hasMore ? '；继续加载可补充更早节点' : ''}}</view>
+      </view>
+    </view>
+    <scroll-view scroll-x class="career-scroll" enable-flex>
+      <view class="career-track">
+        <view wx:for="{{milestones}}" wx:key="key" class="career-node {{item.honor ? 'is-honor' : ''}}">
+          <view class="career-year">{{item.year}}</view>
+          <view class="career-dot"></view>
+          <view class="career-card">
+            <view class="career-project">{{item.projectName}}</view>
+            <view class="career-card-title">{{item.title}}</view>
+            <view wx:if="{{item.detail}}" class="career-detail">{{item.detail}}</view>
+            <view wx:if="{{item.proof}}" class="career-proof">✓ {{item.proof}}</view>
+            <view class="career-time">{{item.timeText}}</view>
+          </view>
+        </view>
+      </view>
+    </scroll-view>
+  </view>
+
   <block wx:if="{{focusMatchId}}"><view class="sports-focus-head"><text>当前比赛</text><button class="experience-link" bindtap="onCloseMatch">收起详情</button></view><block wx:for="{{[focusKey]}}" wx:key="*this"><match-panel focus-match-id="{{focusMatchId}}" active="{{true}}" /></block></block>
   <view wx:if="{{loading}}" class="experience-skeleton"><view class="experience-skeleton-line is-short"/><view class="experience-skeleton-line"/></view>
   <view wx:elif="{{error}}" class="empty-state"><view class="empty-state-text">{{error}}</view><button class="btn btn-outline" bindtap="onRetry">重新加载</button></view>

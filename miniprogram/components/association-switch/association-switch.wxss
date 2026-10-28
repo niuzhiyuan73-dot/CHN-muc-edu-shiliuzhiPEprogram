@@ -4,12 +4,23 @@
   display: inline-flex;
   align-items: center;
   gap: 6rpx;
-  padding: 6rpx 18rpx;
+  min-height: var(--control-min-height);
+  padding: 0 18rpx;
   border-radius: 999rpx;
   background: var(--color-primary-light, #f7e9e7);
   color: var(--color-primary, #b23a2e);
   font-size: var(--font-sm);
   line-height: 1.4;
+  box-sizing: border-box;
+}
+
+.assoc-switch__label {
+  font-size: var(--font-2xs);
+  opacity: 0.78;
+}
+
+.assoc-switch__glyph {
+  font-weight: 700;
 }
 
 .assoc-switch--hover {

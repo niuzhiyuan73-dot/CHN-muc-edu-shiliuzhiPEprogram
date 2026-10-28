@@ -1,28 +1,59 @@
 <!--
-  全部赛事 / 全部学院赛
-  赛事页「查看全部」的落点。同一页靠 type 分两种列表，行样式与赛事页共用
-  templates/event-list.wxss。数据形状见 services/events-view.js 的 loadEventsView。
+  全部赛事
+  赛事页「查看全部」的落点。行样式与赛事页共用 templates/event-list.wxss。
+  列表按服务端分页，搜索 / 年份 / 状态均在服务端过滤，不再全量读取。
 -->
 <view class="page-container {{themeClass}}">
 
-  <!-- 加载中。必须排在出错之前，否则首屏会一闪而过地报错 -->
+  <!-- 首屏骨架只在没有旧列表时出现；已有列表时用一条更新提示，避免闪白 -->
   <view wx:if="{{loading}}" class="loading">正在加载…</view>
 
   <view wx:elif="{{error}}" class="empty-state">
     <view class="empty-state-icon">⚠️</view>
     <view class="empty-state-text">{{error}}</view>
+    <button class="btn btn-outline event-retry" bindtap="refresh">重新加载</button>
   </view>
 
   <block wx:else>
+    <view wx:if="{{refreshing}}" class="experience-update">正在更新赛事…</view>
 
-    <!-- ========== 全部赛事 ========== -->
+    <view class="explorer card">
+      <view class="explorer-search">
+        <input
+          class="explorer-input"
+          value="{{keyword}}"
+          placeholder="搜索赛事名称或场地"
+          confirm-type="search"
+          maxlength="40"
+          bindinput="onKeywordInput"
+          bindconfirm="onSearchConfirm"
+        />
+        <view wx:if="{{keyword}}" class="explorer-clear" bindtap="onClearKeyword">清除</view>
+        <view class="explorer-submit" bindtap="onSearchConfirm">搜索</view>
+      </view>
+      <view class="explorer-filters">
+        <picker class="explorer-picker" mode="selector" range="{{years}}" range-key="label" value="{{yearIndex}}" bindchange="onPickYear">
+          <view class="explorer-select">{{years[yearIndex].label}} ▾</view>
+        </picker>
+        <picker class="explorer-picker" mode="selector" range="{{statusOptions}}" range-key="label" value="{{statusIndex}}" bindchange="onPickStatus">
+          <view class="explorer-select">{{statusOptions[statusIndex].label}} ▾</view>
+        </picker>
+        <view wx:if="{{filtered}}" class="explorer-reset" bindtap="onResetFilters">重置</view>
+      </view>
+      <view class="explorer-summary">共 {{view.eventTotal || 0}} 场{{filtered ? '符合条件的赛事' : '赛事'}}</view>
+    </view>
+
     <view class="card">
       <view class="list-head">
         <view class="list-head-title">全部赛事</view>
         <view wx:if="{{view.canPublish}}" class="event-publish" bindtap="onOpenPublish">＋ 发布</view>
       </view>
 
-      <view wx:if="{{!view.hasEvents}}" class="empty-note">{{view.eventsEmptyNote}}</view>
+      <view wx:if="{{!view.hasEvents}}" class="empty-state event-empty">
+        <view class="empty-state-icon">🏆</view>
+        <view class="empty-state-text">{{view.eventsEmptyNote}}</view>
+        <button wx:if="{{filtered}}" class="btn btn-outline event-empty-reset" bindtap="onResetFilters">清除筛选</button>
+      </view>
 
       <view
         wx:for="{{view.events}}"
@@ -33,12 +64,13 @@
       >
         <view class="event-main">
           <view class="event-title">
+            <text wx:if="{{item.associationGlyph}}" class="event-assoc-glyph">{{item.associationGlyph}}</text>
             <text class="event-name">{{item.title}}</text>
             <text wx:if="{{item.pinned}}" class="tag tag-danger">置顶</text>
             <text class="tag {{item.isSignup ? 'tag-success' : (item.isOngoing ? 'tag-warning' : 'tag-gray')}}">{{item.statusLabel}}</text>
           </view>
           <view class="event-meta">
-            {{item.timeText}}<text wx:if="{{item.location}}"> · {{item.location}}</text>
+            <text wx:if="{{item.associationName}}">{{item.associationName}} · </text>{{item.timeText}}<text wx:if="{{item.location}}"> · {{item.location}}</text>
           </view>
           <view class="event-meta">{{item.levelLabel}} · {{item.matchTypeLabel}}{{item.disciplineLabel ? ' · ' + item.disciplineLabel : ''}} · {{item.quotaText}}</view>
         </view>
@@ -56,6 +88,17 @@
           <view wx:if="{{!item.signedUp && !item.canPin}}" class="event-arrow">›</view>
         </view>
       </view>
+
+      <view wx:if="{{view.events.length}}" class="explorer-foot">
+        已显示 {{view.events.length}} 场{{hasMore ? ' · 仍有更多' : ' · 已到末尾'}}
+      </view>
+      <view wx:if="{{moreError}}" class="explorer-more-error">{{moreError}}</view>
+      <button
+        wx:if="{{hasMore || moreError}}"
+        class="btn btn-outline btn-block event-more"
+        disabled="{{busy}}"
+        bindtap="onLoadMore"
+      >{{busy ? '正在加载…' : moreError ? '重新加载' : '加载更多'}}</button>
     </view>
 
     <view wx:if="{{isMock}}" class="mock-note">

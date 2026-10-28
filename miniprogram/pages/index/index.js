@@ -44,8 +44,9 @@ const { loadSchoolHomeView } = require('../../services/school-home-view.js');
 const { resolveAuthState } = require('../../services/auth.js');
 const { resetBranding } = require('../../services/branding.js');
 const associationScope = require('../../services/association-scope.js');
+const { getAssociation, isKnownAssociation } = require('../../utils/associations.js');
 const { STORAGE_KEY } = require('../../utils/constants.js');
-const { loadPersonalSports, openSportsTarget } = require('../../templates/personal-sports-client');
+const { loadPersonalSports, openSportsTarget, withPersonalActions } = require('../../templates/personal-sports-client');
 
 /** 首屏缓存。只用来「先把内容画出来」，随后那次 refresh 一定会覆盖它。
  *  键放在 constants 里是因为登出也要清它（换账号后不能先画上一个人的首页）。 */
@@ -70,6 +71,8 @@ Page({
     auth: { loggedIn: false },
     /** 当前全局协会 id，供切换徽章显示；切换器只改全局，不改首页内容 */
     associationId: '',
+    /** 默认项目的显示名，配一句「进入工作台」的直达动作 */
+    associationName: '',
     /** 当前数据源，用于页脚提示 */
     dataSourceLabel: '',
     /** 开发期标注模拟数据（onLoad 时按门面实际状态刷新） */
@@ -138,6 +141,7 @@ Page({
         view: cached.view,
         auth: resolveAuthState(this.currentUser()),
         associationId: this.currentAssociation(),
+        associationName: this.associationNameOf(this.currentAssociation()),
       });
     } catch (err) {
       // 缓存读不出来只是少了「快一步」，不该影响后续正常加载
@@ -179,7 +183,7 @@ Page({
       const result = await loadPersonalSports(session.getSchoolId() || 'muc', { section: 'overview' });
       if (sequence !== this.personalSeq || key !== this.scopeKey()) return;
       if (!result.ok) throw new Error(result.message || '我的安排读取失败');
-      this.setData({ personal: result, personalLoading: false });
+      this.setData({ personal: withPersonalActions(result), personalLoading: false });
     } catch (error) {
       if (sequence === this.personalSeq && key === this.scopeKey()) this.setData({ personal: null, personalLoading: false, personalError: error.message || '我的安排读取失败，请重试' });
     }
@@ -207,6 +211,18 @@ Page({
     const app = getApp();
     if (app && typeof app.setAssociation === 'function') return app.setAssociation(id);
     return associationScope.setAssociation(id);
+  },
+
+  /** 默认项目显示名；注册表里找不到时退回 id，至少不是空白 */
+  associationNameOf(id) {
+    return isKnownAssociation(id) ? getAssociation(id).shortName : (id || '');
+  },
+
+  /** 切换器旁的直接动作：带着刚选中的项目进入工作台 */
+  onOpenAssociationWorkspace() {
+    const id = this.currentAssociation();
+    if (!isKnownAssociation(id)) return;
+    wx.navigateTo({ url: `/pages/association-home/association-home?association=${encodeURIComponent(id)}&tab=space` });
   },
 
   /**
@@ -248,6 +264,7 @@ Page({
         view,
         auth: resolveAuthState(user),
         associationId: this.currentAssociation(),
+        associationName: this.associationNameOf(this.currentAssociation()),
       });
     } catch (err) {
       console.error('[index] 首页加载失败', err);
@@ -297,6 +314,7 @@ Page({
   onAssociationChange(event) {
     const id = event && event.detail ? event.detail.id : '';
     this.switchTo(id);
+    this.setData({ associationName: this.associationNameOf(id) });
   },
 
   /**

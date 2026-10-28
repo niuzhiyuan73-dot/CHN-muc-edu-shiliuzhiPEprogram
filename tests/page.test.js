@@ -1531,7 +1531,8 @@ test('排行榜 —— 搜索范围是全量榜单，前十之外的人也能搜
     const page = instantiate(rankConfig);
     await page.onLoad();
 
-    const outside = page.data.view.allRows[10];
+    // 完整榜只留在实例上（不随 setData 序列化），搜索仍以它为准。
+    const outside = page.view.allRows[10];
     assert.ok(outside, '要有前十之外的会员才能验证全量搜索');
     assert.ok(
       !page.data.rows.some((row) => row.userId === outside.userId),
@@ -1555,7 +1556,7 @@ test('排行榜 —— 用真实姓名也能搜到同一个人，展示的仍是
   const page = instantiate(rankConfig);
   await page.onLoad();
 
-  const target = page.data.view.allRows.find((row) => row.userId === 'u06');
+  const target = page.view.allRows.find((row) => row.userId === 'u06');
   assert.ok(target, '种子里应当有这位会员');
   assert.strictEqual(target.nickName, '明宇');
   assert.strictEqual(target.realName, '赵明宇');
@@ -1574,7 +1575,7 @@ test('排行榜 —— S2：默认演示身份在榜上标「我」，名次卡�
   const page = instantiate(rankConfig);
   await page.onLoad();
 
-  const mine = page.data.view.allRows.find((row) => row.isMe);
+  const mine = page.view.allRows.find((row) => row.isMe);
   assert.ok(mine, '默认身份 u06 应在男单榜上');
   assert.strictEqual(mine.userId, 'u06');
   assert.ok(page.data.view.me, '有「我」就该有名次卡');
@@ -1689,7 +1690,7 @@ eventPanelTest('赛事页 —— 输入名字后只剩命中的人，名次保�
   const page = instantiate(eventsConfig);
   await page.onLoad();
 
-  const target = page.data.view.allRows[0];
+  const target = page.view.allRows[0];
   page.onInputKeyword({ detail: { value: target.nickName } });
 
   assert.strictEqual(page.data.searching, true);
@@ -1703,14 +1704,17 @@ eventPanelTest('赛事页 —— 搜索范围是全量榜单，前十之外的�
   const page = instantiate(eventsConfig);
   await page.onLoad();
 
-  const base = page.data.view.allRows[0];
-  page.view = { ...page.data.view, allRows: Array.from({length:12}, (_,i)=>({ ...base,
+  const base = page.view.allRows[0];
+  page.view = { ...page.view, allRows: Array.from({length:12}, (_,i)=>({ ...base,
     userId: 'search-'+i, nickName: '搜索会员'+i, realName:'姓名'+i, rank:i+1 })) };
   page.view.rows = page.view.allRows.slice(0,10);
-  page.setData({view:page.view});
+  // 视图层副本不含 allRows；搜索仍从实例上的完整榜读取。
+  const display = { ...page.view };
+  delete display.allRows;
+  page.setData({view:display});
   page.applyKeyword('');
 
-  const outside = page.data.view.allRows[10];
+  const outside = page.view.allRows[10];
   assert.ok(outside, '要有前十之外的会员才能验证全量搜索');
   assert.ok(
     !page.data.rows.some((row) => row.userId === outside.userId),
@@ -1728,7 +1732,7 @@ eventPanelTest('赛事页 —— 积分榜用真实姓名也能搜到同一个�
   const page = instantiate(eventsConfig);
   await page.onLoad();
 
-  const target = page.data.view.allRows.find((row) => row.userId === 'u06');
+  const target = page.view.allRows.find((row) => row.userId === 'u06');
   assert.ok(target, '种子里应当有这位会员');
   assert.strictEqual(target.realName, '赵明宇');
 

@@ -626,6 +626,11 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
       const refereeTakesOver = officiated && actorId !== refereeId && !isAdmin;
       // Q5：裁判也可以是本场参赛者，界面给个提示，不禁止
       const refereeIsParticipant = officiated && isParticipant(record, refereeId);
+      const isMine = Boolean(actorId && isParticipant(record, actorId));
+      // 本人是否在获胜一侧：仅用于「晋级之路」的“你已赢下/已结束”提示，
+      // 真实胜负仍以服务端 winner 与 score 为准。
+      const winningSide = record.winner === 'A' ? record.teamA : record.winner === 'B' ? record.teamB : [];
+      const isWinner = Boolean(isMine && record.winner && asArray(winningSide).includes(actorId));
 
       // 录分 / 确认 / 指派裁判：协议 2 由服务端逐场给出（见 matchSummary）；
       // 旧栈按 actor 现算。给了显式能力就照它渲染，不再用旧 actor 重算。
@@ -633,6 +638,11 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
 
       return {
         matchId: record._id,
+        // 数字轮次与阶段供「晋级之路」按列分组；文案仍由 roundText 提供，
+        // 模板不重复实现轮次命名规则。
+        round: Number(record.round) || 1,
+        stage: record.stage || BRACKET_STAGE.MAIN,
+        slot: Number(record.slot) || 0,
         roundText: roundLabelOf(record.round, totalRounds, record.stage),
         // 小组赛的比赛带 group 段，界面上要标出是哪一组；0 号组也要标
         groupText: hasGroup(record.group) ? groupLabelOf(record.group, format) : '',
@@ -648,9 +658,11 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
         live: describeLive(record.live),
         liveActive: Boolean(record.live),
         winnerSide: record.winner || '',
+        status: record.status,
         statusLabel: tag.label,
         statusClass: tag.className,
-        isMine: Boolean(actorId && (isParticipant(record, actorId))),
+        isMine,
+        isWinner,
         // 还没比分的场次先录分，录完才谈得上确认
         canRecord: override
           ? Boolean(override.canRecord)
@@ -672,6 +684,68 @@ function buildBracketRows(records, event, memberMap, ctx = {}) {
     });
 }
 
+
+const BRACKET_STAGE_LABEL = {
+  [BRACKET_STAGE.MAIN]: '淘汰赛',
+  [BRACKET_STAGE.WINNERS]: '胜者组',
+  [BRACKET_STAGE.LOSERS]: '败者组',
+  [BRACKET_STAGE.BRONZE]: '季军赛',
+  [BRACKET_STAGE.GRAND_FINAL]: '总决赛',
+  [BRACKET_STAGE.PLACEMENT]: '排位赛',
+  [BRACKET_STAGE.GROUP]: '小组赛',
+};
+
+/**
+ * 把已排好序的签表行按「阶段 + 轮次」切成横向泳道。
+ *
+ * 只做展示分组，不重排、不推断晋级关系：每一场的对手、比分与能力旗标都来自
+ * buildBracketRows。页面因此可以横向看整届赛事，也能随时切回逐场列表核对。
+ *
+ * @param {Array<Object>} rows buildBracketRows 的结果
+ * @returns {Array<{key:string,label:string,stageText:string,rows:Array<Object>}>}
+ */
+function buildBracketLanes(rows) {
+  const lanes = [];
+  const byKey = new Map();
+  asArray(rows).forEach((row) => {
+    const stage = row.stage || BRACKET_STAGE.MAIN;
+    const round = Number(row.round) || 1;
+    const key = `${stage}:${round}`;
+    let lane = byKey.get(key);
+    if (!lane) {
+      lane = {
+        key,
+        label: row.groupText ? `${row.groupText} · ${row.roundText}` : row.roundText,
+        stageText: BRACKET_STAGE_LABEL[stage] || '',
+        rows: [],
+      };
+      byKey.set(key, lane);
+      lanes.push(lane);
+    }
+    lane.rows.push(row);
+  });
+  return lanes;
+}
+
+/**
+ * 用一句话说明「我」在签表里的位置。
+ * 没有本人场次时也明确说明，而不是留一块空白让人误以为加载失败。
+ *
+ * @param {Array<Object>} rows buildBracketRows 的结果
+ * @returns {string}
+ */
+function describeMyBracket(rows) {
+  const mine = asArray(rows).filter(row => row.isMine);
+  if (mine.length === 0) return '签表中暂未找到你的场次';
+  const live = mine.find(row => row.liveActive);
+  if (live) return `你的比赛正在进行：${live.roundText} · ${live.teamAText} 对 ${live.teamBText}`;
+  const next = mine.find(row => !row.winnerSide);
+  if (next) return `你的下一场：${next.roundText} · ${next.teamAText} 对 ${next.teamBText}`;
+  const latest = mine[mine.length - 1];
+  return latest.isWinner
+    ? `你已赢下 ${latest.roundText}，等待下一轮`
+    : `你的 ${latest.roundText} 已结束，可查看比分`;
+}
 
 /**
  * 场地分配表：按场号分组，每组按「该场地上的先后」列出要打的比赛。
@@ -882,6 +956,8 @@ module.exports = {
   entryTextOf,
   byeTextOf,
   buildBracketRows,
+  buildBracketLanes,
+  describeMyBracket,
   buildCourtBoard,
   buildStandings,
   drawnTeamIds,
