@@ -5,6 +5,7 @@ const clone = value => value === undefined ? undefined : JSON.parse(JSON.stringi
 const { memoryMatchPage } = require('./match-list-query');
 const { attachTeamReads, fieldValues } = require('./scoped-team-reads.js');
 const { memoryDirectoryPage } = require('./account-directory.js');
+const { memoryPersonalPage } = require('./personal-sports-query.js');
 const { attachOverviewReads, memoryOverviewIO } = require('./school-overview-reads.js');
 /**
  * 带 eventId 的「从属集合」：按赛事取子集用 listByEvent（条件查询 + 索引），
@@ -43,6 +44,10 @@ function createSchoolMemoryRepo(seed = {}) {
   let queue = Promise.resolve();
   const build = (getState, inTx) => {
     const repo = {};
+    repo.personalSports = { readPage: async (source, auth, query) => {
+      if (inTx) throw new Error('事务内不允许个人体育查询');
+      return memoryPersonalPage(key => [...getState()[key].values()].map(clone), source, auth, query);
+    } };
     for (const key of KEYS) {
       repo[key] = {
         getById: async id => clone(getState()[key].get(id) || null),

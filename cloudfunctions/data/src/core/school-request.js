@@ -83,6 +83,11 @@ async function handleSchoolRequest(event, { repo, openId, clientIp = '', now = n
   // 用 try/finally 保证 handler 抛错时也失效：一次失败的事务可能已经改了一半。
   const readOnly = contextCache.isReadAction(event.action);
   try {
+    if (event.action === 'getMySportsDashboard') {
+      // 本人体育中心属于学校；不因某一协会停用而整体失效。每次新建身份，不使用读缓存。
+      const personalCtx = await buildMeetContext({ repo, openId, now, scope: { schoolId: event.schoolId } });
+      return await handlers[event.action](event.payload || {}, personalCtx);
+    }
     // 运动会分支：只要求 schoolId，meetId 按动作可选（列表/建赛/搜项目都没有届）。
     if (MEET_ACTIONS.has(event.action)) {
       if (!event.schoolId) return fail('运动会接口必须指定学校');

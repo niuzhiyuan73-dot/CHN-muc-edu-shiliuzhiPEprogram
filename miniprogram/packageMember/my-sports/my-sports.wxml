@@ -1,0 +1,26 @@
+<view class="page-container my-sports-page {{themeClass}}">
+  <view class="sports-heading"><view class="sports-title">我的体育</view><view class="experience-caption">赛程、待办与经验证的运动记录</view></view>
+  <view class="sports-tabs"><button wx:for="{{tabs}}" wx:key="id" class="sports-tab {{tab === item.id ? 'is-current' : ''}}" data-tab="{{item.id}}" bindtap="onTab">{{item.label}}</button></view>
+  <scroll-view scroll-x class="sports-projects"><button wx:for="{{projects}}" wx:key="id" class="sports-project {{project === item.id ? 'is-current' : ''}}" data-project="{{item.id}}" bindtap="onProject">{{item.label}}</button></scroll-view>
+  <view class="sports-caption">{{caption}}</view>
+  <block wx:if="{{focusMatchId}}"><view class="sports-focus-head"><text>当前比赛</text><button class="experience-link" bindtap="onCloseMatch">收起详情</button></view><block wx:for="{{[focusKey]}}" wx:key="*this"><match-panel focus-match-id="{{focusMatchId}}" active="{{true}}" /></block></block>
+  <view wx:if="{{loading}}" class="experience-skeleton"><view class="experience-skeleton-line is-short"/><view class="experience-skeleton-line"/></view>
+  <view wx:elif="{{error}}" class="empty-state"><view class="empty-state-text">{{error}}</view><button class="btn btn-outline" bindtap="onRetry">重新加载</button></view>
+  <block wx:else>
+    <view wx:if="{{updating}}" class="experience-update">正在核对最新状态…</view>
+    <view wx:if="{{!items.length}}" class="empty-state"><view class="empty-state-text">{{hasMore ? '本批没有可展示项，可继续查询' : tab === 'passport' ? '暂未收录已验证的运动记录' : tab === 'tasks' ? '当前没有可处理的待办' : '当前没有已排期或待排期的安排'}}</view></view>
+    <view wx:for="{{items}}" wx:key="key" class="sports-record {{item.honor ? 'has-honor' : ''}}" data-key="{{item.key}}" bindtap="onOpen">
+      <view class="sports-record-top"><text class="sports-project-name">{{item.projectName}}</text><text class="sports-state">{{item.state}}</text></view>
+      <view class="sports-record-title">{{item.title}}</view>
+      <view wx:if="{{item.opponents}}" class="sports-opponents">{{item.opponents}}</view>
+      <view wx:if="{{item.scoreText}}" class="sports-score">{{item.scoreText}}</view>
+      <view wx:if="{{item.rank}}" class="sports-rank">{{item.proof === '已发布分组成绩' ? '本场名次' : '正式名次'}} · 第 {{item.rank}} 名</view>
+      <view wx:if="{{item.proof}}" class="sports-proof">✓ {{item.proof}}</view>
+      <view class="sports-record-meta">{{item.timeText}}<text wx:if="{{item.location}}"> · {{item.location}}</text></view>
+      <view wx:if="{{item.subtitle}}" class="sports-record-meta">{{item.subtitle}}</view>
+      <view class="sports-record-foot"><text>{{item.rolesText}}</text><text>{{tab === 'tasks' ? '前往处理' : '查看记录'}} ›</text></view>
+    </view>
+    <view class="sports-list-end">已显示 {{items.length}} 条{{hasMore ? '，仍有更多' : ''}}<view wx:if="{{asOfText}}">更新于 {{asOfText}}</view></view>
+    <button wx:if="{{hasMore || moreError}}" class="btn btn-outline btn-block" disabled="{{loadingMore}}" bindtap="onMore">{{loadingMore ? '正在加载…' : moreError ? moreError + ' · 重试' : '加载更多'}}</button>
+  </block>
+</view>

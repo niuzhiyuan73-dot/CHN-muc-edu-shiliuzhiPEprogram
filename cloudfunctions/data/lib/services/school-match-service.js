@@ -417,7 +417,14 @@ async function getSchoolMatch(payload = {}, ctx) {
   const dir = legacyRoleOf(ctx) === ROLE.STAFF
     ? await recordDirOf(ctx, doc)
     : EMPTY_RECORD_DIR;
-  return ok({ ok: true, match: await withLive(matchSummary(doc, ctx, dir), ctx), message: '' });
+  const match = await withLive(matchSummary(doc, ctx, dir), ctx);
+  if (payload.presentation === true) {
+    const ids = [...new Set([...(doc.teamA || []).slice(0, 2), ...(doc.teamB || []).slice(0, 2), doc.referee].filter(Boolean))];
+    const users = ids.length ? await ctx.repo.users.listByIds(ids) : [];
+    return ok({ ok: true, match, viewer: { userId: ctx.actorId, nickName: ctx.actor.nickName || '' },
+      members: users.map(user => ({ userId: user._id, nickName: user.nickName || '会员' })), message: '' });
+  }
+  return ok({ ok: true, match, message: '' });
 }
 
 /**

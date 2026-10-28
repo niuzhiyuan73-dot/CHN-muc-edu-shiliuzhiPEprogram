@@ -80,6 +80,8 @@ const MANIFEST = [
   'services/school-permission.js',
   'services/school-member.js',
   'services/account-directory.js',
+  'services/personal-sports-query.js',
+  'services/personal-sports-service.js',
   'services/scoped-team-reads.js',
   'services/school-overview-reads.js',
   'services/team-profile-data.js',

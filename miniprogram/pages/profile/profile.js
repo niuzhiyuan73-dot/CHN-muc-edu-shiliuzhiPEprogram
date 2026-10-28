@@ -239,6 +239,10 @@ Page({
   onGoSchoolIdentity() {
     wx.navigateTo({ url: '/packageMember/school-identity/school-identity' });
   },
+  onGoMySports(event) {
+    const tab = event?.currentTarget?.dataset?.tab;
+    wx.navigateTo({ url: `/packageMember/my-sports/my-sports?tab=${['schedule', 'tasks', 'passport'].includes(tab) ? tab : 'passport'}` });
+  },
   /**
    * 跨校邀请赛。**不再只对模拟数据开放**（2026-10-16）：协议 2 已注册邀请赛的
    * 全部动作，云端走得通；此处若再按 isMock 拦一道，真实环境就成了「点不动的

@@ -45,6 +45,7 @@ const { resolveAuthState } = require('../../services/auth.js');
 const { resetBranding } = require('../../services/branding.js');
 const associationScope = require('../../services/association-scope.js');
 const { STORAGE_KEY } = require('../../utils/constants.js');
+const { loadPersonalSports, openSportsTarget } = require('../../templates/personal-sports-client');
 
 /** 首屏缓存。只用来「先把内容画出来」，随后那次 refresh 一定会覆盖它。
  *  键放在 constants 里是因为登出也要清它（换账号后不能先画上一个人的首页）。 */
@@ -60,6 +61,7 @@ Page({
     /** 首屏加载中 */
     loading: true,
     refreshing: false,
+    personal: null, personalLoading: false, personalError: '',
     /** 加载失败时的提示 */
     error: '',
     /** 视图模型，形状见 services/school-home-view.js。初值给空对象，WXML 展开才不会出错 */
@@ -108,7 +110,7 @@ Page({
       return this.refresh();
     }
     // 10 秒内切回来不重复取数：一轮就是 30+ 次读取，手快点两下 tab 就是两轮
-    if (Date.now() - (this.lastLoadedAt || 0) < ON_SHOW_TTL) return undefined;
+    if (Date.now() - (this.lastLoadedAt || 0) < ON_SHOW_TTL) return this.refreshPersonal();
     return this.refresh();
   },
 
@@ -164,7 +166,34 @@ Page({
     const session = require('../../services/school-session.js');
     return JSON.stringify([session.getSchoolId() || 'muc', user && (user._id || user.userId), runtime.isMockNow()]);
   },
-  onUnload() { this.loadSeq = (this.loadSeq || 0) + 1; },
+  onUnload() { this.loadSeq = (this.loadSeq || 0) + 1; this.personalSeq = (this.personalSeq || 0) + 1; },
+  async refreshPersonal() {
+    const sequence = this.personalSeq = (this.personalSeq || 0) + 1;
+    const key = this.scopeKey();
+    if (this.personalScopeKey !== key) this.setData({ personal: null });
+    this.personalScopeKey = key;
+    if (!this.currentUser()) { this.setData({ personal: null, personalLoading: false, personalError: '' }); return; }
+    this.setData({ personalLoading: true, personalError: '' });
+    try {
+      const session = require('../../services/school-session');
+      const result = await loadPersonalSports(session.getSchoolId() || 'muc', { section: 'overview' });
+      if (sequence !== this.personalSeq || key !== this.scopeKey()) return;
+      if (!result.ok) throw new Error(result.message || '我的安排读取失败');
+      this.setData({ personal: result, personalLoading: false });
+    } catch (error) {
+      if (sequence === this.personalSeq && key === this.scopeKey()) this.setData({ personal: null, personalLoading: false, personalError: error.message || '我的安排读取失败，请重试' });
+    }
+  },
+  onOpenMySports(event) {
+    const tab = event?.currentTarget?.dataset?.tab;
+    wx.navigateTo({ url: `/packageMember/my-sports/my-sports?tab=${['schedule', 'tasks', 'passport'].includes(tab) ? tab : 'schedule'}` });
+  },
+  onOpenPersonalRecord(event) {
+    const key = event.currentTarget.dataset.key;
+    const rows = [...(this.data.personal?.schedule?.items || []), ...(this.data.personal?.tasks?.items || [])];
+    const row = rows.find(item => item.key === key);
+    if (row) return openSportsTarget(row.target);
+  },
 
   /** 当前全局协会。真机上由 app 持有，测试环境下回落到门面 */
   currentAssociation() {
@@ -195,10 +224,15 @@ Page({
       const user = this.currentUser();
       const scopeKey = this.scopeKey();
       const schoolSession = require('../../services/school-session.js');
-      const view = await loadSchoolHomeView({
+      const personalTask = this.refreshPersonal();
+      // 演示聚合等待运动会种子就绪；概况随后读取，避免显示装载到一半的人数。
+      // 云端没有这段种子装载，两个读取仍并行。
+      if (runtime.isMockNow()) await personalTask;
+      if (seq !== this.loadSeq || scopeKey !== this.scopeKey()) return;
+      const [view] = await Promise.all([loadSchoolHomeView({
         schoolId: schoolSession.getSchoolId() || 'muc',
         viewerId: user ? user._id : '',
-      });
+      }), personalTask]);
       if (seq !== this.loadSeq) return;
       if (scopeKey !== this.scopeKey()) return this.refresh();
       this.loaded = true;

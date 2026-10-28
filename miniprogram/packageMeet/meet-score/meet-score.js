@@ -23,6 +23,7 @@ const meet = require('../../services/meet.js');
 const { updateMeetPage } = require('../../utils/meet-ui.js');
 const session = require('../../services/school-session.js');
 const { withScoreDraftExperience } = require('../../templates/score-draft-experience.js');
+const { routeIdCandidates } = require('../../utils/route-query.js');
 
 /** 晋级口径的中文名（只用于显示，判定一律在服务端） */
 const ADVANCE_LABEL = {
@@ -70,7 +71,13 @@ Page(withScoreDraftExperience({
       schoolId: session.getSchoolId() || 'muc',
       meetId: String(options.meetId || ''),
     });
-    return this.reload();
+    return this.reload().then(() => {
+      if (this.unloaded || !options.sessionKey || this.data.error) return;
+      const sessions = [...this.data.tasks, ...this.data.events.flatMap(row => row.sessions || [])];
+      const canonical = routeIdCandidates(options.sessionKey).find(key => sessions.some(row => row.sessionKey === key));
+      if (canonical) return this.openSession(canonical);
+      this.update({ error: '该裁判安排已变化，请刷新任务列表' });
+    });
   },
 
   onHide() { this.needsRefresh = true; },

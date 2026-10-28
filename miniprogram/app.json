@@ -109,6 +109,7 @@
         "profile-detail/profile-detail",
         "school-identity/school-identity",
         "school-exchange/school-exchange",
+        "my-sports/my-sports",
         "agreement/agreement"
       ]
     }

@@ -10,7 +10,8 @@
 const crypto = require('crypto');
 const { SCHOOL_IDENTITY_ACTIONS, pickActions } = require('../../lib/utils/school-actions.js');
 const { createSchoolHandlers } = require('../../lib/services/school-membership-service.js');
+const personalSportsService = require('../../lib/services/personal-sports-service.js');
 
 module.exports = Object.freeze(pickActions([createSchoolHandlers({
   claimKey: (schoolId, studentId) => `sid_${crypto.createHash('sha256').update(JSON.stringify([schoolId, studentId])).digest('hex')}`,
-})], SCHOOL_IDENTITY_ACTIONS));
+}), personalSportsService], SCHOOL_IDENTITY_ACTIONS));

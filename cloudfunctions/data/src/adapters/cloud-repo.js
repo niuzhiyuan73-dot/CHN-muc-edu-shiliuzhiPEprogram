@@ -22,6 +22,7 @@
 
 const { COLLECTIONS } = require('../repository.js');
 const { attachSchoolRepository } = require('../school-repository.js');
+const { readPersonalSportsPage } = require('./personal-sports-page.js');
 const { readMemberPage } = require('./member-page.js');
 const { matchListWhere } = require('../../lib/services/match-list-query.js');
 const { MATCH_STATUS } = require('../../lib/utils/constants.js');
@@ -624,6 +625,10 @@ function buildCollections(scope, inTx, cmd) {
   // 必须放在 attachSchoolRepository **之后**：team* 属于 SCHOOL_COLLECTIONS，
   // 顶层对象由那一步创建（补齐循环的清单里没有它们）。
   attachSchoolRepository(repo, {
+    personalPage: (source, auth, query) => {
+      if (inTx) throw new Error('事务内不允许个人体育查询');
+      return readPersonalSportsPage(scope, cmd, source, auth, query);
+    },
     // 范围条件要能构造操作符（gte / in 等），故把 db.command 一并交给学校仓储
     // 扩展，供 listByEvent 之外的范围查询使用。
     cmd,

@@ -12,6 +12,16 @@
   <block wx:else>
     <view wx:if="{{refreshing}}" class="experience-update">正在更新当前学校的赛事…</view>
     <block wx:if="{{view.loggedIn}}">
+      <view class="experience-heading"><view class="experience-heading-title">我的下一场</view><button class="home-text-button" data-tab="schedule" bindtap="onOpenMySports">全部安排 ›</button></view>
+      <view wx:if="{{personalLoading && !personal}}" class="experience-update">正在核对我的安排…</view>
+      <view wx:elif="{{personalError}}" class="personal-empty"><view>{{personalError}}</view><button class="home-text-button" bindtap="refreshPersonal">重试</button></view>
+      <block wx:elif="{{personal}}">
+        <view wx:for="{{personal.schedule.items}}" wx:key="key" class="personal-next" data-key="{{item.key}}" bindtap="onOpenPersonalRecord"><view class="personal-next-top"><text>{{item.projectName}} · {{item.rolesText}}</text><text>{{item.state}}</text></view><view class="personal-next-title">{{item.title}}</view><view wx:if="{{item.opponents}}" class="personal-next-opponents">{{item.opponents}}</view><view class="personal-next-time">{{item.timeText}}<text wx:if="{{item.location}}"> · {{item.location}}</text></view><view class="personal-next-link">{{item.waiting ? '查看报名' : '查看安排'}} ›</view></view>
+        <view wx:if="{{!personal.schedule.items.length}}" class="personal-empty">{{personal.schedule.hasMore ? '本批安排仍在核对，可进入全部安排继续查看' : '当前暂无比赛或裁判安排'}}</view>
+        <view class="personal-task-head"><text>我的待办</text><button class="home-text-button" data-tab="tasks" bindtap="onOpenMySports">{{personal.tasks.hasMore ? '更多待办 ›' : '查看待办 ›'}}</button></view>
+        <view wx:if="{{personal.tasks.items.length}}" class="card personal-task-list"><view wx:for="{{personal.tasks.items}}" wx:key="key" class="personal-task" data-key="{{item.key}}" bindtap="onOpenPersonalRecord"><view><view>{{item.state}}</view><view class="experience-caption">{{item.projectName}} · {{item.title}}</view></view><text>›</text></view></view>
+        <view wx:else class="experience-caption">{{personal.tasks.hasMore ? '本批没有可展示待办，可继续查看' : '当前没有可处理的待办'}}</view>
+      </block>
       <view class="experience-heading"><view class="experience-heading-title">近期赛事</view><button class="home-text-button" bindtap="onGoEvents">进入赛事 ›</button></view>
       <view wx:for="{{view.upcomingEvents}}" wx:key="id" class="home-event {{index === 0 ? 'is-featured' : ''}}" data-event-id="{{item.id}}" data-event-kind="{{item.eventKind}}" data-association="{{item.association}}" bindtap="onOpenEvent">
         <view class="home-event-top"><view class="home-date"><text>{{item.dateText || '日期待定'}}</text><text class="home-time">{{item.clockText || '时间待定'}}</text></view><view class="home-event-main"><text class="tag {{item.isOngoing ? 'tag-success' : 'tag-primary'}}">{{item.statusLabel}}</text><view class="event-title">{{item.title}}</view><view class="event-meta">{{item.associationName}} · {{item.eventKind === 'team' ? '团队赛事' : '个人赛事'}}<text wx:if="{{item.signedUp}}" class="event-mine"> · 已报名</text></view></view></view>

@@ -27,6 +27,7 @@ const { SCHOOL_COLLECTIONS, attachSchoolRepository } = require('../../cloudfunct
 const { memoryMatchPage } = require('../../miniprogram/services/match-list-query');
 const { fieldValues } = require('../../miniprogram/services/scoped-team-reads');
 const { memoryDirectoryPage } = require('../../miniprogram/services/account-directory');
+const { memoryPersonalPage } = require('../../miniprogram/services/personal-sports-query');
 
 function clone(doc) {
   return doc === null || typeof doc !== 'object' ? doc : { ...doc };
@@ -384,6 +385,7 @@ function createMemoryRepo(seed = {}) {
       // 与云端 io.cmd 对应：listRatedSince 等范围查询靠它构造操作符。
       cmd: command,
       memberPage: async (scope, options) => memoryDirectoryPage(list('schoolMembers'), list('users'), scope, options),
+      personalPage: async (source, auth, query) => memoryPersonalPage(list, source, auth, query),
       matchPage: async (scope, options) => memoryMatchPage(list('matches'), scope, options),
       read,
       set: async (key, id, doc) => {

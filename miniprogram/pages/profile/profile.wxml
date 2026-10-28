@@ -4,6 +4,8 @@
   <view wx:else class="card guest-card"><view class="card-title">参与校园体育活动</view><view class="card-subtitle">登录后查看个人成绩、赛事经历与学校身份</view><button class="btn btn-primary btn-block guest-btn" bindtap="onGoLogin">登录 / 注册</button></view>
   <view class="experience-heading"><view class="experience-heading-title">个人服务</view></view>
   <view class="card profile-services">
+    <view wx:if="{{loggedIn}}" class="profile-service" data-tab="passport" bindtap="onGoMySports"><view><view class="profile-service-title">运动护照</view><view class="experience-caption">已确认成绩、正式名次与参赛记录</view></view><text>›</text></view>
+    <view wx:if="{{loggedIn}}" class="profile-service" data-tab="tasks" bindtap="onGoMySports"><view><view class="profile-service-title">我的待办</view><view class="experience-caption">核对比分、处理退回名单与裁判草稿</view></view><text>›</text></view>
     <view class="profile-service" bindtap="onGoSchoolIdentity"><view><view class="profile-service-title">学校身份</view><view class="experience-caption">学籍信息、管理授权与审核结果</view></view><text>›</text></view>
     <view class="profile-service" bindtap="onGoSchoolExchange"><view><view class="profile-service-title">跨校邀请赛</view><view class="experience-caption">受邀学校交流 · 不计校内等级分</view></view><text>›</text></view>
   </view>

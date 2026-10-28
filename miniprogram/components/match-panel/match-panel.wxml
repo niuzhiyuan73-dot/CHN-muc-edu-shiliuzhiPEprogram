@@ -23,7 +23,7 @@
 
     <!-- ========== 录入入口 ========== -->
     <!-- 不能录入时把原因写在按钮上方，免得用户点了没反应还不知道为什么 -->
-    <view wx:if="{{!demoSchool}}" class="card entry-bar">
+    <view wx:if="{{!demoSchool && !focusMatchId}}" class="card entry-bar">
       <view class="entry-hint">{{entryHint}}</view>
       <view
         class="btn btn-block {{auth.canRecord ? 'btn-accent' : 'btn-disabled'}}"
@@ -32,7 +32,7 @@
     </view>
 
     <!-- ========== 标签 ========== -->
-    <view class="pool-tabs {{switching ? 'is-switching' : ''}}">
+    <view wx:if="{{!focusMatchId}}" class="pool-tabs {{switching ? 'is-switching' : ''}}">
       <view
         wx:for="{{view.tabs}}"
         wx:key="tab"
@@ -219,6 +219,8 @@
         bindtap="onClearReferee"
       >撤下裁判</view>
       <scroll-view scroll-y class="referee-list">
+        <view wx:if="{{referee.loading}}" class="experience-update">正在读取候选…</view>
+        <view wx:if="{{referee.error}}" class="focused-referee-error">{{referee.error}}</view>
         <view wx:if="{{referee.rows.length === 0}}" class="empty-note">{{referee.emptyText}}</view>
         <view
           wx:for="{{referee.rows}}"
@@ -231,6 +233,7 @@
           <view class="referee-row-name">{{item.name}}</view>
           <text wx:if="{{item.selected}}" class="referee-check">当前</text>
         </view>
+        <button wx:if="{{focusMatchId && (referee.hasMore || referee.error)}}" class="btn btn-outline btn-block" disabled="{{referee.loading}}" bindtap="onMoreFocusedReferees">{{referee.error ? '重试读取' : '加载更多候选'}}</button>
       </scroll-view>
       <view class="sheet-actions">
         <view class="btn btn-outline sheet-btn" bindtap="onCancelReferee">关闭</view>

@@ -1,6 +1,7 @@
 const service = require('../../services/school-identity.js');
 const { activeAssociations } = require('../../utils/associations.js');
 const associationScope = require('../../services/association-scope.js');
+const schoolSession = require('../../services/school-session.js');
 const STATUS_LABEL = { pending: '待审核', active: '已通过', rejected: '已驳回', left: '已离校', disabled: '已停用' };
 
 Page({
@@ -23,7 +24,7 @@ Page({
     const associations = activeAssociations();
     const association = associationScope.getAssociation();
     const associationIndex = Math.max(0, associations.findIndex(row => row.id === association));
-    this.update({ associations, association, associationIndex, associationName: associations[associationIndex]?.name || association });
+    this.update({ schoolId: schoolSession.getSchoolId() || 'muc', associations, association, associationIndex, associationName: associations[associationIndex]?.name || association });
     return this.reload();
   },
   onUnload() { this.unloaded = true; this.loadVersion = (this.loadVersion || 0) + 1; },

@@ -432,6 +432,11 @@ function buildScoped(repo, io, inTx, options) {
   return result;}
 
 function attachSchoolRepository(repo, io, inTx) {
+  repo.personalSports = { readPage: (source, auth, query) => {
+    if (inTx) throw new Error('事务内不允许个人体育查询');
+    if (!io.personalPage) throw new Error('个人体育查询适配器未接入');
+    return io.personalPage(source, auth, query);
+  } };
   // 【顶层 list() 是「跨范围读」，业务代码不要用】（2026-10-27 第八轮审查 P1-3）
   // 这里的条件对象是空的：`io.query(key, {})` 会把**全平台**该集合读回来。
   // 它存在只为满足「两套仓储方法面一致」的契约（模拟仓储的顶层 list 也是全量），

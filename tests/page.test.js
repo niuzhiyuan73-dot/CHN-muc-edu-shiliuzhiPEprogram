@@ -495,9 +495,10 @@ test('首页 —— 公告与概况都有内容，数据里没有 undefined 或 
   const page = instantiate(indexConfig);
   await page.onLoad();
 
-  // S2 口径：民大在册会员 = 24 位旧演示账号 + 校管理员 + 会员 + 学院负责人演示身份，
-  // 再加 2026-10-16 为跨校邀请赛补的「民大会员二」。
-  assert.strictEqual(page.data.view.summary.memberCount, 28);
+  // 本人聚合等待运动会种子就绪，学校名册还包含真实生成的运动会演示会员。
+  const roster = await require('../miniprogram/services/association-space').forScope({ schoolId: 'muc', association: 'pkb' }).listSchoolMembers({});
+  assert.strictEqual(page.data.view.summary.memberCount, roster.total);
+  assert.ok(roster.total >= 28);
   assert.ok(page.data.view.summary.matchCount > 0);
   assert.ok(page.data.view.announcements.rows.length > 0);
 
@@ -572,8 +573,8 @@ test('首页 —— 切到北航得到真实空聚合，不再展示静态演示
     // 切回本校即还原民大聚合内容
     await page.onSchoolChange({ detail: { schoolId: 'muc' } });
     assert.ok(page.data.view.announcements.rows.length > 0, '切回本校公告回来');
-    // 同上一处：民大在册会员已含 2026-10-16 补的「民大会员二」
-    assert.strictEqual(page.data.view.summary.memberCount, 28);
+    const roster = await require('../miniprogram/services/association-space').forScope({ schoolId: 'muc', association: 'pkb' }).listSchoolMembers({});
+    assert.strictEqual(page.data.view.summary.memberCount, roster.total);
   } finally {
     fx.restore();
   }

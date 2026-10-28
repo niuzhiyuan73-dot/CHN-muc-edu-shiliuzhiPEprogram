@@ -1,0 +1,2 @@
+{ "navigationBarTitleText": "我的体育", "enablePullDownRefresh": true,
+  "usingComponents": { "match-panel": "/components/match-panel/match-panel" } }

@@ -34,6 +34,7 @@ const SCHOOL_IDENTITY_ACTIONS = Object.freeze([
   'getSchoolIdentitySession', 'getSchoolMembers',         'grantSchoolPermission',
   'updateSchoolProfile',      'applySchoolTransfer',      'reviewSchoolTransfer',
   'cancelSchoolTransfer',
+  'getMySportsDashboard',
 ]);
 
 /** 协会空间（`forAssociationSpace` 声明，81 个）。 */

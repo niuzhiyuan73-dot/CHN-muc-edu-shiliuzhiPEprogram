@@ -61,6 +61,12 @@ const RENDER_STEP = 20;
 
 Component({
   properties: {
+    focusMatchId: { type: String, value: '', observer() {
+      if (!this.loaded) return;
+      this.suspend();
+      this.setData({ loading: true, view: {}, visibleRecords: [] });
+      this.refresh();
+    } },
     active: { type: Boolean, value: true, observer(value) {
       if (!value) this.suspend();
       else if (!this.hidden && this.loaded) this.refresh();
@@ -173,11 +179,13 @@ Component({
     },
 
     suspend() {
+      clearTimeout(this.refereeSearchTimer);
       this.request = (this.request || 0) + 1;
       if (this.liveHandle) { this.liveHandle(); this.liveHandle = null; }
     },
 
     onUnload() {
+      clearTimeout(this.refereeSearchTimer);
       this.hidden = true;
       this.request = (this.request || 0) + 1;
       if (this.liveHandle) {
@@ -226,7 +234,7 @@ Component({
       this.members = null;
       this.setData({ action: { ...this.data.action, open: false }, referee: { ...this.data.referee, open: false } });
       try {
-        const view = await loadSchoolMatchView(api, this.currentTab);
+        const view = await loadSchoolMatchView(api, this.currentTab, { matchId: this.data.focusMatchId });
         if (request !== this.request) return;
         this.viewer = view.context.viewer;
         this.members = view.context.members.map(m => ({ id: m.userId, name: m.nickName || m.userId, realName: m.realName }));
@@ -512,6 +520,7 @@ Component({
 
     /** 按关键字刷新面板列表 */
     async applyRefereeKeyword(keyword) {
+      if (this.data.focusMatchId) return this.loadFocusedReferees(keyword);
       const members = await this.pickerMembers();
       this.setData({
         'referee.keyword': keyword,
@@ -527,6 +536,11 @@ Component({
 
       const record = (this.data.view.records || []).find((item) => item.matchId === matchId);
       const selectedId = (record && record.referee) || '';
+      if (this.data.focusMatchId) {
+        this.setData({ referee: { open: true, matchId, hasReferee: Boolean(record && record.hasReferee),
+          selectedId, keyword: '', rows: [], loading: true, hasMore: false, nextCursor: '', error: '' } });
+        return this.loadFocusedReferees('');
+      }
       const members = await this.pickerMembers();
       const rows = buildPickerRows(members, '', selectedId);
 
@@ -544,11 +558,45 @@ Component({
     },
 
     onInputRefereeKeyword(event) {
+      if (this.data.focusMatchId) {
+        clearTimeout(this.refereeSearchTimer);
+        this.refereePageVersion = (this.refereePageVersion || 0) + 1;
+        const keyword = String(event.detail.value || '').slice(0, 32);
+        this.setData({ 'referee.keyword': keyword, 'referee.rows': [], 'referee.hasMore': false });
+        const request = this.request;
+        this.refereeSearchTimer = setTimeout(() => {
+          if (request === this.request && this.data.referee.open) this.loadFocusedReferees(keyword);
+        }, 250);
+        return;
+      }
       return this.applyRefereeKeyword(event.detail.value);
+    },
+
+    async loadFocusedReferees(keyword, append = false) {
+      const version = this.refereePageVersion = (this.refereePageVersion || 0) + 1;
+      const request = this.request;
+      this.setData({ 'referee.loading': true, 'referee.error': '' });
+      try {
+        const page = await this.api.listSchoolMembers({ page: true, keyword, limit: 20,
+          cursor: append ? this.data.referee.nextCursor : '' });
+        if (version !== this.refereePageVersion || request !== this.request || !this.data.referee.open) return;
+        if (!page.ok) throw new Error(page.message || '候选读取失败');
+        const rows = buildPickerRows((page.members || []).map(row => ({ id: row.userId, name: row.nickName || '会员' })), '', this.data.referee.selectedId);
+        this.setData({ 'referee.rows': append ? [...this.data.referee.rows, ...rows] : rows, 'referee.loading': false,
+          'referee.hasMore': Boolean(page.hasMore), 'referee.nextCursor': page.nextCursor || '', 'referee.emptyText': pickerEmptyText(keyword) });
+      } catch (error) {
+        if (version === this.refereePageVersion && request === this.request && this.data.referee.open) this.setData({ 'referee.loading': false, 'referee.error': error.message || '候选读取失败，请重试' });
+      }
+    },
+    onMoreFocusedReferees() {
+      if (this.data.referee.loading) return;
+      return this.loadFocusedReferees(this.data.referee.keyword, Boolean(this.data.referee.rows.length));
     },
 
     onCancelReferee() {
       if (this.data.refereeActing) return;
+      clearTimeout(this.refereeSearchTimer);
+      this.refereePageVersion = (this.refereePageVersion || 0) + 1;
       this.setData({ referee: { ...this.data.referee, open: false } });
     },
 

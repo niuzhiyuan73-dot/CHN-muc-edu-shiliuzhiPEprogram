@@ -1,6 +1,7 @@
 const { createSchoolDemoSeed, createSchoolDemoContent } = require('./school-seed.js');
 const { createSchoolMemoryRepo } = require('./school-memory-repo.js');
 const { createSchoolHandlers } = require('./school-membership-service.js');
+const personalSportsService = require('./personal-sports-service.js');
 const { buildSchoolContext } = require('./school-context.js');
 const { buildMeetContext } = require('./meet-context.js');
 const { meetRequestScope } = require('../utils/meet-scope.js');
@@ -172,6 +173,7 @@ let wechatOpenId = '';
 let repo;
 const handlers = Object.freeze(pickActions([
   createSchoolHandlers({ claimKey: (schoolId, studentId) => schoolKey('demo-claim', schoolId, studentId) }),
+  personalSportsService,
 ], SCHOOL_IDENTITY_ACTIONS));
 /**
  * 重置学校维度内存仓储。
@@ -263,7 +265,10 @@ function forSchoolIdentity(input) {
   const binding = actorBinding();
   const boundRepo = repo;
   return Object.freeze(Object.fromEntries(Object.entries(handlers).map(([name, handler]) => [name, async payload => {
-    const ctx = await buildSchoolContext({ repo: boundRepo, ...binding, scope });
+    if (name === 'getMySportsDashboard') await meetDemoReady;
+    const ctx = name === 'getMySportsDashboard'
+      ? { ...await buildMeetContext({ repo: boundRepo, ...binding, scope: { schoolId: scope.schoolId } }), isMock: true }
+      : await buildSchoolContext({ repo: boundRepo, ...binding, scope });
     const result = await handler(payload || {}, ctx);
     if (!result.ok) throw new Error(result.message);
     return result.data;
