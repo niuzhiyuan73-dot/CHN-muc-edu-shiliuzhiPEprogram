@@ -1,3 +1,4 @@
+const { withFormExperience } = require('../../templates/form-experience.js');
 /**
  * 发布公告
  * ============================================================
@@ -38,7 +39,7 @@ function nextRequestId() {
   return `pub_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
-Page({
+Page(withFormExperience({
   data: {
     /** 提交中，防止连点重复提交 */
     submitting: false,
@@ -171,4 +172,4 @@ Page({
   onCancel() {
     wx.navigateBack();
   },
-});
+}));

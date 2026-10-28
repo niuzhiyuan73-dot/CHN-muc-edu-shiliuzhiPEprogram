@@ -1,4 +1,4 @@
-<view class="page-container {{themeClass}}">
+<view class="page-container football-report-page {{themeClass}}">
   <view wx:if="{{loading}}" class="hint">加载中…</view>
   <view wx:elif="{{error}}" class="card">{{error}}<button bindtap="refresh">重试</button></view>
   <block wx:elif="{{form}}">
@@ -9,10 +9,12 @@
       <view wx:if="{{info.pending}}" class="warning">有待审核版本；审核前公开成绩保持原版。</view>
       <view wx:if="{{!info.canEdit}}" class="muted">{{info.lineupOnly ? '本场名单 · 只读' : '已发布报告 · 只读'}}</view>
     </view>
+    <view class="card" wx:if="{{!info.lineupOnly}}"><view class="card-title">报告状态</view><view class="experience-review-row"><text>已发布</text><text>{{publishedText}}</text></view><view class="experience-review-row"><text>已提交</text><text>{{submittedText}}</text></view><view class="experience-review-row"><text>当前编辑</text><text>{{editingState}}</text></view><view class="experience-caption">{{validationText}}</view></view>
+    <view class="card" wx:if="{{reportDiff.total}}"><view class="card-title">{{reportDiffTitle}} · {{reportDiff.total}} 处</view><view wx:for="{{reportDiff.rows}}" wx:key="key" class="report-difference"><view>{{item.label}}</view><view class="experience-caption">{{item.before}} → {{item.after}}</view></view><view wx:if="{{reportDiff.hasMore}}" class="experience-caption">先显示 60 处，请逐分区继续核对完整报告。</view></view>
     <view wx:if="{{notice}}" class="notice">{{notice}}</view>
     <block wx:if="{{info.canEdit}}">
     <view class="card" wx:if="{{!info.lineupOnly}}">
-      <view class="title">比赛结果</view>
+      <button class="experience-fold-head" data-section="result" bindtap="onToggleSection"><text>比赛结果</text><text>{{reportFolds.result ? '展开 ＋' : '收起 －'}}</text></button><view hidden="{{reportFolds.result}}">
       <picker range="{{kindLabels}}" value="{{form.kindIndex}}" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" data-field="kindIndex" bindchange="onPick"><view class="row">结果：{{kindLabels[form.kindIndex]}} ›</view></picker>
       <view class="row"><text>常规时间（必填）</text><input type="number" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" value="{{form.regulationA}}" data-field="regulationA" bindinput="onInput" placeholder="A"/><text>:</text><input type="number" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" value="{{form.regulationB}}" data-field="regulationB" bindinput="onInput" placeholder="B"/></view>
       <view class="row"><text>半场（可留空）</text><input type="number" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" value="{{form.halfA}}" data-field="halfA" bindinput="onInput" placeholder="A"/><text>:</text><input type="number" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" value="{{form.halfB}}" data-field="halfB" bindinput="onInput" placeholder="B"/></view>
@@ -33,9 +35,10 @@
       <view wx:if="{{form.kindIndex === 2}}" class="warning">中断仅保存报告，不能作为最终成绩发布。裁判裁定后补录完赛或弃权。</view>
       <textarea maxlength="500" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}" value="{{form.note}}" data-field="note" bindinput="onInput" placeholder="裁判报告说明、人工纪律处罚；少于 11 人首发、弃权、中断须说明"/>
       <textarea wx:if="{{info.needReview && info.canEdit}}" maxlength="500" disabled="{{busy}}" value="{{form.reason}}" data-field="reason" bindinput="onInput" placeholder="更正理由（必填）"/>
+      </view>
     </view>
     <view class="card">
-      <view class="title">单场名单与基础统计（可稍后补录）</view>
+      <button class="experience-fold-head" data-section="roster" bindtap="onToggleSection"><text>单场名单与基础统计（可稍后补录）</text><text>{{reportFolds.roster ? '展开 ＋' : '收起 －'}}</text></button><view hidden="{{reportFolds.roster}}">
       <view wx:if="{{info.lineupOnly && !info.lineupEditable[side.key]}}" class="warning">当前球队名单只读，请切换至自己管理的球队。</view><view class="tabs"><button wx:for="{{form.sides}}" wx:key="key" size="mini" data-index="{{index}}" bindtap="onSide">{{item.name}}</button></view>
       <view class="muted">单场最多 {{info.rules.matchRosterMax}} 人；首发 7–11 人，首发须标明一位守门员。未出场替补可单独记牌。</view>
       <view class="muted">可只录比分；未选择名单表示未记录，不能据此认定谁缺席。</view>
@@ -62,7 +65,7 @@
         <checkbox-group bindchange="onIncoming"><label wx:for="{{side.players}}" wx:key="userId" wx:if="{{item.selected && item.appeared}}" class="check"><checkbox value="{{item.userId}}" checked="{{item.incoming}}" disabled="{{!info.canEdit || busy || (info.lineupOnly && !info.lineupEditable[side.key])}}"/>{{item.name}}</label></checkbox-group>
       </block>
       <view class="muted">仅校验已有摘要，不代替现场换人程序核验；不完整时会标注覆盖范围。</view></block>
-    </view>
+</view>    </view>
     <view class="card" wx:if="{{!info.lineupOnly}}">
       <view class="title">进球明细（助攻须关联进球）</view>
       <view class="muted">可不记分钟；乌龙记在本方球员，计入对方比分。助攻仅适用于普通进球，每球最多一人。请同步核对上方个人进球和助攻总数。</view>

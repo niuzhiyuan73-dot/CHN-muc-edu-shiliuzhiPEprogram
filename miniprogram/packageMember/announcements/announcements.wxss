@@ -54,3 +54,8 @@
   font-size: var(--font-sm);
   margin: var(--space-sm) 0;
 }
+
+.notice-content.is-collapsed { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.notice-content.is-expanded { white-space: pre-wrap; overflow-wrap: anywhere; }
+.notice-expand { background: transparent; color: var(--color-primary-dark); font-size: var(--font-sm); margin: var(--space-xs) 0 0; padding: var(--space-xs) 0; min-height: var(--control-min-height); text-align: left; }
+.notice-expand::after { border: none; }

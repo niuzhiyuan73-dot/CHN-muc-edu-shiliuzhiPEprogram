@@ -25,7 +25,7 @@
     <view class="assoc-section">
       <view class="assoc-section-title">校级活动<text class="assoc-section-note">全校都能参加</text></view>
 
-      <view class="assoc-grid assoc-grid--three">
+      <view class="assoc-grid assoc-grid--activities">
         <view class="assoc-item assoc-item-meet" data-kind="meet" bindtap="onChooseMeet">
           <view class="assoc-item-icon"><text>🏟️</text></view>
           <view class="assoc-item-name">运动会</view>
@@ -43,9 +43,9 @@
     <!-- 下档：协会。图标式宫格，一行四个（四列放得下五个字以内的协会名），
          四个之后自动换行，后续继续加协会不必再改布局。 -->
     <view class="assoc-section">
-      <view class="assoc-section-title">协会<text class="assoc-section-note">按协会查看排行榜、比赛与赛事</text></view>
+      <view class="assoc-section-title">体育协会<text class="assoc-section-note">选择项目进入工作台</text></view>
 
-      <view class="assoc-grid assoc-grid--four">
+      <view class="assoc-grid assoc-grid--sports">
         <view
           wx:for="{{associations}}"
           wx:key="id"

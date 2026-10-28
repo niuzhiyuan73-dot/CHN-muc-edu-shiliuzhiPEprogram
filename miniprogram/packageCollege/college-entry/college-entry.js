@@ -46,6 +46,9 @@ Page({
     memberIds: [],
     /** 备注（选填） */
     remark: '',
+    selectorOpen: false,
+    selectorScope: {},
+    selectedMembers: [],
   },
 
   /**
@@ -113,7 +116,7 @@ Page({
     try {
       const view = await loadCollegeEntryView(this.eventId, {
         schoolId: scope.schoolId, association: scope.association,
-        actorId: this.actorId, collegeId: this.collegeId, preferredCollegeId,
+        actorId: this.actorId, collegeId: this.collegeId, preferredCollegeId, pagedCandidates: true,
       });
       if (request !== this.loadRequest) return;
       // 采纳装载器探测出的真实编号再用于写：query 在微信开发者工具 / 真机里是
@@ -125,7 +128,10 @@ Page({
         loading: false,
         error: '',
         view,
-        memberIds: view.candidates.filter((item) => item.checked).map((item) => item.memberId),
+        memberIds: view.existingMemberIds || [],
+        selectedMembers: view.existingMembers || [],
+        selectorScope: scope,
+        selectorOpen: false,
         remark: view.remark,
         themeClass: currentThemeClass(),
       });
@@ -138,6 +144,13 @@ Page({
   },
 
   /* ---------- 交互 ---------- */
+  onOpenSelector() { if (this.data.view.canSubmit && !this.data.submitting) this.setData({ selectorOpen: true }); },
+  onCloseSelector() { this.setData({ selectorOpen: false }); },
+  onConfirmSelector(event) {
+    const selectedMembers = event.detail.members || [];
+    this.setData({ selectorOpen: false, selectedMembers, memberIds: selectedMembers.map(row => row.userId),
+      'view.selectedCount': selectedMembers.length });
+  },
 
   onCollegeChange(event) {
     if (this.data.submitting) return;

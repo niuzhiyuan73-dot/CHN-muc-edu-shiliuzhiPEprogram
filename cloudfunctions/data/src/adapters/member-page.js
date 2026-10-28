@@ -11,7 +11,8 @@ async function readMemberPage(db, command, scope, query = {}) {
   const after = cursor && [cursor[0], directorySortText(cursor[1]), directorySortText(cursor[2]), cursor[3]];
   const rowsOf = result => result.list || result.data || [];
   const base = () => db.collection(COLLECTIONS.schoolMembers).aggregate()
-    .match({ schoolId: scope.schoolId, status: 'active' })
+    .match({ schoolId: scope.schoolId, status: 'active',
+      ...(typeof query.collegeId === 'string' && query.collegeId ? { collegeId: query.collegeId } : {}) })
     .lookup({ from: COLLECTIONS.users, localField: 'userId', foreignField: '_id', as: 'account' })
     .unwind('$account')
     .match({ 'account.platformStatus': 'active', 'account.primarySchoolId': scope.schoolId });

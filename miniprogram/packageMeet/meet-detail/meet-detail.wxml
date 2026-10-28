@@ -1,8 +1,9 @@
+<import src="../../templates/detail-experience.wxml" />
 <!--
   运动会详情：基本信息 + 项目清单 + 按角色可见的动作。
   草稿期才出现「继续配置 / 发布报名 / 删除草稿」——发布后改规则会影响已提交的报名。
 -->
-<view class="page-container meet-theme">
+<view class="page-container experience-safe-page meet-theme">
 
   <view wx:if="{{loading}}" class="loading">正在加载…</view>
 
@@ -13,9 +14,11 @@
   </view>
 
   <block wx:else>
+    <template is="detailExperience" data="{{experience: experience, managementOpen: managementOpen}}" />
     <view wx:if="{{notice}}" class="meet-notice">{{notice}}</view>
     <view wx:if="{{error}}" class="meet-error">{{error}}</view>
 
+    <view id="detail-info"></view>
     <view class="card meet-head">
       <view class="meet-name">{{meet.name}}</view>
       <view wx:if="{{canManage || !meet.isDraft}}" class="meet-status meet-status-{{meet.status}}">{{meet.statusLabel}}</view>
@@ -36,6 +39,7 @@
       <view class="empty-state-text">还没有选择项目</view>
     </view>
 
+    <view id="detail-results"></view>
     <!-- 点项目弹成绩：成绩不再平铺在页面底部，避免一届上百项目滚不完 -->
     <view
       wx:for="{{events}}"
@@ -85,6 +89,7 @@
       </view>
     </view>
 
+    <view id="detail-members"></view>
     <!-- 我的参与：意向与正式名单要能分清（D10 的三态） -->
     <block wx:if="{{isRegistration && interests.length > 0}}">
       <view class="meet-section-title">我的参赛意向</view>
@@ -118,6 +123,7 @@
       <view class="meet-college-link" bindtap="onOpenCollege">进入学院报名工作台 ›</view>
     </block>
 
+    <view id="detail-schedule"></view>
     <!-- 管理员：赛程编排与录分发布 -->
     <block wx:if="{{!isDraft}}">
       <view wx:if="{{canManage}}" class="meet-college-link" bindtap="onOpenSchedule">赛程编排与裁判指派 ›</view>
@@ -214,4 +220,5 @@
       </scroll-view>
     </view>
   </view>
+<template wx:if="{{!loading && !error}}" is="detailAction" data="{{experience: experience, acting: acting, busy: busy}}" />
 </view>

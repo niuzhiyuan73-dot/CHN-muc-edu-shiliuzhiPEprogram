@@ -2,6 +2,7 @@
   <view class="card">
     <view class="card-title">学校身份</view>
     <view class="hint">选择学校，查看或申请该校身份</view>
+    <picker range="{{associations}}" range-key="name" value="{{associationIndex}}" disabled="{{submitting || loading}}" bindchange="onAssociationChange"><view class="selection">权限所属项目：{{associationName}} <text>切换 ›</text></view></picker>
     <picker range="{{schools}}" range-key="name" value="{{schoolIndex}}" disabled="{{submitting}}" bindchange="onSchoolChange">
       <view class="selection">{{schoolName}} <text>切换 ›</text></view>
     </picker>

@@ -24,13 +24,13 @@
       </view>
 
       <view wx:else class="card">
-        <view wx:for="{{view.rows}}" wx:for-item="notice" wx:key="id" class="notice-row">
+        <view wx:for="{{view.rows}}" wx:for-item="notice" wx:key="id" id="notice-{{index}}" class="notice-row">
           <view class="notice-head">
             <text wx:if="{{notice.pinned}}" class="tag notice-pin">置顶</text>
             <text class="notice-date">{{notice.publishText}}</text>
           </view>
-          <view class="notice-title">{{notice.title}}</view>
-          <view class="notice-content">{{notice.content}}</view>
+          <view class="notice-title" data-id="{{notice.id}}" bindtap="onToggleNotice">{{notice.title}}</view>
+          <view class="notice-content {{expandedNotices[notice.id] ? 'is-expanded' : 'is-collapsed'}}">{{notice.content}}</view><button class="notice-expand" data-id="{{notice.id}}" bindtap="onToggleNotice">{{expandedNotices[notice.id] ? '收起正文' : '展开正文'}}</button>
         </view>
       </view>
 

@@ -1,3 +1,4 @@
+const { withNoticeExpansion } = require('../../templates/notice-experience');
 /**
  * 公告列表页
  * ============================================================
@@ -27,7 +28,7 @@ const schoolSession = require('../../services/school-session.js');
 const associationScope = require('../../services/association-scope.js');
 const { LEGACY_SCHOOL_ID } = require('../../utils/school.js');
 
-Page({
+Page(withNoticeExpansion({
   data: {
     /** 首屏加载中 */
     loading: true,
@@ -101,4 +102,4 @@ Page({
       if (!this.unloaded && version === this.requestVersion) this.setData({ loadingMore: false, moreError: error.message || '加载失败，请重试' });
     }
   },
-});
+}));

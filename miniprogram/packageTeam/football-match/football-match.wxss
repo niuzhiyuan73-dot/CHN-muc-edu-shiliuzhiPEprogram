@@ -1,24 +1,24 @@
-.page-container { padding: 24rpx; padding-bottom: 60rpx; background: #f5f6f8; color: #25332c; }
+.football-report-page { padding: 24rpx; padding-bottom: 60rpx; background: var(--color-bg); color: var(--color-text); }
 .title { font-size: var(--font-md); font-weight: 600; margin-bottom: 20rpx; }
 .row, .coverage-row { display: flex; align-items: center; justify-content: space-between; gap: 12rpx; padding: 16rpx 0; }
 .row text:first-child { flex: 1; }
-input { width: 130rpx; padding: 10rpx; border: 1rpx solid #cedbd3; border-radius: 8rpx; text-align: center; }
-textarea { width: 100%; box-sizing: border-box; min-height: 130rpx; height: 150rpx; padding: 18rpx; margin-top: 16rpx; background: #f4f7f5; border-radius: 10rpx; }
-.muted { color: #64756b; font-size: var(--font-caption); line-height: 1.7; }
-.warning, .notice { background: #fff2d8; color: #755018; padding: 20rpx; margin-bottom: 20rpx; border-radius: 10rpx; }
+input { width: 130rpx; padding: 10rpx; border: 1rpx solid var(--color-border); border-radius: 8rpx; text-align: center; }
+textarea { width: 100%; box-sizing: border-box; min-height: 130rpx; height: 150rpx; padding: 18rpx; margin-top: 16rpx; background: var(--color-bg-subtle); border-radius: 10rpx; }
+.muted { color: var(--color-text-secondary); font-size: var(--font-caption); line-height: 1.7; }
+.warning, .notice { background: var(--color-warning-light); color: var(--color-warning-text); padding: 20rpx; margin-bottom: 20rpx; border-radius: 10rpx; }
 .tabs, .flags { display: flex; gap: 16rpx; align-items: center; flex-wrap: wrap; margin: 18rpx 0; }
 .tabs button { flex: 1; min-width: 180rpx; margin: 0; }
-button { color: #0d6b45; font-size: var(--font-sm); margin-top: 20rpx; }
-.player { border-top: 1rpx solid #e5ebe7; padding: 16rpx 0; }
+button { color: var(--color-primary-dark); font-size: var(--font-sm); margin-top: 20rpx; }
+.player { border-top: 1rpx solid var(--color-border); padding: 16rpx 0; }
 .flags { font-size: var(--font-caption); }
 .flags view { display: flex; align-items: center; }
 switch { transform: scale(.8); transform-origin: right center; }
 .stats-grid { display: flex; flex-wrap: wrap; gap: 12rpx; }
-.stat-cell { width: 29%; font-size: var(--font-caption); color: #64756b; }
+.stat-cell { width: 29%; font-size: var(--font-caption); color: var(--color-text-secondary); }
 .stat-cell input { width: 100%; box-sizing: border-box; margin-top: 8rpx; }
 .check { display: inline-flex; align-items: center; margin: 12rpx; font-size: var(--font-sm); }
-.goal-row { padding: 16rpx 0; border-bottom: 1rpx solid #eee; overflow-wrap: anywhere; font-size: var(--font-caption); }
-.goal-edit { padding: 20rpx; background: #f4f7f5; margin-top: 20rpx; }
+.goal-row { padding: 16rpx 0; border-bottom: 1rpx solid var(--color-divider); overflow-wrap: anywhere; font-size: var(--font-caption); }
+.goal-edit { padding: 20rpx; background: var(--color-bg-subtle); margin-top: 20rpx; }
 
 /* 提示行：队列表与赛事页都有，这个页面前漏了（空态/说明文字会挤成一团） */
 .hint {
@@ -28,3 +28,6 @@ switch { transform: scale(.8); transform-origin: right center; }
   font-size: var(--font-body);
   line-height: 1.7;
 }
+
+.row{min-height:44px;flex-wrap:wrap}.row text:first-child{min-width:0;overflow-wrap:anywhere}.title,.muted{overflow-wrap:anywhere}.report-difference{padding:var(--space-sm) 0;border-bottom:1rpx solid var(--color-border);font-size:var(--font-body)}
+@media(max-width:360px){.stat-cell{width:45%}.row input{width:100rpx}}

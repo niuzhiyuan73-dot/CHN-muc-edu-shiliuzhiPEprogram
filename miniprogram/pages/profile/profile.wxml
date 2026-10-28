@@ -1,96 +1,17 @@
-<!--
-  我的
-  只展示当前分数与赛事荣誉；走势、逐场战绩、交锋记录、搭档记录
-  都在个人详情页（点下方头卡里的头像过去看）。
-  界面同样抽在公共模板里，这里只负责装配数据。
-  模板的字段说明见 templates/member-view.wxml。
--->
 <import src="../../templates/member-view.wxml" />
-
-<view class="page-container">
-  <!--
-    跨校邀请赛。**不再是模拟环境专属**（2026-10-16）：协议 2 已注册邀请赛的
-    全部动作，云端与本地模拟都能走，因此这张卡在两种数据源下都常显——
-    能不能发起 / 报名由页面自身的权限与状态决定，不靠入口先拦一道。
-    勾掉是否模拟只影响副标题文案，不影响能不能进。
-  -->
-  <view class="card entry-card" bindtap="onGoSchoolExchange">
-    <view class="entry-card-main">
-      <view class="entry-card-title">跨校邀请赛</view>
-      <view class="entry-card-hint">{{isMock ? '民大与北航 · 本地模拟邀请与报名' : '与受邀学校交流 · 不计入校内等级分'}}</view>
-    </view>
-    <view class="entry-card-arrow">›</view>
+<view class="page-container profile-page">
+  <block wx:if="{{loggedIn}}"><template is="profileView" data="{{...view, loading: loading, error: error, showSwitch: true, switchValue: associationId}}" /></block>
+  <view wx:else class="card guest-card"><view class="card-title">参与校园体育活动</view><view class="card-subtitle">登录后查看个人成绩、赛事经历与学校身份</view><button class="btn btn-primary btn-block guest-btn" bindtap="onGoLogin">登录 / 注册</button></view>
+  <view class="experience-heading"><view class="experience-heading-title">个人服务</view></view>
+  <view class="card profile-services">
+    <view class="profile-service" bindtap="onGoSchoolIdentity"><view><view class="profile-service-title">学校身份</view><view class="experience-caption">学籍信息、管理授权与审核结果</view></view><text>›</text></view>
+    <view class="profile-service" bindtap="onGoSchoolExchange"><view><view class="profile-service-title">跨校邀请赛</view><view class="experience-caption">受邀学校交流 · 不计校内等级分</view></view><text>›</text></view>
   </view>
-  <view class="card entry-card" bindtap="onGoSchoolIdentity">
-    <view class="entry-card-main">
-      <view class="entry-card-title">学校身份</view>
-      <view class="entry-card-hint">选择学校、申请身份与查看审核结果</view>
-    </view>
-    <view class="entry-card-arrow">›</view>
-  </view>
-  <!--
-    管理入口。放在战绩之前：需要处理的事该排在浏览数据前面。
-    没有权限时整张卡不渲染（visible），不是灰掉——灰按钮
-    点不动还得让人猜为什么。
-  -->
-  <view wx:if="{{reviewEntry.visible}}" class="card entry-card" bindtap="onGoReview">
-    <view class="entry-card-main">
-      <view class="entry-card-title">会员审核</view>
-      <view class="entry-card-hint">{{reviewEntry.hint}}</view>
-    </view>
-    <view class="entry-card-arrow">›</view>
-  </view>
-
-  <view wx:if="{{adminEntry.visible}}" class="card entry-card" bindtap="onGoAnnouncementsAdmin">
-    <view class="entry-card-main">
-      <view class="entry-card-title">公告管理</view>
-      <view class="entry-card-hint">{{adminEntry.hint}}</view>
-    </view>
-    <view class="entry-card-arrow">›</view>
-  </view>
-
-  <!--
-    未登录：这一页只有「自己」可看，没有自己就没什么可看的。
-    不要让模板去渲染数据源答出来的「当前用户」——云端认的是
-    OpenID，退出登录之后它照样答得出是谁（见 profile.js 的 refresh）。
-  -->
-  <block wx:if="{{loggedIn}}">
-    <!-- showSwitch 恒为真（已登录），switchValue 用当前全局协会；
-         点头卡头像进详情页才是看等级分/赛季积分的地方 -->
-    <template
-      is="profileView"
-      data="{{...view, loading: loading, error: error, showSwitch: true, switchValue: associationId}}"
-    />
-  </block>
-
-  <view wx:else class="card guest-card">
-    <view class="card-title">还没有登录</view>
-    <view class="card-subtitle">登录后就能看到自己的荣誉与排名</view>
-    <button class="btn btn-primary btn-block guest-btn" bindtap="onGoLogin">登录 / 注册</button>
-  </view>
-
-  <!--
-    退出登录。只在已登录时出现——没登录时它没有意义。
-    登录页也有一处，但首页的登录入口只对未登录的人显示，已登录的人到不了
-    那一页，所以这里是唯一稳定够得着的出口。
-  -->
-  <button wx:if="{{loggedIn}}" class="btn btn-danger btn-block logout-btn" bindtap="onLogout">
-    退出登录
-  </button>
-
-  <!--
-    协议入口：审核员会找这两条，用户行使查阅/更正/删除权也走这里。
-    未登录时也显示——条款不是登录之后才生效的。
-    隐私指引用微信官方页（wx.openPrivacyContract），用户协议是自有条款，
-    放在 packageMember 分包，不占主包。
-  -->
-  <view class="legal-links">
-    <text class="legal-link" bindtap="onOpenPrivacyContract">隐私保护指引</text>
-    <text class="legal-sep">·</text>
-    <text class="legal-link" bindtap="onGoAgreement">用户协议</text>
-  </view>
-
-  <view wx:if="{{isMock}}" class="mock-note">
-    当前为本地模拟数据，用于开发预览，并非真实成绩
-  </view>
+  <block wx:if="{{reviewEntry.visible || adminEntry.visible}}"><view class="experience-heading"><view class="experience-heading-title">管理工具</view><text class="experience-caption">按当前身份开放</text></view><view class="card profile-services">
+    <view wx:if="{{reviewEntry.visible}}" class="profile-service" bindtap="onGoReview"><view><view class="profile-service-title">会员审核</view><view class="experience-caption">{{reviewEntry.hint}}</view></view><text>›</text></view>
+    <view wx:if="{{adminEntry.visible}}" class="profile-service" bindtap="onGoAnnouncementsAdmin"><view><view class="profile-service-title">公告管理</view><view class="experience-caption">{{adminEntry.hint}}</view></view><text>›</text></view>
+  </view></block>
+  <view class="legal-links"><text class="legal-link" bindtap="onOpenPrivacyContract">隐私保护指引</text><text class="legal-sep">·</text><text class="legal-link" bindtap="onGoAgreement">用户协议</text></view>
+  <button wx:if="{{loggedIn}}" class="btn btn-danger btn-block logout-btn" bindtap="onLogout">退出登录</button>
+  <view wx:if="{{isMock}}" class="mock-note">当前为本地模拟数据，用于开发预览，并非真实成绩</view>
 </view>

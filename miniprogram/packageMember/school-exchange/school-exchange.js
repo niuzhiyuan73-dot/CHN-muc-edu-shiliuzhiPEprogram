@@ -226,7 +226,7 @@ Page({
     } catch (err) { this.update({ error: err.message || '操作失败，请重试' }); }
     finally { this.update({ busy: false }); }
   },
-  onCreate() {
+  async onCreate() {
     if (!this.data.canCreate) return;
     const schoolIds = this.data.selectedSchoolIds;
     if (schoolIds.length < 2 || schoolIds.length > 8 || !schoolIds.includes(this.data.schoolId)) {
@@ -241,6 +241,16 @@ Page({
     }
     const start = new Date(`${this.data.date}T${this.data.time}:00`);
     if (!Number.isFinite(start.getTime())) { this.update({ error: '请选择有效时间' }); return; }
+    if (typeof wx !== 'undefined' && wx.showModal) {
+      if (this.createConfirming || this.data.busy) return;
+      this.createConfirming = true;
+      const fingerprint = JSON.stringify([this.data.schoolId, this.data.selectedSchoolIds, this.data.schoolChoices, this.data.title, this.data.location, this.data.date, this.data.time, this.data.format, this.data.quota, this.data.groupCount, this.data.advancePerGroup, this.data.bronzeMode, this.data.gfReset]);
+      const summary = this.data.schoolChoices.filter(row => schoolIds.includes(row.schoolId)).map(row => row.name + ' ' + row.quota + ' 人').join('；');
+      const confirmed = await new Promise(resolve => wx.showModal({ title: '核对交流赛邀请', content: this.data.title + '\n' + this.data.date + ' ' + this.data.time + ' · ' + this.data.location + '\n' + this.data.formatLabel + ' · 总名额 ' + quota + ' 人\n' + summary,
+        success: result => resolve(Boolean(result.confirm)), fail: () => resolve(false) }));
+      this.createConfirming = false;
+      if (!confirmed || fingerprint !== JSON.stringify([this.data.schoolId, this.data.selectedSchoolIds, this.data.schoolChoices, this.data.title, this.data.location, this.data.date, this.data.time, this.data.format, this.data.quota, this.data.groupCount, this.data.advancePerGroup, this.data.bronzeMode, this.data.gfReset])) return;
+    }
     this.requestId = this.requestId || `create_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
     return this.write(api => api.createExchangeEvent({ requestId: this.requestId, title: this.data.title,
       location: this.data.location, startTime: start.toISOString(), participantSchoolIds: schoolIds,

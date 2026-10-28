@@ -1,3 +1,4 @@
+const { withDetailExperience } = require('../../templates/detail-experience');
 /**
  * 团队赛事：详情（报名 → 锁定 → 抽签 → 录分 → 发布 → 结算）
  * ============================================================
@@ -82,7 +83,7 @@ function roundLabelOf(round, totalRounds, format, stage) {
   return `第 ${round} 轮`;
 }
 
-Page({
+Page(withDetailExperience({
   data: {
     loading: true,
     error: '',
@@ -1092,4 +1093,4 @@ Page({
       matchId: matchid, approve: false, expectRevision: target && target.revision,
     }, '已驳回，请让队长重新录');
   },
-});
+}, 'team', 'refresh'));

@@ -95,7 +95,10 @@ test('学院名单页：学籍A院、授权B院时默认B院并可实际提交�
   await page.onLoad({ eventId: created.event.eventId });
   assert.equal(page.data.view.collegeId, 'c02');
   assert.equal(page.data.view.canSubmit, true);
-  assert.ok(page.data.view.candidates.some(row => row.memberId === 'u10'));
+  assert.deepEqual(page.data.view.candidates, [], '打开选择器前不读取全名单');
+  const candidatePage = await api.listSchoolMembers({ page: true, collegeId: page.data.view.collegeId, limit: 20 });
+  assert.ok(candidatePage.members.some(row => row.userId === 'u10'));
+  assert.ok(candidatePage.members.every(row => row.collegeId === 'c02'));
   page.onToggleMember(input(['u10'])); await page.onSubmit();
   assert.equal(page.data.submitting, false);
   const entries = await api.listCollegeEntries({ eventId: created.event.eventId });

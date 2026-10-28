@@ -59,6 +59,7 @@ Page({
   data: {
     /** 首屏加载中 */
     loading: true,
+    refreshing: false,
     /** 加载失败时的提示 */
     error: '',
     /** 视图模型，形状见 services/school-home-view.js。初值给空对象，WXML 展开才不会出错 */
@@ -102,6 +103,10 @@ Page({
     resetBranding();
     // 首次进入时 onLoad 已经加载过，这个紧随其后的 onShow 直接跳过
     if (!this.loaded) return undefined;
+    if (this.lastScopeKey && this.lastScopeKey !== this.scopeKey()) {
+      this.setData({ view: {}, loading: true });
+      return this.refresh();
+    }
     // 10 秒内切回来不重复取数：一轮就是 30+ 次读取，手快点两下 tab 就是两轮
     if (Date.now() - (this.lastLoadedAt || 0) < ON_SHOW_TTL) return undefined;
     return this.refresh();
@@ -123,6 +128,7 @@ Page({
     try {
       const cached = wx.getStorageSync(HOME_CACHE_KEY);
       if (!cached || !cached.view || !cached.ts) return;
+      if (cached.scopeKey !== this.scopeKey()) return;
       if (Date.now() - cached.ts > HOME_CACHE_TTL) return;
       this.setData({
         loading: false,
@@ -140,7 +146,7 @@ Page({
   /** 把这一份视图模型存起来，供下次冷启动先画一屏 */
   saveCache(view) {
     try {
-      wx.setStorageSync(HOME_CACHE_KEY, { view, ts: Date.now() });
+      wx.setStorageSync(HOME_CACHE_KEY, { view, ts: Date.now(), scopeKey: this.scopeKey() });
     } catch (err) {
       console.error('[index] 写入首页缓存失败', err);
     }
@@ -153,6 +159,12 @@ Page({
     if (typeof app.getUserInfo === 'function') return app.getUserInfo();
     return app.globalData ? app.globalData.userInfo : null;
   },
+  scopeKey() {
+    const user = this.currentUser();
+    const session = require('../../services/school-session.js');
+    return JSON.stringify([session.getSchoolId() || 'muc', user && (user._id || user.userId), runtime.isMockNow()]);
+  },
+  onUnload() { this.loadSeq = (this.loadSeq || 0) + 1; },
 
   /** 当前全局协会。真机上由 app 持有，测试环境下回落到门面 */
   currentAssociation() {
@@ -174,24 +186,30 @@ Page({
    */
   async refresh() {
     const seq = this.loadSeq = (this.loadSeq || 0) + 1;
+    this.setData({ refreshing: true });
     try {
-      const user = this.currentUser();
       // 学校切换器单独加载；装载完按当前学校聚合首页内容。
       // 失败只收起控件，不该拖垮首页内容。
-      await this.loadSchoolScope();
+      await this.loadSchoolScope(seq);
+      if (seq !== this.loadSeq) return;
+      const user = this.currentUser();
+      const scopeKey = this.scopeKey();
       const schoolSession = require('../../services/school-session.js');
       const view = await loadSchoolHomeView({
         schoolId: schoolSession.getSchoolId() || 'muc',
         viewerId: user ? user._id : '',
       });
       if (seq !== this.loadSeq) return;
+      if (scopeKey !== this.scopeKey()) return this.refresh();
       this.loaded = true;
       // onShow 的去抖窗口以「上一次成功装载」为起点：失败不该顺延窗口，
       // 否则一次网络抖动会让接下来 10 秒都不再重试
       this.lastLoadedAt = Date.now();
+      this.lastScopeKey = this.scopeKey();
       this.saveCache(view);
       this.setData({
         loading: false,
+        refreshing: false,
         error: '',
         view,
         auth: resolveAuthState(user),
@@ -201,12 +219,11 @@ Page({
       console.error('[index] 首页加载失败', err);
       if (seq !== this.loadSeq) return;
       this.loaded = true;
-      // 屏上已经有内容（刚才的缓存，或上一次成功的结果）就不换成整屏报错：
-      // 让人看着旧内容、知道「可能不是最新」，比把页面变成一句错误有用
-      const hasContent = Boolean(this.data.view && this.data.view.announcements);
-      if (hasContent) return;
+      // 读取失败清除旧快照，避免旧学校内容继续显示。
       this.setData({
         loading: false,
+        refreshing: false,
+        view: {},
         error: '首页数据加载失败，请下拉重试',
       });
     }
@@ -261,7 +278,7 @@ Page({
    *
    * @returns {Promise<void>}
    */
-  async loadSchoolScope() {
+  async loadSchoolScope(sequence) {
     try {
       const service = require('../../services/school-identity.js');
       const schoolSession = require('../../services/school-session.js');
@@ -271,6 +288,7 @@ Page({
         api.getSchoolDirectory(),
         api.getSchoolIdentitySession(),
       ]);
+      if (sequence !== undefined && sequence !== this.loadSeq) return;
       if (!directory || !directory.ok) {
         this.setData({ schoolList: [], readOnlySchool: false });
         return;
@@ -287,6 +305,7 @@ Page({
         readOnlySchool: schoolSession.isReadOnly(),
       });
     } catch (err) {
+      if (sequence !== undefined && sequence !== this.loadSeq) return;
       console.error('[index] 学校切换器加载失败', err);
       this.setData({ schoolList: [], readOnlySchool: false });
     }
@@ -306,6 +325,7 @@ Page({
       schoolId: id,
       schoolName: found ? found.name : id,
       readOnlySchool: schoolSession.isReadOnly(),
+      view: {}, loading: true,
     });
     return this.refresh();
   },
@@ -314,6 +334,8 @@ Page({
   onGoLogin() {
     wx.navigateTo({ url: '/pages/login/login' });
   },
+
+  onGoAssociations() { return wx.switchTab({ url: '/pages/association/association' }); },
 
   /**
    * 去「赛事」看全部赛事。赛事板块现在收在「协会工作台」里，直接跳到工作台的
@@ -338,7 +360,8 @@ Page({
   },
 
   /** 点公告的一条：公告是学校级的一条通道，不必先切协会 */
-  onOpenAnnouncement() {
-    return wx.navigateTo({ url: '/packageMember/announcements/announcements' });
+  onOpenAnnouncement(event) {
+    const id = event?.currentTarget?.dataset?.noticeId;
+    return wx.navigateTo({ url: '/packageMember/announcements/announcements' + (id ? `?noticeId=${encodeURIComponent(id)}` : '') });
   },
 });

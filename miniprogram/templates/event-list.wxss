@@ -124,3 +124,5 @@
   font-size: var(--font-sm);
   color: var(--color-primary);
 }
+
+.event-row{gap:var(--space-md)}.event-title{flex-wrap:wrap;gap:var(--space-xs)}.event-name{white-space:normal;overflow-wrap:anywhere;line-height:1.45}.event-meta{font-size:var(--font-caption);line-height:1.6;overflow-wrap:anywhere}.event-publish,.event-pin{min-height:44px;display:flex;align-items:center;justify-content:center;box-sizing:border-box}.event-side{max-width:30%;text-align:right}

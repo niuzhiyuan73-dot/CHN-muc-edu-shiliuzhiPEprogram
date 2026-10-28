@@ -1,3 +1,4 @@
+const { withNoticeExpansion } = require('../../templates/notice-experience');
 /**
  * 公告管理页
  * ============================================================
@@ -35,7 +36,7 @@ const { LEGACY_SCHOOL_ID } = require('../../utils/school.js');
 /** 下架前的二次确认文案 */
 const ARCHIVE_CONFIRM = '下架后这条公告不再对会员显示，但仍会留在台账里，确定下架吗？';
 
-Page({
+Page(withNoticeExpansion({
   data: {
     /** 首屏加载中 */
     loading: true,
@@ -195,4 +196,4 @@ Page({
       if (!this.unloaded) this.setData({ acting: false });
     }
   },
-});
+}));

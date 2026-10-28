@@ -1,8 +1,10 @@
+<import src="../../templates/form-experience.wxml" />
 <!--
   发布赛事
   表单的校验在 services/event.js，这里只渲染，并把用户的操作交回去。
 -->
 <view class="page-container {{themeClass}}">
+  <template is="form-error-summary" data="{{formErrorItems}}" />
 
   <!-- 没有发布权时不给表单：填完再被拒，比一开始就说清楚糟得多 -->
   <view wx:if="{{blockReason}}" class="empty-state">
@@ -15,7 +17,7 @@
 
     <!-- ========== 基本信息 ========== -->
     <view class="card">
-      <view class="card-title">赛事信息</view>
+      <button class="experience-fold-head" data-group="group-3" bindtap="onToggleFormGroup"><text>赛事信息</text><text>{{formFolds['group-3'] ? '展开 ＋' : '收起 －'}}</text></button><view hidden="{{formFolds['group-3']}}">
 
       <view class="field-row">
         <view class="field-label">赛事名称</view>
@@ -27,7 +29,7 @@
           bindinput="onInputTitle"
         />
       </view>
-      <view wx:if="{{errors.title}}" class="field-error">{{errors.title}}</view>
+      <view wx:if="{{errors.title}}" id="form-title" class="field-error">{{errors.title}}</view>
 
       <view class="field-row">
         <view class="field-label">项目</view>
@@ -35,7 +37,7 @@
           <view class="field-value">{{matchTypes[matchTypeIndex]}} ›</view>
         </picker>
       </view>
-      <view wx:if="{{errors.matchType}}" class="field-error">{{errors.matchType}}</view>
+      <view wx:if="{{errors.matchType}}" id="form-matchType" class="field-error">{{errors.matchType}}</view>
 
       <!-- 组别：声明本赛事限什么性别。留空「不限」即不按性别拦人 -->
       <view class="field-row">
@@ -44,7 +46,7 @@
           <view class="field-value">{{disciplines[disciplineIndex]}} ›</view>
         </picker>
       </view>
-      <view wx:if="{{errors.discipline}}" class="field-error">{{errors.discipline}}</view>
+      <view wx:if="{{errors.discipline}}" id="form-discipline" class="field-error">{{errors.discipline}}</view>
       <view class="field-hint">选了男单 / 女单（男双 / 女双）后，只有相符性别的会员能报名；混双按「一男一女」配对；不限则不拦</view>
 
       <!-- 赛制：单打双打都开放，可选赛制一致。预填单败淘汰，不选即旧行为 -->
@@ -55,7 +57,7 @@
             <view class="field-value">{{formats[formatIndex]}} ›</view>
           </picker>
         </view>
-        <view wx:if="{{errors.format}}" class="field-error">{{errors.format}}</view>
+        <view wx:if="{{errors.format}}" id="form-format" class="field-error">{{errors.format}}</view>
 
         <!-- 小组数只对「小组赛类」赛制有意义（循环类恒为单组） -->
         <block wx:if="{{form.format === 'group_knockout' || form.format === 'group_double_elim'}}">
@@ -65,7 +67,7 @@
               <view class="field-value">{{groupCounts[groupCountIndex]}} ›</view>
             </picker>
           </view>
-          <view wx:if="{{errors.groupCount}}" class="field-error">{{errors.groupCount}}</view>
+          <view wx:if="{{errors.groupCount}}" id="form-groupCount" class="field-error">{{errors.groupCount}}</view>
         </block>
 
         <!-- 出线人数：小组赛类与「循环赛+淘汰」都要（后者是单组取前 N） -->
@@ -76,7 +78,7 @@
               <view class="field-value">{{advanceOptions[advanceIndex]}} ›</view>
             </picker>
           </view>
-          <view wx:if="{{errors.advancePerGroup}}" class="field-error">{{errors.advancePerGroup}}</view>
+          <view wx:if="{{errors.advancePerGroup}}" id="form-advancePerGroup" class="field-error">{{errors.advancePerGroup}}</view>
           <view class="field-hint">
             {{form.format === 'round_robin_knockout' ? '循环赛按战绩取前几名进淘汰赛' : '小组循环后按战绩取每组前几名进淘汰赛，跨组交叉对阵'}}
           </view>
@@ -98,7 +100,7 @@
             <switch checked="{{form.placementMode === 'top8'}}" bindchange="onToggleTop8" color="#2f7d4f" />
           </view>
           <view class="field-hint">打开后八强负者加赛两轮，分出第 5、6、7、8 名；签表不足 8 人时不启用</view>
-          <view wx:if="{{errors.placementMode}}" class="field-error">{{errors.placementMode}}</view>
+          <view wx:if="{{errors.placementMode}}" id="form-placementMode" class="field-error">{{errors.placementMode}}</view>
         </block>
       </block>
 
@@ -111,7 +113,7 @@
           </view>
         </picker>
       </view>
-      <view wx:if="{{errors.level}}" class="field-error">{{errors.level}}</view>
+      <view wx:if="{{errors.level}}" id="form-level" class="field-error">{{errors.level}}</view>
       <view class="field-hint">等级同时定等级分与名次分：一级 每场 K=32、名次 ×4；二级 K=24、名次 ×2；三级 K=16、名次 ×1</view>
 
       <!-- 三四名赛只对单败签表有意义：双败的名次由败者组自然排出 -->
@@ -124,7 +126,7 @@
             </view>
           </picker>
         </view>
-        <view wx:if="{{errors.bronzeMode}}" class="field-error">{{errors.bronzeMode}}</view>
+        <view wx:if="{{errors.bronzeMode}}" id="form-bronzeMode" class="field-error">{{errors.bronzeMode}}</view>
         <view class="field-hint">并列：两位半决赛负者都记季军；打三四名：加赛一场，分出第三、第四名</view>
       </block>
 
@@ -138,7 +140,7 @@
             </view>
           </picker>
         </view>
-        <view wx:if="{{errors.seedMode}}" class="field-error">{{errors.seedMode}}</view>
+        <view wx:if="{{errors.seedMode}}" id="form-seedMode" class="field-error">{{errors.seedMode}}</view>
 
         <view class="field-row">
           <view class="field-label">种子数量</view>
@@ -146,18 +148,18 @@
             <view class="field-value">{{seedCounts[seedCountIndex]}} ›</view>
           </picker>
         </view>
-        <view wx:if="{{errors.seedCount}}" class="field-error">{{errors.seedCount}}</view>
+        <view wx:if="{{errors.seedCount}}" id="form-seedCount" class="field-error">{{errors.seedCount}}</view>
         <view class="field-hint">
           {{form.matchType === 3
             ? '双打按抽签时的搭档组合排种子：等级分取两人双打分之和，手工指定则按点名顺序两人一组；数量指种子组数。只在报名阶段由管理员手动抽签'
             : '抽签时按来源排出种子，强手分散、轮空优先给高种子；只在报名阶段由管理员手动抽签'}}
         </view>
       </block>
-    </view>
+    </view></view>
 
     <!-- ========== 时间与场地 ========== -->
     <view class="card">
-      <view class="card-title">时间与场地</view>
+      <button class="experience-fold-head" data-group="group-2" bindtap="onToggleFormGroup"><text>时间与场地</text><text>{{formFolds['group-2'] ? '展开 ＋' : '收起 －'}}</text></button><view hidden="{{formFolds['group-2']}}">
 
       <view class="field-row">
         <view class="field-label">日期</view>
@@ -176,7 +178,7 @@
           </view>
         </picker>
       </view>
-      <view wx:if="{{errors.startTime}}" class="field-error">{{errors.startTime}}</view>
+      <view wx:if="{{errors.startTime}}" id="form-startTime" class="field-error">{{errors.startTime}}</view>
 
       <view class="field-row">
         <view class="field-label">场地</view>
@@ -188,7 +190,7 @@
           bindinput="onInputLocation"
         />
       </view>
-      <view wx:if="{{errors.location}}" class="field-error">{{errors.location}}</view>
+      <view wx:if="{{errors.location}}" id="form-location" class="field-error">{{errors.location}}</view>
 
       <view class="field-row">
         <view class="field-label">场地数</view>
@@ -200,7 +202,7 @@
           bindinput="onInputCourtCount"
         />
       </view>
-      <view wx:if="{{errors.courtCount}}" class="field-error">{{errors.courtCount}}</view>
+      <view wx:if="{{errors.courtCount}}" id="form-courtCount" class="field-error">{{errors.courtCount}}</view>
 
       <view class="field-row">
         <view class="field-label">名额</view>
@@ -212,13 +214,13 @@
           bindinput="onInputQuota"
         />
       </view>
-      <view wx:if="{{errors.quota}}" class="field-error">{{errors.quota}}</view>
+      <view wx:if="{{errors.quota}}" id="form-quota" class="field-error">{{errors.quota}}</view>
       <view class="field-hint">本项目最多 {{capacity}} 人；不填写或填 0 仍受此上限限制。</view>
-    </view>
+    </view></view>
 
     <!-- ========== 报名资格（小组限制，B6） ========== -->
     <view class="card">
-      <view class="card-title">报名资格</view>
+      <button class="experience-fold-head" data-group="group-1" bindtap="onToggleFormGroup"><text>报名资格</text><text>{{formFolds['group-1'] ? '展开 ＋' : '收起 －'}}</text></button><view hidden="{{formFolds['group-1']}}">
       <view class="card-subtitle">不限，或只限若干小组成员报名（命中任一即可）</view>
 
       <picker mode="selector" range="{{audienceModes}}" value="{{audienceIndex}}" bindchange="onPickAudience">
@@ -238,11 +240,11 @@
         </view>
         <view wx:if="{{groups.length === 0}}" class="field-error">本协会还没有小组，请先在协会空间建立小组</view>
       </block>
-    </view>
+    </view></view>
 
     <!-- ========== 说明 ========== -->
     <view class="card">
-      <view class="card-title">赛事说明</view>
+      <button class="experience-fold-head" data-group="group-0" bindtap="onToggleFormGroup"><text>赛事说明</text><text>{{formFolds['group-0'] ? '展开 ＋' : '收起 －'}}</text></button><view hidden="{{formFolds['group-0']}}">
       <view class="card-subtitle">把赛制、报名要求写清楚，最多 {{descriptionMax}} 个字</view>
 
       <textarea
@@ -252,17 +254,18 @@
         placeholder="例如：淘汰赛制，每局 11 分三局两胜，请提前 15 分钟到场热身。"
         bindinput="onInputDescription"
       />
-      <view wx:if="{{errors.description}}" class="field-error">{{errors.description}}</view>
-    </view>
+      <view wx:if="{{errors.description}}" id="form-description" class="field-error">{{errors.description}}</view>
+    </view></view>
 
     <view wx:if="{{errorText}}" class="submit-error">{{errorText}}</view>
 
+    <template is="form-review" data="{{formReview, submitting}}" />
     <view class="submit-bar">
       <view class="btn btn-outline submit-btn" bindtap="onCancel">取消</view>
       <view
         class="btn btn-primary submit-btn {{submitting ? 'btn-disabled' : ''}}"
-        bindtap="onSubmit"
-      >发布</view>
+        bindtap="onPrepareFormReview"
+      >核对后发布</view>
     </view>
 
     <view wx:if="{{isMock}}" class="mock-note">

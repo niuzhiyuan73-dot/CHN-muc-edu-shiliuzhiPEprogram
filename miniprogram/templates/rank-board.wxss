@@ -259,3 +259,5 @@
   color: var(--color-text-tertiary);
   margin-top: 2rpx;
 }
+
+.rank-no,.rank-value,.my-rank-value{font-variant-numeric:tabular-nums}.rank-value-box{min-width:110rpx;text-align:right}.rank-name{flex-wrap:wrap;overflow-wrap:anywhere}.rank-name>text:first-child{min-width:0;white-space:normal;overflow-wrap:anywhere}.search-bar,.search-clear{min-height:44px;height:auto;box-sizing:border-box}.search-clear{display:flex;align-items:center;justify-content:center;min-width:44px}.rank-no.is-gold,.rank-no.is-silver,.rank-no.is-bronze{color:var(--color-text-strong)}

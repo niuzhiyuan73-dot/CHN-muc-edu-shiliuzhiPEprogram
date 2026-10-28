@@ -209,7 +209,7 @@ test('聚合 —— 公告超过单页限量时如实带 hasMore，概况赛事�
 
   // 公告服务端单页限量 50（无 offset）：首页展示第一页的前 3 条，如实带上 hasMore
   assert.strictEqual(view.announcements.hasMore, true);
-  assert.strictEqual(view.announcements.rows.length, 3, '首屏仍只展示 3 条');
+  assert.strictEqual(view.announcements.rows.length, 2, '首屏展示两条公告摘要');
   assert.strictEqual(view.announcements.rows[0].pinned, true, '置顶在最前');
   // 概况的赛事数用服务端返回的 totalAll（筛选前的总量），不再靠「循环取完再数」
   // 协会数由注册表决定（按 N 个设计），新增协会时聚合口径自然扩展，不必改数字

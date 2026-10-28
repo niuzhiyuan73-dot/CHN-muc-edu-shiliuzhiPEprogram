@@ -1,0 +1,36 @@
+/* 跨分包的界面骨架：主题继承各页，通用类只在 app.wxss 定义。 */
+.experience-heading { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-sm); margin: var(--space-lg) 0 var(--space-sm); }
+.experience-heading-title { font-size: var(--font-lg); font-weight: 600; color: var(--color-text); }
+.experience-caption { font-size: var(--font-caption); color: var(--color-text-secondary); line-height: 1.6; }
+.experience-link { min-height: var(--control-min-height); display: inline-flex; align-items: center; color: var(--color-primary-dark); font-size: var(--font-sm); padding: 0 var(--space-xs); }
+.experience-progress { display: flex; flex-wrap: wrap; gap: var(--space-sm); margin: var(--space-md) 0; }
+.experience-step { flex: 1; min-width: 100rpx; color: var(--color-text-secondary); font-size: var(--font-caption); padding-bottom: var(--space-sm); border-bottom: 4rpx solid var(--color-divider); }
+.experience-step.is-current { color: var(--color-primary-dark); border-bottom-color: var(--color-primary); font-weight: 600; }
+.experience-step.is-done { border-bottom-color: var(--color-primary-light); }
+.experience-anchor-nav { display: flex; flex-wrap: wrap; gap: var(--space-sm); margin-bottom: var(--space-md); }
+.experience-anchor { min-height: var(--control-min-height); display: flex; align-items: center; justify-content: center; padding: 0 var(--space-md); border-radius: var(--radius-sm); background: var(--color-card); color: var(--color-text-secondary); font-size: var(--font-sm); }
+.experience-safe-page { padding-bottom: calc(150rpx + env(safe-area-inset-bottom)); }
+.experience-action-bar { position: fixed; bottom: 0; left: 0; right: 0; z-index: 20; background: var(--color-card); border-top: 2rpx solid var(--color-border); padding: var(--space-sm) var(--space-md); padding-bottom: calc(var(--space-sm) + env(safe-area-inset-bottom)); display: flex; align-items: center; gap: var(--space-md); box-sizing: border-box; }
+.experience-action-bar .experience-action-main { flex: 1; min-width: 0; }
+.experience-action-context { font-size: var(--font-caption); color: var(--color-text-secondary); max-width: 35%; overflow-wrap: anywhere; }
+.experience-fold-head { width:100%; min-height: var(--control-min-height); display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); }
+.experience-fold-head,button.experience-link{background:transparent;border:0;margin:0;padding:var(--space-xs) 0;font-size:var(--font-body);color:var(--color-text);line-height:1.5;text-align:left;border-radius:0}
+.experience-fold-head::after,button.experience-link::after{border:0}
+.experience-fold-head text:first-child{font-weight:600;min-width:0;overflow-wrap:anywhere}.experience-fold-head text:last-child{font-size:var(--font-caption);color:var(--color-primary-dark);flex-shrink:0}
+.experience-fold-title { font-weight: 600; font-size: var(--font-md); min-width: 0; overflow-wrap: anywhere; }
+.experience-fold-action { color: var(--color-primary-dark); font-size: var(--font-caption); flex-shrink: 0; }
+.experience-error-summary { background: var(--color-danger-light); color: var(--color-danger-text); border-radius: var(--radius-md); padding: var(--space-md); margin-bottom: var(--space-md); }
+.experience-error-item { min-height: var(--control-min-height); display: flex; align-items: center; font-size: var(--font-sm); }
+.experience-review { padding: var(--space-md); margin-bottom: var(--space-md); background: var(--color-primary-light); border-radius: var(--radius-md); }
+.experience-review-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-sm); padding: var(--space-xs) 0; font-size: var(--font-sm); overflow-wrap: anywhere; }
+.experience-review-row text:last-child { color: var(--color-text); }
+.experience-selected { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-xs); padding: var(--space-sm) 0; font-size: var(--font-caption); }
+.experience-selected-chip { background: var(--color-primary-light); color: var(--color-primary-dark); padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); min-height: 32px; box-sizing: border-box; }
+.experience-update { color: var(--color-text-secondary); font-size: var(--font-caption); padding: var(--space-xs) 0; }
+.experience-data-table { overflow-x: auto; }
+.experience-data-table-inner { min-width: 650rpx; }
+.experience-skeleton { padding: var(--space-lg); background: var(--color-card); border-radius: var(--radius-md); margin-bottom: var(--space-md); }
+.experience-skeleton-line { height: 28rpx; background: var(--color-divider); border-radius: var(--radius-sm); margin: var(--space-sm) 0; }
+.experience-skeleton-line.is-short { width: 45%; }
+@media (max-width: 360px) { .experience-action-bar { gap: var(--space-sm); } .experience-anchor { padding: 0 var(--space-sm); } }
+@media (prefers-reduced-motion: reduce) { .experience-step, .experience-anchor { transition: none; } }

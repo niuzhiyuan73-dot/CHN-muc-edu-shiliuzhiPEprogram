@@ -55,24 +55,8 @@
       </view>
       <view class="card-subtitle">只能从本院在册会员中选择；名单内未上场的队员即为替补</view>
 
-      <view wx:if="{{view.candidates.length === 0}}" class="empty-note">
-        本院还没有可选的会员
-      </view>
-
-      <checkbox-group bindchange="onToggleMember">
-        <label
-          wx:for="{{view.candidates}}"
-          wx:key="memberId"
-          class="member-row"
-        >
-          <checkbox value="{{item.memberId}}" checked="{{item.checked}}" color="#2f7d4f" />
-          <view class="member-avatar">
-            <image wx:if="{{item.avatarUrl}}" class="member-avatar-img" src="{{item.avatarUrl}}" mode="aspectFill" />
-            <text wx:else>{{item.avatarText}}</text>
-          </view>
-          <view class="member-name">{{item.nickName}}{{item.genderLabel ? ' · ' + item.genderLabel : ''}}</view>
-        </label>
-      </checkbox-group>
+      <view class="experience-selected"><text wx:for="{{selectedMembers}}" wx:key="userId" class="experience-selected-chip">{{item.nickName}}</text></view>
+      <button class="btn btn-outline" disabled="{{submitting}}" bindtap="onOpenSelector">搜索并选择本院会员</button>
     </view>
 
     <!-- ========== 备注 ========== -->
@@ -97,4 +81,5 @@
     </view>
 
   </block>
+  <member-selector active="{{selectorOpen}}" scope="{{selectorScope}}" college-id="{{view.collegeId}}" selected="{{selectedMembers}}" bind:cancel="onCloseSelector" bind:confirm="onConfirmSelector" />
 </view>

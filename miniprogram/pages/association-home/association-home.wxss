@@ -9,13 +9,13 @@
 .ws-head {
   display: flex;
   align-items: center;
-  padding: var(--space-md) var(--space-sm);
+  padding: var(--space-sm) 0;
 }
 
 .ws-head-glyph {
   flex: none;
-  width: 72rpx;
-  height: 72rpx;
+  width: 64rpx;
+  height: 64rpx;
   display: flex;
   align-items: center;
   justify-content: center;

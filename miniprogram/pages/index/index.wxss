@@ -1,206 +1,32 @@
-/* 首页样式 */
-
-/* ---------- 顶部品牌区 ---------- */
-
-.hero {
-  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
-  border-radius: var(--radius-lg);
-  padding: var(--space-xl) var(--space-lg);
-  margin-bottom: var(--space-md);
-  color: #ffffff;
-  position: relative;
-  overflow: hidden;
-}
-
-/* 标题与切协会徽章同一行：标题左、徽章右。标题长时换行，徽章不挤扁 */
-.hero-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-sm);
-}
-
-.hero-title {
-  font-size: var(--font-lg);
-  font-weight: 600;
-  flex: 1;
-  min-width: 0;
-  margin-bottom: var(--space-xs);
-}
-
-/* 右上角两个徽章（协会 / 学校）竖排，标题长时也不挤 */
-.hero-badges {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 8rpx;
-  flex-shrink: 0;
-}
-
-.hero-subtitle {
-  font-size: var(--font-sm);
-  opacity: 0.85;
-}
-
-/* 只读浏览提示条：切到外校时出现在品牌区下方 */
-.readonly-banner {
-  margin-bottom: var(--space-md);
-  padding: var(--space-sm) var(--space-md);
-  border-radius: var(--radius-md);
-  background: var(--color-warning-light);
-  color: var(--color-warning-text);
-  font-size: var(--font-sm);
-  line-height: 1.6;
-}
-
-.hero-badge {
-  display: inline-block;
-  margin-top: var(--space-md);
-  padding: 0 var(--space-sm);
-  height: 40rpx;
-  line-height: 40rpx;
-  border-radius: 20rpx;
-  font-size: var(--font-xs);
-  background: rgba(255, 255, 255, 0.2);
-}
-
-/* ---------- 加载与错误 ---------- */
-
-.load-error {
-  font-size: var(--font-sm);
-  color: var(--color-danger);
-  padding: var(--space-xl) var(--space-md);
-  text-align: center;
-  line-height: 1.6;
-}
-
-/* ---------- 卡片标题行 ---------- */
-
-.card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-sm);
-}
-
-/* card-title 自带下边距，放进标题行后交给 card-head 统一控制 */
-.card-head .card-title {
-  margin-bottom: 0;
-}
-
-.card-more {
-  font-size: var(--font-sm);
-  color: var(--color-primary);
-}
-
-/* ---------- 近期赛事 ---------- */
-
-.event-item {
-  padding: var(--space-md) 0;
-  border-bottom: 2rpx solid var(--color-divider);
-}
-
-.event-item:last-child {
-  border-bottom: none;
-}
-
-.event-head {
-  display: flex;
-  align-items: center;
-}
-
-.event-head .tag {
-  flex-shrink: 0;
-  margin-right: var(--space-xs);
-}
-
-.event-title {
-  font-size: var(--font-md);
-  font-weight: 500;
-  flex: 1;
-  min-width: 0;
-}
-
-.event-meta {
-  font-size: var(--font-xs);
-  color: var(--color-text-tertiary);
-  margin-top: var(--space-xs);
-}
-
-.event-mine {
-  color: var(--color-success);
-}
-
-/* ---------- 公告 ---------- */
-
-.notice-item {
-  padding: var(--space-md) 0;
-  border-bottom: 2rpx solid var(--color-divider);
-}
-
-.notice-item:last-child {
-  border-bottom: none;
-}
-
-.notice-head {
-  display: flex;
-  align-items: center;
-}
-
-.notice-head .tag {
-  flex-shrink: 0;
-  margin-right: var(--space-xs);
-}
-
-.notice-title {
-  font-size: var(--font-md);
-  font-weight: 500;
-  flex: 1;
-  min-width: 0;
-}
-
-.notice-content {
-  font-size: var(--font-sm);
-  color: var(--color-text-secondary);
-  line-height: 1.6;
-  margin-top: var(--space-xs);
-}
-
-/* 公告脚注：所属协会在左、日期在右 */
-.notice-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: var(--space-xs);
-}
-
-.notice-date {
-  font-size: var(--font-xs);
-  color: var(--color-text-tertiary);
-}
-
-/* 内容所属协会的小胶囊。跨协会聚合时，每条都得交代自己是谁家的 */
-.assoc-chip {
-  display: inline-block;
-  padding: 0 var(--space-xs);
-  border-radius: 8rpx;
-  font-size: var(--font-xs);
-  color: var(--color-text-secondary);
-  background: var(--color-divider);
-}
-
-.notice-more {
-  text-align: center;
-  font-size: var(--font-xs);
-  color: var(--color-text-tertiary);
-  padding-top: var(--space-sm);
-}
-
-/* ---------- 页脚概况 ---------- */
-
-.home-stats {
-  text-align: center;
-  font-size: var(--font-sm);
-  color: var(--color-text-secondary);
-  padding: var(--space-md) 0 0;
-}
+.hero { padding: var(--space-sm) 0 var(--space-md); }
+.hero-head { display: flex; align-items: center; gap: var(--space-md); justify-content: space-between; }
+.hero-main { flex: 1; min-width: 0; }
+.hero-title { font-size: var(--font-xl); font-weight: 600; color: var(--color-text); }
+.hero-school { font-size: var(--font-sm); color: var(--color-text-secondary); margin-top: var(--space-xs); overflow-wrap: anywhere; }
+.hero-badges { display: flex; align-items: flex-end; flex-direction: column; gap: var(--space-xs); }
+.home-demo { display: inline-block; font-size: var(--font-caption); color: var(--color-warning-text); background: var(--color-warning-light); padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); margin-top: var(--space-sm); }
+.readonly-banner { background: var(--color-warning-light); color: var(--color-warning-text); border-radius: var(--radius-md); padding: var(--space-md); font-size: var(--font-sm); }
+.home-text-button { background: transparent; border: none; padding: var(--space-xs); margin: 0; min-height: var(--control-min-height); color: var(--color-primary-dark); font-size: var(--font-sm); display: flex; align-items: center; }
+.home-text-button::after { border: none; }
+.home-event { background: var(--color-card); border-radius: var(--radius-md); padding: var(--space-md); margin-bottom: var(--space-sm); }
+.home-event.is-featured { padding: var(--space-lg); border-top: 6rpx solid var(--color-primary); }
+.home-event-top { display: flex; align-items: center; gap: var(--space-md); }
+.home-event-main { flex: 1; min-width: 0; }
+.home-date { width: 148rpx; flex-shrink: 0; color: var(--color-primary-dark); font-size: var(--font-caption); display: flex; align-items: center; flex-direction: column; padding-right: var(--space-md); border-right: 2rpx solid var(--color-divider); }
+.home-time { font-size: var(--font-lg); font-weight: 600; font-variant-numeric: tabular-nums; }
+.event-title { font-size: var(--font-md); font-weight: 600; margin: var(--space-xs) 0; overflow-wrap: anywhere; }
+.event-meta { font-size: var(--font-caption); color: var(--color-text-secondary); }
+.event-mine { color: var(--color-success-text); }
+.home-event-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-sm); margin-top: var(--space-md); font-size: var(--font-caption); color: var(--color-text-secondary); }
+.home-event-action { display: flex; justify-content: space-between; align-items: center; background: var(--color-primary-dark); color: var(--color-on-primary); border-radius: var(--radius-sm); padding: var(--space-sm) var(--space-md); min-height: var(--control-min-height); box-sizing: border-box; margin-top: var(--space-md); font-size: var(--font-sm); }
+.home-notices { padding: 0 var(--space-md); box-shadow: none; }
+.notice-item { padding: var(--space-md) 0; border-bottom: 2rpx solid var(--color-divider); }
+.notice-item:last-child { border-bottom: none; }
+.notice-head { display: flex; align-items: baseline; gap: var(--space-xs); }
+.notice-pin { color: var(--color-honor); font-size: var(--font-caption); flex-shrink: 0; }
+.notice-title { font-size: var(--font-body); font-weight: 500; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.notice-content { font-size: var(--font-sm); color: var(--color-text-secondary); margin-top: var(--space-xs); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.notice-date { font-size: var(--font-caption); color: var(--color-text-secondary); margin-top: var(--space-xs); }
+.home-stats { font-size: var(--font-caption); color: var(--color-text-secondary); text-align: center; margin: var(--space-lg) 0; }
+.home-guest .btn { margin-top: var(--space-md); }
+@media (max-width: 360px) { .home-date { width: 100rpx; padding-right: var(--space-sm); } .home-event.is-featured { padding: var(--space-md); } }

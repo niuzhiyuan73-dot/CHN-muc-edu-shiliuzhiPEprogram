@@ -448,3 +448,13 @@
   font-size: var(--font-sm);
   color: var(--color-primary);
 }
+
+.match-line1, .match-actions { flex-wrap: wrap; gap: var(--space-sm); }
+.match-teams { align-items: center; gap: var(--space-sm); }
+.match-score-center { flex: 0 1 36%; min-width: 120rpx; text-align: center; }
+.match-score-center .match-score { font-variant-numeric: tabular-nums; font-size: var(--font-display); padding: 0; margin: 0; }
+.match-score-center .live-tag, .match-score-center .live-games { display: block; font-size: var(--font-caption); }
+.match-teams .team { flex: 1; min-width: 0; overflow-wrap: anywhere; white-space: normal; }
+.match-actions .mini-btn { min-height: var(--control-min-height); box-sizing: border-box; display: flex; align-items: center; justify-content: center; }
+.match-format { color: var(--color-text-secondary); font-size: var(--font-caption); }
+@media (prefers-reduced-motion: reduce) { .match-row { transition: none; } }

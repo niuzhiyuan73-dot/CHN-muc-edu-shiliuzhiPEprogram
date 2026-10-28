@@ -1,9 +1,12 @@
 const service = require('../../services/school-identity.js');
+const { activeAssociations } = require('../../utils/associations.js');
+const associationScope = require('../../services/association-scope.js');
 const STATUS_LABEL = { pending: '待审核', active: '已通过', rejected: '已驳回', left: '已离校', disabled: '已停用' };
 
 Page({
   data: {
     schoolId: 'muc', schoolName: '中央民族大学', schools: [], schoolIndex: 0,
+    association: 'pkb', associationName: '', associations: [], associationIndex: 0,
     colleges: [], collegeIndex: -1, collegeName: '', studentId: '',
     loading: true, submitting: false, error: '', notice: '',
     user: null, account: null, statusText: '', canApply: false, canReview: false, applications: [],
@@ -15,7 +18,14 @@ Page({
     /** 我在本校是否已有待审的转校申请 */
     transferPending: false,
   },
-  onLoad() { this.unloaded = false; return this.reload(); },
+  onLoad() {
+    this.unloaded = false;
+    const associations = activeAssociations();
+    const association = associationScope.getAssociation();
+    const associationIndex = Math.max(0, associations.findIndex(row => row.id === association));
+    this.update({ associations, association, associationIndex, associationName: associations[associationIndex]?.name || association });
+    return this.reload();
+  },
   onUnload() { this.unloaded = true; this.loadVersion = (this.loadVersion || 0) + 1; },
   onPullDownRefresh() {
     if (this.data.submitting) { wx.stopPullDownRefresh(); return; }
@@ -25,7 +35,7 @@ Page({
   async reload() {
     const version = this.loadVersion = (this.loadVersion || 0) + 1;
     const schoolId = this.data.schoolId;
-    const api = service.forSchoolIdentity({ schoolId, association: 'pkb' });
+    const api = service.forSchoolIdentity({ schoolId, association: this.data.association });
     this.update({ loading: true, error: '', applications: [], canReview: false, canApply: false,
       members: [], grants: [], readOnly: false, canTransfer: false, transferPending: false,
       user: null, account: null, statusText: '', applicationsHasMore: false, grantEditor: null });
@@ -130,6 +140,14 @@ Page({
     this.update({ schoolId: school.schoolId, schoolName: school.name, notice: '', studentId: '', collegeIndex: -1 });
     return this.reload();
   },
+  onAssociationChange(event) {
+    if (this.data.submitting || this.data.loading) return;
+    const associationIndex = Number(event.detail.value);
+    const row = this.data.associations[associationIndex];
+    if (!row || row.id === this.data.association) return;
+    this.update({ association: row.id, associationName: row.name, associationIndex });
+    return this.reload();
+  },
   onCollegeChange(event) {
     if (this.data.submitting || this.data.loading) return;
     const index = Number(event.detail.value);
@@ -176,12 +194,22 @@ Page({
     return this.write(api => api.cancelSchoolTransfer({}));
   },
 
-  onReview(event) {
+  async onReview(event) {
     if (!this.data.canReview) return;
     const { userId, decision } = event.currentTarget.dataset;
     const row = this.data.applications.find(item => item.userId === userId);
     if (!row || !['approve', 'reject'].includes(decision)) return;
     if (decision === 'reject' && !row.reason.trim()) { this.update({ error: '请先填写驳回理由' }); return; }
+    if (typeof wx !== 'undefined' && wx.showModal) {
+      if (this.reviewConfirming) return;
+      this.reviewConfirming = true;
+      const version = this.loadVersion;
+      const confirmed = await new Promise(resolve => wx.showModal({ title: (row.transfer ? '转校申请' : '入会申请') + (decision === 'approve' ? ' · 通过' : ' · 驳回'),
+        content: (row.nickName || userId) + ' → ' + this.data.schoolName + ' · ' + row.collegeName + (row.transfer ? '。通过后变更学校身份，历史成绩保留原归属。' : '。请核对申请信息。'),
+        success: result => resolve(Boolean(result.confirm)), fail: () => resolve(false) }));
+      this.reviewConfirming = false;
+      if (!confirmed || this.unloaded || version !== this.loadVersion) return;
+    }
     // 转校申请走自己的审批动作：通过时要搬运两侧身份，与普通入会不是同一条口径
     return this.write(api => (row.transfer
       ? api.reviewSchoolTransfer({ userId, decision, revision: row.revision, reason: row.reason })
@@ -238,10 +266,20 @@ Page({
     const college = editor && this.data.colleges[editor.collegeIndex];
     if (college) return this.submitGrant(editor.userId, 'collegeLeader', true, college.collegeId);
   },
-  submitGrant(userId, permission, make, targetCollegeId) {
+  async submitGrant(userId, permission, make, targetCollegeId) {
     const member = this.data.members.find(row => row.userId === userId);
     if (!member || this.data.submitting) return undefined;
     const collegeId = permission === 'collegeLeader' ? targetCollegeId || member.managedCollegeId || member.collegeId : '';
+    const label = (this.data.grants.find(row => row.permission === permission) || {}).label || permission;
+    const college = this.data.colleges.find(row => row.collegeId === collegeId);
+    const scope = `${this.data.schoolName} · ${this.data.associationName || this.data.association}${college ? ' · ' + college.name : ''}`;
+    if (typeof wx !== 'undefined' && wx.showModal) {
+      const version = this.loadVersion;
+      const confirmed = await new Promise(resolve => wx.showModal({ title: `${make ? '授予' : '取消'}${label}`,
+        content: `${member.nickName || userId}：${scope}。请核对授权范围。`,
+        success: result => resolve(Boolean(result.confirm)), fail: () => resolve(false) }));
+      if (!confirmed || this.unloaded || version !== this.loadVersion) return;
+    }
     return this.write(api => api.grantSchoolPermission({ userId, permission, make, collegeId }));
   },
 

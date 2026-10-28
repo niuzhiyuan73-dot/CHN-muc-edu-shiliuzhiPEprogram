@@ -86,9 +86,9 @@ test('模板：跨校邀请赛入口卡没有任何条件门控，副标题才�
   const card = tagOf(wxml, 'onGoSchoolExchange');
   assert.doesNotMatch(card, /wx:if/, '入口卡不该被任何条件拦一道（曾经是 wx:if="{{isMock}}"）');
   assert.doesNotMatch(card, /hidden/, '也不该用 hidden 变相藏起来');
-  assert.match(wxml, /<view class="entry-card-title">跨校邀请赛<\/view>/, '卡片上要有标题');
+  assert.match(wxml, /<view class="profile-service-title">跨校邀请赛<\/view>/, '卡片上要有标题');
   // isMock 只留在副标题那一行里（换文案），不参与显隐
-  const hintAt = wxml.indexOf('entry-card-hint');
+  const hintAt = wxml.indexOf('受邀学校交流', wxml.indexOf('onGoSchoolExchange'));
   assert.ok(hintAt > wxml.indexOf('onGoSchoolExchange'), '副标题要留在入口卡内');
 });
 

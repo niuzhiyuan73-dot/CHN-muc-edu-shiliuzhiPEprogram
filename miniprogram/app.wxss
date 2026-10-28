@@ -6,6 +6,8 @@
  * ============================================================
  */
 
+@import "templates/experience.wxss";
+
 page {
   /* ---------- 主色：石榴红（与协会无关的界面，如首页顶栏） ---------- */
   --color-primary: #b23a2e;
@@ -15,6 +17,11 @@ page {
   /* ---------- 强调色：石榴籽金，用于关键行动按钮与高亮 ---------- */
   --color-accent: #c9a227;
   --color-accent-light: #fbf3e0;
+  --color-on-primary: #ffffff;
+  --color-on-accent: #49360c;
+  --control-min-height: 44px;
+  --motion-fast: 140ms;
+  --color-mask: rgba(20, 24, 30, .4);
 
   /* ---------- 中性色 ---------- */
   --color-bg: #f5f6f8;
@@ -128,6 +135,8 @@ page {
   padding: var(--space-lg);
   margin-bottom: var(--space-md);
   box-shadow: var(--shadow-card);
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .card-title {
@@ -200,7 +209,10 @@ page {
   font-size: var(--font-md);
   font-weight: 500;
   border: none;
-  line-height: 1;
+  line-height: 1.4;
+  min-height: var(--control-min-height);
+  box-sizing: border-box;
+  white-space: normal;
 }
 
 .btn::after {
@@ -210,8 +222,8 @@ page {
 /* 主按钮用主色渐变：比实心色块多一层质感，也和顶部品牌区的渐变呼应。
    禁用态保持实心灰——渐变会给「不可点」的元素误加视觉权重。 */
 .btn-primary {
-  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
-  color: #ffffff;
+  background: var(--color-primary-dark);
+  color: var(--color-on-primary);
 }
 
 .btn-primary.btn-disabled {
@@ -221,7 +233,7 @@ page {
 
 .btn-accent {
   background: var(--color-accent);
-  color: #ffffff;
+  color: var(--color-on-accent);
 }
 
 .btn-outline {
@@ -234,8 +246,8 @@ page {
    不做成实心红——整屏只有一个主行动按钮，退出一类的不该抢那个位置。 */
 .btn-danger {
   background: transparent;
-  color: var(--color-danger);
-  border: 2rpx solid var(--color-danger);
+  color: var(--color-danger-text);
+  border: 2rpx solid var(--color-danger-text);
 }
 
 .btn-block {

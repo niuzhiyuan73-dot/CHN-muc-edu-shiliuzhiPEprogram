@@ -85,7 +85,15 @@
               bindtap="onOpenMember"
             >{{player.nickName}}</text>
           </view>
-          <text class="match-vs">vs</text>
+          <view class="match-score-center">        <!-- 正在逐球计分的场次：当前比分顶在终局比分的位置上，并标「进行中 / 已结束」 -->
+        <view wx:if="{{item.liveActive}}" class="match-score is-live">
+          <text class="live-tag {{item.live.finished ? 'is-done' : ''}}">{{item.live.statusLabel}}</text>
+          <text class="live-score">{{item.live.scoreText}}</text>
+          <text class="live-games">局分 {{item.live.gamesText}} · {{item.live.gameIndexText}}</text>
+        </view>
+        <view wx:else class="match-score">{{item.scoreText}}</view>
+
+</view>
           <view class="team {{item.winnerSide === 'B' ? 'is-winner' : ''}}">
             <text
               wx:for="{{item.teamBList}}"
@@ -97,14 +105,6 @@
             >{{player.nickName}}</text>
           </view>
         </view>
-
-        <!-- 正在逐球计分的场次：当前比分顶在终局比分的位置上，并标「进行中 / 已结束」 -->
-        <view wx:if="{{item.liveActive}}" class="match-score is-live">
-          <text class="live-tag {{item.live.finished ? 'is-done' : ''}}">{{item.live.statusLabel}}</text>
-          <text class="live-score">{{item.live.scoreText}}</text>
-          <text class="live-games">局分 {{item.live.gamesText}} · {{item.live.gameIndexText}}</text>
-        </view>
-        <view wx:else class="match-score">{{item.scoreText}}</view>
 
         <view class="match-meta">
           {{item.dateText}}
@@ -123,7 +123,7 @@
         <!-- 作废的比赛把理由亮出来，否则看到「已撤销」会一头雾水 -->
         <view wx:if="{{item.statusReason}}" class="match-reason">理由：{{item.statusReason}}</view>
 
-        <view wx:if="{{item.canRecord || item.canConfirm || item.canForfeit || item.canAssignReferee}}" class="match-actions">
+        <view wx:if="{{item.canRecord || item.canConfirm || item.canForfeit || item.canAssignReferee}}" class="match-actions"><button wx:if="{{item.canForfeit || item.canAssignReferee}}" class="mini-btn" data-match-id="{{item.matchId}}" bindtap="onToggleMatchMenu">{{openMenuMatchId === item.matchId ? "收起操作" : "更多操作"}}</button>
           <!-- 抽签排出的比赛还没有比分：先录分，之后才有「确认」可谈 -->
           <view
             wx:if="{{item.canRecord}}"
@@ -133,7 +133,7 @@
           >录分</view>
           <!-- 本人自选弃权：对手直接晋级，且不计个人等级分 -->
           <view
-            wx:if="{{item.canForfeit}}"
+            wx:if="{{item.canForfeit && openMenuMatchId === item.matchId}}"
             class="mini-btn is-danger"
             data-match-id="{{item.matchId}}"
             bindtap="onForfeit"
@@ -154,7 +154,7 @@
           <!-- 撤销已取消：比赛一经确认即为最终结算，发现录错请在确认前驳回 -->
           <!-- 指派裁判：仅管理员，且只在还没生效的场次上开 -->
           <view
-            wx:if="{{item.canAssignReferee}}"
+            wx:if="{{item.canAssignReferee && openMenuMatchId === item.matchId}}"
             class="mini-btn"
             data-match-id="{{item.matchId}}"
             bindtap="onOpenReferee"

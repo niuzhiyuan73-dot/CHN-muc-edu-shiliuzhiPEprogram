@@ -1,0 +1,13 @@
+.selector-mask{position:fixed;inset:0;background:var(--color-mask);z-index:200;display:flex;align-items:flex-end}
+.selector-sheet{background:var(--color-card);color:var(--color-text);width:100%;border-radius:var(--radius-lg) var(--radius-lg) 0 0;padding:var(--space-lg);padding-bottom:calc(var(--space-lg) + env(safe-area-inset-bottom));box-sizing:border-box;max-height:90vh}
+.selector-head{display:flex;justify-content:space-between;align-items:center;font-size:var(--font-lg);font-weight:600}
+.selector-search{background:var(--color-bg);border-radius:var(--radius-md);min-height:44px;padding:0 var(--space-md);font-size:var(--font-body)}
+.selector-results{height:42vh}.selector-caption{padding:var(--space-md) 0;color:var(--color-text-secondary);font-size:var(--font-caption)}
+.selector-row{display:flex;justify-content:space-between;gap:var(--space-md);text-align:left;min-height:44px;padding:var(--space-md);background:var(--color-card);color:var(--color-text);font-size:var(--font-body);border-bottom:1rpx solid var(--color-border);line-height:1.5;word-break:break-all;border-radius:0}
+.selector-row text:first-child{flex:1;min-width:0}.selector-row text:last-child{flex-shrink:0;color:var(--color-primary-dark)}
+.selector-row.is-selected{background:var(--color-primary-light)}.selector-tray{white-space:nowrap}
+.selector-chip{display:inline-block;font-size:var(--font-caption);min-height:44px;line-height:44px;padding:0 var(--space-md);margin:var(--space-sm) var(--space-sm) 0 0;background:var(--color-primary-light);color:var(--color-primary-dark)}
+.selector-link{min-height:44px;background:transparent;color:var(--color-primary-dark);font-size:var(--font-body);margin:0;line-height:44px}
+.selector-confirm{min-height:44px;line-height:1.5;padding:var(--space-md);background:var(--color-primary-dark);color:var(--color-on-primary);font-size:var(--font-body)}
+.selector-row::after,.selector-link::after,.selector-confirm::after,.selector-chip::after{border:0}
+.selector-row,.selector-confirm,.selector-search{width:100%;box-sizing:border-box}.selector-search{display:block}

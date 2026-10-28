@@ -1,9 +1,12 @@
+<import src="../../templates/detail-experience.wxml" />
 <!-- 团队赛事详情：一页走完 报名 → 锁定 → 抽签 → 录分 → 发布 → 名次 -->
-<view class="page-container {{themeClass}}">
+<view class="page-container experience-safe-page {{themeClass}}">
   <view wx:if="{{loading}}" class="hint">加载中…</view>
   <view wx:elif="{{error}}" class="hint">{{error}}</view>
 
   <block wx:else>
+    <template is="detailExperience" data="{{experience: experience, managementOpen: managementOpen}}" />
+    <view id="detail-info"></view>
     <!-- 名头 -->
     <view class="head">
       <view class="head-name">{{event.name}}</view>
@@ -18,7 +21,7 @@
     <view wx:if="{{notice}}" class="notice {{noticeError ? 'notice-error' : ''}}">{{notice}}</view>
 
     <!-- 管理动作：按状态只显示此刻该做的那一个 -->
-    <view wx:if="{{canManage && supportsMatchData}}" class="action-bar">
+    <view wx:if="{{managementOpen && canManage && supportsMatchData}}" class="action-bar">
       <view
         wx:if="{{event.status === 'registration'}}"
         class="btn btn-primary"
@@ -41,6 +44,7 @@
       >结算名次</view>
     </view>
 
+    <view id="detail-members"></view>
     <!-- 报名 -->
     <view class="card">
       <view class="card-title">报名（{{entries.length}}）</view>
@@ -86,6 +90,7 @@
       </view>
     </view>
 
+    <view id="detail-schedule"></view>
     <!-- 赛程 -->
     <view wx:if="{{rounds.length > 0}}" class="card">
       <view class="card-title">赛程</view>
@@ -204,6 +209,7 @@
       </view>
     </view>
 
+    <view id="detail-results"></view>
     <!-- 名次 -->
     <view wx:if="{{placements.length > 0}}" class="card">
       <view class="card-title">最终名次</view>
@@ -494,4 +500,5 @@
       <view class="sheet-actions"><view class="btn btn-ghost" bindtap="onCloseRanking">取消</view><view class="btn btn-primary" bindtap="onConfirmRanking">保存确认并结算</view></view>
     </view>
   </block>
+<template wx:if="{{!loading && !error}}" is="detailAction" data="{{experience: experience, acting: acting, busy: busy}}" />
 </view>

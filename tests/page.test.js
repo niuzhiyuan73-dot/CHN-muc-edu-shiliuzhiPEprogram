@@ -5025,12 +5025,14 @@ collegeTest('名单提交 —— 学院负责人只看得到本学院的候选�
   assert.strictEqual(page.data.view.canSubmit, true);
   assert.strictEqual(page.data.view.blockReason, '');
   assert.strictEqual(page.data.view.college, STAFF_COLLEGE);
-  assert.ok(page.data.view.candidates.length > 0, '本院应有候选队员');
+  assert.deepEqual(page.data.view.candidates, [], '打开选人前不取名单');
+  const candidatePage = await require('../miniprogram/services/association-space').forScope(page.scope).listSchoolMembers({ page: true, collegeId: page.data.view.collegeId, limit: 20 });
+  assert.ok(candidatePage.members.length > 0, '本院应有候选队员');
 
   const members = await collegeFixture.getMembers();
   const byId = new Map(members.map((member) => [member._id, member]));
-  for (const candidate of page.data.view.candidates) {
-    assert.strictEqual(byId.get(candidate.memberId).college, STAFF_COLLEGE, '候选里不许混进外院的人');
+  for (const candidate of candidatePage.members) {
+    assert.strictEqual(byId.get(candidate.userId).college, STAFF_COLLEGE, '候选里不许混进外院的人');
   }
 });
 
@@ -5041,7 +5043,8 @@ collegeTest('名单提交 —— 学院负责人提交本学院名单成功，�
   const page = instantiate(collegeEntryConfig);
   await page.onLoad({ eventId: event._id });
 
-  const ids = page.data.view.candidates.map((candidate) => candidate.memberId);
+  const candidatePage = await require('../miniprogram/services/association-space').forScope(page.scope).listSchoolMembers({ page: true, collegeId: page.data.view.collegeId, limit: 20 });
+  const ids = candidatePage.members.map(candidate => candidate.userId);
   page.onToggleMember({ detail: { value: ids } });
   assert.strictEqual(page.data.view.selectedCount, ids.length, '勾选人数回写到视图模型');
 

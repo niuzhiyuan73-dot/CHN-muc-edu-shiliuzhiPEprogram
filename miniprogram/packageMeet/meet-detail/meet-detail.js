@@ -1,3 +1,4 @@
+const { withDetailExperience } = require('../../templates/detail-experience');
 /**
  * 运动会详情
  * ============================================================
@@ -12,7 +13,7 @@ const meet = require('../../services/meet.js');
 const { updateMeetPage } = require('../../utils/meet-ui.js');
 const session = require('../../services/school-session.js');
 
-Page({
+Page(withDetailExperience({
   data: {
     loading: true,
     error: '',
@@ -435,4 +436,4 @@ Page({
       this.update({ busy: false, error: (err && err.message) || '删除失败' });
     }
   },
-});
+}, 'meet', 'reload'));

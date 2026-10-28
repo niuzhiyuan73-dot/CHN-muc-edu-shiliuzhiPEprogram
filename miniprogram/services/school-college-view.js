@@ -224,7 +224,7 @@ async function loadCollegeEntryView(eventId, options = {}) {
   const [eventDto, entriesDto, membersDto] = await Promise.all([
     Promise.resolve(resolved.dto),
     api.listCollegeEntries({ eventId: resolvedId }),
-    allowedIds.includes(collegeId) ? api.listSchoolMembers({ collegeId }) : Promise.resolve({ ok: true, members: [] }),
+    allowedIds.includes(collegeId) && !options.pagedCandidates ? api.listSchoolMembers({ collegeId }) : Promise.resolve({ ok: true, members: [] }),
   ]);
 
   const found = okOf(eventDto);
@@ -293,8 +293,11 @@ async function loadCollegeEntryView(eventId, options = {}) {
     entryReturned: state.returned,
     entryReason: existing ? existing.reason || '' : '',
     existingCount: existing ? asArray(existing.memberIds).length : 0,
+    existingMemberIds: [...picked],
+    existingMembers: [...picked].map((userId, index) => ({ userId,
+      nickName: (existing.memberNames || [])[index] || userId })),
     candidates,
-    selectedCount: candidates.filter(item => item.checked).length,
+    selectedCount: options.pagedCandidates ? picked.size : candidates.filter(item => item.checked).length,
     remark: existing ? existing.remark || '' : '',
   };
 }

@@ -1,10 +1,11 @@
+<import src="../../templates/detail-experience.wxml" />
 <!--
   赛事详情
   数据形状见 services/school-event-view.js 的 loadSchoolEventDetailView
   （与旧栈 loadEventDetailView 同形）。
   名单行与名次行复用 templates/rank-board.wxss 的样式，与榜单同一副面孔。
 -->
-<view class="page-container {{themeClass}}">
+<view class="page-container experience-safe-page {{themeClass}}">
 
   <!-- 加载中。必须排在出错之前，否则首屏会一闪而过地报错 -->
   <view wx:if="{{loading}}" class="loading">正在加载…</view>
@@ -20,7 +21,9 @@
   </view>
 
   <block wx:else>
+    <template is="detailExperience" data="{{experience: experience, managementOpen: managementOpen}}" />
 
+    <view id="detail-info"></view>
     <!-- ========== 赛事信息 ========== -->
     <view class="card">
       <view class="event-head">
@@ -59,16 +62,16 @@
       <view class="card-title">报名</view>
       <view class="signup-line">我的状态：<text class="signup-state">{{view.event.mySignupLabel}}</text></view>
 
-      <view wx:if="{{view.event.canSignUp}}" class="btn btn-primary btn-block" bindtap="onSignUp">报名</view>
+      <view wx:if="{{view.event.canSignUp}}" class="btn btn-outline btn-block" bindtap="onSignUp">报名</view>
       <view wx:elif="{{view.event.canCancelSignup}}" class="btn btn-outline btn-block" bindtap="onCancelSignup">取消报名</view>
       <view wx:else class="signup-note">{{view.signupNote || '当前暂不可报名，请刷新查看最新状态'}}</view>
     </view>
 
     <!-- ========== 管理动作 ========== -->
     <!-- 没有管理权时整张卡不渲染，不给点了再被拒的机会 -->
-    <view wx:if="{{view.event.canStart || view.event.canFinish}}" class="card">
+    <view wx:if="{{managementOpen && (view.event.canStart || view.event.canFinish)}}" class="card">
       <view class="card-title">管理</view>
-      <view wx:if="{{view.event.canStart}}" class="btn btn-primary btn-block" bindtap="onStart">开始赛事</view>
+      <view wx:if="{{view.event.canStart}}" class="btn btn-outline btn-block" bindtap="onStart">开始赛事</view>
       <view wx:if="{{view.event.canFinish}}" class="btn btn-accent btn-block btn-gap" bindtap="onOpenPlacement">录入名次并结束</view>
     </view>
 
@@ -88,8 +91,8 @@
       </view>
 
       <view
-        wx:if="{{view.event.canDraw}}"
-        class="btn btn-primary btn-block {{acting ? 'btn-disabled' : ''}}"
+        wx:if="{{managementOpen && view.event.canDraw}}"
+        class="btn btn-outline btn-block {{acting ? 'btn-disabled' : ''}}"
         bindtap="onDraw"
       >{{view.event.drawn ? '重新抽签' : '开始抽签'}}</view>
     </view>
@@ -131,6 +134,7 @@
       </view>
     </view>
 
+    <view id="detail-schedule"></view><view wx:if="{{!view.hasBracket && !view.hasCourts}}" class="card experience-caption">赛程尚未生成，抽签后可查看。</view>
     <!-- ========== 场地分配表 ========== -->
     <!-- 按场号分组，看得到每块场地上依次要打哪几场。全部由现有数据推得，
          不需要新接口；批次没有落库，是这里重算出来的（见 buildCourtBoard） -->
@@ -219,6 +223,7 @@
       </view>
     </view>
 
+    <view id="detail-members"></view>
     <!-- ========== 报名名单（未结束） ========== -->
     <view wx:if="{{!view.event.isFinished}}" class="card">
       <view class="rank-head">
@@ -260,6 +265,7 @@
       </view>
     </view>
 
+    <view id="detail-results"></view>
     <!-- ========== 最终名次（已结束） ========== -->
     <view wx:if="{{view.event.isFinished}}" class="card">
       <view class="rank-head">
@@ -378,4 +384,5 @@
       </view>
     </view>
   </view>
+<template wx:if="{{!loading && !error}}" is="detailAction" data="{{experience: experience, acting: acting, busy: busy}}" />
 </view>

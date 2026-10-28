@@ -6,7 +6,7 @@
   </view>
 
   <view wx:if="{{loading}}" class="panel-hint">加载中…</view>
-  <view wx:elif="{{error}}" class="panel-hint">{{error}}</view>
+  <view wx:elif="{{error}}" class="panel-hint">{{error}}<button class="btn btn-outline" bindtap="refresh">重新加载</button></view>
   <view wx:elif="{{events.length === 0}}" class="panel-hint">{{emptyText}}</view>
 
   <view wx:else class="event-list">

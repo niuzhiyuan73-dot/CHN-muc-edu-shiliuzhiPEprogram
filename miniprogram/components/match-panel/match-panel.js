@@ -146,6 +146,11 @@ Component({
   },
 
   methods: {
+    onToggleMatchMenu(event) {
+      const matchId = event.currentTarget.dataset.matchId;
+      if (!(this.data.visibleRecords || []).some(row => row.matchId === matchId)) return;
+      this.setData({ openMenuMatchId: this.data.openMenuMatchId === matchId ? '' : matchId });
+    },
     /**
      * 返回 Promise 是有意为之：小程序不关心返回值，
      * 但测试需要一个句柄等首屏加载完（见 tests/page.test.js）。

@@ -27,6 +27,7 @@ const {
 } = require('../../utils/associations.js');
 const { applyBranding } = require('../../services/branding.js');
 const scope = require('../../services/association-scope.js');
+const schoolSession = require('../../services/school-session.js');
 
 /**
  * 页签不再写死。球拍运动是「协会空间 / 排行榜 / 比赛 / 赛事」，
@@ -67,6 +68,8 @@ Page({
    * 再按参数决定初始页签。三个面板会在自己 attached 时按全局协会取数。
    */
   onLoad(options = {}) {
+    this.boundIdentity = this.identityKey();
+    this.scrollPositions = {};
     const requested = options.association;
     const id = isKnownAssociation(requested) ? requested : scope.getAssociation();
     try {
@@ -100,11 +103,13 @@ Page({
       activeTab: active,
       tabs: definitions.map((def) => ({ ...def, active: def.tab === active })),
       mounted,
+      workspaceKey: `${this.boundIdentity}:${id}`,
     });
     this.paintNav();
   },
 
   onShow() {
+    if (this.boundIdentity && this.boundIdentity !== this.identityKey()) return this.onLoad({ association: this.data.associationId });
     if (isKnownAssociation(this.data.associationId)) scope.setAssociation(this.data.associationId);
     this.paintNav();
   },
@@ -158,6 +163,17 @@ Page({
       tabs: this.data.tabs.map((def) => ({ ...def, active: def.tab === tab })),
       [`mounted.${tab}`]: true,
     });
+    if (typeof wx !== 'undefined' && typeof wx.pageScrollTo === 'function') wx.pageScrollTo({ scrollTop: (this.scrollPositions || {})[tab] || 0, duration: 0 });
+  },
+
+  identityKey() {
+    const app = typeof getApp === 'function' ? getApp() : null;
+    const user = app && (typeof app.getUserInfo === 'function' ? app.getUserInfo() : app.globalData?.userInfo);
+    return `${schoolSession.getSchoolId() || 'muc'}:${user?._id || ''}`;
+  },
+  onPageScroll(event) {
+    this.scrollPositions = this.scrollPositions || {};
+    this.scrollPositions[this.data.activeTab] = event.scrollTop || 0;
   },
 
   /**

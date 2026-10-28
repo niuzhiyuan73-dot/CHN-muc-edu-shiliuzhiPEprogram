@@ -1,3 +1,4 @@
+const { withDetailExperience } = require('../../templates/detail-experience');
 /**
  * 赛事详情
  * ============================================================
@@ -38,7 +39,7 @@ const space = require('../../services/association-space.js');
 const identity = require('../../services/school-identity.js');
 const { LEGACY_SCHOOL_ID } = require('../../utils/school.js');
 
-Page({
+Page(withDetailExperience({
   data: {
     /** 首屏加载中 */
     loading: true,
@@ -603,4 +604,4 @@ Page({
 
     wx.navigateTo({ url: `/packageMember/member/member?userId=${userId}` });
   },
-});
+}, 'personal', 'refresh'));

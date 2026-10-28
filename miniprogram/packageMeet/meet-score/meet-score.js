@@ -22,6 +22,7 @@
 const meet = require('../../services/meet.js');
 const { updateMeetPage } = require('../../utils/meet-ui.js');
 const session = require('../../services/school-session.js');
+const { withScoreDraftExperience } = require('../../templates/score-draft-experience.js');
 
 /** 晋级口径的中文名（只用于显示，判定一律在服务端） */
 const ADVANCE_LABEL = {
@@ -30,7 +31,7 @@ const ADVANCE_LABEL = {
   hybrid: '混合晋级',
 };
 
-Page({
+Page(withScoreDraftExperience({
   data: {
     loading: true,
     error: '',
@@ -113,12 +114,14 @@ Page({
   },
 
   async reload() {
+    const request = this.loadRequest = (this.loadRequest || 0) + 1;
     this.update({ loading: true, error: '' });
     try {
       const [tasks, schedule] = await Promise.all([
         this.client().getMyMeetJudgeTasks({}),
         this.client().getMeetSchedule({}),
       ]);
+      if (this.unloaded || request !== this.loadRequest) return;
       this.update({
         loading: false,
         canManage: Boolean(schedule.canManage),
@@ -127,7 +130,9 @@ Page({
         events: schedule.items.map((row) => this.decorateEvent(row)),
       });
     } catch (err) {
-      this.update({ loading: false, error: (err && err.message) || '加载失败' });
+      if (this.unloaded || request !== this.loadRequest) return;
+      this.update({ loading: false, tasks: [], events: [], canManage: false, canPublish: false,
+        canEnterSession: false, error: (err && err.message) || '加载失败' });
     }
   },
 
@@ -213,6 +218,7 @@ Page({
     if (!eventKey) return undefined;
     try {
       const list = await this.client().listMeetEventSessions({ eventKey });
+      if (this.unloaded || this.data.activeSessionKey !== sessionKey) return;
       const items = (list.items || []).map((row) => ({
         ...row,
         displayLabel: row.round === 'heat'
@@ -224,6 +230,7 @@ Page({
         sessionIndex: items.findIndex((row) => row.sessionKey === sessionKey),
       });
     } catch (err) {
+      if (this.unloaded || this.data.activeSessionKey !== sessionKey) return;
       this.update({ eventSessions: [], sessionIndex: -1 });
     }
     return undefined;
@@ -438,4 +445,4 @@ Page({
       this.update({ busy: false, error: (err && err.message) || '判定失败' });
     }
   },
-});
+}));

@@ -12,7 +12,7 @@
 
   <view wx:elif="{{error}}" class="empty-state">
     <view class="empty-state-icon">⚠️</view>
-    <view class="empty-state-text">{{error}}</view>
+    <view class="empty-state-text">{{error}}</view><button class="btn btn-outline" bindtap="refresh">重新加载</button>
   </view>
 
   <block wx:else>

@@ -27,6 +27,7 @@
 
       </view>
       <view wx:if="{{activeSessionKey}}" id="meet-score-editor" class="meet-editor">
+        <view class="meet-score-context"><view>{{scoreContext || '当前录分场次'}}</view><view class="meet-hint">{{scoreDirty ? '有未提交输入 · 请逐条提交' : '输入与已保存成绩一致'}}</view></view>
         <!-- 同项目多场次：预赛各组、多枪决赛。切场次不必退回任务列表 -->
         <scroll-view wx:if="{{eventSessions.length > 1}}" scroll-x class="meet-rounds">
           <view
@@ -39,6 +40,7 @@
           >{{rnd.displayLabel}}</view>
         </scroll-view>
 
+        <view class="meet-hint">{{scoreFormatHint}}</view>
         <view class="meet-hint">本场裁判：{{sessionJudgeNames}}</view>
         <picker wx:if="{{canManage && scoringJudges.length}}" range="{{scoringJudges}}" range-key="name" value="{{scoringJudgeIndex}}" bindchange="onPickScoringJudge"><view class="meet-hint">代录裁判：{{scoringJudges[scoringJudgeIndex].name}}（点击切换）</view></picker>
         <view wx:if="{{!canEnterSession}}" class="meet-warn">你没有被指派到这个场次，不能录入成绩</view>
@@ -49,12 +51,13 @@
           <input
             class="meet-score-input"
             type="text"
-            placeholder="成绩"
+            placeholder="按项目成绩格式填写"
+            disabled="{{busy || !canEnterSession}}"
             value="{{drafts[row.entryKey]}}"
             data-entry-key="{{row.entryKey}}"
             bindinput="onScoreInput"
           />
-          <view class="meet-score-state">{{row.myScore ? (row.myScore.state === 'submitted' ? '已提交' : '草稿') : '未录'}}</view>
+          <view class="meet-score-state">{{dirtyEntryKeys[row.entryKey] ? '未提交改动' : row.myScore ? (row.myScore.state === 'submitted' ? '已提交' : '已保存草稿') : '未录'}}</view>
           <view wx:if="{{canEnterSession}}" class="meet-score-submit" data-entry-key="{{row.entryKey}}" bindtap="onSubmitScore">提交</view>
         </view>
         <view

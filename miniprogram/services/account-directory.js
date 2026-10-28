@@ -19,6 +19,7 @@ function memoryDirectoryPage(members, users, scope, query) {
   const rows = [];
   for (const member of members) {
     if (member.schoolId !== scope.schoolId || member.status !== 'active') continue;
+    if (query && query.collegeId && member.collegeId !== query.collegeId) continue;
     const user = userById.get(member.userId);
     if (!user || user.platformStatus !== 'active' || user.primarySchoolId !== scope.schoolId) continue;
     rows.push({ userId: user._id, nickName: user.nickName || '', realName: user.realName || '',

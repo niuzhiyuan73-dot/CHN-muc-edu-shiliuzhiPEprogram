@@ -1,3 +1,4 @@
+const { withDetailExperience } = require('../../templates/detail-experience');
 /**
  * 学院赛详情（报名中抽签 → 待开赛开赛 → 进行中打大场）
  * ============================================================
@@ -31,7 +32,7 @@ const space = require('../../services/association-space.js');
 const identity = require('../../services/school-identity.js');
 const { LEGACY_SCHOOL_ID } = require('../../utils/school.js');
 
-Page({
+Page(withDetailExperience({
   data: {
     /** 首屏加载中 */
     loading: true,
@@ -448,4 +449,4 @@ Page({
 
   /** 吞掉面板内层的冒泡，免得点名单时把面板一起关掉 */
   noop() {},
-});
+}, 'college', 'refresh'));

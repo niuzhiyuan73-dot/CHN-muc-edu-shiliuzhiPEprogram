@@ -1,4 +1,4 @@
 {
-  "usingComponents": {},
+  "usingComponents": { "member-selector": "/components/member-selector/member-selector" },
   "navigationBarTitleText": "提交学院名单"
 }

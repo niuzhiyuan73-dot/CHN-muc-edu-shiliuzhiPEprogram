@@ -41,25 +41,25 @@
 
 /* 运动会：学校级栏目，不属于任何协会，图标底用浅灰以示区别 */
 .assoc-item-meet .assoc-item-icon {
-  background: linear-gradient(135deg, #f4f6f9, #e3e8ef);
+  background: var(--color-bg);
 }
 
 /* 石榴籽杯（学院赛）：香槟金浅底，与运动会的冷灰形成暖冷对照。
    不用深金/琥珀——金色奖杯图标压在金色底上会糊在一起；
    也不能用红色——红色是学校品牌色，会和导航栏、其他协会混作一谈 */
 .assoc-item-cup .assoc-item-icon {
-  background: linear-gradient(135deg, #fbebc8 0%, #f2d9a0 100%);
+  background: var(--color-honor-light);
 }
 
 .assoc-item-meet:active,
 .assoc-item:active {
-  background: #f7f7f7;
+  background: var(--color-bg);
 }
 
 /* ==================== 宫格（两档共用） ====================
    列数由修饰类决定，.assoc-item 只负责卡片外观：
-     .assoc-grid--three  校级活动，一行三个，卡片更大；
-     .assoc-grid--four   协会，一行四个（五个字以内的协会名放得下，
+     .assoc-grid--activities  校级活动，一行三个，卡片更大；
+     .assoc-grid--sports   协会，一行四个（五个字以内的协会名放得下，
                          之后再加协会自动换行，不必再改布局）。
    列宽必须与 gap 成对计算，否则每行最后一格会被挤到下一行。 */
 .assoc-grid {
@@ -67,11 +67,11 @@
   flex-wrap: wrap;
 }
 
-.assoc-grid--three {
+.assoc-grid--activities {
   gap: var(--space-md);
 }
 
-.assoc-grid--four {
+.assoc-grid--sports {
   gap: var(--space-md);
 }
 
@@ -88,56 +88,56 @@
 }
 
 /* —— 校级活动：一行三个，图标与文字整体放大一档 —— */
-.assoc-grid--three .assoc-item {
-  width: calc((100% - 2 * var(--space-md)) / 3);
+.assoc-grid--activities .assoc-item {
+  width: calc((100% - var(--space-md)) / 2);
   padding: var(--space-lg) var(--space-sm);
   border-radius: var(--radius-lg);
 }
 
-.assoc-grid--three .assoc-item-icon {
+.assoc-grid--activities .assoc-item-icon {
   width: 136rpx;
   height: 136rpx;
   border-radius: 36rpx;
   font-size: var(--font-display);
 }
 
-.assoc-grid--three .assoc-item-name {
+.assoc-grid--activities .assoc-item-name {
   margin-top: var(--space-md);
   font-size: var(--font-md);
 }
 
-.assoc-grid--three .assoc-item-sport {
+.assoc-grid--activities .assoc-item-sport {
   margin-top: 4rpx;
   font-size: var(--font-sm);
 }
 
 /* —— 协会：一行四个。四列宽度容得下五个字的协会名，副行恢复显示，
       图标与字号相应放大一档，避免五列时的局促感。 */
-.assoc-grid--four .assoc-item {
-  width: calc((100% - 3 * var(--space-md)) / 4);
+.assoc-grid--sports .assoc-item {
+  width: calc((100% - 2 * var(--space-md)) / 3);
   padding: var(--space-md) var(--space-xs);
   border-radius: var(--radius-lg);
 }
 
-.assoc-grid--four .assoc-item-icon {
+.assoc-grid--sports .assoc-item-icon {
   width: 96rpx;
   height: 96rpx;
   border-radius: 26rpx;
   font-size: var(--font-lg);
 }
 
-.assoc-grid--four .assoc-item-icon-img {
+.assoc-grid--sports .assoc-item-icon-img {
   width: 58rpx;
   height: 58rpx;
 }
 
-.assoc-grid--four .assoc-item-name {
+.assoc-grid--sports .assoc-item-name {
   margin-top: var(--space-sm);
   font-size: var(--font-sm);
 }
 
 /* 「当前」角标在四列里收到贴角位置，避免压住放大的图标 */
-.assoc-grid--four .assoc-item-current {
+.assoc-grid--sports .assoc-item-current {
   top: var(--space-xs);
   right: var(--space-xs);
   font-size: var(--font-2xs);
@@ -158,7 +158,7 @@
   padding: 2rpx 12rpx;
   border-radius: 999rpx;
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-on-primary);
   font-size: var(--font-xs);
   line-height: 1.5;
 }
@@ -173,7 +173,7 @@
   justify-content: center;
   border-radius: 28rpx;
   background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
-  color: #fff;
+  color: var(--color-on-primary);
   font-size: var(--font-xl);
   font-weight: 600;
   overflow: hidden;
@@ -192,7 +192,7 @@
   color: var(--color-text);
   max-width: 100%;
   overflow: hidden;
-  white-space: nowrap;
+  white-space: normal;
   text-overflow: ellipsis;
 }
 
@@ -201,3 +201,5 @@
   font-size: var(--font-xs);
   color: var(--color-text-tertiary);
 }
+
+@media (max-width: 360px) { .assoc-grid--sports .assoc-item { width: calc((100% - var(--space-md)) / 2); } .assoc-section-title { flex-wrap: wrap; } }

@@ -60,6 +60,7 @@ Page({
     blockReason: '',
     /** 操作过程中的提示（判球失败、撤销失败等），成功一次新的判球就清掉 */
     notice: '',
+    scorePending: 0,
 
     /** 左右两方的显示名：个人赛是队员姓名，学院赛是学院名 */
     labelA: 'A 队',
@@ -338,8 +339,13 @@ Page({
     this.setData({ notice: '' });
 
     this.pending += 1;
+    this.setData({ scorePending: this.pending });
     this.queue = this.queue.then(() => this.sendRally(side, rallyId));
     return undefined;
+  },
+  onScoreTap(event) {
+    if (this.pending > 0 || this.data.finishing) return;
+    return this.onScore(event);
   },
 
   /**
@@ -356,6 +362,7 @@ Page({
     }
     this.pending -= 1;
     if (this.destroyed) return;
+    this.safeSetData({ scorePending: this.pending });
 
     if (!res.ok) {
       this.safeSetData({ notice: res.message || '判球失败' });
@@ -379,6 +386,7 @@ Page({
   /* ---------- 撤销 / 定稿 ---------- */
 
   onUndo() {
+    if (this.pending > 0 || this.data.finishing) return;
     if (!this.data.canUndo) return undefined;
     if (!this.actor) {
       this.showToast('请先登录后再撤销');
@@ -386,6 +394,7 @@ Page({
     }
     this.setData({ notice: '' });
     this.pending += 1;
+    this.setData({ scorePending: this.pending });
     this.queue = this.queue.then(() => this.sendUndo());
     return undefined;
   },
@@ -400,6 +409,7 @@ Page({
     }
     this.pending -= 1;
     if (this.destroyed) return;
+    this.safeSetData({ scorePending: this.pending });
 
     if (!res.ok) {
       this.safeSetData({ notice: res.message || '撤销失败' });
@@ -410,7 +420,7 @@ Page({
   },
 
   onFinish() {
-    if (this.data.finishing || !this.data.canFinish) return undefined;
+    if (this.data.finishing || this.pending > 0 || !this.data.canFinish) return undefined;
     if (!this.actor) {
       this.showToast('请先登录后再定稿');
       return undefined;
@@ -429,7 +439,7 @@ Page({
     }
     wx.showModal({
       title: '结束比赛',
-      content: '定稿后比分将提交为待确认，由对手 / 裁判确认后生效。确定结束吗？',
+      content: `${this.data.labelA} 对 ${this.data.labelB}。定稿后比分将提交为待确认，由对手 / 裁判确认后生效。确定结束吗？`,
       success: (res) => submit(Boolean(res && res.confirm)),
       fail: () => submit(false),
     });

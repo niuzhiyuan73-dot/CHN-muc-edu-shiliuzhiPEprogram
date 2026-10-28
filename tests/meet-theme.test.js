@@ -37,7 +37,7 @@ const read = (file) => fs.readFileSync(file, 'utf8');
 test('七个页面根节点固定挂 meet-theme，不再有动态换肤类', () => {
   for (const name of PAGES) {
     const wxml = read(path.join(MEET, name, `${name}.wxml`));
-    assert.ok(wxml.includes('class="page-container meet-theme"'),
+    assert.ok(/class="page-container(?: [a-z-]+)* meet-theme"/.test(wxml),
       `${name}.wxml 的根节点必须是 page-container meet-theme（运动会恒定金色）`);
     assert.ok(!wxml.includes('{{themeClass}}'),
       `${name}.wxml 还在绑动态主题类，运动会会跟着协会变色`);

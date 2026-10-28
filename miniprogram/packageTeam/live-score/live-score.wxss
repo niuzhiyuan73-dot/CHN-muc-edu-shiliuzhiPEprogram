@@ -246,3 +246,6 @@ page {
   font-size: 26vh;
   letter-spacing: 0.2vw;
 }
+
+.side.is-waiting{opacity:.7}.sync-state{font-size:2.8vh;line-height:1.5;text-align:center;padding:1vh;color:var(--color-on-primary);flex-shrink:0}.points,.sets,.games{font-variant-numeric:tabular-nums}.team-name{white-space:normal;overflow-wrap:anywhere;line-height:1.25}.actions button{min-height:44px}.topbar{gap:2vw}.scoreline{flex-wrap:wrap;gap:1vh 0}
+@media(max-height:360px){.actions{flex-wrap:wrap}.actions button{font-size:3vh}.topbar{padding-top:1vh;padding-bottom:1vh}}

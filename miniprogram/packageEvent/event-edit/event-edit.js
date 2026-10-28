@@ -1,3 +1,4 @@
+const { withFormExperience } = require('../../templates/form-experience.js');
 /**
  * 发布赛事
  * ============================================================
@@ -138,7 +139,7 @@ function todayText(now = new Date()) {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
-Page({
+Page(withFormExperience({
   data: {
     capacity: drawCapacityOf({ matchType: MATCH_TYPE.SINGLES }),
     /** 提交中，防止连点重复提交 */
@@ -512,4 +513,4 @@ Page({
   onCancel() {
     wx.navigateBack();
   },
-});
+}));

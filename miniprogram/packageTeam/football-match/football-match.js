@@ -6,25 +6,29 @@ const { LEGACY_SCHOOL_ID } = require('../../utils/school');
 const { resolveRouteId } = require('../../utils/route-query');
 const { createReportForm, reportPayload, coverageLabels } = require('../../utils/football-report-form');
 const { normalizeFootballReport, normalizeSide, scoreText } = require('../../utils/football-report');
+const { reportDifferences } = require('../../utils/interface-view');
 const requestId = () => `fb_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 Page({
   data: { loading: true, error: '', notice: '', busy: false, form: null, info: null, themeClass: '',
     kindLabels: ['正常完赛', '弃权判定', '中断待裁定'], coverageLabels,
     subLabels: ['未记录', '部分记录（依据赛后报告）', '完整摘要（依据赛后报告）'],
-    sideIndex: 0, side: null, showExtra: false, showShootout: false, goalEditor: null,
+    sideIndex: 0, side: null, showExtra: false, showShootout: false, goalEditor: null, reportFolds: {}, reportDiff: {},
     goalTypes: ['普通进球', '比赛中点球', '直接任意球', '乌龙球'], audit: [], goalRows: [], preview: null },
   onLoad(options = {}) {
+    this.unloaded = false;
     this.scope = { schoolId: schoolSession.getSchoolId() || LEGACY_SCHOOL_ID, association: associationScope.getAssociation() };
     this.matchId = options.matchId || ''; this.lineupOnly = options.lineup === '1';
     this.setData({ themeClass: currentThemeClass() }); return this.refresh();
   },
   async refresh() {
+    const version = this.loadVersion = (this.loadVersion || 0) + 1;
     this.setData({ loading: true, error: '' });
     try {
       const resolved = await resolveRouteId(this.matchId, async matchId => {
         const data = await space.forScope(this.scope)[this.lineupOnly ? 'getTeamMatchLineup' : 'getTeamMatchStats']({ matchId });
         if (data?.ok) return data; this.failure = data?.message; return null;
       });
+      if (this.unloaded || version !== this.loadVersion) return;
       if (!resolved.id || resolved.result.sportFormat !== 'football11') throw new Error(this.failure || '比赛不存在或不是足球赛事');
       this.matchId = resolved.id; const info = resolved.result;
       if (this.lineupOnly) {
@@ -37,7 +41,28 @@ Page({
         preview: null, publishedText: info.publishedReport ? scoreText(info.publishedReport.result) : '尚未发布', notice: '' });
       this.updateGoalRows();
       this.updateStage();
-    } catch (e) { this.setData({ loading: false, error: e.message || '加载失败，请重试' }); }
+      this.savedForm = JSON.stringify(this.data.form);
+      this.updateReportExperience();
+    } catch (e) { if (!this.unloaded && version === this.loadVersion) this.setData({ loading: false, info: null, form: null, error: e.message || '加载失败，请重试' }); }
+  },
+  onUnload() { this.unloaded = true; this.loadVersion = (this.loadVersion || 0) + 1; },
+  onToggleSection(event) {
+    const section = event.currentTarget.dataset.section;
+    if (['result', 'roster'].includes(section)) this.setData({ reportFolds: { ...this.data.reportFolds, [section]: !this.data.reportFolds[section] } });
+  },
+  updateReportExperience() {
+    if (!this.data.form || !this.data.info || this.lineupOnly) return;
+    const info = this.data.info;
+    const raw = reportPayload(this.data.form);
+    const check = normalizeFootballReport(raw, info);
+    const dirty = this.savedForm && JSON.stringify(this.data.form) !== this.savedForm;
+    const names = Object.fromEntries(this.data.form.sides.flatMap(side => side.players).map(player => [player.userId, player.name]));
+    this.setData({ editingState: dirty ? '有未提交改动' : '与已保存内容一致',
+      submittedText: info.report ? scoreText(info.report.result) + (info.pending ? ' · 待审核' : ' · 已保存') : '尚未提交',
+      validationText: check.ok ? '已通过当前报告字段校验；提交前仍需核对预览。' : check.message,
+      reportDiff: dirty ? reportDifferences(info.report, check.ok ? check.value : raw, names) : reportDifferences(info.publishedReport, info.report, names),
+      reportDiffTitle: dirty ? '当前编辑相对已提交的变化' : '已提交相对已发布的变化',
+      ...(dirty ? { preview: null } : {}) });
   },
   updateStage() {
     const f = this.data.form; const info = this.data.info;
@@ -49,6 +74,7 @@ Page({
     this.setData({ showExtra, showShootout,
       ...(!showExtra ? { 'form.extraA': '', 'form.extraB': '', 'form.extraTimeCompleted': false } : {}),
       ...(!showShootout ? { 'form.shootoutA': '', 'form.shootoutB': '', 'form.refereeConfirmed': false } : {}) });
+    this.updateReportExperience();
   },
   onInput(event) {
     if (!this.data.info.canEdit || this.data.busy) return;
@@ -81,6 +107,7 @@ Page({
     if (this.lineupOnly && !this.data.info.lineupEditable[this.data.side.key]) return;
     const sides = JSON.parse(JSON.stringify(this.data.form.sides));
     fn(sides[this.data.sideIndex]); this.setData({ 'form.sides': sides, side: sides[this.data.sideIndex] });
+    this.updateReportExperience();
   },
   onPlayerFlag(event) {
     const { userid, field } = event.currentTarget.dataset;
@@ -142,6 +169,7 @@ Page({
     const types = { normal: '普通进球', penalty: '比赛中点球', free_kick: '直接任意球', own_goal: '乌龙' };
     this.setData({ goalRows: this.data.form.goalEvents.map(g => ({ description:
       `${g.side} 队 · ${names.get(g.scorerId) || '名单球员'} · ${types[g.type]}${g.minute !== '' && g.minute != null ? ` · ${g.minute} 分` : ''}${g.assistId ? ` · 助攻 ${names.get(g.assistId) || '名单球员'}` : ''}` })) });
+    this.updateReportExperience();
   },
   async act(action, payload) {
     if (this.data.busy) return;

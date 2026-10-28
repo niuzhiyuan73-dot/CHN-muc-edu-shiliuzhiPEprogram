@@ -9,7 +9,8 @@
  * 协会空间的 `listAssociationMembers` 是「成员页签」的取数口：关键字搜索 + 游标
  * 分页，只给当前页补权限标签（默认 20 / 上限 50）。这里要的是旧栈 `getMembers`
  * 那种**一次取齐的平铺名单**，并附带 `gender`（性别项目报名、单打榜过滤都要用），
- * 不做分页、不补权限标签——两者取数与用途不同，故各留一处，不互相将就。
+ * 默认保持平铺契约；新选人弹层传 `page:true` 时复用数据库目录的搜索与游标分页，
+ * 只返回 userId / nickName / realName / avatarUrl / collegeId，不补权限标签。
  *
  * 【隐私口径】只下发 userId / nickName / realName / avatarUrl / gender /
  * collegeId / collegeName。学号、手机号、OpenID、平台角色一律不下发（与
@@ -45,8 +46,8 @@ function memberRow(user, member, collegeName) {
 }
 
 /**
- * 本校在册会员名录（平铺，一次取齐）。可选 `collegeId` 只取某学院。
- * @param {Object} [payload] { collegeId? }
+ * 本校在册会员名录。默认平铺；`page:true` 按关键词与游标取页。
+ * @param {Object} [payload] { collegeId?, page?, keyword?, cursor?, limit? }
  * @param {Object} ctx
  */
 async function listSchoolMembers(payload = {}, ctx) {
@@ -55,6 +56,13 @@ async function listSchoolMembers(payload = {}, ctx) {
   }
   const scoped = ctx.repo.forScope(ctx);
   const filterCollegeId = typeof payload.collegeId === 'string' && payload.collegeId ? payload.collegeId : '';
+  // 选人弹层按需取页；保留旧调用方的平铺返回契约。
+  if (payload.page === true) {
+    const page = await scoped.schoolMembers.listDirectoryPage({ collegeId: filterCollegeId,
+      keyword: payload.keyword, cursor: payload.cursor,
+      limit: Number.isInteger(payload.limit) && payload.limit > 0 ? Math.min(payload.limit, 50) : 20 });
+    return ok({ ok: true, ...page, message: '' });
+  }
   const rows = [];
   let afterId = '';
   do {

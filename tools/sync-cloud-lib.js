@@ -43,6 +43,7 @@ const MANIFEST = [
   // 纯计算与常量
   'utils/constants.js',
   'utils/event-capacity.js',
+  'utils/interface-view.js',
   'utils/associations.js',
   // 篮球规则快照：赛事创建时定节数/节长/犯规上限，云端开赛与本地模拟
   // 必须用同一份判定（否则「5 人可开赛」会在一端放行、另一端拒绝）。

@@ -82,6 +82,20 @@ function fixture(names) {
   return tables;
 }
 
+test('学院选人分页：学院条件在联表前下推，双端结果一致且不带学号', async () => {
+  const tables = fixture(['甲', '乙', '丙', '丁']);
+  tables.school_members[0].collegeId = 'c02'; tables.school_members[2].collegeId = 'c02';
+  const query = { collegeId: 'c02', limit: 1 };
+  const db = directoryDatabase(tables);
+  const first = await readMemberPage(db, db.command, scope, query);
+  assert.deepEqual(first, memoryDirectoryPage(tables.school_members, tables.users, scope, query));
+  assert.deepEqual(db.traces[0][0], ['match', { schoolId: 'muc', status: 'active', collegeId: 'c02' }]);
+  assert.equal(first.members.length, 1); assert.equal(first.hasMore, true);
+  const next = await readMemberPage(db, db.command, scope, { ...query, cursor: first.nextCursor });
+  assert.notEqual(first.members[0].userId, next.members[0].userId);
+  assert.ok([...first.members, ...next.members].every(row => row.collegeId === 'c02' && !('studentId' in row)));
+});
+
 test('云端目录查询与原搜索一致：NFKC、前缀优先、同名、特殊字符、UTF-16 排序及跨页', async () => {
   const tables = fixture(['小张', '张甲', 'ＡＢＣ', 'abc', 'xABC', '张甲', '😀', '\ue000', '$x', '.*']);
   for (const keyword of ['', '张', 'abc', '$x', '.*', '不存在']) {

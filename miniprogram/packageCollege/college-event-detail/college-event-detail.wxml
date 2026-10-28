@@ -1,9 +1,10 @@
+<import src="../../templates/detail-experience.wxml" />
 <!--
   学院赛详情
   数据形状见 services/college-view.js 的 loadCollegeEventDetailView。
   权限布尔量与文案都在视图模型里算好，这里只渲染。
 -->
-<view class="page-container {{themeClass}}">
+<view class="page-container experience-safe-page {{themeClass}}">
 
   <view wx:if="{{loading}}" class="loading">正在加载…</view>
 
@@ -19,7 +20,9 @@
   </view>
 
   <block wx:else>
+    <template is="detailExperience" data="{{experience: experience, managementOpen: managementOpen}}" />
 
+    <view id="detail-info"></view>
     <!-- ========== 赛事信息 ========== -->
     <view class="card">
       <view class="rank-head">
@@ -34,6 +37,7 @@
       <view wx:if="{{view.currentRound}}" class="field-hint">当前第 {{view.currentRound}} 轮</view>
     </view>
 
+    <view id="detail-members"></view>
     <!-- ========== 报名中：学院负责人交名单 ========== -->
     <view wx:if="{{view.isSignup && view.canSubmitEntry}}" class="card">
       <view class="card-title">本学院名单</view>
@@ -87,7 +91,7 @@
     </view>
 
     <!-- ========== 待开赛：开始赛事 ========== -->
-    <view wx:if="{{view.canStartEvent}}" class="card">
+    <view wx:if="{{managementOpen && view.canStartEvent}}" class="card">
       <view class="card-title">开始赛事</view>
       <view class="card-subtitle">开始后生成第一轮大场，各学院即可提交排阵。</view>
       <view
@@ -97,12 +101,13 @@
     </view>
 
     <!-- ========== 进行中：录入名次并结束 ========== -->
-    <view wx:if="{{view.canFinish}}" class="card">
+    <view wx:if="{{managementOpen && view.canFinish}}" class="card">
       <view class="card-title">录入名次</view>
       <view class="card-subtitle">大场打完后来这里填学院名次，提交即结束赛事。名次只记给学院，不产生个人积分。</view>
       <view class="btn btn-primary start-event-btn" bindtap="onOpenPlacement">录入名次并结束</view>
     </view>
 
+    <view id="detail-results"></view>
     <!-- ========== 已结束：学院名次 ========== -->
     <view wx:if="{{view.hasResults}}" class="card">
       <view class="rank-head">
@@ -114,6 +119,7 @@
       </view>
     </view>
 
+    <view id="detail-schedule"></view>
     <!-- ========== 大场列表 ========== -->
     <view class="card">
       <view class="rank-head">
@@ -241,4 +247,5 @@
       </view>
     </view>
   </view>
+<template wx:if="{{!loading && !error}}" is="detailAction" data="{{experience: experience, acting: acting, busy: busy}}" />
 </view>

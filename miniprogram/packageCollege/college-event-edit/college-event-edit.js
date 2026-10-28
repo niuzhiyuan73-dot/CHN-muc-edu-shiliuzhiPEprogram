@@ -1,3 +1,4 @@
+const { withFormExperience } = require('../../templates/form-experience.js');
 /**
  * 发布学院赛
  * ============================================================
@@ -109,7 +110,7 @@ function todayText(now = new Date()) {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
-Page({
+Page(withFormExperience({
   data: {
     /** 提交中，防止连点重复提交 */
     submitting: false,
@@ -461,4 +462,4 @@ Page({
   onCancel() {
     wx.navigateBack();
   },
-});
+}));

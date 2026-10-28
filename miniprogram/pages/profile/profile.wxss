@@ -48,8 +48,18 @@
 
 /* 与页脚的模拟数据说明留出间距，免得两个都是灰字挤成一片 */
 .logout-btn {
-  margin-top: var(--space-xl);
+  margin-top: var(--space-md);
+  background: transparent;
+  border: none;
+  color: var(--color-text-secondary);
 }
+
+.profile-services { padding: 0 var(--space-md); box-shadow: none; }
+.profile-service { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); min-height: var(--control-min-height); padding: var(--space-md) 0; border-bottom: 2rpx solid var(--color-divider); }
+.profile-service:last-child { border-bottom: none; }
+.profile-service > view { min-width: 0; }
+.profile-service-title { font-size: var(--font-body); font-weight: 500; margin-bottom: var(--space-xs); }
+.profile-service .experience-caption { overflow-wrap: anywhere; }
 
 /* ==================== 未登录引导 ==================== */
 

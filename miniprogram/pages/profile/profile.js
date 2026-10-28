@@ -52,6 +52,7 @@ Page({
   },
 
   onLoad() {
+    this.unloaded = false;
     // 「我的」是全局页，套中性品牌（与首页一致）
     resetBranding();
     // 入口与荣誉数据互不依赖，各算各的，不必串成一条链
@@ -97,8 +98,10 @@ Page({
    */
   sessionKey(user) {
     if (!user) return null;
-    return [user._id, user.nickName || '', user.avatarUrl || ''].join('|');
+    const schoolId = require('../../services/school-session.js').getSchoolId() || 'muc';
+    return [user._id, user.nickName || '', user.avatarUrl || '', schoolId].join('|');
   },
+  onUnload() { this.unloaded = true; this.loadVersion = (this.loadVersion || 0) + 1; },
 
   /** 读取全局登录态。app 可能还没初始化好，逐层兜底 */
   currentUser() {
@@ -156,6 +159,9 @@ Page({
    * @returns {Promise<void>}
    */
   async refresh() {
+    const version = this.loadVersion = (this.loadVersion || 0) + 1;
+    this.session = null;
+    this.syncEntries();
     const user = this.currentUser();
     if (!user) {
       this.showGuest();
@@ -175,8 +181,10 @@ Page({
       const session = await require('../../services/school-identity.js')
         .forSchoolIdentity({ schoolId, association: this.currentAssociation() })
         .getSchoolIdentitySession();
-      this.session = session;
+      if (this.unloaded || version !== this.loadVersion || key !== this.sessionKey(this.currentUser())) return;
       const view = await loadSchoolProfileSummaryView({ schoolId, session });
+      if (this.unloaded || version !== this.loadVersion || key !== this.sessionKey(this.currentUser())) return;
+      this.session = session;
 
       this.setData({
         loading: false,
@@ -192,9 +200,13 @@ Page({
         this.showGuest();
       }
     } catch (err) {
+      if (this.unloaded || version !== this.loadVersion) return;
       console.error('[profile] 加载失败', err);
+      this.session = null;
+      this.syncEntries();
       this.setData({
         loading: false,
+        view: {},
         error: '数据加载失败，请下拉重试',
       });
     }
@@ -203,6 +215,8 @@ Page({
 
   /** 原地切成未登录的样子，不跳页——退出的入口和这里都不该把人甩到别的页 */
   showGuest() {
+    this.loadVersion = (this.loadVersion || 0) + 1;
+    this.session = null;
     // 没有登录态可展示，下次 onShow 只要还是未登录就不用重取
     this.loadedForKey = null;
     this.setData({

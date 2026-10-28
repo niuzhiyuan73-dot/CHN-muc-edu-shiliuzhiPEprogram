@@ -1,0 +1,7 @@
+<template name="detailExperience">
+  <view class="experience-progress" aria-label="赛事阶段"><view wx:for="{{experience.steps}}" wx:key="position" class="experience-step {{item.current ? 'is-current' : item.done ? 'is-done' : ''}}">{{item.done ? '✓' : item.current ? '●' : '○'}} {{item.label}}</view></view>
+  <view class="experience-anchor-nav"><view wx:for="{{experience.anchors}}" wx:key="id" class="experience-anchor" data-section="{{item.id}}" bindtap="onExperienceSection">{{item.title}}</view><view wx:if="{{experience.management}}" class="experience-anchor" bindtap="onExperienceManagement">{{managementOpen ? '收起管理' : '管理选项'}}</view></view>
+</template>
+<template name="detailAction">
+  <view wx:if="{{experience.action && !loading && !error}}" class="experience-action-bar"><text class="experience-action-context">{{experience.context}}</text><button class="btn btn-primary experience-action-main" bindtap="onExperienceAction" loading="{{acting || busy}}" disabled="{{acting || busy}}">{{experience.label}}</button></view>
+</template>

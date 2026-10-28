@@ -40,3 +40,5 @@ button[disabled] { opacity: .45; color: #64748b; }
 .action-panel .stat-title { font-size: 12px; line-height: 16px; }
 .action-panel .stat-actions { gap: 3px; }
 .action-panel .stat-actions button { height: 26px; line-height: 26px; min-width: 0; padding: 0 2px; font-size: 12px; }
+
+.team-name,.player-row,.section-title{overflow-wrap:anywhere;white-space:normal}.points{font-variant-numeric:tabular-nums}.header-actions button,.score-buttons button,.stat-actions button{min-height:44px}.header-actions{flex-wrap:wrap}.save-state{white-space:normal}

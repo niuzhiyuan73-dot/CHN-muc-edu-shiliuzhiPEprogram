@@ -32,6 +32,7 @@
   </view>
 
   <!-- 面板：挂过的保持挂载，用 hidden 收起来，来回切页签不丢状态 -->
+  <block wx:for="{{[workspaceKey]}}" wx:key="*this">
   <view wx:if="{{mounted.space}}" hidden="{{activeTab !== 'space'}}">
     <association-space-panel id="space" />
   </view>
@@ -54,4 +55,5 @@
     <events-panel wx:else id="events" />
   </view>
 
+  </block>
 </view>

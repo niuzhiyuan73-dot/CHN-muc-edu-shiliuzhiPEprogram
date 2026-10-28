@@ -29,7 +29,7 @@
         <text wx:if="{{user.showRealName}}" class="member-real-name">（{{user.realName}}）</text>
         <text wx:if="{{user.roleLabel && user.roleLabel !== '会员'}}" class="member-badge">{{user.roleLabel}}</text>
       </view>
-      <view class="member-meta">{{user.college}} · 加入于 {{user.joinDateText}}</view>
+      <view wx:if="{{user.college || user.joinDateText}}" class="member-meta">{{user.college}}<text wx:if="{{user.joinDateText}}"> · 加入于 {{user.joinDateText}}</text></view>
       <view class="member-tags">
         <!-- 赛季积分各协会不同（详情页/他人主页按协会取数才显示）；
              「我的」页是跨协会的，这里关掉（user.showPoints 为假，见 profile-view） -->

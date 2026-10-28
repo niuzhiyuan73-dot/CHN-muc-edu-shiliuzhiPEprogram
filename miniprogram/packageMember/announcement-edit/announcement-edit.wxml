@@ -1,8 +1,10 @@
+<import src="../../templates/form-experience.wxml" />
 <!--
   发布公告
   表单的校验在 services/announcement.js，这里只渲染，并把用户的操作交回去。
 -->
 <view class="page-container {{themeClass}}">
+  <template is="form-error-summary" data="{{formErrorItems}}" />
 
   <!-- 没有发布权时不给表单：填完再被拒，比一开始就说清楚糟得多 -->
   <view wx:if="{{blockReason}}" class="empty-state">
@@ -15,7 +17,7 @@
 
     <!-- ========== 基本信息 ========== -->
     <view class="card">
-      <view class="card-title">公告信息</view>
+      <button class="experience-fold-head" data-group="group-1" bindtap="onToggleFormGroup"><text>公告信息</text><text>{{formFolds['group-1'] ? '展开 ＋' : '收起 －'}}</text></button><view hidden="{{formFolds['group-1']}}">
 
       <view class="field-row">
         <view class="field-label">标题</view>
@@ -27,18 +29,18 @@
           bindinput="onInputTitle"
         />
       </view>
-      <view wx:if="{{errors.title}}" class="field-error">{{errors.title}}</view>
+      <view wx:if="{{errors.title}}" id="form-title" class="field-error">{{errors.title}}</view>
 
       <view class="field-row">
         <view class="field-label">置顶</view>
         <switch checked="{{form.pinned}}" color="#2f6fed" bindchange="onTogglePinned" />
       </view>
       <view class="field-hint">置顶的公告会排在首页与列表的最前面，适合招新、规则变更这类必须让所有人看到的信息</view>
-    </view>
+    </view></view>
 
     <!-- ========== 正文 ========== -->
     <view class="card">
-      <view class="card-title">正文</view>
+      <button class="experience-fold-head" data-group="group-0" bindtap="onToggleFormGroup"><text>正文</text><text>{{formFolds['group-0'] ? '展开 ＋' : '收起 －'}}</text></button><view hidden="{{formFolds['group-0']}}">
       <view class="card-subtitle">把时间、地点、要带的东西写清楚，最多 {{contentMax}} 个字</view>
 
       <textarea
@@ -48,17 +50,18 @@
         placeholder="例如：本周起每周三、周五 18:00 在体育馆 1 号场常规训练，请自备球拍。"
         bindinput="onInputContent"
       />
-      <view wx:if="{{errors.content}}" class="field-error">{{errors.content}}</view>
-    </view>
+      <view wx:if="{{errors.content}}" id="form-content" class="field-error">{{errors.content}}</view>
+    </view></view>
 
     <view wx:if="{{errorText}}" class="submit-error">{{errorText}}</view>
 
+    <template is="form-review" data="{{formReview, submitting}}" />
     <view class="submit-bar">
       <view class="btn btn-outline submit-btn" bindtap="onCancel">取消</view>
       <view
         class="btn btn-primary submit-btn {{submitting ? 'btn-disabled' : ''}}"
-        bindtap="onSubmit"
-      >发布</view>
+        bindtap="onPrepareFormReview"
+      >核对后发布</view>
     </view>
 
     <view wx:if="{{isMock}}" class="mock-note">

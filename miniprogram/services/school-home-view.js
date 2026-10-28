@@ -29,7 +29,7 @@ const { formatDate, formatDateTime } = require('../utils/format.js');
 const { ANNOUNCEMENT_STATUS } = require('../utils/constants.js');
 
 /** 首页默认展示的公告与赛事条数。太多会把首屏撑得很长。 */
-const DEFAULT_ANNOUNCEMENT_LIMIT = 3;
+const DEFAULT_ANNOUNCEMENT_LIMIT = 2;
 const DEFAULT_EVENT_LIMIT = 3;
 
 /** 公告首页最多取一页，完整列表由公告页继续翻页。 */
@@ -86,6 +86,8 @@ function eventRow(event, assoc) {
     statusLabel: event.statusLabel || '',
     isOngoing: Boolean(event.isOngoing),
     timeText: event.startTime ? formatDateTime(event.startTime) : '时间待定',
+    dateText: event.startTime ? formatDate(event.startTime) : '',
+    clockText: event.startTime ? formatDateTime(event.startTime).slice(-5) : '',
     location: event.location || '',
     quotaText: event.quotaText || '',
     signedUp: Boolean(event.mySignup && event.mySignup.signed),

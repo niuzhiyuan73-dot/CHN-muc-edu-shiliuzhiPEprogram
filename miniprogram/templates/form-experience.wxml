@@ -1,0 +1,15 @@
+<template name="form-error-summary">
+  <view wx:if="{{formErrorItems.length}}" class="experience-error-summary">
+    <view>请检查以下 {{formErrorItems.length}} 处内容</view>
+    <button wx:for="{{formErrorItems}}" wx:key="field" class="experience-link" data-field="{{item.field}}" bindtap="onFormError">{{item.message}} ›</button>
+  </view>
+</template>
+<template name="form-review">
+  <view wx:if="{{formReview}}" id="form-review" class="card">
+    <view class="card-title">提交前核对</view>
+    <view class="experience-caption">确认名称、时间和规则。修改任何选项后，需要重新核对。</view>
+    <view wx:for="{{formReview.rows}}" wx:key="field" class="experience-review-row"><text>{{item.label}}</text><text>{{item.value}}</text></view>
+    <button class="btn btn-primary" disabled="{{submitting}}" bindtap="onConfirmFormReview">{{submitting ? '提交中…' : '确认提交'}}</button>
+    <button class="btn btn-outline" disabled="{{submitting}}" bindtap="onBackToForm">继续修改</button>
+  </view>
+</template>

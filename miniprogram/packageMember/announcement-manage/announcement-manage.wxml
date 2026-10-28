@@ -35,15 +35,15 @@
 
       <view wx:if="{{view.rows.length === 0}}" class="empty-note">还没有任何公告</view>
 
-      <view wx:for="{{view.rows}}" wx:key="id" class="notice-row {{item.archived ? 'is-archived' : ''}}">
+      <view wx:for="{{view.rows}}" wx:key="id" id="notice-{{index}}" class="notice-row {{item.archived ? 'is-archived' : ''}}">
         <view class="notice-head">
           <text wx:if="{{item.pinned}}" class="tag notice-pin">置顶</text>
           <text class="tag {{item.archived ? 'is-revoked' : 'is-active'}} notice-status">{{item.statusLabel}}</text>
           <text class="notice-date">{{item.publishText}}</text>
         </view>
 
-        <view class="notice-title">{{item.title}}</view>
-        <view class="notice-content">{{item.content}}</view>
+        <view class="notice-title" data-id="{{item.id}}" bindtap="onToggleNotice">{{item.title}}</view>
+        <view class="notice-content {{expandedNotices[item.id] ? 'is-expanded' : 'is-collapsed'}}">{{item.content}}</view><button class="notice-expand" data-id="{{item.id}}" bindtap="onToggleNotice">{{expandedNotices[item.id] ? '收起正文' : '展开正文'}}</button>
 
         <view wx:if="{{item.publisherName}}" class="notice-meta">发布人：{{item.publisherName}}</view>
 

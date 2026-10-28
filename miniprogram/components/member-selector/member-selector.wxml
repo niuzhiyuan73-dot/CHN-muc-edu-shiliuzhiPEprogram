@@ -1,0 +1,19 @@
+<view wx:if="{{active}}" class="selector-mask" catchtap="onCancel">
+  <view class="selector-sheet" catchtap="noop">
+    <view class="selector-head"><text>选择会员</text><button class="selector-link" bindtap="onCancel">取消</button></view>
+    <input class="selector-search" value="{{keyword}}" maxlength="32" placeholder="搜索昵称或姓名" bindinput="onSearch" />
+    <scroll-view wx:if="{{picked.length}}" scroll-x class="selector-tray">
+      <button wx:for="{{picked}}" wx:key="userId" class="selector-chip" data-id="{{item.userId}}" bindtap="onToggle">{{item.nickName}} ×</button>
+    </scroll-view>
+    <view class="selector-caption">已选 {{picked.length}} 人 · 搜索和翻页会保留选择</view>
+    <scroll-view scroll-y class="selector-results" bindscrolltolower="onMore">
+      <button wx:for="{{rows}}" wx:key="userId" class="selector-row {{item.checked ? 'is-selected' : ''}}" data-id="{{item.userId}}" bindtap="onToggle"><text>{{item.nickName}}</text><text>{{item.checked ? '已选 ✓' : '选择'}}</text></button>
+      <view wx:if="{{loading}}" class="selector-caption">正在加载…</view>
+      <button wx:elif="{{error}}" class="selector-link" bindtap="onRetry">{{error}} · 重试</button>
+      <view wx:elif="{{!rows.length}}" class="selector-caption">没有找到符合条件的在册会员</view>
+      <button wx:elif="{{hasMore}}" class="selector-link" bindtap="onMore">加载更多</button>
+      <view wx:else class="selector-caption">已显示全部搜索结果</view>
+    </scroll-view>
+    <button class="selector-confirm" bindtap="onConfirm">确定选择（{{picked.length}} 人）</button>
+  </view>
+</view>

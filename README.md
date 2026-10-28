@@ -3,8 +3,9 @@
 一个原生微信小程序（WXML / WXSS / JS，零框架），把校内**多个体育协会**的等级分、赛事、训练与校级活动装进同一套系统。
 
 - 当前进度：篮球五人制与实时计分已落地；足球 F0—F3 已完成，支持赛后报告与成绩；足球/篮球已有协会内“我的球队”累计统计页签
-- 自检：`npm test` → **3168 项用例通过 / 0 失败 / 0 超时**（193 个测试文件 / 约 19 秒）
-- 云端共享库：`npm run check:cloud-sync` → 93 个文件一致
+- 自检：`npm test` → **3188 项用例通过 / 0 失败 / 0 超时**（194 个测试文件 / 19.1 秒）
+- 云端共享库：`npm run check:cloud-sync` → 94 个文件一致
+- 界面预览：F01–F17 首轮优化留在工作区待用户看效果，**未提交、未部署，F18 排除**；范围与检查方法见[预览说明](docs/前端体验优化-F01-F17-预览说明.md)
 - 数据源：默认**本地模拟**（`miniprogram/config.js` 的 `CLOUD_ENV_ID` 为空），填入环境 ID 即切云端，页面代码一行不改
 
 ---
@@ -93,7 +94,7 @@ services                 视图模型 + 数据源门面（MOCK / CLOUD 同一套
         │
 utils                    纯函数：计分、抽签、分组、榜单、积分、权限
         │
-        ├── tools/sync-cloud-lib.js ──逐字节镜像──▶ cloudfunctions/data/lib/（93 文件）
+        ├── tools/sync-cloud-lib.js ──逐字节镜像──▶ cloudfunctions/data/lib/（94 文件）
         │
 cloudfunctions/data      唯一云函数：协议 2 请求信封 + 仓储 + 事务
         └── src/core      身份上下文、路由、四个领域的 action handler（共 201 个）
@@ -117,7 +118,7 @@ cloudfunctions/data      唯一云函数：协议 2 请求信封 + 仓储 + 事�
 
 > 体积是最近一次打包实测值，本地 `npm test` 覆盖不到；**增删页面后需重新打包核对**，不要按页数推算。
 
-主包 **939 KB（gzip）**，全量 1217 KB。约定：
+上次打包记录：主包 **939 KB（gzip）**，全量 1217 KB；本轮共享组件和交互改动后的体积待微信开发者工具重新打包核对。约定：
 
 - **分包可以用主包的 `services` / `utils` / `components` / `templates`，反过来不行。** 所以算法、门面、面板组件、共用样式一律留在主包，分包里只放页面。共用的 WXSS 放 `templates/`（如 `templates/team-profile-view.wxss`），两边都从主包 `@import`——**主包组件引用分包里的 wxss 会编译失败**，报错长得像「文件找不到」，实际是方向错了。
 - 页面目录深度保持两级（`<包>/<页面>/`），页面里的 `require('../../services/...')` 因此不用改。
